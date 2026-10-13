@@ -1,15 +1,14 @@
 # prototyping Quality Assurance
 
-Critic-only adversarial contract. Assume competent production and normal review have already occurred; attack residual false confidence without creating new authority.
-
 ## QA criteria
 
-Critic asks: *What conclusion is being drawn, and could this prototype produce that same evidence even if the real product would fail?* Probe fake latency/data, happy-path-only demonstrations, inaccessible simulated controls, mocked integrations, and polished detail that biases choice.
-
-Block when the declared question remains unanswered, claimed evidence exceeds what the prototype actually exercised, a prototype is presented as implementation/specification authority, or an important decision was made from a non-discriminating experiment.
-
-Do not block for low fidelity itself when it is sufficient to answer the question.
+- Change a happy-path assumption: delayed response, repeated action, vanished focus target, interruption, or long content. Check whether the chosen prototype could reveal the resulting failure at all.
+- Challenge a polished interactive demo whose simulated backend supplies guarantees the product does not have.
+- Challenge a convincing written walkthrough used to claim observed timing, rendering, focus, or representative user success.
+- Look for biased comparisons: different data, unequal polish, easier scenarios for the preferred option, or a novelty preference disguised as evidence.
+- Trace a discovered gap into the final handoff. Does it disappear behind a confident recommendation or become an invented accepted requirement?
+- Check whether refinement continues without reducing uncertainty, or whether tool absence causes universal refusal even though useful bounded exploration remains possible.
 
 ## QA depth
 
-Increase depth with decision irreversibility, fidelity/realism claims, integration assumptions, user-risk consequence, number of alternatives, and cost of drawing the wrong conclusion.
+Attack the limits of the evidence and the experiment's ability to falsify its favored answer, not merely whether the prototype looks complete. Preserve role and production boundaries.

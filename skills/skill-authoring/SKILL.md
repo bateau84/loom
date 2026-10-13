@@ -45,7 +45,7 @@ Absence of either companion file is valid. Do not generate boilerplate merely fo
 
 When discovery, structure, behavioral guidance, or eval design is load-bearing, read [Portable authoring principles](references/authoring-principles.md) before editing. Loom owns the runtime/eval machinery; this skill owns the portable methodology for making a reusable skill worth loading.
 
-1. **Start from the job, not the document.** Define what the skill enables, the concrete situations that should retrieve it, nearby sibling territory, and what observable failure or quality gap justifies the skill.
+1. **Start from the job, not the document.** Define what the skill enables, the concrete situations that should retrieve it, nearby sibling territory, and what observable failure or quality gap justifies the skill. Walk one ordinary user request from inputs through key decisions and tools (when needed) to a useful observable outcome; a large, correct reference alone is not a working method.
 2. **Treat the description as a retrieval contract.** Lead with the capability; include concrete `Use when` verbs, filenames, tools, symptoms, or situations; add a narrow `Not for ...` sibling pointer where territory overlaps. Do not turn the description into a miniature workflow. When editing a proven description, dropped trigger anchors are a reason to re-test discovery, not proof of causality.
 3. **Choose a shape that fits the work.** Technique, reference, pattern-recognition, and discipline/governance skills need different bodies. Do not force every skill into one universal section template.
 4. **Keep the load-bearing normal path in `SKILL.md`.** Move bulky schemas, API tables, examples, or specialized variants to direct references only when the core method remains understandable without loading them. Avoid reference chains whose real answer is several hops away.
@@ -62,6 +62,7 @@ When discovery, structure, behavioral guidance, or eval design is load-bearing, 
 15. Preserve licenses and attribution for copied third-party material. Curate sources deliberately: keep the generalizable principle, record meaningful lineage, and discard obsolete workflow mechanics rather than copying them for historical symmetry.
 16. Keep external dependencies explicit; do not assume a CLI/service is installed.
 17. If a skill changes behavioral decisions rather than merely technical method, add or update a realistic eval for that decision boundary. Prefer real incidents and observed work as scenario sources; use Loom's central skill-ablation machinery rather than inventing a skill-local execution lifecycle.
+18. **Check the consumer, not just your own fixtures.** Before claiming eval compatibility, identify the actual runner/parser and exercise it against the authored case files. Do not invent a convenient JSON shape and then write local tests that only accept that shape. Cases describe expectations; only executed baseline/candidate evidence can support a behavioral-improvement claim.
 
 ## Companion quality tests
 

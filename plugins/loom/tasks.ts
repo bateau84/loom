@@ -4,6 +4,47 @@ export const MAX_TASKS = 24
 export const MAX_TASK_ID_LENGTH = 96
 export const MAX_TASK_TEXT_LENGTH = 1_000
 export const MAX_TASK_CONTEXT_ITEMS = 16
+export const LOOM_AGENT_ROLES = [
+  "designer", "specifier", "architect", "reviewer", "critic", "acceptance",
+  "planner", "documenter", "worker", "research", "diagnostic", "brainstorm",
+] as const
+export const PLAN_PRODUCER_ROLES = ["worker", "designer", "specifier", "architect", "documenter", "research", "diagnostic"] as const
+
+/** Plugin-owned native paths, never inferred from host descriptions or Planner labels. */
+export function nativeTaskPath(task: { role?: string; responsibility?: string }) {
+  const { role, responsibility } = task
+  if (role === "brainstorm" && responsibility === "produce") {
+    return { nativeKind: "advisory", stepKind: "work", agent: role, result: "advisory-v1", write: "none", requiredReview: "scoped-independent" } as const
+  }
+  if (role && PLAN_PRODUCER_ROLES.some((producer) => producer === role) &&
+      (responsibility === "produce" || responsibility === "execute")) {
+    return { nativeKind: "producer", stepKind: "work", agent: role, result: "producer", write: "scoped", requiredReview: "scoped-independent" } as const
+  }
+  if (role === "reviewer" && responsibility === "review") {
+    return { nativeKind: "review", stepKind: "gate", agent: role, result: "verdict", write: "scoped", requiredReview: "independent" } as const
+  }
+  if (role === "acceptance" && responsibility === "review") {
+    // This is the real Product Acceptance gate, not a renamed producer/reviewer.
+    return { nativeKind: "acceptance", stepKind: "gate", agent: role, result: "product-acceptance", write: "scoped", requiredReview: "independent" } as const
+  }
+  if (role === "user" && responsibility === "obtain-user-decision") {
+    return { nativeKind: "user-decision", stepKind: "wait", agent: role, result: "user-answer", write: "none", requiredReview: "scoped-independent" } as const
+  }
+  return undefined
+}
+
+export function validateAdviceAssociation(task: { id: string; role?: string; responsibility?: string; adviceForTaskId?: string; write?: string[] }) {
+  if ("nativeKind" in task) throw new Error(`Task ${task.id} nativeKind is plugin-derived, not a public contract field.`)
+  if (nativeTaskPath(task)?.nativeKind !== "advisory") {
+    if (task.adviceForTaskId !== undefined) throw new Error(`Task ${task.id} adviceForTaskId is permitted only on Brainstorm produce Tasks.`)
+    return
+  }
+  const receiver = task.adviceForTaskId
+  if (!receiver || !/^[a-z0-9][a-z0-9-]*$/.test(receiver) || receiver.length > MAX_TASK_ID_LENGTH || receiver === task.id) {
+    throw new Error(`Task ${task.id} requires a valid distinct adviceForTaskId.`)
+  }
+  if (task.write?.length) throw new Error(`Task ${task.id} advisory write scope must be empty.`)
+}
 
 function boundedText(value: string, label: string) {
   const text = value.trim()
@@ -41,6 +82,10 @@ export type TaskSpec = {
   write: string[]
   skills: string[]
   verify: string[]
+  /** Accountable agent role copied from the persistent semantic Plan. */
+  role?: string
+  responsibility?: "produce" | "execute" | "review" | "obtain-user-decision"
+  adviceForTaskId?: string
 }
 
 function normalizeTask(input: TaskSpec): TaskSpec {
@@ -57,6 +102,8 @@ function normalizeTask(input: TaskSpec): TaskSpec {
   const write = [...new Set(input.write.map((item) => item.trim()).filter(Boolean))]
   const skills = boundedList(input.skills, `Task ${id} skills`)
   const verify = boundedList(input.verify, `Task ${id} verify`)
+  const role = input.role?.trim()
+  const responsibility = input.responsibility
 
   if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) {
     throw new Error(`Invalid task id ${input.id}; use lowercase letters, numbers, and hyphens.`)
@@ -65,11 +112,16 @@ function normalizeTask(input: TaskSpec): TaskSpec {
     throw new Error(`Task id exceeds maximum of ${MAX_TASK_ID_LENGTH} characters.`)
   }
   if (!title || !objective) throw new Error(`Task ${id} requires title and objective.`)
+  if (role && !/^[a-z][a-z0-9-]*$/.test(role)) throw new Error(`Task ${id} has invalid accountable role.`)
+  if (responsibility && !["produce", "execute", "review", "obtain-user-decision"].includes(responsibility)) {
+    throw new Error(`Task ${id} has invalid responsibility.`)
+  }
   if (!rationale) throw new Error(`Task ${id} requires rationale within the parent Plan.`)
   if (authorityRefs.length === 0) throw new Error(`Task ${id} requires at least one accepted authority reference.`)
   if (acceptanceCriteria.length === 0) throw new Error(`Task ${id} requires at least one falsifiable acceptance criterion.`)
   if (verify.length === 0) throw new Error(`Task ${id} requires at least one verification expectation.`)
   validateWriteScope(write)
+  validateAdviceAssociation({ ...input, id, role, responsibility, write })
 
   return {
     id,
@@ -85,6 +137,9 @@ function normalizeTask(input: TaskSpec): TaskSpec {
     write,
     skills,
     verify,
+    ...(role ? { role } : {}),
+    ...(responsibility ? { responsibility } : {}),
+    ...(input.adviceForTaskId !== undefined ? { adviceForTaskId: input.adviceForTaskId } : {}),
   }
 }
 

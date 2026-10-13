@@ -48,6 +48,8 @@ Publication remains atomic and per-publisher generation is monotonic. An expired
 
 ## Bounded control path
 
+This section describes the **current terminal failed/cancelled cleanup path and its earlier terminal-only proposed provenance correction**, not an implementation of all-workflow archival. The newer proposed [BR-026](../../requirements/loom/br-026-archive-or-permanently-delete-workflow-records-safely.md) and [Work Lifecycle, Command Authority, and Publication](work-lifecycle-and-publication.md) separately require Archive (including Active work only after cancellation/revocation), a visible Archived view with in-flight uncertainty, and explicitly confirmed Permanent Delete only after confirmed quiescence while retaining protected history. Current cleanup cannot be relabeled as either operation. The earlier user OQ on terminal-only cleanup remains historical; the later proposed all-workflow direction does not rewrite its answer or replace the accepted Anchor.
+
 Workflow cleanup is deliberately separate from the projection path:
 
 ```text
@@ -104,11 +106,13 @@ Deletion then:
 3. removes the workflow from `WorkHierarchy.workflowIds`;
 4. removes active session/step/OQ bindings that still point at it;
 5. records a separate child-session deletion fence before dropping old child bindings, so late host/tool calls from those child sessions remain denied until a new valid attachment exists;
-6. removes workflow-local budgets, limits, OQs, scopes, binding-release records, and work-release records;
+6. removes workflow-local budgets, limits, scopes, binding-release records, work-release records, and **active OQ routing/index/binding effects**, while retaining answered-question content and its source attribution as workflow-attributable historical provenance. Historical question records must not be treated as runnable OQs, active blockers, or an alternate workflow binding after cleanup;
 7. removes the canonical `workflow/<id>` execution record;
 8. writes a durable `workflow-deletion/<id>` tombstone.
 
-Evidence observations/claims and durable completed work results are retained.
+**Proposed target:** Evidence observations/claims, answered-question content and source attribution, and durable completed work results remain unchanged and attributable to the deleted workflow. The user approved removal of terminal failed/cancelled workflow records while retaining evidence and completed work; proposed [BR-018](../../requirements/loom/br-018-external-operational-dashboard.md) makes answered-question content and attribution explicit. BR-018 itself remains proposed, not independently accepted wholesale. Neither boundary requires retaining an *active* OQ route after deletion. Separating routing from historical question provenance avoids both late dispatch against deleted work and irreversible loss of an answer's source.
+
+**Current implementation gap (not a conformance claim):** `plugins/loom/workflow-cleanup.ts` currently deletes the entire `oq/<workflow.id>/` prefix along with `oq-index/<workflow.id>` and session OQ bindings. The OQ record in `plugins/loom/oq.ts` carries the answer text, source, answering identity, and reconciliations. Thus current cleanup deletes answer-bearing records and attribution, contrary to this proposed retention design. Existing evidence and completed work outside those deleted OQ records may remain, but their survival does not establish survival of answered-question provenance. This reconstruction documents the source-backed gap; it does not authorize a product-code change, assert deployment prevalence, or claim deletion now conforms. A future implementation needs a safe historical-read boundary and proof that retained records have no routing effect.
 
 The deletion tombstone has a second purpose: stale publisher snapshots can continue to exist until their leases expire. The control-panel aggregator filters any workflow named by a tombstone so deleted work does not reappear in the UI during that window.
 
@@ -151,6 +155,7 @@ Cleanup failure is fail-closed:
 - revision/work-binding changes force the user to refresh and retry;
 - active work is rejected rather than implicitly cancelled;
 - durable completed-Wave provenance blocks deletion;
+- a failure to retain answer/provenance or to detach active question routing must roll back the cleanup transaction;
 - the HTTP server bounds request bodies before JSON/control processing;
 - a completed tombstone makes a repeated delete idempotent, so an uncertain browser response can be retried safely without recreating or re-deleting state.
 
@@ -179,6 +184,10 @@ The control panel does not:
 - infer Loom truth from OpenCode transcripts.
 
 Further control actions require separate product and architecture acceptance rather than expanding this endpoint generically.
+
+## Downstream verification (not performed by this reconstruction)
+
+Exercise a failed/cancelled workflow with an answered, source-attributed OQ and multiple consumers: after confirmed cleanup, its answer and attribution must remain retrievable as historical provenance, but its OQ must not dispatch, block or bind any active work. Check evidence/completed work and project files remain unchanged, old projections cannot resurrect the workflow, and failed retention or routing-detachment rolls back without reporting success. This is future implementation proof, not a claim that current cleanup passes.
 
 ## Related
 

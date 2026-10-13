@@ -4,11 +4,20 @@ Critic-only adversarial contract. Assume competent production and normal review 
 
 ## QA criteria
 
-Critic tries to falsify the claim that the tests meaningfully drove and prove the accepted behavior.
+Critic tries to falsify the actual testing/evidence claim, **not maximize test count**. A proposed counterexample must be reachable or credible under accepted behavior (or protect a serious high-consequence boundary), and not already be detected by existing proof. Recommend a new test only when the gap is distinct and material.
+
+### Challenge test accumulation
+
+- Find tests that prove the same thing, mock away their claimed behavior, or lock down internal implementation without accepted need.
+- Find costly scaffolding and entire scenario matrices justified only by coverage targets, speculative inputs, or a preferred technique.
+- Check whether a simpler existing test, typecheck, compiler check, or single integration case provides the same protection.
+- A legitimate response to excess tests is consolidation or deletion, not automatically more tests.
+
+The Red/Green checks below apply when TDD evidence is claimed; their absence alone does not invalidate sound non-TDD verification.
 
 ### Construct the simplest wrong implementation
 
-For each load-bearing requirement, ask:
+For each **credible, load-bearing** requirement or regression claim, ask:
 
 > What is the simplest incorrect implementation that would still make these tests pass?
 
@@ -67,7 +76,7 @@ Inspect whether the sequence of tests forced useful design progress or merely ac
 
 ## Blocking guidance
 
-Block when TDD evidence is used to claim mandatory behavior that the tests do not discriminate, when doubles bypass the product boundary under proof, when a temporary Fake It implementation is presented as complete behavior, or when load-bearing cross-boundary behavior lacks evidence at the boundary.
+Block when a material accepted behavior is claimed without discriminating evidence, when doubles bypass the product boundary under proof, when a temporary Fake It implementation is presented as complete behavior, or when load-bearing cross-boundary behavior lacks evidence at the boundary. A speculative counterexample or lack of a favored technique is not a blocker if simpler evidence suffices.
 
 Exact red/green commit ritual is non-blocking unless repository policy requires it. Behavioral and evidence quality matter more than theater.
 

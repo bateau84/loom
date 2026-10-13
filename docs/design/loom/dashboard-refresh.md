@@ -103,7 +103,16 @@ verified causal explanations. Descriptions and lists may be limited; say so. Mis
 or incompatible context provides counts-only guidance and an update/restart hint,
 never an empty-details-as-success claim. Zero open verification requirements is not
 a claim that all tests passed. Resolve questions and supply evidence through Loom;
-there are no dashboard mutation controls.
+the dashboard's directory, session, workflow, question, evidence, and Plan views
+remain observational and do not authorize execution. The one separately accepted
+dashboard mutation is explicit-confirmation removal of terminal failed/cancelled
+workflow records, with project files, retained evidence, and completed work
+preserved; it is not an execution control. See [Dashboard Experience](dashboard-experience.md).
+
+When a planning-only workflow has a reviewed Plan, show that as the workflow's
+intermediate planning outcome. Do not present it as completion of the product
+Objective, implementation, or authorization to start implementation. Further
+implementation requires a distinct user-authorized transition.
 
 Sessions are secondary. The coordinator is labeled only by exact recorded creator
 membership. Other members use Session 1, Session 2, etc., with the workflow name
@@ -139,9 +148,13 @@ paused. Resume requests current data. These controls never pause or resume Loom
 execution. Projection receipt time is not publisher or workflow health.
 
 Distinguish loading, no publishers, no projected workflows, no filter matches, and
-unavailable projection. Failed/malformed refreshes keep the last valid snapshot,
-including an empty one. Retry clears degradation. Invalid hashes get a recovery
-link without rewriting the URL. Missing deep-link targets wait at the exact address;
+unavailable projection. After a failed/malformed refresh, keep and present any last
+validated snapshot—including an empty one—as last-known with explicit freshness /
+degraded state; unavailable is the view state only when no prior validated snapshot
+exists, or when the retained snapshot itself cannot be presented. Do not discard an
+available last-known view merely because refresh validation failed. A valid retry
+updates the view and clears/updates degradation. Invalid hashes get a recovery link
+without rewriting the URL. Missing deep-link targets wait at the exact address;
 repeated reads do not prove deletion.
 
 ## Accessibility and validation

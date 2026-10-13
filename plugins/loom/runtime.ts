@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto"
-import { assertWorkflowNotCancelled, type Workflow } from "./workflow"
+import { assertWorkflowNotCancelled, executableTaskPlanFingerprint, type Workflow } from "./workflow"
+import { workPlanSemanticFingerprint, type WorkHierarchy } from "./work"
 import { execFile, spawn } from "node:child_process"
 import { once } from "node:events"
 import { AsyncLocalStorage } from "node:async_hooks"
@@ -15,6 +16,8 @@ export type RawStorage = {
   delete?(key: string): Promise<boolean>
   scan(input: { prefix: string; limit?: number; after?: string }): Promise<any>
   transaction?<T>(fn: () => Promise<T>): Promise<T>
+  /** A consistent read snapshot that does not reserve the SQLite writer slot. */
+  readTransaction?<T>(fn: () => Promise<T>): Promise<T>
 }
 
 export type LoomRuntimeIdentity = {
@@ -49,7 +52,7 @@ const PROJECT_PREFIX = "project/"
 const GLOBAL_PREFIXES = ["installation/", "episode/", "heuristic/"]
 
 export const RUNTIME_BASELINE_VERSION = 1
-export const RUNTIME_STATE_VERSION = 7
+export const RUNTIME_STATE_VERSION = 10
 
 export type RuntimeUpgradePhase =
   | "canonical-upgrade"
@@ -144,6 +147,31 @@ const RUNTIME_UPGRADE_STEPS: RuntimeUpgradeStep[] = [{
     runnableAttemptMutationFence: true,
     installationScopedHardBoundaryLocks: true,
   }),
+}, {
+  id: "same-owner-coordinator-resumption-v8",
+  fromVersion: 7,
+  toVersion: 8,
+  // Existing records are unchanged. Fence v7 writers that do not serialize
+  // same-session Loom admission with coordinator binding transitions.
+  applyInstallation: async () => ({ sameOwnerCoordinatorResumption: true }),
+}, {
+  id: "plan-authority-delta-v9",
+  fromVersion: 8,
+  toVersion: 9,
+  // Existing records remain readable. Fence v8 writers that can still replace
+  // bounded authorityRefs wholesale or persist only the legacy Task
+  // fingerprint semantics while v9 performs delta-only authority mutation.
+  applyInstallation: async () => ({
+    planAuthorityDelta: true,
+    taskFingerprintRefinement: true,
+  }),
+}, {
+  id: "brainstorm-native-advice-v10",
+  fromVersion: 9,
+  toVersion: 10,
+  // Fence writers that strip receiver associations or lack causal resolution.
+  // Old supported results/OQs retain their meaning; no advisory backfill.
+  applyInstallation: async () => ({ nativeAdvisoryTasks: true, digestBoundAdviceResolution: true }),
 }]
 
 function sha256(value: string) {
@@ -525,13 +553,30 @@ export async function withRuntimeAdvisoryLock<T>(
   resourceIdentity: string,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const release = await acquireFlock(
-    runtimeLockPath(runtime, { aggregate, resourceIdentity }),
-  )
+  return withRuntimeAdvisoryLocks(runtime, [{ aggregate, resourceIdentity }], fn)
+}
+
+/** Hold ordered cross-process advisory leases without extending a storage transaction. */
+export async function withRuntimeAdvisoryLocks<T>(
+  runtime: LoomRuntimeIdentity,
+  resources: RuntimeLockResource[],
+  fn: () => Promise<T>,
+): Promise<T> {
+  const lockPaths = [...new Set(resources.map((resource) => runtimeLockPath(runtime, resource)))].sort()
+  const releases: Array<() => Promise<void>> = []
   try {
+    for (const lockPath of lockPaths) releases.push(await acquireFlock(lockPath))
     return await fn()
   } finally {
-    await release()
+    let releaseError: unknown
+    for (const release of releases.reverse()) {
+      try {
+        await release()
+      } catch (error) {
+        releaseError ??= error
+      }
+    }
+    if (releaseError) throw releaseError
   }
 }
 
@@ -970,24 +1015,31 @@ export function createProjectStorage(
     }
   }
 
-  const fencedTransaction = <T>(fn: () => Promise<T>) =>
+  // Version check and read must share one snapshot. A write transaction here
+  // reserves SQLite's single writer slot even for a status/dashboard read.
+  const fencedRead = <T>(fn: () => Promise<T>) => {
+    if (expectedVersion === undefined) return fn()
+    if (raw.readTransaction) return raw.readTransaction(fn)
+    return raw.transaction ? raw.transaction(fn) : fn()
+  }
+  const fencedWrite = <T>(fn: () => Promise<T>) =>
     expectedVersion !== undefined && raw.transaction ? raw.transaction(fn) : fn()
 
   const scoped: RawStorage = {
     async get(key) {
-      return fencedTransaction(async () => {
+      return fencedRead(async () => {
         await assertVersion()
         return raw.get(scopedKey(projectId, key))
       })
     },
     async set(key, value) {
-      return fencedTransaction(async () => {
+      return fencedWrite(async () => {
         await assertVersion()
         return raw.set(scopedKey(projectId, key), value)
       })
     },
     async scan(input) {
-      return fencedTransaction(async () => {
+      return fencedRead(async () => {
         await assertVersion()
         return raw.scan({ ...input, prefix: scopedKey(projectId, input.prefix) })
       })
@@ -995,7 +1047,7 @@ export function createProjectStorage(
   }
   if (raw.delete) {
     scoped.delete = (key) =>
-      fencedTransaction(async () => {
+      fencedWrite(async () => {
         await assertVersion()
         return raw.delete!(scopedKey(projectId, key))
       })
@@ -1003,6 +1055,13 @@ export function createProjectStorage(
   if (raw.transaction) {
     scoped.transaction = (fn) =>
       raw.transaction!(async () => {
+        await assertVersion()
+        return fn()
+      })
+  }
+  if (raw.readTransaction || raw.transaction) {
+    scoped.readTransaction = (fn) =>
+      (raw.readTransaction ?? raw.transaction)!(async () => {
         await assertVersion()
         return fn()
       })
@@ -1043,6 +1102,7 @@ export async function sessionBoundToOq(
 }
 
 const transactionalStores = new Map<string, RawStorage>()
+const initializingTransactionalStores = new Map<string, Promise<RawStorage>>()
 
 function escapeLikePrefix(value: string) {
   return value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_")
@@ -1053,104 +1113,147 @@ export async function createTransactionalStorage(
 ): Promise<RawStorage> {
   const existing = transactionalStores.get(runtime.stateRoot)
   if (existing) return existing
+  const pending = initializingTransactionalStores.get(runtime.stateRoot)
+  if (pending) return pending
 
-  const path = join(runtime.stateRoot, "execution-state.sqlite")
-  const db = new Database(path, { create: true })
-  db.run("PRAGMA journal_mode = WAL")
-  db.run("PRAGMA synchronous = FULL")
-  db.run("PRAGMA busy_timeout = 5000")
-  db.run(
-    "CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)",
-  )
-  await chmod(path, 0o600).catch(() => {})
-
-  const transactionContext = new AsyncLocalStorage<boolean>()
-  let tail: Promise<void> = Promise.resolve()
-
-  const exclusive = async <T>(fn: () => T | Promise<T>): Promise<T> => {
-    if (transactionContext.getStore()) return await fn()
-
-    const previous = tail
-    let release!: () => void
-    const next = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    tail = previous.then(() => next)
-    await previous
+  // Multiple plugin instances can initialize in the same process. Publish the
+  // in-flight open before its first filesystem await to avoid duplicate handles.
+  const initialization = (async (): Promise<RawStorage> => {
+    const path = join(runtime.stateRoot, "execution-state.sqlite")
+    const db = new Database(path, { create: true })
     try {
-      return await fn()
-    } finally {
-      release()
-    }
-  }
+      // WAL setup and CREATE TABLE can themselves contend on a shared startup.
+      db.run("PRAGMA busy_timeout = 5000")
+      db.run("PRAGMA journal_mode = WAL")
+      db.run("PRAGMA synchronous = FULL")
+      db.run(
+        "CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)",
+      )
+      await chmod(path, 0o600).catch(() => {})
 
-  const readValue = (key: string) => {
-    const row = db.query("SELECT value FROM kv WHERE key = ?1").get(key) as
-      | { value: string }
-      | null
-    return row ? JSON.parse(row.value) : undefined
-  }
+      const transactionContext = new AsyncLocalStorage<"read" | "write">()
+      let tail: Promise<void> = Promise.resolve()
 
-  const writeValue = (key: string, value: unknown) => {
-    if (value === undefined) throw new Error("Loom durable storage cannot persist undefined.")
-    db.query(
-      "INSERT INTO kv(key, value) VALUES(?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-    ).run(key, JSON.stringify(value))
-    return value
-  }
+      const exclusive = async <T>(fn: () => T | Promise<T>): Promise<T> => {
+        if (transactionContext.getStore()) return await fn()
 
-  const storage: RawStorage = {
-    async get(key: string) {
-      return exclusive(() => readValue(key))
-    },
-    async set(key: string, value: unknown) {
-      return exclusive(() => writeValue(key, value))
-    },
-    async delete(key: string) {
-      return exclusive(() => {
-        const result = db.query("DELETE FROM kv WHERE key = ?1").run(key) as { changes?: number }
-        return Number(result.changes ?? 0) > 0
-      })
-    },
-    async scan(input: { prefix: string; limit?: number; after?: string }) {
-      return exclusive(() => {
-        const limit = Math.max(1, Math.min(input.limit ?? 100, 1000))
-        const prefix = `${escapeLikePrefix(input.prefix)}%`
-        const after = input.after ?? ""
-        const rows = db
-          .query(
-            "SELECT key, value FROM kv WHERE key LIKE ?1 ESCAPE '\\' AND key > ?2 ORDER BY key LIMIT ?3",
-          )
-          .all(prefix, after, limit + 1) as Array<{ key: string; value: string }>
-        const selected = rows.slice(0, limit)
-        return {
-          entries: selected.map((row) => ({ key: row.key, value: JSON.parse(row.value) })),
-          next: rows.length > limit ? selected.at(-1)?.key : undefined,
-        }
-      })
-    },
-    async transaction<T>(fn: () => Promise<T>): Promise<T> {
-      if (transactionContext.getStore()) return fn()
-      return exclusive(async () => {
-        db.run("BEGIN IMMEDIATE")
+        const previous = tail
+        let release!: () => void
+        const next = new Promise<void>((resolve) => {
+          release = resolve
+        })
+        tail = previous.then(() => next)
+        await previous
         try {
-          const result = await transactionContext.run(true, fn)
-          db.run("COMMIT")
-          return result
-        } catch (error) {
-          try {
-            db.run("ROLLBACK")
-          } catch {
-            // Preserve the original transaction error.
-          }
-          throw error
+          return await fn()
+        } finally {
+          release()
         }
-      })
-    },
-  }
+      }
 
-  transactionalStores.set(runtime.stateRoot, storage)
-  return storage
+      const assertWritable = () => {
+        if (transactionContext.getStore() === "read") {
+          throw new Error("Loom read-only transaction cannot write durable state.")
+        }
+      }
+
+      const readValue = (key: string) => {
+        const row = db.query("SELECT value FROM kv WHERE key = ?1").get(key) as
+          | { value: string }
+          | null
+        return row ? JSON.parse(row.value) : undefined
+      }
+
+      const writeValue = (key: string, value: unknown) => {
+        assertWritable()
+        if (value === undefined) throw new Error("Loom durable storage cannot persist undefined.")
+        db.query(
+          "INSERT INTO kv(key, value) VALUES(?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        ).run(key, JSON.stringify(value))
+        return value
+      }
+
+      const transact = async <T>(
+        mode: "read" | "write",
+        fn: () => Promise<T>,
+      ): Promise<T> => {
+        const active = transactionContext.getStore()
+        if (active) {
+          if (active === "read" && mode === "write") {
+            throw new Error("Loom read-only transaction cannot start a write transaction.")
+          }
+          return fn()
+        }
+
+        return exclusive(async () => {
+          db.run(mode === "read" ? "BEGIN" : "BEGIN IMMEDIATE")
+          try {
+            const result = await transactionContext.run(mode, fn)
+            db.run("COMMIT")
+            return result
+          } catch (error) {
+            try {
+              db.run("ROLLBACK")
+            } catch {
+              // Preserve the original transaction error.
+            }
+            throw error
+          }
+        })
+      }
+
+      const storage: RawStorage = {
+        async get(key: string) {
+          return exclusive(() => readValue(key))
+        },
+        async set(key: string, value: unknown) {
+          return exclusive(() => writeValue(key, value))
+        },
+        async delete(key: string) {
+          return exclusive(() => {
+            assertWritable()
+            const result = db.query("DELETE FROM kv WHERE key = ?1").run(key) as { changes?: number }
+            return Number(result.changes ?? 0) > 0
+          })
+        },
+        async scan(input: { prefix: string; limit?: number; after?: string }) {
+          return exclusive(() => {
+            const limit = Math.max(1, Math.min(input.limit ?? 100, 1000))
+            const prefix = `${escapeLikePrefix(input.prefix)}%`
+            const after = input.after ?? ""
+            const rows = db
+              .query(
+                "SELECT key, value FROM kv WHERE key LIKE ?1 ESCAPE '\\' AND key > ?2 ORDER BY key LIMIT ?3",
+              )
+              .all(prefix, after, limit + 1) as Array<{ key: string; value: string }>
+            const selected = rows.slice(0, limit)
+            return {
+              entries: selected.map((row) => ({ key: row.key, value: JSON.parse(row.value) })),
+              next: rows.length > limit ? selected.at(-1)?.key : undefined,
+            }
+          })
+        },
+        async readTransaction<T>(fn: () => Promise<T>): Promise<T> {
+          return transact("read", fn)
+        },
+        async transaction<T>(fn: () => Promise<T>): Promise<T> {
+          return transact("write", fn)
+        },
+      }
+
+      transactionalStores.set(runtime.stateRoot, storage)
+      return storage
+    } catch (error) {
+      db.close()
+      throw error
+    }
+  })()
+  initializingTransactionalStores.set(runtime.stateRoot, initialization)
+  try {
+    return await initialization
+  } finally {
+    initializingTransactionalStores.delete(runtime.stateRoot)
+  }
 }
 
 type AtomicFileStorageOptions = {
@@ -1982,6 +2085,13 @@ export type DispatchGrantV1 = {
   consumedAt?: string
   consumingSessionId?: string
   revokedAt?: string
+  advisoryBinding?: {
+    generation: number
+    stepAttempt: number
+    taskPlanFingerprint?: string
+    executableFingerprint?: string
+    planFingerprint?: string
+  }
 }
 
 export async function revokeWorkflowDispatchGrantsLocked(
@@ -2006,9 +2116,32 @@ export async function revokeWorkflowDispatchGrantsLocked(
   return revoked
 }
 
-async function assertGrantWorkflowActive(storage: RawStorage, workflowId: string) {
+async function assertGrantWorkflowActive(storage: RawStorage, workflowId: string, projectId: string) {
   const workflow = await storage.get(`workflow/${workflowId}`) as Workflow | undefined
-  if (workflow) assertWorkflowNotCancelled(workflow)
+  if (!workflow || workflow.id !== workflowId || workflow.projectId !== projectId) {
+    throw new Error("Dispatch grant workflow is missing or belongs to another project.")
+  }
+  assertWorkflowNotCancelled(workflow)
+  return workflow
+}
+
+async function advisoryGrantBinding(storage: RawStorage, workflow: Workflow, stepId?: string): Promise<DispatchGrantV1["advisoryBinding"]> {
+  if (!stepId || !workflow.work) return undefined
+  const work = await storage.get(`work/${encodeURIComponent(workflow.work.objectiveId)}`) as WorkHierarchy | undefined
+  const plan = work?.plans?.find((plan) => plan.generation === workflow.work!.generation)
+  if (!plan?.phases.some((phase) => phase.waves.some((wave) => wave.tasks.some((task) => task.role === "brainstorm")))) return undefined
+  const step = workflow.steps.find((step) => step.id === stepId)
+  if (!step) throw new Error("Advisory dispatch step is missing.")
+  return { generation: workflow.work.generation, stepAttempt: step.attempt ?? 0,
+    ...(stepId === "review-plan" || stepId === "plan" ? { planFingerprint: workPlanSemanticFingerprint(work!, workflow.work.generation) }
+      : { taskPlanFingerprint: workflow.work.taskPlanFingerprint, executableFingerprint: executableTaskPlanFingerprint(workflow) }) }
+}
+
+async function assertAdvisoryGrantBinding(storage: RawStorage, workflow: Workflow, grant: DispatchGrantV1) {
+  const current = await advisoryGrantBinding(storage, workflow, grant.stepId)
+  if (JSON.stringify(current) !== JSON.stringify(grant.advisoryBinding)) {
+    throw new Error("Stale advisory Task/Plan grant: attempt, generation, receiver contract or executable graph changed.")
+  }
 }
 
 function dispatchGrantKey(grantId: string) {
@@ -2044,7 +2177,7 @@ export async function issueDispatchGrantLocked(
   runtime: LoomRuntimeIdentity,
   input: IssueDispatchGrantInput,
 ): Promise<DispatchGrantV1> {
-  await assertGrantWorkflowActive(storage, input.workflowId)
+  const workflow = await assertGrantWorkflowActive(storage, input.workflowId, runtime.projectId)
   if (Boolean(input.stepId) === Boolean(input.oqId)) {
     throw new Error("Dispatch grant requires exactly one of stepId or oqId.")
   }
@@ -2070,6 +2203,7 @@ export async function issueDispatchGrantLocked(
     issuingParentSessionId: input.issuingParentSessionId,
     createdAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + ttlMs).toISOString(),
+    ...(input.stepId ? { advisoryBinding: await advisoryGrantBinding(storage, workflow, input.stepId) } : {}),
   }
   await storage.set(dispatchGrantKey(grant.grantId), grant)
   return grant
@@ -2098,7 +2232,11 @@ export async function findUsableDispatchGrant(
   },
 ): Promise<DispatchGrantV1 | undefined> {
   const workflow = await storage.get(`workflow/${input.workflowId}`) as Workflow | undefined
-  if (workflow?.cancellation) return undefined
+  if (!workflow || workflow.id !== input.workflowId || workflow.projectId !== runtime.projectId) {
+    throw new Error("Dispatch grant workflow is missing or belongs to another project.")
+  }
+  if (workflow.cancellation) return undefined
+  const binding = await advisoryGrantBinding(storage, workflow, input.stepId)
   const now = (input.now ?? new Date()).getTime()
   let after: string | undefined
   do {
@@ -2116,7 +2254,8 @@ export async function findUsableDispatchGrant(
         !grant.consumedAt &&
         !grant.revokedAt &&
         Date.parse(grant.expiresAt) > now &&
-        grantMatchesSelector(grant, input)
+        grantMatchesSelector(grant, input) &&
+        JSON.stringify(grant.advisoryBinding) === JSON.stringify(binding)
       ) {
         return grant
       }
@@ -2143,11 +2282,12 @@ export async function admitDispatchGrantLocked(
   runtime: LoomRuntimeIdentity,
   input: AdmitDispatchGrantInput,
 ): Promise<DispatchGrantV1> {
-  await assertGrantWorkflowActive(storage, input.workflowId)
   const grant = (await storage.get(dispatchGrantKey(input.grantId))) as DispatchGrantV1 | undefined
   if (!grant || grant.schemaVersion !== 1) throw new Error("Dispatch grant not found.")
   if (grant.projectId !== runtime.projectId) throw new Error("Dispatch grant belongs to another project.")
   if (!grantMatchesSelector(grant, input)) throw new Error("Dispatch grant scope changed before dispatch.")
+  const workflow = await assertGrantWorkflowActive(storage, input.workflowId, runtime.projectId)
+  await assertAdvisoryGrantBinding(storage, workflow, grant)
   if (grant.revokedAt) throw new Error("Dispatch grant has been revoked.")
   if (grant.consumedAt) throw new Error("Dispatch grant has already been consumed.")
   if (grant.admittedAt) throw new Error("Dispatch grant has already admitted a subagent launch.")
@@ -2180,11 +2320,12 @@ export async function consumeDispatchGrantLocked(
   runtime: LoomRuntimeIdentity,
   input: ConsumeDispatchGrantInput,
 ): Promise<DispatchGrantV1> {
-  await assertGrantWorkflowActive(storage, input.workflowId)
   const grant = (await storage.get(dispatchGrantKey(input.grantId))) as DispatchGrantV1 | undefined
   if (!grant || grant.schemaVersion !== 1) throw new Error("Dispatch grant not found.")
   if (grant.projectId !== runtime.projectId) throw new Error("Dispatch grant belongs to another project.")
   if (!grantMatchesSelector(grant, input)) throw new Error("Dispatch grant scope does not match this attachment.")
+  const workflow = await assertGrantWorkflowActive(storage, input.workflowId, runtime.projectId)
+  await assertAdvisoryGrantBinding(storage, workflow, grant)
   if (grant.revokedAt) throw new Error("Dispatch grant has been revoked.")
   if (grant.consumedAt) throw new Error("Dispatch grant has already been consumed.")
 

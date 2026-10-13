@@ -36,13 +36,16 @@ describe("Diagnostic product contract", () => {
   })
 
   test("temporary mutation stays inside the disposable sandbox and remains evidence only", async () => {
-    const directive = await diagnosticDirective()
-    expect(directive).toContain("loom_diagnostic_sandbox_start")
-    expect(directive).toContain("loom_diagnostic_sandbox_exec")
-    expect(directive).toContain("loom_diagnostic_sandbox_diff")
-    expect(directive).toContain("experimental laboratory")
-    expect(directive).toContain("Never copy/apply a sandbox candidate fix into the real project")
-    expect(directive).toContain(
+    const portable = await diagnosticDirective()
+    const loomContract = await readFile(join(import.meta.dir, "contracts", "diagnostic.md"), "utf8")
+    expect(portable).toContain("Scientific investigation")
+    expect(portable).not.toContain("loom_diagnostic_sandbox_start")
+    expect(loomContract).toContain("loom_diagnostic_sandbox_start")
+    expect(loomContract).toContain("loom_diagnostic_sandbox_exec")
+    expect(loomContract).toContain("loom_diagnostic_sandbox_diff")
+    expect(loomContract).toContain("experimental laboratory")
+    expect(loomContract).toContain("Never copy/apply a sandbox candidate fix into the real project")
+    expect(loomContract).toContain(
       "exit zero only when the predicted observation occurred",
     )
   })

@@ -14,7 +14,10 @@ Reviewer applies the **implementation-without-UX-invention test**: a competent i
 - Behavioral intent stands independently of mockups/visual styling; visual semantics communicate meaning rather than hide behavior.
 - Consequential design choices retain rationale/alternatives, while backend/API/schema/persistence realization remains outside Designer authority.
 - Human-visible meaning is compatible with accepted Specifier obligations where they overlap; disagreements are surfaced rather than normalized.
+- New/material direction includes context-grounded character, reference qualities, and concrete craft criteria in the existing handoff. A local change can inherit these; generic adjectives, a theme name, or invented research are not a substitute.
+- Real project flow/component/token references are sufficient and current for the affected journey. Invariants, defaults, open choices, and accepted exceptions are distinguishable; downstream implementation need not guess what wins.
+- Prototype observations retain their limitations. Required validation is linked to the actual experience; optional refinement is not silently promoted into a new acceptance gate.
 
 ## Review depth
 
-Scale with scenario/state count, asynchronous behavior, destructive/recovery paths, multiple surfaces/input modes, responsive adaptation, and accessibility risk.
+Scale with scenario/state count, asynchronous behavior, destructive/recovery paths, multiple surfaces/input modes, responsive adaptation, and accessibility risk, plus the reach of a changed product direction.

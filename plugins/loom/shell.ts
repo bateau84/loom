@@ -37,6 +37,9 @@ const safePatterns = [
   /^go list(?:\s|$)/,
   /^go env(?:\s|$)/,
   /^go mod graph(?:\s|$)/,
+  /^go mod verify$/,
+  /^go mod tidy -diff$/,
+  /^go version$/,
   /^gofmt(?:\s|$)/,
   /^golangci-lint run(?:\s|$)/,
   /^gosec(?:\s|$)/,
@@ -176,10 +179,14 @@ export function isAllowedWorkerShell(command: string) {
 
   if (!normalized) return false
   if (hasForbiddenShellSyntax(normalized)) return false
+  if (scopedToolOutputFlagPresent(normalized)) return false
 
   const parsed = parseEnvironmentPrefix(normalized)
   if (!parsed || !parsed.command) return false
   if (!environmentAllowed(parsed.assignments)) return false
+  if (isGitShellCommand(parsed.command)) {
+    return isGitInspectionShellCommand(parsed.command)
+  }
   if (writeFlags.some((pattern) => pattern.test(parsed.command))) return false
 
   if (/^find(?:\s|$)/.test(parsed.command)) {
@@ -243,6 +250,381 @@ function parsedCommandWords(command: string) {
   if (!parsed || !parsed.command || !environmentAllowed(parsed.assignments)) return undefined
   return splitShellWords(parsed.command)
 }
+
+/** User-owned shell exception. It admits one bounded invocation, not its effects.
+ * Dangerous shell composition and Git authoring are still governed by the
+ * separate one-use loom_command_elevate audit path.
+ */
+export function localPolicyShellAllowed(
+  command: string,
+  rules: { exact: readonly string[]; prefixes: readonly string[] },
+): boolean {
+  const normalized = command.trim()
+  const words = parsedCommandWords(normalized)
+  if (!words?.length) return false
+  // Git mutation has existing ownership-aware admission; arbitrary forms can
+  // instead be explicitly audit-elevated for one exact command.
+  if (words[0] === "git" || words[0] === "but") return false
+  if (new Set([
+    "env", "command", "exec", "sudo", "doas", "su", "runuser",
+    "nice", "nohup", "time", "setsid", "busybox", "xargs", "parallel",
+  ]).has(words[0])) return false
+  if (new Set(["sh", "bash", "dash", "zsh", "fish"]).has(words[0]) &&
+      words.slice(1).some((word) => /^-[a-z]*c[a-z]*$/.test(word))) return false
+  if (rules.exact.includes(normalized)) return true
+  return rules.prefixes.some((prefix) =>
+    normalized === prefix || normalized.startsWith(prefix + " "),
+  )
+}
+
+// Named package scripts execute project code. The command and environment
+// remain bounded, but script effects are not restricted by this allowlist.
+export function isAllowedPackageScriptShell(command: string) {
+  const words = parsedCommandWords(command)
+  return Boolean(
+    words &&
+    words.length >= 3 &&
+    ["bun", "npm", "pnpm", "yarn"].includes(words[0]) &&
+    words[1] === "run" &&
+    /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(words[2]),
+  )
+}
+
+
+export type VerificationShellCommand = {
+  family: "package" | "python" | "go" | "shell"
+  runner: string
+}
+
+function projectScriptPath(path: string, extension: RegExp) {
+  return !path.startsWith("-") && safeProjectRelativePath(path) &&
+    extension.test(path.replace(/^\.\/+/, ""))
+}
+
+function namedTestScript(path: string) {
+  if (!projectScriptPath(path, /\.(?:py|sh|bash)$/)) return false
+  const parts = path.replace(/^\.\/+/, "").split("/")
+  const basename = parts[parts.length - 1] ?? ""
+  return parts.some((part) => /^(?:test|tests|spec|specs|checks)$/.test(part)) ||
+    /(?:^|[._-])(?:test|tests|check|verify|validate|lint|qa|spec|e2e|integration)(?:[._-]|$)/.test(basename)
+}
+
+/** Test runners are executable project code; this classifies command shape, not side effects. */
+export function classifyVerificationShell(command: string): VerificationShellCommand | undefined {
+  const words = parsedCommandWords(command)
+  if (!words?.length) return undefined
+  const [runner, action, target] = words
+  if (isAllowedPackageScriptShell(command) ||
+      (["bun", "npm", "pnpm", "yarn"].includes(runner) && action === "test")) {
+    return { family: "package", runner }
+  }
+
+  if (runner === "go") {
+    if (["test", "vet"].includes(action) ||
+        (action === "tool" && ["cover", "test2json"].includes(target))) {
+      return { family: "go", runner }
+    }
+  }
+
+  if (/^python(?:3(?:\.[0-9]+)?)?$/.test(runner)) {
+    if (action === "-m" && [
+      "pytest", "unittest", "tox", "nox", "coverage", "behave",
+      "compileall", "py_compile", "mypy", "ruff",
+    ].includes(target) &&
+      !(target === "ruff" && words.some((word) => ["--fix", "--fix-only", "--unsafe-fixes"].includes(word)))) {
+      return { family: "python", runner }
+    }
+    if (action && namedTestScript(action) && action.endsWith(".py")) {
+      return { family: "python", runner }
+    }
+  }
+  if (["pytest", "tox", "nox", "mypy", "pyright", "coverage", "behave"].includes(runner) ||
+      (runner === "ruff" && action === "check" &&
+        !words.some((word) => ["--fix", "--fix-only", "--unsafe-fixes"].includes(word)))) {
+    return { family: "python", runner }
+  }
+
+  if (["shellcheck", "bats"].includes(runner) ||
+      (runner === "shfmt" &&
+        words.some((word) => ["-d", "-l"].includes(word)) &&
+        !words.some((word) => ["-w", "--write"].includes(word)))) {
+    return { family: "shell", runner }
+  }
+  if (["bash", "sh"].includes(runner)) {
+    if (action === "-n" && target && projectScriptPath(target, /\.(?:sh|bash)$/)) {
+      return { family: "shell", runner }
+    }
+    if (action && namedTestScript(action) && /\.(?:sh|bash)$/.test(action)) {
+      return { family: "shell", runner }
+    }
+  }
+  if (/^\.\/.*\.(?:sh|bash)$/.test(runner) && namedTestScript(runner)) {
+    return { family: "shell", runner }
+  }
+  return undefined
+}
+
+/**
+ * Explicit one-use elevation can cover project verification entrypoints not
+ * included in the routine list. It never admits shell eval, Git, package
+ * installation, arbitrary command chains, or paths outside the project.
+ */
+export function isElevatableVerificationShell(command: string) {
+  const words = parsedCommandWords(command)
+  if (!words?.length || classifyVerificationShell(command)) return false
+  const [runner, action, target] = words
+  // A self-elevation is for testing, not obviously destructive lifecycle work.
+  // This does not inspect the contents/effects of the requested scripts.
+  if (words.some((word) =>
+    /(?:^|[\/._-])(?:deploy|install|publish|release|migrate|delete|remove|wipe|reset|clean|destroy|push|prune)(?:[\/._-]|$)/i.test(word)
+  )) return false
+  if (["make", "just"].includes(runner)) {
+    // Options after a target still affect the Makefile/Justfile being run.
+    // In particular -f/-C/--eval can replace local test code with external code.
+    return words.length === 2 &&
+      /^(?:test|check|verify|validate|lint|qa|unit|integration|e2e)(?:[._:-]|$)/.test(action)
+  }
+  if (["bash", "sh"].includes(runner)) {
+    return Boolean(action && projectScriptPath(action, /\.(?:sh|bash)$/))
+  }
+  if (/^python(?:3(?:\.[0-9]+)?)?$/.test(runner)) {
+    if (action === "-m" && target) {
+      return !/^(?:pip|ensurepip|venv)(?:$|\.)/.test(target) &&
+        /^[A-Za-z0-9_.-]+$/.test(target) &&
+        /(?:^|[._-])(?:test|tests|testing|check|checks|verify|validate|validation|lint|qa|spec|unit|integration|e2e|ci|diagnose|diagnostic|repro|reproduce)(?:$|[._-])/.test(target)
+    }
+    return Boolean(action && projectScriptPath(action, /\.py$/))
+  }
+  if (runner === "go" && action === "run") {
+    return Boolean(target && target.startsWith("./") &&
+      safeProjectRelativePath(target))
+  }
+  return false
+}
+
+/**
+ * Project generation is separate from verification: it writes product files.
+ * Only admitted generator forms with a predictable output directory
+ * can use scope-based admission. Other generators require their own parser,
+ * rather than an arbitrary-executable fallback.
+ */
+type GenerationCommand = { output?: string; error?: string }
+
+/**
+ * An exact CLI shape, not a sandbox. Keep the admission decision and its
+ * rejection reason in one parser so the agent can correct a real typo
+ * without trying shell-quoting variations.
+ */
+function parseGenerationCommand(command: string): GenerationCommand | undefined {
+  const words = parsedCommandWords(command)
+  if (!words) {
+    return /^\s*swag\s+init(?:\s|$)/.test(command)
+      ? { error: "swag init contains unsafe shell syntax or an unsupported environment prefix." }
+      : undefined
+  }
+  if (words[0] !== "swag" || words[1] !== "init") return undefined
+
+  const booleanFlags = new Set([
+    "--parseDependency", "--parseInternal", "--requiredByDefault",
+    "--parseVendor", "--parseGoList", "--parseFuncBody", "--generatedTime",
+    "--quiet", "-q", "--pd",
+  ])
+  const valueFlags = new Set([
+    "-g", "--generalInfo", "-d", "--dir", "-o", "--output",
+    "-t", "--tags", "--outputTypes", "--ot", "-ot", "--instanceName",
+    "--parseDepth", "--parseDependencyLevel", "--pdl", "--codeExampleFiles",
+  ])
+  let output: string | undefined
+  for (let index = 2; index < words.length; index += 1) {
+    const word = words[index]
+    const separator = word.indexOf("=")
+    const flag = separator < 0 ? word : word.slice(0, separator)
+    if (booleanFlags.has(flag)) {
+      if (separator >= 0) {
+        return { error: "Boolean swag init option " + flag + " must be a standalone flag." }
+      }
+      continue
+    }
+    if (!valueFlags.has(flag)) {
+      return { error: "Unsupported swag init option or argument: " + flag + "." }
+    }
+    const value = separator >= 0 ? word.slice(separator + 1) : words[++index]
+    if (!value || value.startsWith("-")) {
+      return { error: "Missing or invalid value for swag init option " + flag + "." }
+    }
+    if (flag === "-o" || flag === "--output") {
+      if (output) return { error: "swag init accepts only one explicit output directory." }
+      if (!safeProjectRelativePath(value) || !/^[A-Za-z0-9_./-]+$/.test(value)) {
+        return { error: "swag init output must be a safe project-relative directory without '..' or shell-special characters." }
+      }
+      output = value.replace(/^\.\//, "").replace(/\/$/, "")
+    } else if (flag === "-g" || flag === "--generalInfo") {
+      if (!safeProjectRelativePath(value) || !value.endsWith(".go")) {
+        return { error: "swag init general-info input must be a project-relative .go path." }
+      }
+    } else if (flag === "-d" || flag === "--dir") {
+      if (!value.split(",").every((part) => safeProjectRelativePath(part))) {
+        return { error: "swag init source directories must be project-relative." }
+      }
+    } else if (flag === "--codeExampleFiles") {
+      if (!safeProjectRelativePath(value)) {
+        return { error: "swag init code example files must be project-relative." }
+      }
+    } else if (["--outputTypes", "--ot", "-ot"].includes(flag)) {
+      if (!value.split(",").every((type) => ["go", "json", "yaml"].includes(type))) {
+        return { error: "swag init output types must be go, json or yaml." }
+      }
+    } else if (flag === "--parseDepth") {
+      // Swag's documented default is 100; bound explicit values to 1000.
+      if (!/^[1-9][0-9]{0,3}$/.test(value) || Number(value) > 1000) {
+        return { error: "swag init parse depth must be an integer from 1 through 1000." }
+      }
+    } else if (flag === "--parseDependencyLevel" || flag === "--pdl") {
+      if (!/^[0-3]$/.test(value)) {
+        return { error: "swag init parse dependency level must be 0, 1, 2 or 3." }
+      }
+    } else if (flag === "--tags" || flag === "-t") {
+      // Swag documents !tag for exclusion; this is CLI data, not shell eval.
+      if (!/^[!A-Za-z0-9_.,/-]+$/.test(value)) {
+        return { error: "Unsafe or unsupported swag init tags value." }
+      }
+    } else if (!/^[A-Za-z0-9_.,/-]+$/.test(value)) {
+      return { error: "Unsafe or unsupported value for swag init option " + flag + "." }
+    }
+  }
+  // Swaggo defaults to ./docs. Treat it as three explicit outputs and
+  // require the same write scope as --output ./docs.
+  if (!output) output = "docs"
+  if (output === "." ||
+    output === ".git" || output.startsWith(".git/") ||
+    output === ".loom" || output.startsWith(".loom/")) {
+    return { error: "swag init output must not target the repository root or protected .git/.loom state." }
+  }
+  return { output }
+}
+
+export function elevatedGenerationOutput(command: string): string | undefined {
+  return parseGenerationCommand(command)?.output
+}
+
+/** Specific validation feedback for recognized generator commands. */
+export function generationElevationError(command: string): string | undefined {
+  return parseGenerationCommand(command)?.error
+}
+
+/** Exact known outputs for the supported Swagger generator. */
+export function elevatedGenerationPaths(command: string): string[] {
+  const output = elevatedGenerationOutput(command)
+  return output
+    ? ["docs.go", "swagger.json", "swagger.yaml"].map((file) => output + "/" + file)
+    : []
+}
+
+/**
+ * Return a filesystem entrypoint that must resolve inside this project.
+ * A lexical relative path is insufficient when a symlink can escape the root.
+ */
+export function elevatedVerificationEntrypoint(command: string): string | undefined {
+  if (!isElevatableVerificationShell(command)) return undefined
+  const words = parsedCommandWords(command)
+  if (!words) return undefined
+  const [runner, action, target] = words
+  if (["bash", "sh"].includes(runner)) return action
+  if (/^python(?:3(?:\.[0-9]+)?)?$/.test(runner) && action !== "-m") return action
+  if (runner === "go" && action === "run") return target
+  return undefined
+}
+
+type ParsedGitCommand = {
+  subcommand: string
+  args: string[]
+}
+
+function parsedGitCommand(command: string): ParsedGitCommand | undefined {
+  const words = parsedCommandWords(command)
+  if (!words || words[0] !== "git") return undefined
+
+  let index = 1
+  if (words[index] === "--no-pager") index += 1
+  if (!words[index] || words[index].startsWith("-")) return undefined
+
+  return {
+    subcommand: words[index],
+    args: words.slice(index + 1),
+  }
+}
+
+export function isGitShellCommand(command: string) {
+  return /^git(?:\s|$)/.test(command.trimStart())
+}
+
+function gitInspectionHasUnsafeOption(args: readonly string[]) {
+  return args.some((word) =>
+    word === "--ext-diff" ||
+    word === "--textconv" ||
+    word === "--no-index" ||
+    word === "--paginate" ||
+    word === "-P" ||
+    word === "--output" ||
+    word.startsWith("--output=") ||
+    word === "--open-files-in-pager" ||
+    word.startsWith("--open-files-in-pager=") ||
+    word === "-O" ||
+    word === "--filters"
+  )
+}
+
+export function isGitInspectionShellCommand(command: string) {
+  const parsed = parsedGitCommand(command)
+  if (!parsed || gitInspectionHasUnsafeOption(parsed.args)) return false
+
+  if (
+    [
+      "status",
+      "diff",
+      "log",
+      "show",
+      "rev-parse",
+      "grep",
+      "ls-files",
+      "blame",
+      "shortlog",
+      "describe",
+      "merge-base",
+      "name-rev",
+      "ls-tree",
+    ].includes(parsed.subcommand)
+  ) return true
+
+  if (parsed.subcommand === "branch") {
+    if (parsed.args.length === 1 && parsed.args[0] === "--show-current") return true
+    // Branch listing is inspection; deletion, renaming, setting upstream and
+    // other branch mutations must never inherit the inspection allowance.
+    return parsed.args.every((arg) =>
+      ["-a", "--all", "-r", "--remotes", "-l", "--list", "-v", "-vv", "--verbose"].includes(arg)
+    )
+  }
+
+  if (parsed.subcommand === "remote") {
+    return (
+      parsed.args.length === 0 ||
+      (parsed.args.length === 1 && ["-v", "--verbose"].includes(parsed.args[0]))
+    )
+  }
+
+  if (parsed.subcommand === "tag") {
+    return parsed.args.length === 0 || parsed.args.every((word) =>
+      word === "-l" ||
+      word === "--list" ||
+      word.startsWith("--list=") ||
+      word.startsWith("--sort=") ||
+      word.startsWith("--format=")
+    )
+  }
+
+  return false
+}
+
 
 function splitSafeAndChain(command: string) {
   const commands: string[] = []
@@ -375,6 +757,68 @@ export function scopedGitAddTargets(command: string) {
   }
 
   return sawAdd ? [...new Set(targets)] : undefined
+}
+
+
+/** File-specific Git commands inherit the current authorized write paths.
+ * Only literal explicit paths are accepted; Git aliases, wildcard pathspecs,
+ * option expansion and implicit repository-wide mutations are excluded.
+ */
+export type ScopedGitFileMutation = {
+  kind: "rm" | "mv" | "restore" | "reset" | "checkout"
+  paths: string[]
+  writesWorktree: boolean
+  stagesChanges: boolean
+  unstagesChanges: boolean
+}
+
+function safeGitFilePath(path: string) {
+  const normalized = path.replace(/^\.\//, "")
+  const parts = normalized.split("/")
+  return !path.startsWith("-") &&
+    safeProjectRelativePath(path) &&
+    !parts.includes(".git") &&
+    !parts.includes(".loom") &&
+    normalized !== ".loom.yaml" &&
+    normalized !== ".loom.yml" &&
+    normalized !== "docs/reports" &&
+    !normalized.startsWith("docs/reports/") &&
+    normalized !== "ephemeral-reports" &&
+    !normalized.startsWith("ephemeral-reports/")
+}
+
+export function scopedGitFileMutation(command: string): ScopedGitFileMutation | undefined {
+  const words = parsedCommandWords(command)
+  if (!words || words[0] !== "git") return undefined
+  let index = 1
+  if (words[index] === "-c" && words[index + 1] === "core.hooksPath=/dev/null") index += 2
+  const kind = words[index] as ScopedGitFileMutation["kind"]
+  if (!["rm", "mv", "restore", "reset", "checkout"].includes(kind)) return undefined
+  const args = words.slice(index + 1)
+  const dash = args.indexOf("--")
+  if (dash < 0) return undefined
+  const flags = args.slice(0, dash)
+  const paths = args.slice(dash + 1)
+  if (paths.length === 0 || paths.some((path) => !safeGitFilePath(path))) return undefined
+
+  if (kind === "rm" || kind === "mv" || kind === "checkout") {
+    if (flags.length !== 0 || (kind === "mv" && paths.length !== 2)) return undefined
+    return {
+      kind, paths, writesWorktree: true,
+      stagesChanges: kind === "rm" || kind === "mv", unstagesChanges: false,
+    }
+  }
+  if (kind === "reset") {
+    if (flags.length > 1 || (flags.length === 1 && flags[0] !== "HEAD")) return undefined
+    return { kind, paths, writesWorktree: false, stagesChanges: false, unstagesChanges: true }
+  }
+  if (flags.some((flag) => !["--staged", "--worktree"].includes(flag)) ||
+      new Set(flags).size !== flags.length) return undefined
+  const staged = flags.includes("--staged")
+  return {
+    kind, paths, writesWorktree: !staged || flags.includes("--worktree"),
+    stagesChanges: false, unstagesChanges: staged,
+  }
 }
 
 function shellSegmentsForAuthoringClassification(command: string) {
@@ -540,7 +984,7 @@ function gitAuthoringSubcommand(words: readonly string[]) {
       continue
     }
 
-    return word === "add" || word === "commit" ? word : undefined
+    return ["add", "commit", "rm", "mv", "restore", "reset", "checkout"].includes(word) ? word : undefined
   }
 
   return undefined
@@ -555,6 +999,7 @@ export function isGitAuthoringShellCommand(command: string) {
 
 type AllowedGitCommit = {
   messageFile?: string
+  paths: string[]
 }
 
 export function commitMessageScratchPath(path: string) {
@@ -580,8 +1025,14 @@ function parsedAllowedGitCommit(command: string): AllowedGitCommit | undefined {
 
   let hasInlineMessage = false
   let messageFile: string | undefined
+  let paths: string[] = []
   for (let index = 4; index < words.length; index += 1) {
     const word = words[index]
+    if (word === "--") {
+      paths = words.slice(index + 1)
+      if (paths.length === 0 || paths.some((path) => !safeGitFilePath(path))) return undefined
+      break
+    }
     if (word === "-m" || word === "--message") {
       const message = words[index + 1]
       if (!message || messageFile) return undefined
@@ -610,7 +1061,11 @@ function parsedAllowedGitCommit(command: string): AllowedGitCommit | undefined {
   }
 
   if (!hasInlineMessage && !messageFile) return undefined
-  return messageFile ? { messageFile } : {}
+  return { ...(messageFile ? { messageFile } : {}), paths }
+}
+
+export function gitCommitPaths(command: string) {
+  return parsedAllowedGitCommit(command)?.paths ?? []
 }
 
 export function gitCommitMessageFile(command: string) {
@@ -649,6 +1104,30 @@ function githubInspectionAllowed(command: string) {
   const words = parsedCommandWords(command)
   if (!words || words[0] !== "gh") return false
 
+  if (words[1] === "repo" && words[2] === "view") {
+    // Only bounded repository metadata reads. Flags such as --web, --jq and
+    // --template are deliberately excluded, as are all repo write subcommands.
+    const args = words.slice(3)
+    let seenRepo = false
+    let seenJson = false
+    for (let i = 0; i < args.length; i += 1) {
+      const arg = args[i]
+      const fields = arg === "--json" ? args[++i]
+        : arg.startsWith("--json=") ? arg.slice("--json=".length)
+        : undefined
+      if (fields !== undefined) {
+        if (seenJson || !/^[A-Za-z][A-Za-z0-9]*(?:,[A-Za-z][A-Za-z0-9]*)*$/.test(fields)) return false
+        seenJson = true
+        continue
+      }
+      if (arg === "--json" || seenRepo ||
+          !/^(?:[A-Za-z0-9_.-]+\/)?[A-Za-z0-9_.-]+$/.test(arg) ||
+          arg.split("/").some((part) => part === "." || part === "..")) return false
+      seenRepo = true
+    }
+    return true
+  }
+
   if (words[1] === "pr") {
     return ["view", "checks", "status", "diff"].includes(words[2] ?? "")
   }
@@ -666,6 +1145,8 @@ export function diagnosticShellResourcesAllowed(resources: readonly string[]) {
   return resources.every(
     (command) =>
       isAllowedWorkerShell(command) ||
+      isAllowedPackageScriptShell(command) ||
+      Boolean(classifyVerificationShell(command)) ||
       githubInspectionAllowed(command),
   )
 }
@@ -760,11 +1241,23 @@ export function workerShellResourcesAllowed(
   if (resources.length === 0) return false
 
   return resources.every((command) => {
+    const outputs = scopedToolWriteTargets(command)
+    if (outputs.length) return writeScope.length > 0 &&
+      resourcesWithinScope(outputs, writeScope)
+    if (scopedToolOutputFlagPresent(command)) return false
     if (
       diagnosticShellResourcesAllowed([command]) ||
-      workerExecutionAllowed(command) ||
-      workerDeliveryAllowed(command)
+      workerExecutionAllowed(command)
     ) return true
+    if (isAllowedGitCommit(command)) {
+      const paths = gitCommitPaths(command)
+      return writeScope.length > 0 &&
+        (paths.length === 0 || resourcesWithinScope(paths, writeScope))
+    }
+    const operation = scopedGitFileMutation(command)
+    if (operation) return writeScope.length > 0 &&
+      resourcesWithinScope(operation.paths, writeScope)
+    if (workerDeliveryAllowed(command)) return true
 
     const gofmtTargets = scopedGofmtWriteTargets(command)
     if (
@@ -786,9 +1279,13 @@ export function authorGitShellResourcesAllowed(
   if (resources.length === 0 || writeScope.length === 0) return false
 
   return resources.every((command) => {
-    if (isAllowedGitCommit(command) || authoringInspectionAllowed(command)) {
-      return true
+    if (isAllowedGitCommit(command)) {
+      const paths = gitCommitPaths(command)
+      return paths.length === 0 || resourcesWithinScope(paths, writeScope)
     }
+    if (authoringInspectionAllowed(command)) return true
+    const operation = scopedGitFileMutation(command)
+    if (operation) return resourcesWithinScope(operation.paths, writeScope)
     const targets = scopedGitAddTargets(command)
     return Boolean(targets && resourcesWithinScope(targets, writeScope))
   })
@@ -800,6 +1297,100 @@ function safeRelativeGoFile(path: string) {
   if (normalized.split("/").includes("..")) return false
   if (/[*?\[\]{}]/.test(normalized)) return false
   return normalized.endsWith(".go")
+}
+
+/**
+ * Predictable outputs for common source-writing tools. The shell still runs
+ * with host permissions; only these files can acquire Loom Git provenance.
+ */
+/** True when a verifier names an explicit on-disk report output. */
+export function scopedToolOutputFlagPresent(command: string) {
+  const words = parsedCommandWords(command)
+  if (!words) return false
+  const args = /^python(?:3(?:\.[0-9]+)?)?$/.test(words[0]) && words[1] === "-m"
+    ? words.slice(2) : words
+  const flag = args[0] === "go" && args[1] === "test"
+    ? "-coverprofile" : args[0] === "pytest" ? "--junitxml" : undefined
+  return Boolean(flag && args.some((value) =>
+    value === flag || value.startsWith(flag + "=")))
+}
+
+export function scopedToolWriteTargets(command: string): string[] {
+  const swagger = elevatedGenerationPaths(command)
+  if (swagger.length) return swagger
+  const words = parsedCommandWords(command)
+  if (!words?.length) return []
+  const args = /^python(?:3(?:\.[0-9]+)?)?$/.test(words[0]) && words[1] === "-m"
+    ? words.slice(2) : words
+  const [runner, action] = args
+
+  if (runner === "go" && action === "mod" && args[2] === "tidy" && args.length === 3) {
+    return ["go.mod", "go.sum"]
+  }
+  if (runner === "go" && action === "fmt" && args.length > 2 &&
+      args.slice(2).every((p) => !p.startsWith("-") && safeRelativeGoFile(p))) {
+    return [...new Set(args.slice(2))]
+  }
+  if (["gofmt", "goimports", "gofumpt"].includes(runner)) {
+    const allowed = runner === "gofmt" ? ["-w", "-s"] : ["-w"]
+    const values = args.slice(1)
+    const files = values.filter((v) => !v.startsWith("-"))
+    if (values.includes("-w") && files.length &&
+        values.every((v) => v.startsWith("-")
+          ? allowed.includes(v) : safeRelativeGoFile(v))) return [...new Set(files)]
+    return []
+  }
+
+  const ruffFix = runner === "ruff" && action === "check" && args.includes("--fix")
+  const ruffFormat = runner === "ruff" && action === "format" && !args.includes("--check")
+  const pythonFormat = ["black", "isort"].includes(runner)
+  const pythonInPlace = ["autopep8", "yapf"].includes(runner) &&
+    args.some((v) => ["--in-place", "-i"].includes(v))
+  const jsFormat = (runner === "prettier" && args.includes("--write")) ||
+    (runner === "eslint" && args.includes("--fix"))
+  const shFormat = runner === "shfmt" && args.includes("-w")
+  if (ruffFix || ruffFormat || pythonFormat || pythonInPlace || jsFormat || shFormat) {
+    const allowedFlags = new Set([
+      "--fix", "--unsafe-fixes", "--write", "--in-place",
+      "-i", "-w", "-s", "-q", "--quiet", "-v", "--verbose",
+    ])
+    const values = args.slice(runner === "ruff" ? 2 : 1)
+    const extension = (ruffFix || ruffFormat || pythonFormat || pythonInPlace)
+      ? /\.pyi?$/ : shFormat ? /\.(?:sh|bash)$/ :
+      /\.(?:js|jsx|ts|tsx|mjs|cjs|json|md|yaml|yml|css|scss|html|vue|svelte)$/
+    const files = values.filter((v) => !v.startsWith("-"))
+    if (files.length && values.every((v) => v.startsWith("-")
+      ? allowedFlags.has(v)
+      : safeScopedToolOutput(v) && extension.test(v))) return [...new Set(files)]
+    return []
+  }
+
+  // Tests can have many side effects. Only explicit report-file flags can
+  // receive post-run ownership, never unknown test outputs.
+  const flag = runner === "go" && action === "test"
+    ? "-coverprofile" : runner === "pytest" ? "--junitxml" : undefined
+  if (flag) {
+    const values = args.slice(runner === "go" ? 2 : 1)
+    const outputs: string[] = []
+    for (let i = 0; i < values.length; i += 1) {
+      if (values[i] !== flag && !values[i].startsWith(flag + "=")) continue
+      const path = values[i] === flag ? values[++i] : values[i].slice(flag.length + 1)
+      if (!path || !safeScopedToolOutput(path)) return []
+      outputs.push(path)
+    }
+    if (outputs.length === 1) return outputs
+  }
+  return []
+}
+
+function safeScopedToolOutput(path: string) {
+  const normalized = path.replace(/^\.\//, "")
+  const parts = normalized.split("/")
+  return !path.startsWith("-") && safeProjectRelativePath(path) &&
+    !parts.includes(".git") && !parts.includes(".loom") &&
+    normalized !== ".loom.yaml" && normalized !== ".loom.yml" &&
+    normalized !== "docs/reports" && !normalized.startsWith("docs/reports/") &&
+    normalized !== "ephemeral-reports" && !normalized.startsWith("ephemeral-reports/")
 }
 
 export function scopedGofmtWriteTargets(command: string) {

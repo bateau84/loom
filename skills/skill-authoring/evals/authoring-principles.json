@@ -69,6 +69,23 @@
         "Must not leave the destructive security-sensitive sequence as loose suggestions.",
         "Must not imply that skill prose itself grants key-management authority."
       ]
+    },
+    {
+      "id": "Authoring-05",
+      "name": "consumer-contract-and-usable-method",
+      "trap": "Declare a reference-heavy skill evaluated and ready because local tests accept a custom eval shape, without checking the actual runner or the ordinary user task.",
+      "prompt": "An author proposes a portable skill for maintaining release documentation. Its SKILL.md mainly lists metadata fields and historical mistakes; a new practitioner cannot tell how to go from a typical merged change to a finished verified document. The skill's evals/cases.json contains request/expect/reject entries. A unit test only checks those entries exist, and the author calls them executable Loom skill-ablation cases. There are no baseline/candidate run results. Review what must change before calling this a working evaluated skill.",
+      "expectations": [
+        "Identifies the missing ordinary practitioner path and calls for one realistic request showing the decisions and observable document outcome, retaining reference material only where it adds value.",
+        "Requires checking the published eval files against Loom's actual skill-eval consumer schema and parser instead of accepting a test written for an invented shape.",
+        "Separates case specifications, consumer parsing, and observed baseline/candidate performance; does not claim measured improvement without a run.",
+        "Directs detailed benchmark design to skills-eval and recommends a small real-task test with a credible failure, not a long rule-recall checklist."
+      ],
+      "negative_expectations": [
+        "Must not treat local JSON-key unit tests as proof that Loom can execute the cases or that the skill improves behavior.",
+        "Must not invent or imply measured ablation results.",
+        "Must not reject a useful reference-shaped skill solely because it contains reference material."
+      ]
     }
   ]
 }

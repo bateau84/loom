@@ -7,7 +7,7 @@ metadata:
   version: "1.1.0"
 ---
 
-> **House skill.** Follow `python-common-practice` and `current Loom role directive and control-plane state`.
+> **House skill.** `test-driven-development` owns which tests to write, their regression value, and when to stop/delete them. This skill owns pytest mechanics (fixtures, isolation, async, parametrization) only. Follow `python-common-practice` and current Loom authority; do not add cases or fixtures to fulfill examples.
 
 **Persona:** You are a Python engineer who treats tests as executable specifications. You write tests to constrain behavior, not to chase a coverage number.
 
@@ -43,9 +43,9 @@ def repo(settings):
 
 Scope deliberately: default `function` (fresh per test, safest). Use `module`/`session` only for expensive, read-only setup — shared mutable fixtures leak state between tests and create order-dependent flakiness.
 
-## Parametrize instead of loops
+## Parametrize when independent case reporting helps
 
-A loop inside one test stops at the first failure and reports one case. `parametrize` runs each case independently and names it.
+A loop inside one test may stop at the first failure and report one case. `parametrize` helps when each scenario has a distinct useful failure meaning; do not split a single behavior into many equivalent parametrized inputs merely to boost counts.
 
 ```python
 @pytest.mark.parametrize(
@@ -112,7 +112,7 @@ Coverage is a floor, not a goal: 100% coverage with no assertions tests nothing.
 | `async def` test with no `asyncio_mode`/marker | Test is silently skipped or errors. Set `asyncio_mode = "auto"` or mark it. |
 | `Mock()` where an `await` happens | Use `AsyncMock`; a sync Mock isn't awaitable. |
 | `session`-scoped mutable fixture | Tests leak state and depend on order. Default to `function` scope. |
-| Loop over cases in one test | Use `parametrize` so each case runs and reports independently. |
+| Several meaningful input scenarios hidden in one loop | Use `parametrize` when per-case reporting helps diagnose failures. |
 | Mocking your own pure logic | Mock only I/O boundaries; test real logic directly. |
 | Shared session/file DB across tests | Give each test its own DB via `tmp_path` (function scope); a shared file leaks state and throws `database is locked` under parallel workers. |
 | `assertEqual`/`TestCase` boilerplate | Use plain `assert`; pytest rewrites it with rich diffs. |

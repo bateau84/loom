@@ -56,7 +56,16 @@ describe("dashboard auto-start lifecycle", () => {
   })
 
   test("is enabled by default and supports an explicit opt-out", () => {
-    expect(dashboardAutostartEnabled(undefined)).toBe(true)
+    const previous = process.env.LOOM_DASHBOARD_AUTOSTART
+    try {
+      delete process.env.LOOM_DASHBOARD_AUTOSTART
+      expect(dashboardAutostartEnabled(undefined)).toBe(true)
+      process.env.LOOM_DASHBOARD_AUTOSTART = "0"
+      expect(dashboardAutostartEnabled(undefined)).toBe(false)
+    } finally {
+      if (previous === undefined) delete process.env.LOOM_DASHBOARD_AUTOSTART
+      else process.env.LOOM_DASHBOARD_AUTOSTART = previous
+    }
     for (const value of ["0", "false", "FALSE", "no", "off"]) {
       expect(dashboardAutostartEnabled(value)).toBe(false)
     }

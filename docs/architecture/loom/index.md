@@ -1,26 +1,23 @@
----
-type: architecture-index
-title: Loom Architecture
-description: Navigation for Loom's OpenCode-native architecture.
-tags: [architecture, loom, index]
----
-
 # Loom Architecture
 
 - [System Architecture](system.md)
 - [Execution Model](execution-model.md)
   - [Conversation Is Primary; Loom Is the Single Primary Agent](decisions/conversation-primary-agent.md)
 - [Hierarchical Work Model](work-hierarchy.md)
+  - [Brainstorm Planned Advisory Tasks](specs/brainstorm-planned-advice.md)
 - [Control Plane](control-plane.md)
 - [Runtime Isolation](runtime-isolation.md)
   - [Project Epoch Identity](decisions/project-epoch-identity.md)
   - [Cross-Process Mutation Guard](decisions/cross-process-mutation-guard.md)
+  - [Same-Owner Coordinator Resumption](decisions/same-owner-coordinator-resumption.md)
   - [Runtime Scope Specification](specs/runtime-scope.md)
 - [Dashboard Observability](dashboard-observability.md)
   - [Dashboard Projection Transport](decisions/dashboard-projection-transport.md)
   - [Dashboard Projection Specification](specs/dashboard-projection.md)
 - [Verification Model](verification.md)
+  - [Project-local OCI Test Adapter](specs/oci-test-adapter.md)
   - [Reviewer Repair and Re-review Runtime](specs/reviewer-repair-and-rereview.md)
+  - [Eval Evidence Safety Projection](decisions/eval-evidence-safety-projection.md)
 - [Knowledge and Learning](knowledge-and-learning.md)
 
 These documents describe one architecture. Split exists for retrieval and relationship clarity, not separate approval ceremonies.

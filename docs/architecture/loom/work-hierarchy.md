@@ -86,6 +86,10 @@ The smallest Planner-owned unit that should be independently assigned, executed,
 
 A Task may require multiple runtime steps or agent invocations.
 
+**Proposed accountability distinction:** Task identity, obligation ownership, and write scope alone do not establish the accountable *role* or a supported execution/decision path. [BR-024](../../requirements/loom/br-024-preserve-authority-ownership-through-handoffs.md) requires such a role and path for each planned work item, including specialist-owned deliverables and routine execution. The role's decision/output and a cross-role responsibility transfer must be traceable before dependent completion. Specialist authority does not transfer merely because a Worker implements a Task. This design does not prescribe a Task `owner` field or assert that current Plan/Task compilation already meets the requirement; see [Control Plane — Proposed accountable-role admission](control-plane.md#proposed-accountable-role-admission).
+
+In the proposed realization a Task's completion derives from its **bound execution or decision path**, not from the presence of any `task:<id>` Worker step. Planner compiles mixed-role dependencies for the selected unclaimed Wave; a Task receives a dedicated role-owned step before executable review, or an explicit blocked user-decision boundary where only user authority can resolve it. A Reviewer-owned Task binds to an independent gate over other producer work. A pure role-only Wave still needs scoped independent review and evidence before roll-up; a planning-only Objective has no executable Wave at all and ends only its reviewed-Plan workflow. Existing runtime `loom_task_plan` compiles Worker-only steps and does not realize these paths. See [Role-Safe Plan Execution](role-safe-plan-execution.md) for the decision, admission, dependency, compatibility and unavailable-role handling.
+
 ## Plan Semantics Are First-Class
 
 The hierarchy is not only a progress tree. Each plan generation also persists the shared semantic model that explains how accepted authority becomes executable work.
@@ -102,9 +106,11 @@ The control plane preserves this structure as data. A human-readable plan docume
 
 ### Plan revision and generation
 
-A **Plan revision** is a bounded amendment inside one still-trustworthy generation. Planner may atomically patch, add, or remove a small pending/unclaimed Phase, Wave, or Task, including Task subtasks/checklist, while preserving all unaffected nodes and completed result/evidence history. Revision history is immutable but storage-bounded: Loom keeps one current semantic snapshot per generation plus inverse amendment deltas sufficient to reconstruct earlier revisions exactly. Every amendment records who changed it, why, which local operations occurred, and the new revision.
+A **Plan revision** is an immutable-history amendment inside one still-trustworthy generation. Planner may atomically patch, add, or remove Phases, Waves, Tasks and Plan context even after Task execution has started. Loom keeps the current semantic snapshot plus inverse deltas sufficient to reconstruct earlier revisions exactly; each amendment records the actor, reason, changed operations, and revision. Normal agent context shows only the effective Plan; `loom_work_status(revision=...)` explicitly retrieves historical context.
 
-A revision cannot retroactively rewrite semantic context already consumed by completed work. If a requested change alters completed Task meaning, consumed obligation/risk/acceptance authority, or the Plan's trusted premise, Loom requires a **new Plan generation** instead.
+A revision does **not** retroactively make an old completion satisfy a changed contract. Loom compares each Task's semantic contract and transitive dependencies, retains unaffected original Task attempts/results, and archives invalidated results with the revision/reason in `priorResults`. Reusable results require the original current-attempt evidence claims/observations and a matching stored semantic closure receipt. Missing or damaged receipts are rerun, never stamped with a new receipt computed from a later Plan. Work may remain `pending` after execution until independent implementation review; that roll-up status alone must not erase the result. A changed executable DAG is recompiled and independently reviewed before further execution, and stale specialist write/dispatch authority is denied.
+
+A **new Plan generation** remains available for explicit Plan invalidation/replacement when the current generation itself cannot be adopted. Neither revision nor generation change grants Planner new product authority or silently passes a gate.
 
 Planner may explicitly invalidate the current generation. Invalidation preserves its history but makes unfinished work non-runnable. Replacement planning creates a fresh generation; invalidation is not deletion and does not turn prior unfinished work into completion.
 
@@ -226,13 +232,13 @@ The exact locking/storage mechanism is an implementation decision, but lost-upda
 
 ### Task completion
 
-A Task is complete only when its own required execution and verification evidence are satisfied.
+A Task is complete only when its own required execution or decision, mandatory predecessor and independent-review dependencies, and verification evidence are satisfied. In the proposed mixed-role realization, a missing or unavailable role path cannot become complete through a Worker-only sibling, an OQ answer, or a workflow-level review of unrelated work. The current Worker-only Task compiler does not yet enforce that wider rule.
 
 ### Wave completion
 
 A Wave is complete only when:
 
-- all required active-generation Tasks are complete;
+- all required active-generation Tasks are complete, including role-owned work and user-owned decisions where applicable;
 - required Wave-level review/gates pass;
 - required Wave-level evidence is satisfied.
 
@@ -249,7 +255,7 @@ An Objective is complete only when:
 
 - all required active-generation Phases are complete;
 - no mandatory current child work remains unresolved;
-- Objective-level Product Acceptance is satisfied when applicable;
+- Objective-level Product Acceptance is satisfied when applicable (absence of Worker steps alone neither creates nor waives that obligation);
 - required final review/shipping gates pass.
 
 ## Required Invariant
@@ -315,18 +321,18 @@ The important change is that the **semantic work structure and progress identity
 
 Replanning MUST preserve historical truth.
 
-Once execution has started, Loom does not destructively rewrite the active decomposition in place. A materially changed Planner decomposition creates a new **plan generation** or explicit supersession set under the same accepted Objective.
+When execution has started, Planner may still revise the semantic Plan. Loom records each change as the next **immutable Plan revision** and updates only the effective Work projection; it never overwrites an original execution receipt. Explicit Plan invalidation still creates a replacement generation.
 
 Rules:
 
-1. Completed nodes remain immutable historical records.
-2. Removed or replaced nodes become `superseded` or `cancelled`; they do not disappear.
-3. Split/merged Tasks or Waves create new node identities and explicit supersession relationships.
-4. Existing completion may carry forward only when the control plane can establish that accepted authority, parent scope, task objective, required write/effect boundary, prerequisite meaning, and verification obligations remain materially equivalent.
-5. If a changed prerequisite, authority premise, or verification requirement can invalidate prior proof, the prior completion remains historical but does not satisfy the new active generation.
-6. Dependency changes are recorded against the new generation rather than rewriting the historical graph.
-7. Ancestor completion is computed only from the current active generation and its independently satisfied gates.
-8. Replanning cannot retroactively turn a previously incomplete Objective into complete without current-generation closure.
+1. Historical Plan revisions and invalidated Task execution receipts remain inspectable. Effective Task status may change from complete to pending after invalidation; the original result is retained in `priorResults`.
+2. Removed work becomes `superseded`; adding/replacing work has an explicit revision record and is not evidence that removed work was completed.
+3. A Task can retain a prior completion only when its own meaning, parent scope, role/authority, verification contract, and transitive Task dependencies are unchanged **and** the original attempt/evidence receipt is intact.
+4. Changed prerequisites, authority, or evidence invalidate affected Task results and any completed consumers in their dependency closure; the old receipts remain historical, not current satisfaction.
+5. A new executable Task graph requires fresh independent `review-plan` approval before the control plane claims the Wave. Handoff and implementation review gates are never auto-passed.
+6. Reopening a reviewed Wave is denied after claimed or completed downstream work has consumed its result.
+7. Ancestor completion is computed from effective current Work and the independently reviewed Wave/Objective gates. Neither a revision nor an older historical result can mark an incomplete Objective complete.
+8. An explicit full-Plan replacement uses a new generation and preserves earlier generation history.
 
 Exact generation IDs and persistence schema are implementation details.
 
@@ -356,7 +362,7 @@ A gate PASS only authorizes completion or progression at its declared scope.
 
 For Objective implementation workflows, `review-plan` is a pre-execution Wave admission gate. Planner may compile the current Wave's exact executable Task contracts while the Wave remains unclaimed. Reviewer assesses the holistic Plan plus that executable DAG; only PASS authorizes the control plane to acquire the Wave claim. FAIL leaves the Plan/DAG unconsumed and amendable. This gate does not prove implementation or whole-product acceptance.
 
-For a planning-only Objective workflow, the same gate has **planning scope only**: there is deliberately no executable DAG or Wave claim to admit. PASS means the durable semantic Plan has been independently reviewed; it does not change existing Task/Wave implementation state, acquire a Wave claim, or complete the Objective.
+For a planning-only Objective workflow, the same gate has **planning scope only**: there is deliberately no executable DAG or Wave claim to admit. Under accepted Anchor AC8, PASS requires independent whole-Plan review confirming each mandatory obligation's accountable role, handoff and **currently implemented/enabled** future execution or decision path, including later Waves; a missing, unavailable or unrepresented owner/path or independent gate is a reported blocker, not a PASS postponed to Wave admission. The review does not require premature executable slots, but an unimplemented proposed compiler or hypothetical future route does not satisfy it. PASS attests only to the reviewed semantic Plan; it does not change existing Task/Wave implementation state, acquire a Wave claim, authorize dispatch, prove Task output, or complete the Objective. Delivery must separately validate the then-current capabilities and pass concrete Wave admission.
 
 ### Product Acceptance boundary
 
@@ -451,8 +457,8 @@ The implementation should eventually prove at least these cases:
 6. Legacy standalone workflows remain readable without fabricating parent completion.
 7. Legacy workflow `phase` is interpreted as execution-stage metadata, not hierarchical Phase.
 8. Two concurrent workflows cannot both exclusively claim the same Task or overwrite hierarchy state from stale versions.
-9. Replanning preserves completed historical nodes and supersedes/replaces work without rewriting history.
-10. Changed prerequisites or verification requirements prevent invalid carry-forward of stale completion.
+9. Same-generation Plan amendments record immutable revisions and retain invalidated completion receipts as history without treating them as current.
+10. Changed prerequisites, role/authority, or missing original evidence prevent invalid carry-forward of dependent completion.
 11. Simple non-product work can remain standalone without ceremonial empty hierarchy nodes.
 12. Status/UI can show both bounded workflow completion and parent Objective progress.
 
@@ -471,7 +477,7 @@ A live Wave claim authorizes execution; it is not the permanent record of who re
 
 `loom_cancel` terminates the workflow, not its Objective/Phase/Wave/Task hierarchy. It retains completed work and releases only claims owned by the cancelled workflow. Incomplete work remains incomplete; replan/supersession is a separate authorized action. A new plan generation may preserve old completed nodes as history, but cancellation never relabels those nodes as fresh proof.
 
-Implementation reopening requires the exact completed receipt and refuses to invalidate a Wave already consumed by claimed/completed downstream work. Documentation-only reopening leaves the live claim absent. For older completed Waves without receipts, the control plane admits only uniquely attributable persisted review history; ambiguity is reported, not repaired by taking ownership.
+Implementation reopening requires the exact completed receipt and refuses to invalidate a Wave already consumed by claimed/completed downstream work. A Plan-only reopen preserves individually verified completed Task receipts where their contracts and dependency closure are unchanged, but still requires fresh Plan review. Documentation-only reopening leaves the live claim absent. For older completed Waves without receipts, the control plane admits only uniquely attributable persisted review history; ambiguity is reported, not repaired by taking ownership.
 
 See [Control Plane](control-plane.md#workflow-cancellation-and-reviewed-completion) and [Runtime Upgrades](../../user/upgrades.md#cancelling-or-replacing-a-stuck-workflow).
 

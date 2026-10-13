@@ -3,11 +3,14 @@ import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import loomPlugin from "./index"
+import { assertIsolatedTestProcess, assertIsolatedFixturePath, assertIsolatedFixtureRuntime, disableFixtureDashboardAutostart } from "./test-isolation"
 import { createProjectStorage, createTransactionalStorage, resolveRuntimeIdentity } from "./runtime"
 import { observationsSupportKind } from "./evidence"
 import { findPaths, grepText, selectText, statPaths } from "./inspection"
 
 const roots: string[] = []
+await assertIsolatedTestProcess()
+await disableFixtureDashboardAutostart()
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "loom-inspection-"))
@@ -34,6 +37,7 @@ type RegisteredTool = {
 }
 
 async function pluginHarness(root: string) {
+  await assertIsolatedFixturePath(root)
   const registered = new Map<string, RegisteredTool>()
   const toolHooks = new Map<string, (event: any) => any>()
   const storage = new Map<string, unknown>()
@@ -98,6 +102,7 @@ async function pluginHarness(root: string) {
   }
 
   const runtime = await resolveRuntimeIdentity(root, ctx.storage)
+  await assertIsolatedFixtureRuntime(runtime)
   const durableStorage = createProjectStorage(
     await createTransactionalStorage(runtime),
     runtime.projectId,

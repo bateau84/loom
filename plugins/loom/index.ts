@@ -1,15 +1,17 @@
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
+import { AsyncLocalStorage } from "node:async_hooks"
 import { lstat, mkdir, readFile, readlink, realpath, unlink } from "node:fs/promises"
-import { dirname, isAbsolute, join, relative, resolve } from "node:path"
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { captureEvidenceAdmission, observationCallKey, persistEvidenceObservation, sessionAttachmentKey, type EvidenceAdmission } from "./evidence-admission"
 import type * as OpenCodePlugin from "@opencode/plugin"
-import { RUNTIME_STATE_VERSION, admitDispatchGrantLocked, consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, tryAcquireRuntimeLocks, withRuntimeAdvisoryLock, withRuntimeLock, withRuntimeLocks, type LoomRuntimeIdentity } from "./runtime"
+import { RUNTIME_STATE_VERSION, admitDispatchGrantLocked, consumeDispatchGrantLocked, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrantLocked, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, tryAcquireRuntimeLocks, withRuntimeAdvisoryLock, withRuntimeAdvisoryLocks, withRuntimeLock, withRuntimeLocks, type LoomRuntimeIdentity } from "./runtime"
 import { LoomRpc } from "./rpc"
 import { assertLoomToolAdmission, assertCancelledChildToolAdmission, cancelWorkflow, ensureCompletedWaveHistory, workflowBindingTerminal, type CancelWorkflowInput } from "./lifecycle"
 import { buildSidebarSnapshot } from "./sidebar"
 import { renderToolOutput } from "./presentation"
+import { loomPlanningInsights } from "./planning-insights"
 import {
   buildStatusView,
   clippedSummary,
@@ -19,6 +21,7 @@ import {
   renderStatusMarkdown,
   statusPresentation,
   writeStatusArtifact,
+  type StepReadinessObservation,
 } from "./status-view"
 import { createDashboardPublisher, runtimeInstanceIsLive } from "./dashboard"
 import { ensureDashboardServerLifecycle } from "./dashboard-lifecycle"
@@ -27,8 +30,6 @@ import {
   upgradeCompatibilityNotice,
 } from "./upgrade-actions"
 
-export const LOOM_NATIVE_TOOL_GUIDANCE =
-  "Loom control-plane tools are available through two equivalent OpenCode surfaces: native loom_* tools and Code Mode mirrors under tools.loom.code.*. Use either surface directly according to the active tool paradigm. If using Code Mode, search for Loom tools and invoke the returned tools.loom.code.* signatures; do not fall back to shell/filesystem discovery for Loom commands. Reviewer/Critic methodology uses a two-part contract: load practitioner guidance with OpenCode's native skill tool, then consume the role companion through loom_assessment or loom_qa; a plain ASSESSMENT.md/QA.md read is artifact inspection, not methodology loading. Interactive status is dashboard-first and does not depend on model prose: the Loom sidebar exposes a stable workflow dashboard URL, while loom_status may also return presentation metadata. Desktop browser preview is optional metadata only; do not invoke tools.browser.preview merely because presentation metadata exists. When a role owns a repository commit, load git-commit-discipline before committing so the commit remains coherent and reviewable. Loom admits bounded role commits through `git -c core.hooksPath=/dev/null commit -m ...`; long Markdown messages may instead use `git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<name>.md`. Compose that scratch file with edit/write tools, never shell redirection. Plain `git commit` is intentionally denied so repository hooks cannot change the staged scope after Loom validates it. Runtime write scope is discoverable: an attached child that needs additional project-local files calls loom_scope_elevate and continues immediately when granted. If any Loom tool returns continue=false, the child MUST stop its current turn and return control immediately; it must not retry the blocked mutation or continue assuming authority will arrive later."
 import {
   assertWorkflowNotCancelled,
   WorkflowCancelledError,
@@ -56,6 +57,7 @@ import {
   recordReviewerVerdict,
   reviewAssignmentMode,
   reviewerSessionEligibleForIndependentReview,
+  satisfied,
   type Effects,
   type Workflow,
 } from "./workflow"
@@ -64,6 +66,7 @@ import {
   blockingQuestionsForStep,
   raiseQuestion,
   reconcileQuestion,
+  reconcileUserDecisionQuestion,
   relevantQuestions,
   reopenQuestion,
   type OpenQuestion,
@@ -75,6 +78,7 @@ import {
   observationsSupportKind,
   observationMatchesStep,
   safeInputSummary,
+  redactCommand,
   safeResultError,
   safeResultSummary,
   type EvidenceClaim,
@@ -105,6 +109,7 @@ import {
 } from "./scope"
 import {
   allocateDiagnosticSandbox,
+  diagnosticSandboxMatchesTarget,
   destroyDiagnosticSandbox,
   diffDiagnosticSandbox,
   executeDiagnosticSandbox,
@@ -112,20 +117,36 @@ import {
   resolveDiagnosticSandboxRuntime,
   type DiagnosticSandboxNetwork,
   type DiagnosticSandboxRecord,
+  type DiagnosticSandboxTarget,
 } from "./diagnostic-sandbox"
 import {
   authorGitShellResourcesAllowed,
   commitMessageScratchPath,
   diagnosticExecutionShellResourcesAllowed,
   gitCommitMessageFile,
+  gitCommitPaths,
+  scopedGitFileMutation,
   diagnosticShellResourcesAllowed,
   isAllowedGitCommit,
+  isAllowedPackageScriptShell,
+  classifyVerificationShell,
+  isElevatableVerificationShell,
+  elevatedGenerationOutput,
+  elevatedGenerationPaths,
+  generationElevationError,
+  elevatedVerificationEntrypoint,
+  isGitInspectionShellCommand,
+  isGitShellCommand,
   isGitAuthoringShellCommand,
   scopedGitAddTargets,
   scopedGofmtWriteTargets,
+  scopedToolWriteTargets,
+  scopedToolOutputFlagPresent,
   shellResourcesAllowed,
   workerShellResourcesAllowed,
+  localPolicyShellAllowed,
 } from "./shell"
+import { readEffectiveLocalPermissionPolicy, projectShellOverrides, projectWriteOverrides, targetsEffectiveLocalPermissionPolicy } from "./local-policy"
 import { prepareReportPromotion, publishPreparedReport, reconcilePendingReportPromotion, type ReportPromotionInput, type ReportPromotionRecord } from "./reports"
 import {
   findPaths,
@@ -161,9 +182,15 @@ import {
   type AcceptancePlan,
 } from "./acceptance"
 import { loadSkillCompanion, type SkillCompanionKind } from "./methodology"
-import { taskStepId, validateTaskPlan, type TaskSpec } from "./tasks"
+import { loadLoomAgentContracts, LOOM_AGENT_ROLES as LOOM_CONTRACT_ROLES, LOOM_ROLE_PERMISSIONS, type LoomAgentRole } from "./agent-contracts"
+import { candidateLoomTransitions } from "./workflow-guidance"
+import { LOOM_AGENT_ROLES, MAX_TASK_TEXT_LENGTH, MAX_TASK_CONTEXT_ITEMS, nativeTaskPath, taskStepId, validateTaskPlan, type TaskSpec } from "./tasks"
 import {
   amendWorkPlan,
+  advisoryResultDigest,
+  assertCompletedWaveForTasks,
+  assertInvalidatedPlanReopenable,
+  assertCompletedWaveMayReopen,
   assertWaveClaimForTasks,
   assertWorkGeneration,
   attachWorkflowToWork,
@@ -172,21 +199,30 @@ import {
   completeWaveForTasks,
   createWorkHierarchy,
   invalidateWorkPlan,
+  invalidateWorkflowTaskResults,
   materializeWorkPlan,
   nextRunnableWaves,
   objectiveWorkLevel,
   objectiveIdForAnchor,
   releaseWorkflowWave,
+  releaseCancelledWorkflowClaims,
   reopenWaveForTasks,
   syncWorkTaskStatuses,
   workPlanContext,
   workPlanSemanticFingerprint,
   taskSemanticFingerprintAtRevision,
+  taskSemanticClosureFingerprintAtRevision,
+  diagnoseTaskReceiptSemantics,
   validateWorkflowWave,
+  validatePlanRoleFeasibility,
   workflowTaskSemanticFingerprint,
+  legacyWorkflowTaskSemanticFingerprint,
   workTree,
   type WorkHierarchy,
+  type WorkTaskResult,
+  type AdviceResolution,
   type WorkPlanAmendOperation,
+  type WorkPlanAmendTopLevelPatch,
   type WorkPlanDefinition,
   type WorkPlanTopLevelPatch,
 } from "./work"
@@ -206,19 +242,346 @@ import {
   type IntentSession,
 } from "./intent"
 
-const loomAgents = new Set([
-  "designer",
-  "specifier",
-  "architect",
-  "reviewer",
-  "critic",
-  "acceptance",
-  "planner",
-  "documenter",
-  "worker",
-  "research",
-  "diagnostic",
-])
+const loomAgents = new Set<string>(LOOM_AGENT_ROLES)
+
+async function assertAdviceHostPaths(ctx: any, work: WorkHierarchy | undefined, generation?: number, reviewerOnly = false) {
+  const plan = work?.plans?.find((candidate) => candidate.generation === generation)
+  if (!plan || !plan.phases.some((phase) => phase.waves.some((wave) => wave.tasks.some((task) => task.role === "brainstorm")))) return
+  if (!reviewerOnly) validatePlanRoleFeasibility(plan)
+  const roster = await ctx.agent.list({ location: { directory: ctx.location.directory } })
+  if (roster?.location?.directory !== ctx.location.directory || !Array.isArray(roster.data)) throw new Error("Current host availability cannot be established for advisory Plan paths.")
+  const names = new Set(roster.data.map((agent: { name: string }) => agent.name))
+  if (reviewerOnly) {
+    if (!names.has("reviewer")) throw new Error("Host role reviewer is unavailable for independent Plan review.")
+    return
+  }
+  for (const phase of plan.phases) for (const wave of phase.waves) for (const task of wave.tasks) {
+    const path = nativeTaskPath(task)
+    for (const role of [path?.agent, "reviewer"]) {
+      if (role && role !== "user" && !names.has(role)) throw new Error(`Host role ${role} is unavailable for Task ${task.id} in ${phase.id}/${wave.id} (${path?.nativeKind ?? "unsupported"} path).`)
+    }
+  }
+}
+
+async function assertStepHostAvailability(ctx: any, workflow: Workflow, work: WorkHierarchy | undefined, step: Workflow["steps"][number]) {
+  if (requiresReviewedPlannedDispatchBinding(workflow, step)) await assertAdviceHostPaths(ctx, work, workflow.work?.generation)
+  else if (step.id === "review-plan") await assertAdviceHostPaths(ctx, work, workflow.work?.generation, true)
+  if (step.task && work && nativeTaskPath(step.task)?.nativeKind === "producer") await assertAdviceInputEvidence(ctx, workflow, work, step.task.id)
+  if (work && workflow.work && requiresReviewedPlannedDispatchBinding(workflow, step)) {
+    await assertCurrentAcceptanceDependencies(ctx, workflow, work,
+      plannedTaskSteps(workflow).map((candidate) => candidate.task!.id))
+  }
+}
+
+async function assertAdviceInputEvidence(ctx: any, workflow: Workflow, work: WorkHierarchy, taskId: string) {
+  for (const input of reviewedAdviceInputs(workflow, work, taskId)) {
+    const original = await readWorkflow(ctx, input.sourceWorkflowId)
+    const sourceStep = original?.steps.find((step) => step.id === taskStepId(input.taskId))
+    if (!original || !sourceStep || sourceStep.agent !== "brainstorm" || sourceStep.status !== "complete" ||
+        sourceStep.task?.adviceForTaskId !== taskId || input.sourceAttempt > (sourceStep.attempt ?? 0)) {
+      throw new Error(`Advisory Task ${input.taskId} original execution provenance is missing.`)
+    }
+    const result = work.nodes.find((node) => node.type === "task" && node.generation === workflow.work!.generation && node.logicalId === input.taskId && node.status !== "superseded")!.result!
+    const claims = (await stepClaims(ctx, original.id, sourceStep.id)).filter((claim) =>
+      claim.byAgent === "brainstorm" && (claim.attempt ?? 0) === input.sourceAttempt)
+    if (JSON.stringify(claims.map((claim) => claim.id).sort()) !== JSON.stringify([...result.evidenceClaimIds].sort())) {
+      throw new Error(`Advisory Task ${input.taskId} original exact evidence claim set is missing.`)
+    }
+    const scope = { ...original, steps: original.steps.map((step) => step.id === sourceStep.id ? { ...step, attempt: input.sourceAttempt } : step) }
+    for (const claim of claims) {
+      const canonical = await ctx.storage.get(claimIdKey(claim.id)) as EvidenceClaim | undefined
+      if (!canonical || JSON.stringify(canonical) !== JSON.stringify(claim)) throw new Error(`Advisory Task ${input.taskId} original evidence claim is missing or stale.`)
+      for (const id of claim.observationIds) {
+        const observation = await ctx.storage.get(evidenceKey(id)) as EvidenceObservation | undefined
+        if (!observation || !observationMatchesStep(observation, scope, sourceStep.id)) throw new Error(`Advisory Task ${input.taskId} original evidence observation is missing or stale.`)
+      }
+    }
+  }
+}
+
+function plannedTaskSatisfied(workflow: Workflow, step: Workflow["steps"][number]) {
+  const task = step.task
+  if (!task) return false
+  if (!task.role || !task.responsibility) return false
+  if (task.responsibility === "obtain-user-decision") return step.kind === "wait" && step.status === "complete"
+  if (step.kind === "gate") return step.status === "passed"
+  if (step.status !== "complete") return false
+  const handoffGate = workflow.steps.find((candidate) => candidate.id === `task-review:${task.id}`)
+  if (handoffGate) return handoffGate.status === "passed"
+  return workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")
+}
+
+function reviewedAdviceInputs(workflow: Workflow, work: WorkHierarchy, taskId: string) {
+  const generation = workflow.work?.generation
+  const plan = work.plans?.find((candidate) => candidate.generation === generation)
+  if (plan?.invalidated) throw new Error(`Task ${taskId} cannot consume an invalidated Plan generation.`)
+  if (!plan || generation !== work.generation) throw new Error("Advice requires the current valid Plan generation.")
+  const tasks = plan.phases.flatMap((phase) => phase.waves.flatMap((wave) => wave.tasks))
+  const receiver = tasks.find((task) => task.id === taskId)
+  if (!receiver) throw new Error("Advice receiver is missing from the current Plan.")
+  return receiver.dependsOn.flatMap((id) => {
+    const source = tasks.find((task) => task.id === id)
+    if (nativeTaskPath(source ?? {})?.nativeKind !== "advisory") return []
+    if (source!.adviceForTaskId !== taskId) throw new Error(`Advisory Task ${id} names a different receiver.`)
+    const node = work.nodes.find((candidate) => candidate.type === "task" && candidate.generation === generation && candidate.logicalId === id && candidate.status !== "superseded")
+    const result = node?.result
+    if (!result || result.nativeKind !== "advisory" || result.taskId !== id || result.stepId !== taskStepId(id) || result.generation !== generation ||
+        result.adviceForTaskId !== taskId || !result.resultDigest || result.resultDigest !== advisoryResultDigest(result) ||
+        result.semanticClosureFingerprint !== taskSemanticClosureFingerprintAtRevision(work, id, generation)) {
+      throw new Error(`Advisory Task ${id} lacks its exact current original result/digest.`)
+    }
+    const local = workflow.steps.find((step) => step.task?.id === id)
+    let reviewSource: string
+    if (local) {
+      const gate = workflow.steps.find((step) => step.id === `task-review:${id}`)
+      if (!gate || gate.status !== "passed" || local.status !== "complete" ||
+          result.workflowId !== workflow.id || result.completedAttempt! > (local.attempt ?? 0) || local.summary !== result.summary ||
+          result.executableTaskFingerprint !== createHash("sha256").update(JSON.stringify(local.task)).digest("hex")) {
+        throw new Error(`Advisory Task ${id} requires its independent advice gate.`)
+      }
+      reviewSource = gate.id
+    } else {
+      const wave = work.nodes.find((candidate) => candidate.id === node!.parentId)
+      const receipt = wave?.completion
+      if (!receipt?.bindingFingerprint || node!.status !== "complete") throw new Error(`Advisory Task ${id} lacks a reviewed predecessor Wave receipt.`)
+      assertCompletedWaveForTasks(work, result.workflowId, generation!, receipt.taskIds, receipt.bindingFingerprint)
+      reviewSource = `wave:${wave!.logicalId}`
+    }
+    return [{ taskId: id, nativeKind: "advisory" as const, adviceForTaskId: taskId, resultDigest: result.resultDigest,
+      summary: result.summary!, sourceAttempt: result.completedAttempt!, sourceRole: result.producerAgent!,
+      sourceWorkflowId: result.workflowId, reviewSource }]
+  })
+}
+
+function resultDependencyIds(work: WorkHierarchy, generation: number, task: TaskSpec) {
+  const plan = work.plans?.find((candidate) => candidate.generation === generation)
+  const tasks = plan?.phases.flatMap((phase) => phase.waves.flatMap((wave) => wave.tasks))
+  // Preserve old supported receipts. Advisory contracts require cross-Wave
+  // original-result causality, not only the local executable DAG edges.
+  if (!tasks?.some((task) => task.role === "brainstorm")) return task.dependsOn
+  const semantic = tasks.find((candidate) => candidate.id === task.id)
+  if (!semantic) throw new Error("Result has no current semantic Task contract.")
+  return semantic.dependsOn
+}
+
+function assertOriginalAdviceContract(work: WorkHierarchy, generation: number, task: TaskSpec, result: WorkTaskResult, reused = new Map<string, WorkTaskResult>()) {
+  const tasks = work.plans?.find((plan) => plan.generation === generation)?.phases.flatMap((phase) => phase.waves.flatMap((wave) => wave.tasks)) ?? []
+  const semantic = tasks.find((candidate) => candidate.id === task.id)
+  const inputs = semantic?.dependsOn.flatMap((id) => {
+    const source = tasks.find((candidate) => candidate.id === id)
+    return nativeTaskPath(source ?? {})?.nativeKind === "advisory" ? [source!] : []
+  }) ?? []
+  const advisory = nativeTaskPath(task)?.nativeKind === "advisory"
+  if (!advisory && inputs.length === 0) return
+  if (result.nativeKind !== (advisory ? "advisory" : "producer") || result.generation !== generation ||
+      result.taskId !== task.id || result.stepId !== taskStepId(task.id) || result.producerAgent !== task.role || !result.producerSessionId) {
+    throw new Error(`Task ${task.id} lacks its original native advice/receiver provenance.`)
+  }
+  if (advisory) {
+    if (result.adviceForTaskId !== task.adviceForTaskId || !result.resultDigest || result.resultDigest !== advisoryResultDigest(result) || result.adviceResolutions !== undefined) {
+      throw new Error(`Task ${task.id} original advisory result/digest is invalid.`)
+    }
+    return
+  }
+  const resolutions = result.adviceResolutions
+  if (!resolutions || resolutions.length !== inputs.length || new Set(resolutions.map((entry) => entry.taskId)).size !== resolutions.length) {
+    throw new Error(`Task ${task.id} lacks its original complete advice resolutions.`)
+  }
+  for (const source of inputs) {
+    const original = work.nodes.find((node) => node.type === "task" && node.generation === generation && node.logicalId === source.id && node.status !== "superseded")?.result ?? reused.get(source.id)
+    const entry = resolutions.find((entry) => entry.taskId === source.id)
+    if (!original?.resultDigest || original.resultDigest !== advisoryResultDigest(original) || source.adviceForTaskId !== task.id ||
+        entry?.resultDigest !== original.resultDigest || !["adopted", "rejected", "deferred"].includes(entry.disposition) ||
+        !entry.rationale?.trim() || !entry.resolutionRef?.trim()) throw new Error(`Task ${task.id} original advice resolution is missing or stale.`)
+  }
+}
+
+async function validateAdviceResolutions(
+  ctx: any, workflow: Workflow, work: WorkHierarchy | undefined, step: Workflow["steps"][number],
+  summary: string, resolutions: AdviceResolution[] | undefined,
+) {
+  const path = step.task ? nativeTaskPath(step.task) : undefined
+  if (resolutions !== undefined && path?.nativeKind !== "producer") throw new Error("adviceResolutions are allowed only on the receiving producer Task completion.")
+  if (path?.nativeKind === "advisory" && (!summary.trim() || summary.length > MAX_TASK_TEXT_LENGTH)) throw new Error("Advisory findings require a nonempty bounded summary.")
+  if (path?.nativeKind !== "producer" || !work) return
+  const inputs = reviewedAdviceInputs(workflow, work, step.task!.id)
+  if (resolutions === undefined && inputs.length === 0) return
+  if (!Array.isArray(resolutions) || resolutions.length > MAX_TASK_CONTEXT_ITEMS || resolutions.length !== inputs.length ||
+      new Set(resolutions.map((entry) => entry?.taskId)).size !== resolutions.length) {
+    throw new Error("Receiving Task requires exactly one adviceResolution for each direct advisory input.")
+  }
+  for (const entry of resolutions) {
+    if (!entry || Object.keys(entry).some((key) => !["taskId", "resultDigest", "disposition", "rationale", "resolutionRef"].includes(key)) ||
+        !["adopted", "rejected", "deferred"].includes(entry.disposition) ||
+        typeof entry.rationale !== "string" || !entry.rationale.trim() || entry.rationale.length > MAX_TASK_TEXT_LENGTH ||
+        typeof entry.resolutionRef !== "string" || !entry.resolutionRef.trim() || entry.resolutionRef.length > MAX_TASK_TEXT_LENGTH ||
+        !/^[0-9a-f]{64}$/.test(entry.resultDigest) ||
+        !inputs.some((input) => input.taskId === entry.taskId && input.resultDigest === entry.resultDigest)) {
+      throw new Error("Invalid, unrelated or stale digest-bound adviceResolution.")
+    }
+    // Disposition records the receiver's treatment, not semantic adequacy or
+    // authorized Plan deferral. Independent review/OQs preserve that boundary.
+    if (entry.resolutionRef === `task:${step.task!.id}#result`) {
+      if (!summary.trim()) throw new Error("Self-result resolution requires the receiver's own decision summary.")
+    } else if (entry.resolutionRef.startsWith("evidence:")) {
+      const id = entry.resolutionRef.slice("evidence:".length)
+      const claims = await stepClaims(ctx, workflow.id, step.id)
+      const observedIds = new Set((await stepObservations(ctx, workflow.id, step.id))
+        .filter((observation) => observationMatchesStep(observation, workflow, step.id)).map((observation) => observation.id))
+      if (!claims.some((claim) => claim.id === id && claim.byAgent === step.agent &&
+          claim.observationIds.length > 0 && claim.observationIds.every((id) => observedIds.has(id)) &&
+          (claim.attempt ?? 0) === (step.attempt ?? 0))) {
+        throw new Error("Resolution evidence must belong to this receiving Task attempt/session.")
+      }
+    } else if (entry.resolutionRef.startsWith("artifact:")) {
+      const path = safeOwnedRepoPath(entry.resolutionRef.slice("artifact:".length))
+      const scope = await ctx.storage.get(scopeKey(workflow.id, step.id)) as TaskScope | undefined
+      const write = scope?.write.length ? scope.write : artifactWriteDefaults[step.agent] ?? []
+      const owned = await ctx.storage.get(gitStepAttemptOwnedPathKey(workflow.id, step.id, step.attempt ?? 0, path)) as GitStepAttemptOwnedPath | undefined
+      const file = await lstat(resolve(ctx.location.directory, path)).catch(() => undefined)
+      const boundary = await classifyScopeTarget(ctx.location.directory, path)
+      if (!resourcesWithinScope([path], write) || !file?.isFile() || boundary.kind === "hard-boundary" ||
+          !owned || owned.workflowId !== workflow.id || owned.stepId !== step.id || owned.attempt !== (step.attempt ?? 0) ||
+          owned.fingerprint !== await worktreeFingerprint(ctx.location.directory, path)) {
+        throw new Error("Resolution artifact requires current receiving-attempt authorship inside admitted scope.")
+      }
+    } else throw new Error("Unsupported advice resolutionRef; use artifact:, evidence: or the receiver's task:#result.")
+  }
+}
+
+function assertPlannedTaskAdmission(
+  workflow: Workflow,
+  work: WorkHierarchy | undefined,
+  step: Workflow["steps"][number],
+) {
+  const taskSteps = plannedTaskSteps(workflow)
+  const taskIds = taskSteps.map((taskStep) => taskStep.task!.id)
+  const compiledTaskStepIds = new Set(taskSteps.map((taskStep) => taskStep.id))
+  const handoffGateIds = new Set(
+    workflow.steps
+      .filter((candidate) => candidate.id.startsWith("task-review:"))
+      .map((candidate) => candidate.id),
+  )
+  const handoffTaskId = step.id.startsWith("task-review:")
+    ? step.id.slice("task-review:".length)
+    : undefined
+  const compiledImplementationReview =
+    step.id === "review-implementation" &&
+    step.kind === "gate" &&
+    taskIds.length > 0 &&
+    step.dependsOn.some((dependency) =>
+      compiledTaskStepIds.has(dependency) || handoffGateIds.has(dependency),
+    )
+  if ((!step.task && !handoffTaskId && !compiledImplementationReview) || step.kind === "wait") return
+  if (!workflow.work || !work) {
+    throw new Error("Task admission denied: persistent Plan and Wave binding are required.")
+  }
+  if (
+    handoffTaskId &&
+    !workflow.steps.some((candidate) => candidate.id === `task:${handoffTaskId}` && candidate.task)
+  ) {
+    throw new Error("Task admission denied: handoff Reviewer gate has no current planned Task.")
+  }
+  const generation = workflow.work.generation
+  if (work.generation !== generation) {
+    throw new Error("Task admission denied: workflow is bound to a stale Plan generation.")
+  }
+  const plan = workPlanContext(work, undefined, "focused", generation)
+  if (!plan || plan.invalidated) {
+    throw new Error("Task admission denied: current Plan generation is missing or invalidated.")
+  }
+  const reviewPlan = workflow.steps.find((candidate) => candidate.id === "review-plan")
+  if (!reviewPlan || reviewPlan.status !== "passed") {
+    throw new Error("Task admission denied: current Plan requires independent review-plan PASS.")
+  }
+
+  const currentFingerprint = workflowTaskSemanticFingerprint(work, taskIds, generation)
+  const legacyFingerprint = legacyWorkflowTaskSemanticFingerprint(work, taskIds, generation)
+  if (
+    !currentFingerprint ||
+    (
+      workflow.work.taskPlanFingerprint !== currentFingerprint &&
+      workflow.work.taskPlanFingerprint !== legacyFingerprint
+    )
+  ) {
+    throw new Error("Task admission denied: compiled Task DAG is stale against the current Plan generation.")
+  }
+  assertWaveClaimForTasks(work, workflow.id, generation, taskIds)
+}
+
+function requiresReviewedPlannedDispatchBinding(
+  workflow: Workflow,
+  step: Workflow["steps"][number],
+) {
+  return (
+    step.kind !== "wait" &&
+    Boolean(
+      step.task ||
+      step.id.startsWith("task-review:") ||
+      (step.id === "review-implementation" && plannedTaskSteps(workflow).length > 0),
+    )
+  )
+}
+
+function assertStepDispatchAdmission(
+  workflow: Workflow,
+  work: WorkHierarchy | undefined,
+  step: Workflow["steps"][number],
+) {
+  assertPlannedTaskAdmission(workflow, work, step)
+  if (!requiresReviewedPlannedDispatchBinding(workflow, step)) return
+
+  const binding = workflow.work
+  const plan = work && binding
+    ? workPlanContext(work, undefined, "focused", binding.generation)
+    : null
+  const taskIds = plannedTaskSteps(workflow).map((candidate) => candidate.task!.id)
+  const reviewedRevision = binding?.reviewedPlanRevision
+  const currentTaskFingerprint = work && binding
+    ? workflowTaskSemanticFingerprint(work, taskIds, binding.generation)
+    : undefined
+  const currentLegacyTaskFingerprint = work && binding
+    ? legacyWorkflowTaskSemanticFingerprint(work, taskIds, binding.generation)
+    : undefined
+  const bindingUsesLegacyFingerprint =
+    Boolean(binding?.taskPlanFingerprint) &&
+    binding!.taskPlanFingerprint !== currentTaskFingerprint &&
+    binding!.taskPlanFingerprint === currentLegacyTaskFingerprint
+  const reviewedTaskFingerprint = work && binding && Number.isSafeInteger(reviewedRevision)
+    ? (
+        bindingUsesLegacyFingerprint
+          ? legacyWorkflowTaskSemanticFingerprint(work, taskIds, binding.generation, reviewedRevision)
+          : workflowTaskSemanticFingerprint(work, taskIds, binding.generation, reviewedRevision)
+      )
+    : undefined
+  const expectedCurrentTaskFingerprint = bindingUsesLegacyFingerprint
+    ? currentLegacyTaskFingerprint
+    : currentTaskFingerprint
+
+  if (
+    !binding ||
+    !plan ||
+    plan.invalidated ||
+    taskIds.length === 0 ||
+    !Number.isSafeInteger(reviewedRevision) ||
+    reviewedRevision! > plan.revision ||
+    !binding.reviewedPlanFingerprint ||
+    !expectedCurrentTaskFingerprint ||
+    !reviewedTaskFingerprint ||
+    reviewedTaskFingerprint !== expectedCurrentTaskFingerprint ||
+    binding.taskPlanRevision !== plan.revision ||
+    binding.taskPlanFingerprint !== expectedCurrentTaskFingerprint
+  ) {
+    throw new Error(
+      "Dispatch admission denied: the reviewed claimed-Wave contract or current Task DAG no longer matches.",
+    )
+  }
+  if (step.task) {
+    const path = nativeTaskPath(step.task)
+    if (!path || path.agent !== step.agent || path.stepKind !== step.kind) throw new Error("Task native path does not match its exact role/slot binding.")
+    if (path.nativeKind === "producer") reviewedAdviceInputs(workflow, work!, step.task.id)
+  }
+}
 
 const reportProducerAgents = new Set([
   "general",
@@ -248,6 +611,21 @@ async function repositoryHeadSha(projectDirectory: string) {
   }
 }
 
+/** A Git HEAD proves code continuity only when both sides have a clean tree. */
+async function cleanRepositoryHead(projectDirectory: string): Promise<string | undefined> {
+  const head = await repositoryHeadSha(projectDirectory)
+  if (head === "unavailable") return undefined
+  try {
+    const { stdout } = await execFileAsync(
+      "git", ["status", "--porcelain=v1", "--untracked-files=all"],
+      { cwd: projectDirectory, encoding: "utf8", maxBuffer: 1024 * 1024, timeout: 5_000 },
+    )
+    return stdout.trim() === "" ? head : undefined
+  } catch {
+    return undefined
+  }
+}
+
 const artifactWriteDefaults: Record<string, string[]> = {
   designer: ["docs/design/**", "ephemeral-reports/designer/**"],
   specifier: ["docs/requirements/**"],
@@ -273,21 +651,40 @@ const productScopeElevatingAgents = new Set([
 
 const generalGitWriteScope = ["docs/anchors/**"]
 
-const repositoryCommitAgents = new Set([
-  "designer",
-  "specifier",
-  "architect",
-  "reviewer",
-  "documenter",
-  "worker",
-])
+const verificationTestAgents = new Set(["worker", "diagnostic", "reviewer", "critic", "acceptance"])
 
-function roleCanOwnRepositoryCommit(agent: string) {
-  return agent === "general" || repositoryCommitAgents.has(agent)
+type CommandElevation = {
+  id: string
+  workflowId: string
+  stepId: string
+  attempt: number
+  agent: string
+  sessionID: string
+  commandDigest: string
+  commandSummary: string
+  kind?: "verification" | "generation" | "unrestricted"
+  outputPath?: string
+  reason: string
+  grantedAt: string
+  expiresAt: string
+  consumedAt?: string
+  supersededAt?: string
+  observationId?: string
+  outcome?: "completed" | "error"
+  observedAt?: string
 }
 
+const commandElevationCurrentKey = (sessionID: string) => "command-elevation-current/" + sessionID
+const commandElevationKey = (id: string) => "command-elevation/" + id
+const verificationCommandDigest = (command: string) =>
+  createHash("sha256").update(command.trim()).digest("hex")
+
+
+// Commit authority follows the current effective committable write scope, not
+// a role allowlist. This helper only establishes the role-owned scratch
+// namespace; permission to use it is checked against current write scope.
 function roleCommitMessagePath(agent: string, resource: string) {
-  if (!roleCanOwnRepositoryCommit(agent)) return false
+  if (agent !== "general" && !loomAgents.has(agent)) return false
   const normalized = commitMessageScratchPath(resource)
   return Boolean(
     normalized &&
@@ -574,6 +971,7 @@ async function gitCommandPaths(projectDirectory: string, args: string[]) {
   return String(stdout).split("\0").filter(Boolean).map(normalizeRepoPath)
 }
 
+
 async function projectHasGitWorktree(projectDirectory: string) {
   try {
     const { stdout } = await execFileAsync(
@@ -619,6 +1017,8 @@ function toolMutationLockPaths(
     const command = (input as any).command
     if (typeof command === "string") {
       paths.push(...(scopedGitAddTargets(command) ?? []))
+      paths.push(...(scopedGitFileMutation(command)?.paths ?? []))
+      paths.push(...gitCommitPaths(command))
       const messageFile = gitCommitMessageFile(command)
       if (messageFile) paths.push(messageFile)
     }
@@ -632,7 +1032,8 @@ function toolNeedsGitIndexLock(tool: string, input: unknown) {
   }
   const command = (input as any).command
   if (typeof command !== "string") return false
-  return Boolean(scopedGitAddTargets(command)) || isAllowedGitCommit(command)
+  return Boolean(scopedGitAddTargets(command)) ||
+    Boolean(scopedGitFileMutation(command)) || isAllowedGitCommit(command)
 }
 
 function writeLockError(paths: readonly string[]) {
@@ -827,10 +1228,15 @@ async function recordGitSessionStaging(
 async function clearGitSessionStaging(
   ctx: any,
   sessionID: string,
+  paths?: readonly string[],
 ) {
   const ownership = await gitSessionOwnership(ctx, sessionID)
   if (Object.keys(ownership.stagedFingerprints).length === 0) return
-  ownership.stagedFingerprints = {}
+  if (paths?.length) {
+    for (const path of paths) delete ownership.stagedFingerprints[safeOwnedRepoPath(path)]
+  } else {
+    ownership.stagedFingerprints = {}
+  }
   await ctx.storage.set(gitSessionOwnershipKey(sessionID), ownership)
 }
 
@@ -890,6 +1296,7 @@ async function resolveGitStagingOwnership(
 
   return { ownership, unowned, changed }
 }
+
 
 async function changedOwnedPaths(
   ownership: GitSessionOwnership,
@@ -955,9 +1362,12 @@ function successfulMutationPaths(
 
   if (tool === "shell" || tool === "bash") {
     const command = (input as any).command
-    return typeof command === "string"
-      ? (scopedGofmtWriteTargets(command) ?? [])
-      : []
+    if (typeof command !== "string") return []
+    const operation = scopedGitFileMutation(command)
+    return [
+      ...(scopedGofmtWriteTargets(command) ?? []),
+      ...(operation?.writesWorktree ? operation.paths : []),
+    ]
   }
 
   return []
@@ -1024,6 +1434,64 @@ async function changedStagedTargetsSince(
     }
   }
   return changed
+}
+
+/** Refuse implicit directory pathspec expansion into other agents' files. */
+async function assertExplicitGitFiles(projectDirectory: string, paths: readonly string[]) {
+  for (const path of paths) {
+    const info = await lstat(join(projectDirectory, safeOwnedRepoPath(path))).catch((error: any) => {
+      if (error?.code === "ENOENT") return undefined
+      throw error
+    })
+    if (info?.isDirectory()) {
+      throw new Error("Git file operation requires explicit file paths, not directories: " + path)
+    }
+  }
+}
+
+async function scopedGitFileOperationError(
+  ctx: any,
+  sessionID: string,
+  projectDirectory: string,
+  operation: NonNullable<ReturnType<typeof scopedGitFileMutation>>,
+  writeScope: string[],
+) {
+  if (!writeScope.length || !resourcesWithinScope(operation.paths, writeScope)) {
+    return "Git file operation denied: target is outside the current committable Loom write scope."
+  }
+  await assertExplicitGitFiles(projectDirectory, operation.paths)
+  // Clean tracked files may be moved/deleted. Existing dirty bytes need
+  // current step-attempt provenance, including any already-staged version.
+  const dirty = new Set(await projectDirtyPaths(projectDirectory))
+  const changed = operation.paths.filter((path) => dirty.has(safeOwnedRepoPath(path)))
+  if (changed.length) {
+    const owned = await resolveGitStagingOwnership(ctx, sessionID, projectDirectory, changed)
+    if (owned.unowned.length || owned.changed.length) {
+      return "Git file operation denied: pre-existing changes are not owned by this step attempt: " +
+        [...owned.unowned, ...owned.changed].join(", ")
+    }
+  }
+  return undefined
+}
+
+async function explicitGitCommitError(
+  ctx: any,
+  sessionID: string,
+  projectDirectory: string,
+  paths: readonly string[],
+  writeScope: string[],
+) {
+  if (!writeScope.length || !resourcesWithinScope(paths, writeScope)) {
+    return "Git commit denied: explicit paths are outside the current committable Loom write scope."
+  }
+  await assertExplicitGitFiles(projectDirectory, paths)
+  // Explicit-path commit uses worktree bytes, not the complete staged index.
+  const owned = await resolveGitStagingOwnership(ctx, sessionID, projectDirectory, paths)
+  if (owned.unowned.length || owned.changed.length) {
+    return "Git commit denied: explicit paths lack current step-attempt authored-byte evidence: " +
+      [...owned.unowned, ...owned.changed].join(", ")
+  }
+  return undefined
 }
 
 async function gitIndexConflictError(
@@ -1148,7 +1616,7 @@ async function recordGitSessionStagingResult(
 
 function reviewerAcceptanceLogPath(path: string) {
   const normalized = normalizeRepoPath(path)
-  return /(?:^|\/)(?:changelog|history|changes|acceptance(?:[-_]?log)?|decision(?:s|[-_]?log)?|reviews?)\.md$/i.test(
+  return /(?:^|\/)(?:changelog|log|history|changes|acceptance(?:[-_]?log)?|decision(?:s|[-_]?log)?|reviews?)\.md$/i.test(
     normalized,
   )
 }
@@ -1166,6 +1634,28 @@ async function trackedAtHead(projectDirectory: string, path: string) {
   }
 }
 
+/** Reviewer may discover existing documentation acceptance logs without
+ * gaining semantic authorship or permission to invent new history files.
+ * The current step and requested paths are rechecked under the workflow lock.
+ */
+async function reviewerAcceptanceScopeElevationAllowed(
+  projectDirectory: string,
+  step: Workflow["steps"][number],
+  paths: readonly string[],
+) {
+  if (step.agent !== "reviewer" || !reviewerOwnsAcceptanceBookkeeping(step) || paths.length === 0) return false
+  const reviewWrite = reviewerAcceptanceWriteScope(step)
+  const permitted = await Promise.all(paths.map(async (path) => {
+    if (resourcesWithinScope([path], reviewWrite)) return true
+    const normalized = normalizeRepoPath(path)
+    const isDocumentationLog =
+      reviewerAcceptanceLogPath(normalized) &&
+      (normalized.startsWith("docs/") || !normalized.includes("/"))
+    return isDocumentationLog && await trackedAtHead(projectDirectory, normalized)
+  }))
+  return permitted.every(Boolean)
+}
+
 function reviewerAcceptanceMetadataLine(line: string) {
   const value = line.trim()
   if (!value) return true
@@ -1177,13 +1667,21 @@ function reviewerAcceptanceMetadataLine(line: string) {
 
 async function reviewerAcceptanceCommitError(
   projectDirectory: string,
-  staged: readonly string[],
+  paths: readonly string[],
+  source: "staged" | "worktree" = "staged",
 ) {
-  for (const raw of staged) {
+  for (const raw of paths) {
     const path = normalizeRepoPath(raw)
     const { stdout } = await execFileAsync(
       "git",
-      ["diff", "--cached", "--unified=0", "--no-renames", "--", path],
+      [
+        "diff",
+        ...(source === "staged" ? ["--cached"] : []),
+        "--unified=0",
+        "--no-renames",
+        "--",
+        path,
+      ],
       { cwd: projectDirectory, encoding: "utf8" },
     )
     const changed = String(stdout)
@@ -1251,6 +1749,7 @@ async function reviewerAcceptanceStagedCommitError(
   const staged = await stagedGitPaths(projectDirectory)
   return reviewerAcceptanceCommitError(projectDirectory, staged)
 }
+
 
 async function commitScopeError(
   ctx: any,
@@ -1724,6 +2223,46 @@ function pathBeforeGlob(path: string) {
   const boundary = prefix.lastIndexOf("/")
   if (boundary < 0) return "."
   return prefix.slice(0, boundary) || "/"
+}
+
+/**
+ * Git already owns the metadata writes of a scoped git add/commit. In a linked
+ * worktree, .git is a pointer FILE and the actual gitdir/common objects/refs
+ * are outside this checkout. Those exact paths are not product write scopes.
+ *
+ * Recognizing them lets scope_elevate explain the normal Git path without
+ * manufacturing an unnecessary hard-boundary user-approval request.
+ * Recognition NEVER grants permission to edit/write those paths directly.
+ */
+async function linkedWorktreeCommitMetadataPaths(projectDirectory: string): Promise<Set<string> | undefined> {
+  try {
+    const root = await realpath(projectDirectory)
+    const gitFile = join(root, ".git")
+    const info = await lstat(gitFile)
+    if (!info.isFile() || info.isSymbolicLink()) return undefined
+    const pointer = (await readFile(gitFile, "utf8")).match(/^gitdir: ([^\r\n]+)\r?\n?$/)
+    if (!pointer) return undefined
+    const gitdir = await realpath(resolve(root, pointer[1]))
+    const env = Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")),
+    ) as NodeJS.ProcessEnv
+    const readGit = async (flag: string) =>
+      String((await execFileAsync("git", ["rev-parse", flag], {
+        cwd: root, encoding: "utf8", timeout: 10_000, env,
+      })).stdout).trim()
+    const topLevel = await realpath(await readGit("--show-toplevel"))
+    const observedGitdir = await realpath(await readGit("--absolute-git-dir"))
+    const commonDir = await realpath(resolve(root, await readGit("--git-common-dir")))
+    if (topLevel !== root || observedGitdir !== gitdir) return undefined
+    // Require the normal linked-worktree entry under a verified common .git.
+    if (dirname(dirname(gitdir)) !== join(commonDir, "worktrees") &&
+        dirname(gitdir) !== join(commonDir, "worktrees")) return undefined
+    if (basename(commonDir) !== ".git" || !(await lstat(commonDir)).isDirectory()) return undefined
+    return new Set([gitFile, gitdir, join(commonDir, "objects"), join(commonDir, "refs")])
+  } catch {
+    // If identity cannot be proven, retain the existing hard-boundary behavior.
+    return undefined
+  }
 }
 
 async function classifyScopeTarget(projectDirectory: string, raw: string) {
@@ -2200,6 +2739,148 @@ function acceptanceKey(workflowId: string) {
   return `acceptance/${workflowId}`
 }
 
+/** One workflow/attempt owns one canonical Product Acceptance gate, including
+ * Acceptance Tasks compiled into a non-final delivery Wave. */
+function nativeAcceptanceGate(workflow: Workflow) {
+  const gates = workflow.steps.filter((step) =>
+    step.agent === "acceptance" && step.kind === "gate" &&
+    (step.id === "product-acceptance" || (step.task && nativeTaskPath(step.task)?.nativeKind === "acceptance")))
+  if (gates.length > 1) throw new Error("Workflow has ambiguous native Product Acceptance gates.")
+  return gates[0]
+}
+
+/** Check the original current-attempt claims AND their observed origins.
+ * A scenario label, persisted PASS flag, or task summary is never proof. */
+async function assertCurrentAcceptanceProof(
+  ctx: any, workflow: Workflow, step: Workflow["steps"][number],
+) {
+  if (step.status !== "passed" || step.agent !== "acceptance" || step.kind !== "gate") {
+    throw new Error("Native Product Acceptance gate has not passed.")
+  }
+  const plan = await ctx.storage.get(acceptanceKey(workflow.id)) as AcceptancePlan | undefined
+  if (!plan || plan.workflowId !== workflow.id || acceptanceReadiness(plan) !== "passed" ||
+      (plan.stepId !== undefined && plan.stepId !== step.id) ||
+      (plan.stepAttempt !== undefined && plan.stepAttempt !== (step.attempt ?? 0)) ||
+      (step.task && (plan.stepId !== step.id || plan.stepAttempt !== (step.attempt ?? 0)))) {
+    throw new Error("Product Acceptance plan is missing, unproven, or bound to a stale native gate attempt.")
+  }
+  if (!Array.isArray(plan.scenarios) || plan.scenarios.length === 0 ||
+      plan.scenarios.some((scenario) => !scenario.id?.trim() ||
+        !Array.isArray(scenario.criteria) || !scenario.criteria.length ||
+        scenario.criteria.some((criterion) => !criterion?.trim())) ||
+      new Set(plan.scenarios.map((scenario) => scenario.id.toLowerCase())).size !== plan.scenarios.length) {
+    throw new Error("Native Product Acceptance requires a nonempty, unique, criteria-bound scenario set.")
+  }
+  if (step.task && workflow.work) {
+    const work = await readWork(ctx, workflow.work.objectiveId)
+    const snapshot = work?.plans?.find((candidate) => candidate.generation === workflow.work!.generation)
+    if (!snapshot || snapshot.invalidated) {
+      throw new Error("Native Product Acceptance is stale against the current persistent Plan.")
+    }
+    // When the Plan assigns named SC-### coverage to this Task, it is
+    // mandatory. A subset of scenarios cannot authorize the whole Task.
+    const required = snapshot.acceptanceCoverage
+      .filter((coverage) => coverage.taskIds.includes(step.task!.id) && /^sc-\d+$/i.test(coverage.id))
+      .map((coverage) => coverage.id.toLowerCase())
+    const actual = new Set(plan.scenarios.map((scenario) => scenario.id.toLowerCase()))
+    if (required.some((id) => !actual.has(id))) {
+      throw new Error("Native Product Acceptance omits required Plan scenario coverage.")
+    }
+  }
+  const indexed = new Map((await stepClaims(ctx, workflow.id, step.id)).map((claim) => [claim.id, claim]))
+  for (const scenario of plan.scenarios) {
+    if (scenario.outcome !== "passed" || !scenario.evidenceClaimIds.length ||
+        new Set(scenario.evidenceClaimIds).size !== scenario.evidenceClaimIds.length) {
+      throw new Error(`Product Acceptance scenario ${scenario.id} has no valid PASS evidence set.`)
+    }
+    for (const id of scenario.evidenceClaimIds) {
+      const claim = indexed.get(id)
+      const canonical = await ctx.storage.get(claimIdKey(id)) as EvidenceClaim | undefined
+      if (!claim || !canonical || JSON.stringify(claim) !== JSON.stringify(canonical) ||
+          claim.workflowId !== workflow.id || claim.stepId !== step.id ||
+          claim.byAgent !== "acceptance" || claim.kind !== "product-acceptance" ||
+          (claim.attempt ?? 0) !== (step.attempt ?? 0) || !claim.observationIds.length) {
+        throw new Error(`Product Acceptance scenario ${scenario.id} has missing or stale original claims.`)
+      }
+      const observations = await Promise.all(claim.observationIds.map((obsId) =>
+        ctx.storage.get(evidenceKey(obsId)) as Promise<EvidenceObservation | undefined>))
+      if (observations.some((observation) =>
+            !observation || (step.task && !observation.admission) ||
+            !observationMatchesStep(observation, workflow, step.id)) ||
+          !observationsSupportKind("product-acceptance", observations.filter(
+            (observation): observation is EvidenceObservation => Boolean(observation)))) {
+        throw new Error(`Product Acceptance scenario ${scenario.id} has missing, failed, or stale host observations.`)
+      }
+    }
+  }
+}
+
+/** Fail closed on upstream Acceptance proofs at BOTH Wave compilation and
+ * downstream dispatch. Review receipts remain owned by the source Workflow. */
+async function assertCurrentAcceptanceDependencies(
+  ctx: any, workflow: Workflow, work: WorkHierarchy, taskIds: string[],
+) {
+  if (!workflow.work || !taskIds.length) return
+  const generation = workflow.work.generation
+  const snapshot = work.plans?.find((plan) => plan.generation === generation)
+  if (!snapshot || snapshot.invalidated || work.generation !== generation) {
+    throw new Error("Product Acceptance dependencies require the current valid Plan.")
+  }
+  const contracts = new Map(snapshot.phases.flatMap((phase) =>
+    phase.waves.flatMap((wave) => wave.tasks.map((task) => [task.id, task] as const))))
+  const nodes = new Map(work.nodes.filter((node) => node.type === "task" &&
+    node.generation === generation && node.status !== "superseded").map((node) => [node.logicalId, node]))
+  const selectedWaves = new Set(taskIds.map((id) => nodes.get(id)?.parentId))
+  if (selectedWaves.size !== 1 || selectedWaves.has(undefined)) {
+    throw new Error("Product Acceptance dependency admission requires exactly one current Wave.")
+  }
+  const checked = new Set<string>()
+  const visit = async (taskId: string): Promise<void> => {
+    if (checked.has(taskId)) return
+    checked.add(taskId)
+    const contract = contracts.get(taskId)
+    if (!contract) throw new Error(`Missing Plan dependency ${taskId}.`)
+    if (nativeTaskPath(contract)?.nativeKind === "acceptance") {
+      const node = nodes.get(taskId)
+      if (!node) throw new Error(`Missing persistent Acceptance Task ${taskId}.`)
+      if (!selectedWaves.has(node.parentId)) {
+        const result = node.result
+        const source = result ? await readWorkflow(ctx, result.workflowId) : undefined
+        const step = source?.steps.find((candidate) => candidate.id === taskStepId(taskId))
+        const wave = work.nodes.find((candidate) => candidate.id === node.parentId)
+        const completion = wave?.completion
+        if (!result || !source || !step || step.task?.id !== taskId ||
+            node.status !== "complete" || result.nativeKind !== "acceptance" ||
+            result.producerAgent !== "acceptance" || result.stepId !== step.id ||
+            result.generation !== generation || result.taskId !== taskId ||
+            result.completedAttempt !== (step.attempt ?? 0) || !completion ||
+            !result.semanticClosureFingerprint ||
+            result.semanticClosureFingerprint !== taskSemanticClosureFingerprintAtRevision(work, taskId, generation)) {
+          throw new Error(`Cutover blocked: Acceptance Task ${taskId} lacks a current persistent gate receipt.`)
+        }
+        assertCompletedWaveForTasks(work, result.workflowId, generation,
+          completion.taskIds, completion.bindingFingerprint)
+        await assertCurrentAcceptanceProof(ctx, source, step)
+        const originalClaimIds = (await stepClaims(ctx, source.id, step.id))
+          .filter((claim) => claim.byAgent === "acceptance" &&
+            (claim.attempt ?? 0) === (step.attempt ?? 0))
+          .map((claim) => claim.id).sort()
+        if (JSON.stringify(originalClaimIds) !==
+            JSON.stringify([...result.evidenceClaimIds].sort())) {
+          throw new Error(`Cutover blocked: Acceptance Task ${taskId} has an incomplete or altered claim-set receipt.`)
+        }
+        // A later product change cannot inherit the old observed acceptance.
+        const head = await cleanRepositoryHead(ctx.location.directory)
+        if (!head || !result.cleanRepositoryHead || head !== result.cleanRepositoryHead) {
+          throw new Error(`Cutover blocked: accepted product repository revision changed after Acceptance Task ${taskId}.`)
+        }
+      }
+    }
+    for (const parent of contract.dependsOn) await visit(parent)
+  }
+  for (const id of taskIds) await visit(id)
+}
+
 function knowledgeKey(workflowId: string) {
   return `knowledge/${workflowId}`
 }
@@ -2306,6 +2987,10 @@ function stepSessionBindingKey(workflowId: string, stepId: string, attempt: numb
 
 function sessionOqKey(sessionID: string) {
   return `session-oq/${sessionID}`
+}
+
+function sessionOqAttemptKey(sessionID: string) {
+  return `session-oq-attempt/${sessionID}`
 }
 
 function sessionPlanReviewKey(sessionID: string) {
@@ -2445,6 +3130,224 @@ async function readWorkflow(ctx: any, id: string): Promise<Workflow | undefined>
   return (await ctx.storage.get(workflowKey(id))) as Workflow | undefined
 }
 
+function recordValue(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value)
+}
+
+function validStringList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string" && item.length > 0)
+}
+
+function validTimestamp(value: unknown) {
+  return typeof value === "string" && Number.isFinite(Date.parse(value))
+}
+
+function stepDependsOnWorkflow(workflow: Workflow, targetStepId: string, sourceStepId: string, visited = new Set<string>()): boolean {
+  if (targetStepId === sourceStepId) return true
+  if (visited.has(targetStepId)) return false
+  visited.add(targetStepId)
+  const target = workflow.steps.find((step) => step.id === targetStepId)
+  return Boolean(target?.dependsOn.some((dependency) =>
+    stepDependsOnWorkflow(workflow, dependency, sourceStepId, visited),
+  ))
+}
+
+function workflowRecordError(
+  value: unknown,
+  expectedId: string,
+  projectId: string,
+  ownerSessionId: string,
+): string | undefined {
+  if (!recordValue(value)) return "Workflow record is malformed."
+  if (value.id !== expectedId) return "Workflow key does not match its canonical workflow ID."
+  if (value.projectId !== projectId || value.createdBySession !== ownerSessionId) {
+    return "Workflow ownership or project provenance does not match this coordinator."
+  }
+  if (
+    !Number.isSafeInteger(value.revision) || Number(value.revision) < 0 ||
+    typeof value.anchor !== "string" || !value.anchor.trim() ||
+    typeof value.createdAt !== "string" || !value.createdAt.trim() || !Array.isArray(value.steps)
+  ) {
+    return "Workflow record has an invalid canonical shape."
+  }
+
+  const stepIds = new Set<string>()
+  const validStatuses = new Set(["pending", "waiting", "complete", "passed", "failed"])
+  for (const candidate of value.steps) {
+    if (!recordValue(candidate) || typeof candidate.id !== "string" || !candidate.id.trim() ||
+        typeof candidate.agent !== "string" || !candidate.agent.trim() ||
+        !["work", "gate", "wait"].includes(String(candidate.kind)) ||
+        !validStatuses.has(String(candidate.status)) || !validStringList(candidate.dependsOn) ||
+        new Set(candidate.dependsOn).size !== candidate.dependsOn.length ||
+        (candidate.attempt !== undefined && (!Number.isSafeInteger(candidate.attempt) || Number(candidate.attempt) < 0)) ||
+        (candidate.summary !== undefined && typeof candidate.summary !== "string")) {
+      return "Workflow contains a malformed step record."
+    }
+    if (stepIds.has(candidate.id)) return "Workflow contains duplicate step identities."
+    stepIds.add(candidate.id)
+    if (candidate.task !== undefined) {
+      if (!recordValue(candidate.task) || typeof candidate.task.id !== "string" || !candidate.task.id.trim() ||
+          typeof candidate.task.title !== "string" || !candidate.task.title.trim() ||
+          typeof candidate.task.objective !== "string" || !candidate.task.objective.trim() ||
+          !validStringList(candidate.task.dependsOn) || !validStringList(candidate.task.write) ||
+          !validStringList(candidate.task.skills) || !validStringList(candidate.task.verify)) {
+        return "Workflow contains a malformed Task authority record."
+      }
+    }
+  }
+  for (const candidate of value.steps as Array<Record<string, unknown>>) {
+    const dependencies = candidate.dependsOn as string[]
+    if (dependencies.some((dependency) => !stepIds.has(dependency))) {
+      return "Workflow contains a dependency on a missing step."
+    }
+  }
+
+  if (value.verification !== undefined) {
+    if (!Array.isArray(value.verification)) return "Workflow verification state is malformed."
+    const requirementIds = new Set<string>()
+    for (const candidate of value.verification) {
+      if (!recordValue(candidate) || typeof candidate.id !== "string" || !candidate.id.trim() ||
+          typeof candidate.createdByStepId !== "string" || !candidate.createdByStepId ||
+          typeof candidate.createdByAgent !== "string" || !candidate.createdByAgent ||
+          typeof candidate.beforeStepId !== "string" || !candidate.beforeStepId ||
+          typeof candidate.kind !== "string" || !candidate.kind ||
+          typeof candidate.statement !== "string" || !candidate.statement.trim() ||
+          !["open", "satisfied", "superseded"].includes(String(candidate.status)) ||
+          !validTimestamp(candidate.createdAt)) {
+        return "Workflow contains a malformed verification requirement."
+      }
+      if (requirementIds.has(candidate.id)) return "Workflow contains duplicate verification requirement identities."
+      requirementIds.add(candidate.id)
+      if (candidate.status !== "superseded") {
+        const creator = (value.steps as Workflow["steps"]).find((step) => step.id === candidate.createdByStepId)
+        const gate = (value.steps as Workflow["steps"]).find((step) => step.id === candidate.beforeStepId)
+        if (!creator || creator.agent !== candidate.createdByAgent || !gate || gate.kind !== "gate" ||
+            !stepDependsOnWorkflow(value as Workflow, candidate.beforeStepId, candidate.createdByStepId)) {
+          return "Workflow contains a verification requirement with an invalid creator/gate path."
+        }
+      }
+      if (candidate.status === "satisfied") {
+        const proof = candidate.proof
+        if (!recordValue(proof) || typeof proof.byAgent !== "string" || !proof.byAgent ||
+            typeof proof.stepId !== "string" || !proof.stepId ||
+            typeof proof.statement !== "string" || !proof.statement.trim() ||
+            !Array.isArray(proof.observationIds) || proof.observationIds.length === 0 ||
+            !proof.observationIds.every((id) => typeof id === "string" && Boolean(id)) ||
+            new Set(proof.observationIds).size !== proof.observationIds.length ||
+            !validTimestamp(proof.provedAt)) {
+          return "A satisfied verification requirement has malformed proof provenance."
+        }
+      } else if (candidate.proof !== undefined) {
+        return "A non-satisfied verification requirement contains stale proof provenance."
+      }
+    }
+  }
+
+  if (value.work !== undefined) {
+    const workAssociation = value.work
+    if (!recordValue(workAssociation) || typeof workAssociation.objectiveId !== "string" || !workAssociation.objectiveId ||
+        !Number.isSafeInteger(workAssociation.generation) || Number(workAssociation.generation) < 0 ||
+        ["taskPlanRevision", "reviewedPlanRevision"].some((key) => workAssociation[key] !== undefined &&
+          (!Number.isSafeInteger(workAssociation[key]) || Number(workAssociation[key]) < 1)) ||
+        ["taskPlanFingerprint", "reviewedPlanFingerprint"].some((key) => workAssociation[key] !== undefined &&
+          (typeof workAssociation[key] !== "string" || !workAssociation[key]))) {
+      return "Workflow Objective/Plan association is malformed."
+    }
+  }
+  return undefined
+}
+
+async function successfulSourceWorkflowError(ctx: any, workflow: Workflow): Promise<string | undefined> {
+  if (workflow.steps.length === 0 || !workflow.steps.every((step) =>
+    step.kind === "gate" ? step.status === "passed" : step.status === "complete",
+  )) {
+    return "fromWorkflowId must be the successfully completed current workflow."
+  }
+  const satisfiedSteps = new Set(workflow.steps.filter(satisfied).map((step) => step.id))
+  if (workflow.steps.some((step) => step.dependsOn.some((dependency) => !satisfiedSteps.has(dependency)))) {
+    return "Completed source workflow has an unsatisfied dependency inconsistency."
+  }
+
+  for (const requirement of workflow.verification ?? []) {
+    if (requirement.status === "open") {
+      return "Completed source workflow still has an open verification requirement."
+    }
+    if (requirement.status === "superseded") continue
+    const creator = workflow.steps.find((step) => step.id === requirement.createdByStepId)
+    const gate = workflow.steps.find((step) => step.id === requirement.beforeStepId)
+    const proofStep = requirement.proof?.stepId
+      ? workflow.steps.find((step) => step.id === requirement.proof!.stepId)
+      : undefined
+    if (!creator || creator.agent !== requirement.createdByAgent || !gate || gate.kind !== "gate" ||
+        !stepDependsOnWorkflow(workflow, requirement.beforeStepId, requirement.createdByStepId) ||
+        gate.status !== "passed" || !proofStep || proofStep.agent !== requirement.proof?.byAgent ||
+        proofStep.status !== "complete" && proofStep.status !== "passed") {
+      return "Completed source workflow has an invalid verification proof path."
+    }
+    const observations = await Promise.all(requirement.proof!.observationIds.map((id) =>
+      ctx.storage.get(evidenceKey(id)) as Promise<EvidenceObservation | undefined>,
+    ))
+    if (observations.some((observation) => !observation) || !observationsSupportKind(
+      requirement.kind,
+      observations as EvidenceObservation[],
+    ) || observations.some((observation) =>
+      !observation || observation.agent !== requirement.proof!.byAgent ||
+      !observationMatchesStep(observation, workflow, requirement.proof!.stepId!),
+    )) {
+      return "Completed source workflow has missing or invalid verification evidence."
+    }
+  }
+
+  const questionIds = await ctx.storage.get(oqIndexKey(workflow.id))
+  if (questionIds !== undefined && (!Array.isArray(questionIds) ||
+      !questionIds.every((id) => typeof id === "string" && Boolean(id)) ||
+      new Set(questionIds).size !== questionIds.length)) {
+    return "Completed source workflow has a malformed OQ index."
+  }
+  const questions = await readQuestions(ctx, workflow.id)
+  if (questionIds !== undefined && questions.length !== questionIds.length) {
+    return "Completed source workflow has an OQ index pointing to missing state."
+  }
+  for (const question of questions) {
+    if (question.workflowId !== workflow.id || !question.id ||
+        typeof question.question !== "string" || !question.question.trim() ||
+        typeof question.raisedByAgent !== "string" || !question.raisedByAgent ||
+        typeof question.raisedByStepId !== "string" || !question.raisedByStepId ||
+        typeof question.requiredAuthority !== "string" || !question.requiredAuthority ||
+        typeof question.blocking !== "boolean" || !Array.isArray(question.evidence) ||
+        !question.evidence.every((id) => typeof id === "string") || !validTimestamp(question.createdAt) ||
+        !Array.isArray(question.consumerStepIds) ||
+        question.consumerStepIds.some((id) => typeof id !== "string" || !id) ||
+        new Set(question.consumerStepIds).size !== question.consumerStepIds.length ||
+        question.consumerStepIds.some((stepId) => !workflow.steps.some((step) => step.id === stepId)) ||
+        !recordValue(question.reconciliations) || !["open", "answered", "closed"].includes(question.status) ||
+        (question.answer !== undefined && (!recordValue(question.answer) ||
+          typeof question.answer.by !== "string" || !question.answer.by ||
+          !["agent", "user"].includes(String(question.answer.source)) ||
+          typeof question.answer.text !== "string" || !question.answer.text.trim() ||
+          !Array.isArray(question.answer.evidence) || !question.answer.evidence.every((id) => typeof id === "string") ||
+          !validTimestamp(question.answer.at))) ||
+        (question.answer ? question.status === "open" : question.status !== "open")) {
+      return "Completed source workflow has malformed OQ state."
+    }
+    if (!question.blocking) continue
+    if (!question.answer || question.status !== "closed" || question.consumerStepIds.length === 0) {
+      return "Completed source workflow has an unresolved blocking question inconsistency."
+    }
+    for (const stepId of question.consumerStepIds) {
+      const reconciliation = question.reconciliations[stepId]
+      if (!satisfiedSteps.has(stepId) || !recordValue(reconciliation) ||
+          reconciliation.stepId !== stepId || !reconciliation.byAgent ||
+          !["incorporated", "unaffected", "explicitly-deferred"].includes(String(reconciliation.disposition)) ||
+          typeof reconciliation.summary !== "string" || !reconciliation.summary.trim() ||
+          !validTimestamp(reconciliation.at)) {
+        return "Completed source workflow has an unresolved blocking question inconsistency."
+      }
+    }
+  }
+  return undefined
+}
+
 async function validateWorkflowMutationLocked(
   ctx: any,
   runtime: LoomRuntimeIdentity,
@@ -2562,6 +3465,55 @@ async function exactOqBinding(ctx: any, sessionID: string, workflowId: string, q
   return sessionBoundToOq(ctx.storage as any, sessionID, workflowId, questionId)
 }
 
+/**
+ * A late root-cause investigation may attach through a Diagnostic OQ without
+ * rewriting completed Plan Tasks. The disposable sandbox still requires a
+ * current exact attempt: neither an answered/reopened OQ nor a stale step
+ * attachment can authorize new experiments.
+ */
+async function currentDiagnosticSandboxAttachment(
+  ctx: any,
+  sessionID: string,
+): Promise<DiagnosticSandboxTarget | undefined> {
+  const workflowId = (await ctx.storage.get(sessionKey(sessionID))) as string | undefined
+  if (!workflowId) return undefined
+  const workflow = await readWorkflow(ctx, workflowId)
+  if (!workflow || workflow.cancellation) return undefined
+
+  const stepId = (await ctx.storage.get(sessionStepKey(sessionID))) as string | undefined
+  if (stepId) {
+    const step = workflow.steps.find((candidate) => candidate.id === stepId)
+    if (step?.agent !== "diagnostic" ||
+        !(await exactRunnableStepAttemptBinding(ctx, sessionID, workflowId, stepId))) return undefined
+    return { workflowId, stepId, attempt: step.attempt ?? 0 }
+  }
+
+  const questionId = (await ctx.storage.get(sessionOqKey(sessionID))) as string | undefined
+  if (!questionId || !(await exactOqBinding(ctx, sessionID, workflowId, questionId))) return undefined
+  const question = (await ctx.storage.get(oqKey(workflowId, questionId))) as OpenQuestion | undefined
+  const attachedAttempt = await ctx.storage.get(sessionOqAttemptKey(sessionID))
+  if (!question || question.workflowId !== workflowId ||
+      question.requiredAuthority !== "diagnostic" || question.status !== "open" || question.answer ||
+      !Number.isSafeInteger(attachedAttempt) ||
+      attachedAttempt !== (question.attempt ?? 0) ||
+      (question.work &&
+        (!workflow.work || workflow.work.objectiveId !== question.work.objectiveId ||
+         workflow.work.generation !== question.work.generation))) return undefined
+  return { workflowId, stepId: "", questionId, attempt: question.attempt ?? 0 }
+}
+
+async function assertCurrentStepPlanAdmission(ctx: any, workflowId: string, stepId: string) {
+  const workflow = await readWorkflow(ctx, workflowId)
+  if (!workflow) throw new Error("Workflow not found.")
+  assertWorkflowNotCancelled(workflow)
+  const step = workflow.steps.find((candidate) => candidate.id === stepId)
+  if (!step) throw new Error("Step not found.")
+  const work = workflow.work ? await readWork(ctx, workflow.work.objectiveId) : undefined
+  if (workflow.work && !work) throw new Error("Persistent work hierarchy not found.")
+  assertStepDispatchAdmission(workflow, work, step)
+  await assertStepHostAvailability(ctx, workflow, work, step)
+}
+
 async function assertWorkerWorkClaim(ctx: any, workflowId: string, stepId: string) {
   const workflow = await readWorkflow(ctx, workflowId)
   if (!workflow) throw new Error("Workflow not found.")
@@ -2572,6 +3524,8 @@ async function assertWorkerWorkClaim(ctx: any, workflowId: string, stepId: strin
 
   const work = await readWork(ctx, workflow.work.objectiveId)
   if (!work) throw new Error("Persistent work hierarchy not found.")
+  assertStepDispatchAdmission(workflow, work, step)
+  await assertStepHostAvailability(ctx, workflow, work, step)
   assertWaveClaimForTasks(
     work,
     workflow.id,
@@ -2580,12 +3534,302 @@ async function assertWorkerWorkClaim(ctx: any, workflowId: string, stepId: strin
   )
 }
 
+/** Historical receipts remain audit records until their ORIGINAL proof is verified. */
+function lastArchivedCompletionReceipt(
+  node: WorkHierarchy["nodes"][number] | undefined,
+  workflowId: string,
+): NonNullable<WorkHierarchy["nodes"][number]["result"]> | undefined {
+  if (!node || node.result) return undefined
+  const latest = node.priorResults?.at(-1)
+  if (!latest || latest.workflowId !== workflowId) return undefined
+  const {
+    invalidatedAt: _at,
+    invalidatedByRevision: _revision,
+    invalidatedReason: _reason,
+    ...receipt
+  } = latest
+  return receipt
+}
+
+async function reusableCompletedTaskIds(
+  ctx: any,
+  work: WorkHierarchy,
+  workflow: Workflow,
+  taskSteps = plannedTaskSteps(workflow),
+  invalidReceipt: "reject" | "rerun" = "reject",
+) {
+  if (!workflow.work) return []
+  const reusable: string[] = []
+  let checkedCleanHead = false
+  let currentCleanHead: string | undefined
+
+  for (const taskStep of taskSteps) {
+    if (!satisfied(taskStep)) continue
+    const workTask = work.nodes.find(
+      (node) =>
+        node.generation === workflow.work!.generation &&
+        node.type === "task" &&
+        node.logicalId === taskStep.task!.id &&
+        node.status !== "superseded",
+    )
+    // Work status remains pending until independent implementation review.
+    // The execution result, not the roll-up status, is the reusable receipt.
+    if (!workTask?.result || workTask.result.workflowId !== workflow.id) continue
+
+    const receipt = workTask.result
+    const semantic = diagnoseTaskReceiptSemantics(
+      work, taskStep.task!.id, receipt, workflow.work.generation,
+    )
+    const modernReceipt = receipt.completedAttempt !== undefined || receipt.planRevision !== undefined
+    const semanticValid = modernReceipt
+      ? semantic.originalProof === "valid" && semantic.currentContract === "unchanged"
+      : Boolean(receipt.semanticClosureFingerprint &&
+          receipt.semanticClosureFingerprint === taskSemanticClosureFingerprintAtRevision(
+            work, taskStep.task!.id, workflow.work.generation))
+    if (!semanticValid) {
+      if (invalidReceipt === "rerun") continue
+      throw new Error(
+        `Completed Task ${taskStep.task!.id} cannot be reused: original proof=${semantic.originalProof}, current execution contract=${semantic.currentContract}.`,
+      )
+    }
+
+    // Modern receipts must stay valid across EVERY Plan reopen, not just the
+    // explicit reconciliation that first restored their workflow Step.
+    // Legacy receipts without modern provenance keep their historical path.
+    try { assertOriginalAdviceContract(work, workflow.work!.generation, taskStep.task!, receipt) } catch (error) {
+      if (invalidReceipt === "rerun") continue
+      throw error
+    }
+    if (receipt.completedAttempt !== undefined) {
+      if (!checkedCleanHead) {
+        currentCleanHead = await cleanRepositoryHead(ctx.location.directory)
+        checkedCleanHead = true
+      }
+      const contractDigest = createHash("sha256")
+        .update(JSON.stringify(taskStep.task)).digest("hex")
+      const changedDependency = resultDependencyIds(work, workflow.work!.generation, taskStep.task!).some((dependencyId) => {
+        const dependency = work.nodes.find((node) =>
+          node.generation === workflow.work!.generation && node.type === "task" &&
+          node.logicalId === dependencyId && node.status !== "superseded")
+        return !dependency?.result || !receipt.dependencyResultDigests?.[dependencyId] ||
+          createHash("sha256").update(JSON.stringify(dependency.result)).digest("hex") !==
+            receipt.dependencyResultDigests[dependencyId]
+      })
+      if (!Number.isSafeInteger(receipt.completedAttempt) || !receipt.cleanRepositoryHead ||
+          receipt.cleanRepositoryHead !== currentCleanHead ||
+          !receipt.executableTaskFingerprint ||
+          receipt.executableTaskFingerprint !== contractDigest || changedDependency) {
+        if (invalidReceipt === "rerun") continue
+        throw new Error(
+          `Completed Task ${taskStep.task!.id} cannot be reused: original clean code, executable contract, or dependency result has changed.`,
+        )
+      }
+    }
+
+    // Reconciliation preserves the current (higher) workflow attempt to keep
+    // stale sessions fenced. The original producer evidence retains its old
+    // attempt in Work; future Plan revisions must verify THAT attempt.
+    const sourceAttempt = workTask.result.completedAttempt ?? (taskStep.attempt ?? 0)
+    if (workTask.result.producerAgent && workTask.result.producerAgent !== taskStep.agent) {
+      if (invalidReceipt === "rerun") continue
+      throw new Error(`Completed Task ${taskStep.task!.id} has inconsistent producer-role provenance.`)
+    }
+    const originalWorkflow: Workflow = sourceAttempt === (taskStep.attempt ?? 0)
+      ? workflow
+      : { ...workflow, steps: workflow.steps.map((step) => step.id === taskStep.id
+          ? { ...step, attempt: sourceAttempt } : step) }
+
+    // The receipt must name the full set of claims made by this exact
+    // execution attempt, not merely a valid subset of their identifiers.
+    const attemptClaims = (await stepClaims(ctx, workflow.id, taskStep.id))
+      .filter((claim) =>
+        (claim.attempt ?? 0) === sourceAttempt &&
+        claim.byAgent === taskStep.agent,
+      )
+    const receiptIds = [...workTask.result.evidenceClaimIds].sort()
+    const persistedIds = attemptClaims.map((claim) => claim.id).sort()
+    if (JSON.stringify(receiptIds) !== JSON.stringify(persistedIds)) {
+      if (invalidReceipt === "rerun") continue
+      throw new Error(
+        `Completed Task ${taskStep.task!.id} cannot be reused because its exact-attempt evidence claim set is incomplete or inconsistent.`,
+      )
+    }
+
+    const claims = await Promise.all(
+      workTask.result.evidenceClaimIds.map((id) =>
+        ctx.storage.get(claimIdKey(id)) as Promise<EvidenceClaim | undefined>,
+      ),
+    )
+    if (
+      claims.some((claim) => !claim) ||
+      claims.some((claim) =>
+        claim!.workflowId !== workTask.result!.workflowId ||
+        claim!.stepId !== taskStep.id ||
+        claim!.byAgent !== taskStep.agent ||
+        (claim!.attempt ?? 0) !== sourceAttempt
+      )
+    ) {
+      if (invalidReceipt === "rerun") continue
+      throw new Error(
+        `Completed Task ${taskStep.task!.id} cannot be reused because its evidence receipt is missing or no longer matches the preserved attempt.`,
+      )
+    }
+
+    const observations = await Promise.all(
+      claims.flatMap((claim) => claim!.observationIds).map((id) =>
+        ctx.storage.get(evidenceKey(id)) as Promise<EvidenceObservation | undefined>,
+      ),
+    )
+    if (
+      observations.some((observation) => !observation) ||
+      observations.some((observation) =>
+        !observation || !observationMatchesStep(observation, originalWorkflow, taskStep.id)
+      )
+    ) {
+      if (invalidReceipt === "rerun") continue
+      throw new Error(
+        `Completed Task ${taskStep.task!.id} cannot be reused because referenced evidence is missing or belongs to another attempt.`,
+      )
+    }
+    reusable.push(taskStep.task!.id)
+  }
+
+  // An unchanged dependent contract is not enough when its consumed Task
+  // must be executed again. Prune the transitive set until every preserved
+  // Task's same-workflow dependencies also have reusable results.
+  const stepByTaskId = new Map(
+    taskSteps.filter((step) => step.task).map((step) => [step.task!.id, step]),
+  )
+  const eligible = new Set(reusable)
+  let removed = true
+  while (removed) {
+    removed = false
+    for (const taskId of reusable) {
+      if (!eligible.has(taskId)) continue
+      const task = stepByTaskId.get(taskId)
+      const unavailableDependency = task?.task?.dependsOn.find(
+        (dependencyId) => stepByTaskId.has(dependencyId) && !eligible.has(dependencyId),
+      )
+      if (!unavailableDependency) continue
+      if (invalidReceipt === "reject") {
+        throw new Error(
+          `Completed Task ${taskId} cannot be reused because dependency Task ${unavailableDependency} must be executed again.`,
+        )
+      }
+      eligible.delete(taskId)
+      removed = true
+    }
+  }
+
+  return reusable.filter((taskId) => eligible.has(taskId))
+}
+
 async function readQuestions(ctx: any, workflowId: string): Promise<OpenQuestion[]> {
   const ids = ((await ctx.storage.get(oqIndexKey(workflowId))) as string[] | undefined) ?? []
   const questions = await Promise.all(
     ids.map((id) => ctx.storage.get(oqKey(workflowId, id)) as Promise<OpenQuestion | undefined>),
   )
   return questions.filter((question): question is OpenQuestion => Boolean(question))
+}
+
+async function statusStepReadiness(
+  ctx: any,
+  workflow: Workflow,
+  questions: OpenQuestion[],
+  work: WorkHierarchy | undefined,
+  budget: BudgetState,
+  limits: ExecutionLimits,
+): Promise<Record<string, StepReadinessObservation>> {
+  const currentRunnable = runnable(workflow)
+  const currentTargetCounts = new Map<string, number>()
+
+  for (const step of currentRunnable) {
+    currentTargetCounts.set(step.agent, (currentTargetCounts.get(step.agent) ?? 0) + 1)
+  }
+  for (const question of questions) {
+    if (
+      question.status === "closed" ||
+      question.answer ||
+      question.requiredAuthority === "user" ||
+      question.requiredAuthority === "general"
+    ) {
+      continue
+    }
+    currentTargetCounts.set(
+      question.requiredAuthority,
+      (currentTargetCounts.get(question.requiredAuthority) ?? 0) + 1,
+    )
+  }
+
+  const result: Record<string, StepReadinessObservation> = {}
+  for (const step of currentRunnable) {
+    let dispatch: StepReadinessObservation["dispatch"] = { state: "ready" }
+
+    try {
+      assertStepDispatchAdmission(workflow, work, step)
+      await assertStepHostAvailability(ctx, workflow, work, step)
+    } catch (error) {
+      dispatch = {
+        state: "blocked",
+        reason: error instanceof Error ? error.message : String(error),
+      }
+    }
+
+    if (dispatch.state === "ready") {
+      const probeState = structuredClone(budget)
+      const probe = recordDispatch({
+        state: probeState,
+        limits,
+        dispatchID: `status-probe:${workflow.id}:${step.id}:${workflow.revision}`,
+        key: `step:${step.id}`,
+        agent: step.agent,
+      })
+      if (!probe.allowed) {
+        dispatch = {
+          state: "blocked",
+          reason: probe.reason ?? "Dispatch budget admission would deny this target.",
+        }
+      }
+    }
+
+    if (dispatch.state === "ready" && (currentTargetCounts.get(step.agent) ?? 0) > 1) {
+      dispatch = {
+        state: "unknown",
+        reason:
+          `Multiple current targets are owned by ${step.agent}; exact dispatch-grant issuance must revalidate same-agent grant selection.`,
+      }
+    }
+
+    const attempt = step.attempt ?? 0
+    const binding = (await ctx.storage.get(
+      stepSessionBindingKey(workflow.id, step.id, attempt),
+    )) as StepSessionBinding | undefined
+    const bindingCurrent = Boolean(
+      binding &&
+      binding.schemaVersion === 1 &&
+      binding.workflowId === workflow.id &&
+      binding.stepId === step.id &&
+      binding.attempt === attempt &&
+      binding.agent === step.agent &&
+      await exactStepAttemptBinding(ctx, binding.sessionID, workflow.id, step.id) &&
+      await ctx.storage.get(`session-deletion-fence/${binding.sessionID}`) === undefined,
+    )
+
+    result[step.id] = {
+      dispatch,
+      execution: bindingCurrent
+        ? {
+            state: "unknown",
+            evidence: "current_attachment",
+            attachedAt: binding!.attachedAt,
+          }
+        : {
+            state: "unknown",
+          },
+    }
+  }
+
+  return result
 }
 
 async function saveQuestion(ctx: any, question: OpenQuestion) {
@@ -2631,6 +3875,7 @@ function questionState(questions: OpenQuestion[], workflow: Workflow) {
   return {
     unresolved: unresolved.map((question) => ({
       id: question.id,
+      question: question.question,
       status: question.status,
       responder: question.requiredAuthority,
       blocking: question.blocking,
@@ -2640,6 +3885,373 @@ function questionState(questions: OpenQuestion[], workflow: Workflow) {
     reconcile,
   }
 }
+
+type BackgroundChildBinding = {
+  schemaVersion: 1
+  projectId: string
+  workflowId: string
+  parentSessionID: string
+  childSessionID: string
+  active: boolean
+  observedAt: string
+  // A foreground child resumed by an OQ answer has a separate, attempt-scoped
+  // return obligation. Do not rewrite the actual launch mode to background.
+  oqResume?: { stepId: string; attempt: number; questionId: string }
+}
+
+type AdmittedSubagentDispatchMode = {
+  schemaVersion: 1
+  projectId: string
+  workflowId: string
+  grantId: string
+  parentSessionID: string
+  expectedAgent: string
+  background: boolean
+  dispatchID: string
+  observedAt: string
+  stepId?: string
+  questionId?: string
+}
+
+function backgroundChildBindingKey(childSessionID: string) {
+  return `background-child/${encodeURIComponent(childSessionID)}`
+}
+
+function admittedSubagentDispatchModeKey(grantId: string) {
+  return `dispatch-mode/${encodeURIComponent(grantId)}`
+}
+
+function nativeSubagentTool(tool: string) {
+  const normalized = tool.toLowerCase()
+  return normalized === "task" || normalized === "subagent"
+}
+
+function exactSubagentBackgroundFromContext(
+  messages: unknown,
+  source: unknown,
+): boolean | undefined {
+  if (!Array.isArray(messages) || !recordValue(source)) return undefined
+  const messageID =
+    typeof source.messageID === "string" ? source.messageID : ""
+  const callID =
+    typeof source.callID === "string"
+      ? source.callID
+      : typeof source.id === "string"
+        ? source.id
+        : ""
+  if (!messageID || !callID) return undefined
+
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index] as any
+    const info = recordValue(message?.info) ? message.info : message
+    const observedMessageID = String(
+      info?.id ?? message?.id ?? message?.messageID ?? "",
+    )
+    if (observedMessageID && observedMessageID !== messageID) continue
+    const parts = Array.isArray(message?.parts)
+      ? message.parts
+      : Array.isArray(message?.content)
+        ? message.content
+        : []
+    for (let partIndex = parts.length - 1; partIndex >= 0; partIndex--) {
+      const part = parts[partIndex] as any
+      if (
+        part?.type !== "tool" ||
+        !nativeSubagentTool(String(part?.tool ?? part?.name ?? ""))
+      ) {
+        continue
+      }
+      const observedCallID = String(
+        part?.callID ?? part?.toolCallID ?? part?.id ?? "",
+      )
+      if (observedCallID !== callID) continue
+      if (part?.messageID && String(part.messageID) !== messageID) continue
+      const state = recordValue(part?.state) ? part.state : undefined
+      const input = state && recordValue(state.input) ? state.input : undefined
+      if (!input) return undefined
+      return input.background === true
+    }
+  }
+  return undefined
+}
+
+async function subagentBackgroundRequestedForPermission(
+  ctx: any,
+  event: any,
+) {
+  try {
+    const context = await ctx.session.context({ sessionID: event.sessionID })
+    return exactSubagentBackgroundFromContext(context, event.source) ?? false
+  } catch {
+    // Absence of a positive exact background signal is foreground. The real-host
+    // integration proves background launches expose the exact Task input here.
+    return false
+  }
+}
+
+async function backgroundCoordinatorSessionForChild(
+  ctx: any,
+  runtime: LoomRuntimeIdentity,
+  workflow: Workflow,
+  childSessionID: string,
+  event: BackgroundCoordinatorReturn,
+) {
+  const persisted = (await ctx.storage.get(
+    backgroundChildBindingKey(childSessionID),
+  )) as BackgroundChildBinding | undefined
+  if (
+    !persisted ||
+    persisted.schemaVersion !== 1 ||
+    persisted.projectId !== runtime.projectId ||
+    persisted.workflowId !== workflow.id ||
+    persisted.parentSessionID !== workflow.createdBySession ||
+    persisted.childSessionID !== childSessionID
+  ) {
+    return undefined
+  }
+
+  const currentStep = event.kind === "step-terminal"
+    ? workflow.steps.find((step) => step.id === event.stepId)
+    : undefined
+  const oqResumedStep = !persisted.active &&
+    event.kind === "step-terminal" &&
+    persisted.oqResume?.stepId === event.stepId &&
+    persisted.oqResume?.attempt === (currentStep ? (currentStep.attempt ?? 0) : -1) &&
+    Boolean(currentStep) &&
+    await exactStepAttemptBinding(ctx, childSessionID, workflow.id, event.stepId!)
+  if (!persisted.active && !oqResumedStep) return undefined
+
+  try {
+    const child = await ctx.session.get({ sessionID: childSessionID })
+    return child?.parentID === persisted.parentSessionID
+      ? {
+          sessionID: persisted.parentSessionID,
+          source: persisted.active ? "background" as const : "oq-resume" as const,
+          ...(oqResumedStep ? { resumeAttempt: persisted.oqResume!.attempt } : {}),
+        }
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
+type BackgroundCoordinatorReturn = {
+  kind: "step-terminal" | "oq-answered" | "scope-boundary"
+  stepId?: string
+  questionId?: string
+  requestId?: string
+  outcome?: string
+}
+
+async function notifyBackgroundChildCoordinator(
+  ctx: any,
+  runtime: LoomRuntimeIdentity,
+  workflow: Workflow,
+  childSessionID: string,
+  agent: string,
+  event: BackgroundCoordinatorReturn,
+) {
+  const notified: string[] = []
+  const failed: Array<{ target: "general"; error: string }> = []
+  if (agent === "general") return { notified, failed }
+
+  const coordinator = await backgroundCoordinatorSessionForChild(
+    ctx,
+    runtime,
+    workflow,
+    childSessionID,
+    event,
+  )
+  if (!coordinator) return { notified, failed }
+  const generalSessionID = coordinator.sessionID
+
+  try {
+    const delivered = await withRuntimeAdvisoryLocks(
+      runtime,
+      [
+        { aggregate: "workflow", resourceIdentity: workflow.id },
+        { aggregate: "session-coordinator", resourceIdentity: generalSessionID },
+      ],
+      async () => {
+        const [currentWorkflow, currentGeneralBinding] = await Promise.all([
+          readWorkflow(ctx, workflow.id),
+          ctx.storage.get(sessionKey(generalSessionID)) as Promise<string | undefined>,
+        ])
+        if (
+          !currentWorkflow ||
+          currentWorkflow.cancellation ||
+          currentWorkflow.createdBySession !== generalSessionID ||
+          currentGeneralBinding !== workflow.id ||
+          await ctx.storage.get(`session-deletion-fence/${generalSessionID}`) !== undefined
+        ) {
+          return false
+        }
+
+        if (event.kind === "step-terminal") {
+          const step = currentWorkflow.steps.find((candidate) => candidate.id === event.stepId)
+          const expectedStatus =
+            event.outcome === "pass" ? "passed" :
+            event.outcome === "fail" ? "failed" :
+            "complete"
+          if (!step || step.agent !== agent || step.status !== expectedStatus) return false
+          // Reopening the step after OQ resume must never wake General from an
+          // obsolete attempt, even if the old completion notification was slow.
+          if (coordinator.source === "oq-resume" &&
+              (step.attempt ?? 0) !== coordinator.resumeAttempt) return false
+        } else if (event.kind === "oq-answered") {
+          const question = event.questionId
+            ? await ctx.storage.get(oqKey(workflow.id, event.questionId)) as OpenQuestion | undefined
+            : undefined
+          if (!question?.answer || question.answer.by !== agent || question.status === "open") return false
+        } else if (event.kind === "scope-boundary") {
+          if (!event.requestId) return false
+          const request = await ctx.storage.get(
+            scopeBoundaryRequestKey(generalSessionID, event.requestId),
+          ) as ScopeBoundaryRequest | undefined
+          if (
+            !request ||
+            request.workflowId !== workflow.id ||
+            request.agent !== agent ||
+            request.requestedBySessionId !== childSessionID ||
+            request.resolvedAt
+          ) {
+            return false
+          }
+        }
+
+        const eventRevision = event.kind === "step-terminal"
+          ? String(currentWorkflow.steps.find((step) => step.id === event.stepId)?.attempt ?? 0)
+          : event.kind === "oq-answered"
+            ? JSON.stringify((await ctx.storage.get(oqKey(workflow.id, event.questionId!)) as OpenQuestion).answer)
+            : event.requestId!
+        const noticeId = "msg_loom_" + createHash("sha256")
+          .update(JSON.stringify([runtime.projectId, workflow.id, childSessionID, agent, event, eventRevision]))
+          .digest("hex").slice(0, 24)
+        const notice = {
+          id: noticeId,
+          sessionID: generalSessionID,
+          text: coordinator.source === "oq-resume"
+            ? `Loom OQ-resumed child ${agent} completed its current step for workflow ${workflow.id}. Re-read authoritative Loom state and continue the next authorized work without another user prompt. Do not redispatch the completed attempt.`
+            : `Loom background child ${agent} produced authoritative workflow progress (${event.kind}) for workflow ${workflow.id}. Re-read Loom state and continue authorized work without another user prompt unless there is a genuine wait. OpenCode may also deliver its native background task result; if that result refers to the same child work already reflected in Loom state, treat it as corroborating information rather than starting duplicate work.`,
+          description: coordinator.source === "oq-resume"
+            ? "Loom OQ consumer returned"
+            : "Loom background child returned",
+          metadata: {
+            source: "loom",
+            kind: "background-child-return",
+            returnSource: coordinator.source,
+            workflowId: workflow.id,
+            childSessionID,
+            agent,
+            returnKind: event.kind,
+            ...(event.stepId ? { stepId: event.stepId } : {}),
+            ...(event.questionId ? { questionId: event.questionId } : {}),
+            ...(event.requestId ? { requestId: event.requestId } : {}),
+            ...(event.outcome ? { outcome: event.outcome } : {}),
+          },
+          delivery: "queue" as const,
+          resume: true,
+        }
+        // Synthetic inbox admission may have succeeded even when the caller
+        // observed an error. Reuse one stable ID and identical payload so the
+        // bounded second attempt cannot create a second host input.
+        try {
+          await ctx.session.synthetic(notice)
+        } catch {
+          await ctx.session.synthetic(notice)
+        }
+        return true
+      },
+    )
+    if (delivered) notified.push("general")
+  } catch (error) {
+    failed.push({
+      target: "general",
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
+
+  return { notified, failed }
+}
+
+
+async function notifyRaisedBlockingQuestionCoordinator(
+  ctx: any,
+  runtime: LoomRuntimeIdentity,
+  question: OpenQuestion,
+) {
+  const notified: string[] = []
+  const failed: Array<{ target: "general"; error: string }> = []
+
+  if (!question.blocking || question.raisedByAgent === "general") {
+    return { notified, failed }
+  }
+
+  const workflow = await readWorkflow(ctx, question.workflowId)
+  const generalSessionID = workflow?.createdBySession
+  if (!workflow || !generalSessionID) return { notified, failed }
+
+  try {
+    const delivered = await withRuntimeAdvisoryLocks(
+      runtime,
+      [
+        { aggregate: "workflow", resourceIdentity: question.workflowId },
+        { aggregate: "session-coordinator", resourceIdentity: generalSessionID },
+      ],
+      async () => {
+        const [currentWorkflow, currentQuestion, currentGeneralBinding] = await Promise.all([
+          readWorkflow(ctx, question.workflowId),
+          ctx.storage.get(oqKey(question.workflowId, question.id)) as Promise<OpenQuestion | undefined>,
+          ctx.storage.get(sessionKey(generalSessionID)) as Promise<string | undefined>,
+        ])
+        if (
+          !currentWorkflow ||
+          currentWorkflow.cancellation ||
+          currentWorkflow.createdBySession !== generalSessionID ||
+          currentGeneralBinding !== question.workflowId ||
+          !currentQuestion ||
+          currentQuestion.status !== "open" ||
+          currentQuestion.answer ||
+          !currentQuestion.blocking ||
+          currentQuestion.raisedByAgent === "general" ||
+          JSON.stringify(currentQuestion) !== JSON.stringify(question)
+        ) {
+          return false
+        }
+        if (await ctx.storage.get(`session-deletion-fence/${generalSessionID}`) !== undefined) {
+          return false
+        }
+
+        await ctx.session.synthetic({
+          sessionID: generalSessionID,
+          text:
+            `Loom blocking OQ ${question.id} was raised for ${question.requiredAuthority}. Re-read the persisted OQ with loom_oq_list for workflow ${question.workflowId}. If the responder is general, answer it directly; if the responder is user, present the exact stored question and record the exact user answer; otherwise route the exact OQ through the normal dispatch path. The persisted OQ state is authoritative; this notification intentionally contains no question content.`,
+          description: "Loom blocking OQ raised",
+          metadata: {
+            source: "loom",
+            kind: "oq-raised",
+            workflowId: question.workflowId,
+            questionId: question.id,
+            responder: question.requiredAuthority,
+            raisedByAgent: question.raisedByAgent,
+          },
+          delivery: "queue",
+          resume: true,
+        })
+        return true
+      },
+    )
+    if (delivered) notified.push("general")
+  } catch (error) {
+    failed.push({
+      target: "general",
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
+
+  return { notified, failed }
+}
+
 
 async function notifyAnsweredQuestionConsumers(
   ctx: any,
@@ -2651,9 +4263,12 @@ async function notifyAnsweredQuestionConsumers(
 
   for (const stepId of question.consumerStepIds) {
     try {
-      const delivered = await withRuntimeLocks(
+      const delivered = await withRuntimeAdvisoryLocks(
         runtime,
-        [stepAuthorityResource(question.workflowId, stepId)],
+        [
+          { aggregate: "workflow", resourceIdentity: question.workflowId },
+          stepAuthorityResource(question.workflowId, stepId),
+        ],
         async () => {
           const [workflow, currentQuestion] = await Promise.all([
             readWorkflow(ctx, question.workflowId),
@@ -2662,7 +4277,15 @@ async function notifyAnsweredQuestionConsumers(
           if (
             !workflow ||
             workflow.cancellation ||
+            workflow.id !== question.workflowId ||
             !currentQuestion?.answer ||
+            currentQuestion.id !== question.id ||
+            currentQuestion.workflowId !== question.workflowId ||
+            currentQuestion.status !== "answered" ||
+            JSON.stringify(currentQuestion.answer) !== JSON.stringify(question.answer) ||
+            JSON.stringify(currentQuestion.consumerStepIds) !== JSON.stringify(question.consumerStepIds) ||
+            JSON.stringify(currentQuestion.work) !== JSON.stringify(question.work) ||
+            JSON.stringify(currentQuestion.reopened) !== JSON.stringify(question.reopened) ||
             currentQuestion.reconciliations[stepId]
           ) {
             return false
@@ -2696,6 +4319,35 @@ async function notifyAnsweredQuestionConsumers(
             ))
           ) {
             return false
+          }
+          if (await ctx.storage.get(`session-deletion-fence/${binding.sessionID}`) !== undefined) {
+            return false
+          }
+
+          // A previously foreground Task may now proceed independently after
+          // this steering signal. Persist its return obligation before sending
+          // so an accepted (or ambiguously failed) steer cannot lose the parent
+          // wake when the child later completes. New attachments replace this
+          // record and therefore fence an older attempt.
+          const childBinding = (await ctx.storage.get(
+            backgroundChildBindingKey(binding.sessionID),
+          )) as BackgroundChildBinding | undefined
+          if (
+            childBinding &&
+            childBinding.schemaVersion === 1 &&
+            childBinding.projectId === runtime.projectId &&
+            childBinding.workflowId === question.workflowId &&
+            childBinding.childSessionID === binding.sessionID &&
+            childBinding.parentSessionID === workflow.createdBySession &&
+            !childBinding.active
+          ) {
+            await ctx.storage.set(
+              backgroundChildBindingKey(binding.sessionID),
+              {
+                ...childBinding,
+                oqResume: { stepId, attempt, questionId: question.id },
+              } satisfies BackgroundChildBinding,
+            )
           }
 
           await ctx.session.synthetic({
@@ -2917,6 +4569,8 @@ const evidenceObservedLoomToolNames = new Set([
   "diagnostic_sandbox_diff",
 ])
 
+const heldCoordinatorAdmissions = new AsyncLocalStorage<Set<string>>()
+
 function isLoomToolName(tool: string) {
   return tool.startsWith("loom_") || tool.startsWith("loom.")
 }
@@ -2938,6 +4592,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
   id: "loom",
 
   async setup(ctx) {
+    const pluginBuild = createHash("sha256").update(await readFile(new URL(import.meta.url))).digest("hex")
+    const roleContracts = await loadLoomAgentContracts()
+    const setupInstance = randomUUID()
     const legacyStorage = ctx.storage as any
     const runtime = await resolveRuntimeIdentity(ctx.location.project.canonical, legacyStorage)
     const rawStorage = await createTransactionalStorage(runtime)
@@ -2964,6 +4621,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
     await recoverPendingReportPromotions(ctx, runtime, ctx.location.directory)
 
+    // Re-read global/worktree policy at every admission. A worktree policy
+    // replaces, rather than unions with, global grants for this checkout.
+    const currentPolicy = () => readEffectiveLocalPermissionPolicy(ctx.location.directory)
+    const policyWriteScope = async (role: string) =>
+      projectWriteOverrides((await currentPolicy()).policy, ctx.location.directory, role)
+
     const dashboardPublisher = createDashboardPublisher(scopedStorage, runtime)
     dashboardPublisher.trigger()
     dashboardPublisher.startHeartbeat()
@@ -2978,7 +4641,183 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       summary?: ReturnType<typeof safeInputSummary>
       admission?: EvidenceAdmission
       gitStageBefore?: GitStageSnapshot
+      startedAtMs?: number
+      startedAt?: string
+      commandElevationId?: string
+      generationBefore?: Record<string, string>
+      generationPaths?: string[]
+      verification?: ReturnType<typeof classifyVerificationShell>
     }>()
+
+    const assertProjectVerificationEntrypoint = async (command: string) => {
+      const entry = elevatedVerificationEntrypoint(command)
+      if (!entry) return
+      try {
+        const projectRoot = await realpath(ctx.location.directory)
+        const targetPath = await realpath(resolve(projectRoot, entry))
+        const targetRelative = relative(projectRoot, targetPath)
+        if (
+          !targetRelative ||
+          targetRelative === ".." ||
+          targetRelative.startsWith("../") ||
+          targetRelative.startsWith("..\\") ||
+          isAbsolute(targetRelative)
+        ) {
+          throw new Error("Verification entrypoint must resolve inside the current project.")
+        }
+        const targetInfo = await lstat(targetPath)
+        if (!targetInfo.isFile() && !targetInfo.isDirectory()) {
+          throw new Error("Verification entrypoint must resolve to a project file or directory.")
+        }
+      } catch (error) {
+        throw new Error(
+          "Project-local command elevation denied: " +
+          (error instanceof Error ? error.message : String(error)),
+        )
+      }
+    }
+
+
+    // A host shell can finish its tool call while the subprocess exits non-zero.
+    // Do not infer generation success from tool status alone when the shell
+    // supplies its exit/timeout metadata.
+    const generatorResultError = (result: unknown): string | undefined => {
+      let decoded = result
+      if (typeof result === "string" && result.length < 32_768 &&
+          result.trimStart().startsWith("{")) {
+        try {
+          decoded = JSON.parse(result)
+        } catch {
+          // Unstructured shell output is handled by the normal result parser.
+        }
+      }
+      const value = decoded && typeof decoded === "object" && !Array.isArray(decoded)
+        ? decoded as Record<string, unknown>
+        : undefined
+      const metadata = value?.metadata && typeof value.metadata === "object" &&
+        !Array.isArray(value.metadata)
+        ? value.metadata as Record<string, unknown>
+        : undefined
+      if (metadata?.timeout === true || value?.timeout === true) {
+        return "Generator shell execution timed out."
+      }
+      const exit = metadata?.exit ?? value?.exit ?? metadata?.exitCode ?? value?.exitCode
+      // A null exit is not an observed success (for example after a signal).
+      const hasExit = metadata && Object.prototype.hasOwnProperty.call(metadata, "exit") ||
+        value && Object.prototype.hasOwnProperty.call(value, "exit") ||
+        metadata && Object.prototype.hasOwnProperty.call(metadata, "exitCode") ||
+        value && Object.prototype.hasOwnProperty.call(value, "exitCode")
+      if (hasExit && exit !== 0 && exit !== "0") {
+        return "Generator shell execution did not exit successfully (exit: " + String(exit) + ")."
+      }
+      return safeResultError(result)
+    }
+
+    const assertProjectGenerationWrite = async (
+      workflowId: string, stepId: string, agent: string, command: string,
+    ) => {
+      const outputPaths = scopedToolWriteTargets(command)
+      if (outputPaths.length === 0) return
+      for (const path of outputPaths) {
+        const target = await classifyScopeTarget(ctx.location.directory, path)
+        if (target.kind !== "project") {
+          throw new Error(
+            "Generated output is outside this project or targets protected state: " + path,
+          )
+        }
+      }
+      const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
+      const effective = committableWriteScope(mergeWriteScope(
+        scope?.write.length ? scope.write : (artifactWriteDefaults[agent] ?? []),
+        await policyWriteScope(agent),
+      ))
+      if (!effective.length || !resourcesWithinScope(outputPaths, effective)) {
+        throw new Error(
+          "Command output is outside the current Loom write scope (" +
+          outputPaths.join(", ") +
+          "). Call loom_scope_elevate for the output files before retrying.",
+        )
+      }
+    }
+
+    // Each historical elevation record is retained by ID. At most one remains
+    // available to the same child session at any moment.
+    const currentCommandElevation = async (sessionID: string, agent: string, command: string) => {
+      const id = await ctx.storage.get(commandElevationCurrentKey(sessionID)) as string | undefined
+      const grant = id
+        ? await ctx.storage.get(commandElevationKey(id)) as CommandElevation | undefined
+        : undefined
+      if (!grant || grant.sessionID !== sessionID || grant.agent !== agent ||
+          grant.commandDigest !== verificationCommandDigest(command) || grant.consumedAt ||
+          grant.supersededAt || Date.parse(grant.expiresAt) <= Date.now()) return undefined
+      if (!(await exactRunnableStepAttemptBinding(
+        ctx, sessionID, grant.workflowId, grant.stepId,
+      ))) return undefined
+      if ((await ctx.storage.get(sessionStepAttemptKey(sessionID))) !== grant.attempt) return undefined
+      return grant
+    }
+
+    // OpenCode runs tool.execute.before before the shell tool's permission.assert.
+    // Consumption is single-use, but the host must still authorize the exact
+    // in-flight tool call after the receipt becomes consumed.
+    const consumedCommandElevationForPermission = async (event: any) => {
+      if (event.action !== "shell" || !Array.isArray(event.resources) ||
+          event.resources.length === 0 ||
+          !event.resources.every((resource: unknown) => typeof resource === "string")) return false
+      const source = event.source
+      if (source?.type !== "tool" || typeof source.id !== "string" ||
+          !source.id || typeof source.messageID !== "string") return false
+
+      // Permission.Source identifies the original shell/bash call even when
+      // OpenCode's shell scanner splits a pipeline into multiple resources.
+      for (const tool of ["shell", "bash"]) {
+        const key = observationCallKey({
+          sessionID: event.sessionID, messageID: source.messageID,
+          id: source.id, tool,
+        })
+        const pending = key ? pendingObservations.get(key) : undefined
+        if (!pending?.ready || pending.ambiguous || !pending.commandElevationId) continue
+        const grant = await ctx.storage.get(
+          commandElevationKey(pending.commandElevationId),
+        ) as CommandElevation | undefined
+        if (!grant || grant.sessionID !== event.sessionID ||
+            grant.agent !== event.agent || grant.kind !== "unrestricted" ||
+            !grant.consumedAt || grant.observationId) continue
+        if (!(await exactRunnableStepAttemptBinding(
+          ctx, grant.sessionID, grant.workflowId, grant.stepId,
+        ))) continue
+        if ((await ctx.storage.get(sessionStepAttemptKey(grant.sessionID))) !== grant.attempt) continue
+        return true
+      }
+      return false
+    }
+
+    const consumeCommandElevation = async (
+      sessionID: string, agent: string, command: string,
+      stepAuthorityAlreadyLocked = false,
+    ) => {
+      const observed = await currentCommandElevation(sessionID, agent, command)
+      if (!observed) return undefined
+      const consume = async () => {
+        const grant = await currentCommandElevation(sessionID, agent, command)
+        if (!grant || grant.id !== observed.id) return undefined
+        await assertCurrentStepPlanAdmission(ctx, grant.workflowId, grant.stepId)
+        if (agent === "worker") await assertWorkerWorkClaim(ctx, grant.workflowId, grant.stepId)
+        const consumed = { ...grant, consumedAt: new Date().toISOString() }
+        await ctx.storage.set(commandElevationKey(grant.id), consumed)
+        return consumed
+      }
+      // A generated-file tool call already holds the step-authority lock
+      // through acquireGitWriteLocks. Re-acquiring it here would deadlock.
+      // The same held lock serializes grant consumption with grant issuance.
+      return stepAuthorityAlreadyLocked
+        ? consume()
+        : withRuntimeLocks(runtime, [
+            { aggregate: "workflow", resourceIdentity: observed.workflowId },
+            stepAuthorityResource(observed.workflowId, observed.stepId),
+          ], consume)
+    }
+
     const activeGitWriteCalls = new Map<
       string,
       { paths: string[]; release: () => Promise<void> }
@@ -3063,6 +4902,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       directMutationPaths: string[],
     ) => {
       if (directMutationPaths.length === 0 || !raw.sessionID) return
+      if ((await Promise.all(directMutationPaths.map((p) =>
+        targetsEffectiveLocalPermissionPolicy(ctx.location.directory, p),
+      ))).some(Boolean)) {
+        throw new Error("Loom policy YAML is user-owned and cannot be edited by an agent.")
+      }
 
       const sessionID = String(raw.sessionID)
       const workflowId = (await ctx.storage.get(
@@ -3074,6 +4918,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       if (!raw.agent) return
       const agent = String(raw.agent)
+      if (agent === "brainstorm" && directMutationPaths.length > 0) {
+        throw new Error("Brainstorm advisory work cannot mutate, generate, commit or execute commands.")
+      }
 
       const commitMessagePaths = directMutationPaths.filter((path) =>
         roleCommitMessagePath(agent, path),
@@ -3118,6 +4965,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             hardBoundaryPaths,
           )
         ) {
+          if (agent !== "general") {
+            if (!workflowId || !stepId) {
+              throw new Error(
+                `${agent} hard-boundary mutation requires the exact attached current Loom step.`,
+              )
+            }
+            await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+          }
           return
         }
         throw new Error(
@@ -3135,6 +4990,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             `${agent} mutation requires the exact attached current runnable Loom step attempt.`,
           )
         }
+        await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
         if (agent === "worker") {
           await assertWorkerWorkClaim(ctx, workflowId, stepId)
         }
@@ -3147,9 +5003,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const effectiveWriteScope =
         agent === "general"
           ? generalGitWriteScope
-          : declaredScope?.write.length
-            ? declaredScope.write
-            : (artifactWriteDefaults[agent] ?? [])
+          : mergeWriteScope(
+              declaredScope?.write.length
+                ? declaredScope.write : (artifactWriteDefaults[agent] ?? []),
+              await policyWriteScope(agent),
+            )
 
       if (commitMessagePaths.length > 0) {
         if (committableWriteScope(effectiveWriteScope).length === 0) {
@@ -3263,8 +5121,39 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         )) as TaskScope | undefined
         if (scope?.write.length) writeScope = scope.write
       }
+      if (raw.agent !== "general") {
+        writeScope = mergeWriteScope(writeScope, await policyWriteScope(String(raw.agent ?? "")))
+      }
       writeScope = committableWriteScope(writeScope)
 
+      const operation = scopedGitFileMutation(command)
+      const explicitCommitPaths = gitCommitPaths(command)
+      const scopedTargets = [...(scopedGitAddTargets(command) ?? []),
+        ...(operation?.paths ?? []), ...explicitCommitPaths]
+      if (scopedTargets.length > 0) {
+        const root = await realpath(ctx.location.directory)
+        const input = raw.input as Record<string, unknown>
+        for (const alternate of [input.cwd, input.workdir].filter((v) => v !== undefined)) {
+          const target = typeof alternate === "string"
+            ? (isAbsolute(alternate) ? alternate : resolve(root, alternate)) : ""
+          if (!target || await realpath(target).catch(() => "") !== root) {
+            throw new Error("Scoped Git file operations must execute from the current worktree root.")
+          }
+        }
+        await assertExplicitGitFiles(ctx.location.directory, scopedTargets)
+      }
+      if (operation) {
+        const error = await scopedGitFileOperationError(
+          ctx, String(raw.sessionID), ctx.location.directory, operation, writeScope,
+        )
+        if (error) throw new Error(error)
+        if (operation.stagesChanges) {
+          const conflict = await gitIndexConflictError(
+            ctx, String(raw.sessionID), ctx.location.directory, operation.paths,
+          )
+          if (conflict) throw new Error(conflict)
+        }
+      }
       const addTargets = scopedGitAddTargets(command) ?? []
       if (addTargets.length > 0) {
         if (
@@ -3309,53 +5198,57 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           "Git commit denied: the current step has no committable Loom write scope.",
         )
       }
-      const error = await commitScopeError(
-        ctx,
-        String(raw.sessionID),
-        ctx.location.directory,
-        writeScope,
-        true,
-      )
+      const error = explicitCommitPaths.length
+        ? await explicitGitCommitError(
+            ctx, String(raw.sessionID), ctx.location.directory, explicitCommitPaths, writeScope,
+          )
+        : await commitScopeError(
+            ctx, String(raw.sessionID), ctx.location.directory, writeScope, true,
+          )
       if (error) throw new Error(error)
       if (String(raw.agent ?? "") === "reviewer") {
-        const acceptanceError = await reviewerAcceptanceStagedCommitError(
-          ctx,
-          String(raw.sessionID),
-          ctx.location.directory,
-        )
+        const acceptanceError = explicitCommitPaths.length
+          ? await reviewerAcceptanceCommitError(ctx.location.directory, explicitCommitPaths, "worktree")
+          : await reviewerAcceptanceStagedCommitError(
+              ctx, String(raw.sessionID), ctx.location.directory,
+            )
         if (acceptanceError) throw new Error(acceptanceError)
       }
     }
+
+
     const legacyCheckedSessions = new Set<string>()
     const ensureLegacySession = async (sessionID: string) => {
-      if (legacyCheckedSessions.has(sessionID)) return
-      if (await scopedStorage.get(`session-deletion-fence/${sessionID}`) !== undefined) {
+      return withCoordinatorAdmission(sessionID, async () => {
+        if (legacyCheckedSessions.has(sessionID)) return
+        if (await scopedStorage.get(`session-deletion-fence/${sessionID}`) !== undefined) {
+          legacyCheckedSessions.add(sessionID)
+          return
+        }
+        const session = await ctx.session.get({ sessionID })
+        const sessionProjectId =
+          typeof session.projectID === "string" ? session.projectID : ""
+        const currentProjectId =
+          typeof ctx.location.project.id === "string" ? ctx.location.project.id : ""
+        const resumeProof =
+          typeof session.id === "string" &&
+          session.id === sessionID &&
+          sessionProjectId.length > 0 &&
+          currentProjectId.length > 0
+            ? {
+                kind: "opencode-host-session" as const,
+                sessionId: session.id,
+                projectId: sessionProjectId,
+              }
+            : undefined
+        await migrateLegacySessionState(legacyStorage, scopedStorage, runtime, {
+          sessionId: sessionID,
+          sessionProjectId,
+          currentProjectId,
+          ...(resumeProof ? { resumeProof } : {}),
+        })
         legacyCheckedSessions.add(sessionID)
-        return
-      }
-      const session = await ctx.session.get({ sessionID })
-      const sessionProjectId =
-        typeof session.projectID === "string" ? session.projectID : ""
-      const currentProjectId =
-        typeof ctx.location.project.id === "string" ? ctx.location.project.id : ""
-      const resumeProof =
-        typeof session.id === "string" &&
-        session.id === sessionID &&
-        sessionProjectId.length > 0 &&
-        currentProjectId.length > 0
-          ? {
-              kind: "opencode-host-session" as const,
-              sessionId: session.id,
-              projectId: sessionProjectId,
-            }
-          : undefined
-      await migrateLegacySessionState(legacyStorage, scopedStorage, runtime, {
-        sessionId: sessionID,
-        sessionProjectId,
-        currentProjectId,
-        ...(resumeProof ? { resumeProof } : {}),
       })
-      legacyCheckedSessions.add(sessionID)
     }
 
     // A resumed pre-epoch child can first return through a host/MCP tool rather
@@ -3415,6 +5308,36 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       return undefined
     }
 
+    const captureCoordinatorTuple = async (sessionID: string) => {
+      const read = async () => [
+        await scopedStorage.get(sessionKey(sessionID)),
+        await scopedStorage.get(sessionAttachmentKey(sessionID)),
+        await scopedStorage.get(sessionStepKey(sessionID)),
+        await scopedStorage.get(sessionStepAttemptKey(sessionID)),
+        await scopedStorage.get(sessionOqKey(sessionID)),
+        await scopedStorage.get(sessionPlanReviewKey(sessionID)),
+      ]
+      return scopedStorage.readTransaction
+        ? scopedStorage.readTransaction(read)
+        : scopedStorage.transaction ? scopedStorage.transaction(read) : read()
+    }
+
+    const withCoordinatorAdmission = async <T>(sessionID: string, fn: () => Promise<T>) => {
+      if (!sessionID) throw new Error("Loom coordinator admission requires the authenticated host session.")
+      const inherited = heldCoordinatorAdmissions.getStore()
+      if (inherited?.has(sessionID)) return fn()
+      const observed = await captureCoordinatorTuple(sessionID)
+      return withRuntimeAdvisoryLock(runtime, "session-coordinator", sessionID, async () => {
+        const current = await captureCoordinatorTuple(sessionID)
+        if (JSON.stringify(current) !== JSON.stringify(observed)) {
+          throw new Error("Session workflow attachment changed while this Loom invocation waited; retry it.")
+        }
+        const held = new Set(inherited ?? [])
+        held.add(sessionID)
+        return heldCoordinatorAdmissions.run(held, fn)
+      })
+    }
+
     const cleanupDiagnosticSandboxesForWorkflow = async (workflowId: string) => {
       const destroyed: string[] = []
       const errors: Array<{ sandboxId: string; error: string }> = []
@@ -3470,23 +5393,39 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
     await ctx.agent.transform((editor) => {
       if (editor.get("general")) editor.default("general")
+      // Loom's host-side permissions are optional: portable agent definitions
+      // have no Loom-only permission rules when the plugin is disabled.
+      for (const role of LOOM_CONTRACT_ROLES) {
+        if (!editor.get(role)) continue
+        editor.update(role, (agent) => {
+          agent.permissions = [
+            ...(agent.permissions ?? []),
+            ...LOOM_ROLE_PERMISSIONS[role].map((rule) => ({ ...rule })),
+          ]
+        })
+      }
     })
 
     await ctx.tool.transform((editor) => {
+      let expectedRosterRegistration: unknown
       const addLoomTool: typeof editor.add = (definition) => {
         const execute = definition.execute
-        editor.add({
-          ...definition,
-          execute: async (input, tool) => {
-            try {
+        const registeredExecute = async (input: Parameters<typeof execute>[0], tool: Parameters<typeof execute>[1]) => {
+          try {
+            return await withCoordinatorAdmission(tool.sessionID, async () => {
               await ensureLegacyCancellationBoundary(tool.sessionID)
               await assertLoomToolAdmission(ctx.storage as any, definition.name, input, tool)
-              return await execute(input, tool)
-            } catch (error) {
-              if (!(error instanceof WorkflowCancelledError)) throw error
-              return { content: renderToolOutput({ error: error.message }) }
-            }
-          },
+              return execute(input, tool)
+            })
+          } catch (error) {
+            if (!(error instanceof WorkflowCancelledError)) throw error
+            return { content: renderToolOutput({ error: error.message }) }
+          }
+        }
+        if (definition.name === "roster") expectedRosterRegistration = registeredExecute
+        editor.add({
+          ...definition,
+          execute: registeredExecute,
         })
       }
 
@@ -3495,6 +5434,91 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         description: "Loom workflow control, shared questions, routing, step state, and bounded project inspection.",
       })
 
+
+      addLoomTool({
+        name: "attestation",
+        description:
+          "Read-only metadata attestation for this live Loom plugin setup instance. Reports bounded provenance and roster-tool registration identity only; never invokes or returns roster data.",
+        input: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (_input, tool) => {
+          if (tool.agent !== "general" && tool.agent !== "planner") {
+            throw new Error("The live plugin attestation is available only to General and Planner.")
+          }
+
+          const registrations = await ctx.tool.list()
+          const rosterRegistrations = registrations.filter(({ id }) => id === "loom_roster")
+          if (
+            !expectedRosterRegistration ||
+            rosterRegistrations.length !== 1 ||
+            rosterRegistrations[0]?.execute !== expectedRosterRegistration
+          ) {
+            throw new Error("The effective production roster registration is unknown or was overridden.")
+          }
+
+          return {
+            content: renderToolOutput({
+              provenance: {
+                worktree: runtime.canonicalLocation,
+                entrypoint: import.meta.url,
+                buildFingerprint: pluginBuild,
+                setupInstance,
+                rosterRegistration: { id: "loom_roster", present: true },
+              },
+            }),
+          }
+        },
+      })
+
+      addLoomTool({
+        name: "roster",
+        description:
+          "Read-only live OpenCode agent names/descriptions with separate bounded Loom planning advice. General and Planner only; advice is not permission or proof of Task/OQ path support.",
+        input: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (_input, tool) => {
+          if (tool.agent !== "general" && tool.agent !== "planner") {
+            throw new Error("The live host roster is available only to General and Planner.")
+          }
+
+          const roster = await ctx.agent.list({
+            location: { directory: runtime.canonicalLocation },
+          })
+          if (roster.location.directory !== runtime.canonicalLocation) {
+            throw new Error("OpenCode returned an agent roster for a different worktree.")
+          }
+          const agents = roster.data
+          const maxAgents = 200
+          const maxNameLength = 128
+          const maxDescriptionLength = 2_000
+          return {
+            content: renderToolOutput({
+              agents: agents.slice(0, maxAgents).map(({ name, description }) => ({
+                name: name.slice(0, maxNameLength),
+                description: typeof description === "string"
+                  ? description.slice(0, maxDescriptionLength)
+                  : "",
+              })),
+              truncated: agents.length > maxAgents,
+              planningInsights: loomPlanningInsights(agents.slice(0, maxAgents).map(({ name }) => name)),
+              provenance: {
+                plugin: "loom",
+                worktree: runtime.canonicalLocation,
+                entrypoint: import.meta.url,
+                build: pluginBuild,
+              },
+            }),
+          }
+        },
+      })
 
       addLoomTool({
         name: "find",
@@ -3653,26 +5677,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({ error: "Only Diagnostic may create a diagnostic experiment sandbox." }) }
           }
 
-          const workflowId = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
-          const stepId = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
-          if (
-            !workflowId ||
-            !stepId ||
-            !(await exactRunnableStepAttemptBinding(ctx, tool.sessionID, workflowId, stepId))
-          ) {
+          const target = await currentDiagnosticSandboxAttachment(ctx, tool.sessionID)
+          if (!target) {
             return {
               content: renderToolOutput({
-                error:
-                  "Diagnostic sandbox experiments require attachment to the exact current runnable Diagnostic step attempt.",
+                error: "Diagnostic sandbox tools require attachment to an exact runnable Diagnostic step or unanswered Diagnostic OQ for the current attempt.",
               }),
             }
           }
-
-          const workflow = await readWorkflow(ctx, workflowId)
-          const step = workflow?.steps.find((candidate) => candidate.id === stepId)
-          if (!step || step.agent !== "diagnostic") {
-            return { content: renderToolOutput({ error: "Current attached step is not owned by Diagnostic." }) }
-          }
+          const { workflowId } = target
 
           return withRuntimeAdvisoryLock(
             runtime,
@@ -3701,8 +5714,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   projectId: runtime.projectId,
                   sessionId: tool.sessionID,
                   workflowId,
-                  stepId,
-                  attempt: step.attempt ?? 0,
+                  stepId: target.stepId,
+                  ...(target.questionId ? { questionId: target.questionId } : {}),
+                  attempt: target.attempt,
                   image: resolvedRuntime.reference,
                   imageId: resolvedRuntime.id,
                   network: value.network,
@@ -3714,12 +5728,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   "workflow",
                   workflowId,
                   async () => {
-                    if (!(await exactRunnableStepAttemptBinding(
-                      ctx,
-                      tool.sessionID,
-                      workflowId,
-                      stepId,
-                    ))) return false
+                    if (!diagnosticSandboxMatchesTarget(
+                      sandbox!, await currentDiagnosticSandboxAttachment(ctx, tool.sessionID),
+                    )) return false
                     await ctx.storage.set(key, sandbox!)
                     return true
                   },
@@ -3728,7 +5739,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   return {
                     content: renderToolOutput({
                       error:
-                        "Diagnostic step changed before sandbox creation began. Attach to the current attempt before creating a new sandbox.",
+                        "Diagnostic step/OQ changed before sandbox creation began. Attach to the current attempt before creating a new sandbox.",
                     }),
                   }
                 }
@@ -3758,24 +5769,21 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       throw error
                     }
 
-                    if (!(await exactRunnableStepAttemptBinding(
-                      ctx,
-                      tool.sessionID,
-                      workflowId,
-                      stepId,
-                    ))) {
+                    if (!diagnosticSandboxMatchesTarget(
+                      current, await currentDiagnosticSandboxAttachment(ctx, tool.sessionID),
+                    )) {
                       try {
                         await destroyDiagnosticSandbox(current)
                         await ctx.storage.set(key, current)
                       } catch (cleanupError) {
                         await ctx.storage.set(key, current).catch(() => undefined)
                         throw new Error(
-                          "Diagnostic step changed while the sandbox snapshot was being created, and sandbox cleanup failed: " +
+                          "Diagnostic step/OQ changed while the sandbox snapshot was being created, and sandbox cleanup failed: " +
                           (cleanupError instanceof Error ? cleanupError.message : String(cleanupError)),
                         )
                       }
                       throw new Error(
-                        "Diagnostic step changed while the sandbox snapshot was being created. Attach to the current attempt before creating a new sandbox.",
+                        "Diagnostic step/OQ changed while the sandbox snapshot was being created. Attach to the current attempt before creating a new sandbox.",
                       )
                     }
 
@@ -3846,22 +5854,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 return { content: renderToolOutput({ error: "Active Diagnostic sandbox not found for this session." }) }
               }
 
-              const workflowId = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
-              const stepId = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
-              const workflow = workflowId ? await readWorkflow(ctx, workflowId) : undefined
-              const step = workflow?.steps.find((candidate) => candidate.id === stepId)
-              if (
-                !workflowId ||
-                !stepId ||
-                workflowId !== currentSandbox.workflowId ||
-                stepId !== currentSandbox.stepId ||
-                (step?.attempt ?? -1) !== currentSandbox.attempt ||
-                !(await exactRunnableStepAttemptBinding(ctx, tool.sessionID, workflowId, stepId))
-              ) {
+              if (!diagnosticSandboxMatchesTarget(
+                currentSandbox, await currentDiagnosticSandboxAttachment(ctx, tool.sessionID),
+              )) {
                 return {
                   content: renderToolOutput({
                     error:
-                      "Diagnostic sandbox belongs to an older or different step attempt. Destroy it and attach to current diagnosis before further experiments.",
+                      "Diagnostic sandbox belongs to an older or different step attempt (or Diagnostic OQ attempt). Destroy it and attach to current diagnosis before further experiments.",
                   }),
                 }
               }
@@ -3914,22 +5913,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 return { content: renderToolOutput({ error: "Active Diagnostic sandbox not found for this session." }) }
               }
 
-              const workflowId = (await ctx.storage.get(sessionKey(tool.sessionID))) as string | undefined
-              const stepId = (await ctx.storage.get(sessionStepKey(tool.sessionID))) as string | undefined
-              const workflow = workflowId ? await readWorkflow(ctx, workflowId) : undefined
-              const step = workflow?.steps.find((candidate) => candidate.id === stepId)
-              if (
-                !workflowId ||
-                !stepId ||
-                workflowId !== currentSandbox.workflowId ||
-                stepId !== currentSandbox.stepId ||
-                (step?.attempt ?? -1) !== currentSandbox.attempt ||
-                !(await exactRunnableStepAttemptBinding(ctx, tool.sessionID, workflowId, stepId))
-              ) {
+              if (!diagnosticSandboxMatchesTarget(
+                currentSandbox, await currentDiagnosticSandboxAttachment(ctx, tool.sessionID),
+              )) {
                 return {
                   content: renderToolOutput({
                     error:
-                      "Diagnostic sandbox belongs to an older or different step attempt. Historical sandbox evidence cannot be rebound into the current diagnosis.",
+                      "Diagnostic sandbox belongs to an older or different step attempt (or Diagnostic OQ attempt). Historical sandbox evidence cannot be rebound into the current diagnosis.",
                   }),
                 }
               }
@@ -4455,8 +6445,209 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       })
 
       addLoomTool({
+        name: "resume",
+        description:
+          "Restore this General coordinator's access to its own existing workflow after a completed current workflow. This changes access only; it does not dispatch work. General only.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            fromWorkflowId: { type: "string" },
+          },
+          required: ["workflowId", "fromWorkflowId"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general") {
+            return { content: renderToolOutput({ error: "Only general may restore coordinator workflow access." }) }
+          }
+
+          const { workflowId, fromWorkflowId } = input as {
+            workflowId: string
+            fromWorkflowId: string
+          }
+          if (!workflowId?.trim() || !fromWorkflowId?.trim()) {
+            return { content: renderToolOutput({ error: "Both workflowId and fromWorkflowId are required." }) }
+          }
+
+          const sourceSnapshot = await readWorkflow(ctx, fromWorkflowId)
+          const targetSnapshot = await readWorkflow(ctx, workflowId)
+          if (!sourceSnapshot || !targetSnapshot) {
+            return { content: renderToolOutput({ error: "Source or target workflow is unavailable in this project." }) }
+          }
+          const sourceSnapshotError = workflowRecordError(
+            sourceSnapshot,
+            fromWorkflowId,
+            runtime.projectId,
+            tool.sessionID,
+          )
+          const targetSnapshotError = workflowRecordError(
+            targetSnapshot,
+            workflowId,
+            runtime.projectId,
+            tool.sessionID,
+          )
+          if (sourceSnapshotError || targetSnapshotError) {
+            return {
+              content: renderToolOutput({ error: sourceSnapshotError ?? targetSnapshotError }),
+            }
+          }
+          const workIds = [...new Set([
+            sourceSnapshot.work?.objectiveId,
+            targetSnapshot.work?.objectiveId,
+          ].filter((id): id is string => Boolean(id)))]
+          const resources = [
+            ...new Set([fromWorkflowId, workflowId]).values(),
+          ].map((id) => ({ aggregate: "workflow", resourceIdentity: id }))
+          resources.push(...workIds.map((id) => ({ aggregate: "work", resourceIdentity: id })))
+
+          try {
+            const result = await withRuntimeLocks(runtime, resources, async () => {
+              const currentBinding = await ctx.storage.get(sessionKey(tool.sessionID))
+              if (currentBinding !== fromWorkflowId) {
+                throw new Error("Current coordinator binding does not match fromWorkflowId; no workflow was changed.")
+              }
+
+              const source = await readWorkflow(ctx, fromWorkflowId)
+              const target = await readWorkflow(ctx, workflowId)
+              if (!source || !target) throw new Error("Source or target workflow disappeared before restoration.")
+              const sourceRecordError = workflowRecordError(source, fromWorkflowId, runtime.projectId, tool.sessionID)
+              const targetRecordError = workflowRecordError(target, workflowId, runtime.projectId, tool.sessionID)
+              if (sourceRecordError || targetRecordError) throw new Error(sourceRecordError ?? targetRecordError)
+              if (
+                source.work?.objectiveId !== sourceSnapshot.work?.objectiveId ||
+                source.work?.generation !== sourceSnapshot.work?.generation ||
+                target.work?.objectiveId !== targetSnapshot.work?.objectiveId ||
+                target.work?.generation !== targetSnapshot.work?.generation
+              ) {
+                throw new Error("Workflow Objective/Plan association changed concurrently; inspect and retry restoration.")
+              }
+
+              const validateLifecycleAndWork = async (workflow: Workflow) => {
+                if (workflow.cancellation) throw new Error(`Workflow ${workflow.id} is cancelled.`)
+                if (await ctx.storage.get(`workflow-deletion/${workflow.id}`) !== undefined) {
+                  throw new Error(`Workflow ${workflow.id} is deleted and cannot be restored.`)
+                }
+                if ((workflow as Workflow & { archived?: unknown }).archived) {
+                  throw new Error(`Workflow ${workflow.id} is archived and cannot be restored.`)
+                }
+                if (!workflow.work) return
+                const work = await readWork(ctx, workflow.work.objectiveId)
+                const hasGeneration = Boolean(work) && (
+                  (workflow.work.generation === 0 && work!.generation === 0) ||
+                  work!.plans?.some((plan) => plan.generation === workflow.work!.generation) ||
+                  work!.nodes.some((node) => node.generation === workflow.work!.generation)
+                )
+                if (
+                  !work || work.objectiveId !== workflow.work.objectiveId ||
+                  work.anchor !== workflow.anchor || objectiveIdForAnchor(work.anchor) !== workflow.work.objectiveId ||
+                  !work.workflowIds.includes(workflow.id) || !hasGeneration
+                ) {
+                  throw new Error(`Workflow ${workflow.id} has an inconsistent Objective/Plan association.`)
+                }
+              }
+
+              await validateLifecycleAndWork(target)
+              if (currentBinding === workflowId) {
+                return { status: "already_current" as const }
+              }
+
+              const sourceCompletionError = await successfulSourceWorkflowError(ctx, source)
+              if (sourceCompletionError) throw new Error(sourceCompletionError)
+              await validateLifecycleAndWork(source)
+
+              const now = Date.now()
+              let after: string | undefined
+              do {
+                const page = await ctx.storage.scan({
+                  prefix: "dispatch-grant/",
+                  limit: 100,
+                  ...(after ? { after } : {}),
+                })
+                for (const entry of page.entries ?? []) {
+                  const value = entry.value as Record<string, unknown> | undefined
+                  const relevantById = value?.workflowId === source.id || value?.workflowId === target.id
+                  if (!value || typeof value !== "object") {
+                    throw new Error("Malformed dispatch-grant record prevents safe restoration.")
+                  }
+                  if (typeof value.workflowId !== "string" || !value.workflowId ||
+                      typeof value.projectId !== "string" || !value.projectId) {
+                    throw new Error("Malformed dispatch-grant ownership prevents safe restoration.")
+                  }
+                  if (value.projectId !== runtime.projectId || !relevantById) continue
+                  const grantKey = typeof entry.key === "string" &&
+                    entry.key.startsWith(`project/${runtime.projectId}/`)
+                    ? entry.key.slice(`project/${runtime.projectId}/`.length)
+                    : entry.key
+                  const valid = value.schemaVersion === 1 &&
+                    typeof value.grantId === "string" && value.grantId.length > 0 &&
+                    grantKey === `dispatch-grant/${value.grantId}` &&
+                    typeof value.projectId === "string" && value.projectId === runtime.projectId &&
+                    typeof value.workflowId === "string" &&
+                    typeof value.expectedAgent === "string" && value.expectedAgent.length > 0 &&
+                    typeof value.issuingParentSessionId === "string" && value.issuingParentSessionId.length > 0 &&
+                    typeof value.createdAt === "string" && Number.isFinite(Date.parse(value.createdAt)) &&
+                    typeof value.expiresAt === "string" && Number.isFinite(Date.parse(value.expiresAt)) &&
+                    ((typeof value.stepId === "string" && value.stepId.length > 0) !==
+                      (typeof value.oqId === "string" && value.oqId.length > 0)) &&
+                    ["admittedAt", "admittedDispatchId", "consumedAt", "consumingSessionId", "revokedAt"]
+                      .every((key) => value[key] === undefined || (
+                        typeof value[key] === "string" &&
+                        (key.endsWith("At") ? Number.isFinite(Date.parse(value[key] as string)) : value[key].length > 0)
+                      )) &&
+                    ((value.admittedAt === undefined) === (value.admittedDispatchId === undefined)) &&
+                    ((value.consumedAt === undefined) === (value.consumingSessionId === undefined))
+                  if (!valid) throw new Error("Malformed relevant dispatch grant prevents safe restoration.")
+                  const activeUnused = value.admittedAt === undefined &&
+                    value.consumedAt === undefined && value.revokedAt === undefined &&
+                    Date.parse(value.expiresAt as string) > now
+                  if (activeUnused) {
+                    throw new Error("An unadmitted unused dispatch grant is still valid for the source or target workflow.")
+                  }
+                }
+                after = page.next
+              } while (after)
+
+              const at = new Date(now).toISOString()
+              const transitionId = randomUUID()
+              await ctx.storage.set(sessionKey(tool.sessionID), workflowId)
+              await ctx.storage.set(sessionAttachmentKey(tool.sessionID), transitionId)
+              await ctx.storage.set(sessionStepKey(tool.sessionID), "")
+              await ctx.storage.set(sessionStepAttemptKey(tool.sessionID), null)
+              await ctx.storage.set(sessionOqKey(tool.sessionID), "")
+              await ctx.storage.set(sessionOqAttemptKey(tool.sessionID), null)
+              await ctx.storage.set(sessionPlanReviewKey(tool.sessionID), null)
+              await ctx.storage.set(`session-resumption/${encodeURIComponent(tool.sessionID)}`, {
+                schemaVersion: 1,
+                transitionId,
+                projectId: runtime.projectId,
+                coordinatorSessionId: tool.sessionID,
+                sourceWorkflowId: source.id,
+                targetWorkflowId: workflowId,
+                at,
+              })
+              return { status: "resumed" as const, at }
+            })
+
+            return {
+              content: renderToolOutput({
+                ...result,
+                fromWorkflowId,
+                workflowId,
+                changedOnlyCoordinatorAccess: result.status === "resumed",
+                workDispatched: false,
+              }),
+            }
+          } catch (error) {
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
+      })
+
+      addLoomTool({
         name: "start",
-        description: "Start governed Loom execution for an accepted Anchor or a bounded committed task. Ordinary conversation/investigation does not require this tool. General only.",
+        description: "General only. Start one governed Loom workflow after the user has authorized a change, using exactly one accepted Anchor path or a bounded committed request. Conversational explanation, investigation and standalone assessment do not need a workflow. This creates the workflow record, not a child dispatch: use loom_route to classify it and obtain its first eligible steps. Rejected input grants no work authority.",
         input: {
           type: "object",
           properties: {
@@ -4553,6 +6744,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               await ctx.storage.set(sessionStepKey(tool.sessionID), "")
               await ctx.storage.set(sessionStepAttemptKey(tool.sessionID), null)
               await ctx.storage.set(sessionOqKey(tool.sessionID), "")
+              await ctx.storage.set(sessionOqAttemptKey(tool.sessionID), null)
               if (intent?.acceptedAnchor?.path === anchor) {
                 await ctx.storage.set(sessionIntentKey(tool.sessionID), "")
               }
@@ -4581,7 +6773,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "route",
         description:
-          "Classify or reclassify accepted work and create the required Loom execution DAG. General only.",
+          "General only. After loom_start, select the smallest justified execution depth and only unresolved domain-authority flags; ordinary UI/code changes do not automatically require new authority. Creates or updates the authoritative Loom step DAG and returns runnable steps/continuation guidance. Does not dispatch agents or authorize bypass of gates; dispatch uses loom_dispatch_grant after reading current status.",
         input: {
           type: "object",
           properties: {
@@ -4823,7 +7015,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
       addLoomTool({
         name: "status",
-        description: "Inspect Loom progress, current/next work, blockers, OQs, verification, and budget. Compact by default; detail=true returns internals. Interactive status is available independently through Loom's stable dashboard workflow URL exposed in the sidebar; the tool also returns browser-safe presentation metadata as a convenience. OpenCode Desktop browser preview is optional metadata only and must not be invoked merely because presentation metadata exists. Presentation availability never blocks or alters Loom workflow state.",
+        description: "Inspect current Loom workflow truth: ready/blocked DAG steps, dispatch admission, unknown execution liveness, completion/PASS constraints, questions, verification and budget. For General, nextActions names candidate loom_dispatch_grant calls for currently admitted steps; candidates are NOT grants, do not prove no child is already running, and are rechecked by the target tool. Reinspect status after child return or a change in intent. Compact by default; detail=true returns internals. The sidebar dashboard is an independent display; presentation metadata is optional and never alters workflow state.",
         input: {
           type: "object",
           properties: {
@@ -4893,6 +7085,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             boundaryAfter = page.next
           } while (boundaryAfter)
 
+          const stepReadiness = await statusStepReadiness(
+            ctx,
+            workflow,
+            questions,
+            work,
+            budget,
+            limits,
+          )
           const view = buildStatusView(
             workflow,
             questions,
@@ -4901,10 +7101,20 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             acceptance,
             knowledge,
             work,
+            stepReadiness,
           )
+          const nextActions = tool.agent === "general"
+            ? candidateLoomTransitions(view.workflowId, view.readiness)
+            : []
           const artifact = await writeStatusArtifact(runtime, view).catch(() => undefined)
           const presentation = statusPresentation(artifact)
           let compact = renderStatusMarkdown(view, artifact)
+          if (nextActions.length > 0) {
+            compact += "\n\n### Candidate next actions (revalidated at call time)\n" +
+              nextActions.map(({ agent, input }) =>
+                `- Request \`loom_dispatch_grant\` for \`${input.stepId}\` (${agent}); execution liveness remains unknown.`
+              ).join("\n")
+          }
           if (scopeElevations.length > 0 || pendingHardBoundaries.length > 0) {
             const lines = ["", "### Scope activity"]
             for (const elevation of scopeElevations.slice(-8)) {
@@ -4948,6 +7158,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 content: renderToolOutput(
                   {
                     ...view,
+                    nextActions,
                     scopeActivity,
                     ...(presentation ? { presentation } : {}),
                   },
@@ -4961,9 +7172,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           return {
             content: renderToolOutput({
-              summary: view,
+              summary: { ...view, nextActions },
               workflow,
-              runnable: runnable(workflow).map((step) => ({ id: step.id, agent: step.agent })),
+              dagRunnable: runnable(workflow).map((step) => ({ id: step.id, agent: step.agent })),
               questions: questionState(questions, workflow),
               verification: workflow.verification ?? [],
               budget: { limits, state: budget },
@@ -4981,7 +7192,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "complete",
         description:
-          "Finish one Loom step. Work uses complete; Reviewer/Critic gates use pass or fail. Blocking OQs must be answered and reconciled by this step first.",
+          "Complete only the exact currently attached Loom step after verifying its outcome and required evidence; this is a durable state change, not a progress comment. Producer work uses complete; independent Reviewer/Critic gates use pass or fail. Blocking OQs must be answered and reconciled before completion. Denial leaves the step incomplete; do not claim PASS from model prose, stale receipts, or successful tool invocation alone.",
         input: {
           type: "object",
           properties: {
@@ -4989,17 +7200,28 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             stepId: { type: "string" },
             summary: { type: "string" },
             outcome: { type: "string", enum: ["complete", "pass", "fail"] },
+            adviceResolutions: {
+              type: "array", maxItems: MAX_TASK_CONTEXT_ITEMS,
+              items: { type: "object", properties: {
+                taskId: { type: "string", pattern: "^[a-z0-9][a-z0-9-]*$", maxLength: 96 },
+                resultDigest: { type: "string", pattern: "^[0-9a-f]{64}$" },
+                disposition: { type: "string", enum: ["adopted", "rejected", "deferred"] },
+                rationale: { type: "string", minLength: 1, maxLength: MAX_TASK_TEXT_LENGTH },
+                resolutionRef: { type: "string", minLength: 1, maxLength: MAX_TASK_TEXT_LENGTH },
+              }, required: ["taskId", "resultDigest", "disposition", "rationale", "resolutionRef"], additionalProperties: false },
+            },
           },
           required: ["workflowId", "stepId", "summary"],
           additionalProperties: false,
         },
         options: { namespace: "loom", codemode: false },
         execute: async (input, tool) => {
-          const { workflowId, stepId, summary, outcome } = input as {
+          const { workflowId, stepId, summary, outcome, adviceResolutions } = input as {
             workflowId: string
             stepId: string
             summary: string
             outcome?: "complete" | "pass" | "fail"
+            adviceResolutions?: AdviceResolution[]
           }
 
           const workflow = await readBoundWorkflow(ctx, tool.sessionID, workflowId, ensureLegacySession)
@@ -5077,9 +7299,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             const currentFingerprint = work
               ? workflowTaskSemanticFingerprint(work, taskIds, workflow.work.generation)
               : undefined
+            const legacyFingerprint = work
+              ? legacyWorkflowTaskSemanticFingerprint(work, taskIds, workflow.work.generation)
+              : undefined
             if (
               currentFingerprint &&
-              workflow.work.taskPlanFingerprint !== currentFingerprint
+              workflow.work.taskPlanFingerprint !== currentFingerprint &&
+              workflow.work.taskPlanFingerprint !== legacyFingerprint
             ) {
               return {
                 content: renderToolOutput({
@@ -5097,7 +7323,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
           }
 
-          if (stepId === "product-acceptance") {
+          if (nativeAcceptanceGate(workflow)?.id === stepId) {
             const plan = (await ctx.storage.get(acceptanceKey(workflowId))) as AcceptancePlan | undefined
             if (!plan) {
               return { content: renderToolOutput({ error: "Product Acceptance plan is missing." }) }
@@ -5185,6 +7411,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               throw new Error("Step has unresolved blocking questions.")
             }
 
+            if (currentStep && workflow.work && requiresReviewedPlannedDispatchBinding(workflow, currentStep)) {
+              const admissionWork = await readWork(ctx, workflow.work.objectiveId)
+              if (!admissionWork) throw new Error("Persistent work hierarchy not found.")
+              assertStepDispatchAdmission(workflow, admissionWork, currentStep)
+              await assertStepHostAvailability(ctx, workflow, admissionWork, currentStep)
+            }
+
             if (tool.agent === "diagnostic" && resolvedOutcome === "complete") {
               const cleanup = await cleanupDiagnosticSandboxesForWorkflow(workflowId)
               if (cleanup.errors.length > 0) {
@@ -5232,9 +7465,31 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 )
               }
               acceptedPlanReview = binding
+              if (resolvedOutcome === "pass") {
+                const snapshot = currentWork?.plans?.find((candidate) => candidate.generation === workflow.work!.generation)
+                if (!snapshot) throw new Error("Plan role feasibility cannot be checked without the current semantic Plan.")
+                validatePlanRoleFeasibility(snapshot)
+                await assertAdviceHostPaths(ctx, currentWork, workflow.work.generation)
+              }
             }
 
+            const adviceWork = workflow.work ? await readWork(ctx, workflow.work.objectiveId) : undefined
+            if (!currentStep) throw new Error("Step not found.")
+            await validateAdviceResolutions(ctx, workflow, adviceWork, currentStep, summary, adviceResolutions)
             finishStep(workflow, stepId, tool.agent, resolvedOutcome, summary)
+            if (resolvedOutcome === "pass" && nativeAcceptanceGate(workflow)?.id === stepId) {
+              await assertCurrentAcceptanceProof(ctx, workflow, currentStep)
+            }
+            if (resolvedOutcome === "pass" && stepId === "review-implementation") {
+              for (const gate of plannedTaskSteps(workflow).filter((candidate) =>
+                nativeTaskPath(candidate.task!)?.nativeKind === "acceptance")) {
+                await assertCurrentAcceptanceProof(ctx, workflow, gate)
+              }
+            }
+            if (resolvedOutcome === "pass" && stepId === "review-product") {
+              const gate = nativeAcceptanceGate(workflow)
+              if (gate) await assertCurrentAcceptanceProof(ctx, workflow, gate)
+            }
             if (
               stepId === "review-plan" &&
               resolvedOutcome === "pass" &&
@@ -5245,9 +7500,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               workflow.work.reviewedPlanFingerprint = acceptedPlanReview.planFingerprint
             }
             evidenceBound = await bindSessionEvidence(ctx, tool.sessionID, workflowId, stepId)
+            const cleanTaskHead =
+              step.task && (step.status === "complete" || step.status === "passed")
+                ? await cleanRepositoryHead(ctx.location.directory)
+                : undefined
             const completedTaskClaims =
-              step.task && step.status === "complete"
-                ? await stepClaims(ctx, workflowId, stepId)
+              step.task && (step.status === "complete" || step.status === "passed")
+                ? (await stepClaims(ctx, workflowId, stepId)).filter(
+                    (claim) =>
+                      (claim.attempt ?? 0) === (step.attempt ?? 0) &&
+                      claim.byAgent === step.agent,
+                  )
                 : []
 
             if (
@@ -5273,8 +7536,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               const work = await readWork(ctx, workflow.work.objectiveId)
               if (!work) throw new Error("Persistent work hierarchy not found.")
 
-              assertWorkGeneration(work, workflow.work.generation)
               const taskSteps = plannedTaskSteps(workflow)
+              const currentPlan = workPlanContext(
+                work,
+                undefined,
+                "focused",
+                workflow.work.generation,
+              )
+              const preplanningCriticAdjudication =
+                stepId === "critic-solution" &&
+                taskSteps.length === 0 &&
+                work.generation === workflow.work.generation &&
+                currentPlan?.invalidated
+              // A fresh workflow's Critic must be able to adjudicate before its
+              // Planner replaces a carried invalidated Plan. This exception is
+              // deliberately limited to the preplanning gate: all planning,
+              // review, compilation, and execution paths retain generation checks.
+              if (!preplanningCriticAdjudication) {
+                assertWorkGeneration(work, workflow.work.generation)
+              }
               const taskIds = taskSteps.map((taskStep) => taskStep.task!.id)
               const now = new Date().toISOString()
               const hasPlanReview = workflow.steps.some((candidate) => candidate.id === "review-plan")
@@ -5286,18 +7566,44 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 resolvedOutcome === "pass" &&
                 taskIds.length > 0
               ) {
-                // The executable DAG exists before review so Reviewer can inspect
-                // exact write/verification scopes, but execution authority begins
-                // only after independent Plan review passes.
-                claimWorkflowWave(
-                  work,
-                  workflow.id,
-                  workflow.work.generation,
-                  taskSteps.map((taskStep) => taskStep.task!),
-                  (workflow.effects?.workLevel ?? "objective") === "objective",
-                  now,
-                )
+                // A reviewed Plan cannot claim a dependent Wave on the
+                // strength of a stale or fabricated upstream Acceptance PASS.
+                await assertCurrentAcceptanceDependencies(ctx, workflow, work, taskIds)
+                // Fresh Plan review is still mandatory. Unchanged completed
+                // Tasks may reuse their receipts; only pending/invalidated Tasks
+                // need execution authority again.
+                const reusableTaskIds = await reusableCompletedTaskIds(ctx, work, workflow, taskSteps)
+                try {
+                  assertWaveClaimForTasks(work, workflow.id, workflow.work.generation, taskIds)
+                } catch {
+                  const reusable = new Set(reusableTaskIds)
+                  claimWorkflowWave(
+                    work,
+                    workflow.id,
+                    workflow.work.generation,
+                    taskSteps
+                      .filter((taskStep) => !reusable.has(taskStep.task!.id))
+                      .map((taskStep) => taskStep.task!),
+                    (workflow.effects?.workLevel ?? "objective") === "objective",
+                    now,
+                    reusableTaskIds,
+                  )
+                }
               }
+
+              const completedTaskPlanRevision =
+                step.task && Number.isSafeInteger(workflow.work.reviewedPlanRevision)
+                  ? workflow.work.reviewedPlanRevision
+                  : undefined
+              const completedTaskSemanticClosure =
+                step.task && completedTaskPlanRevision
+                  ? taskSemanticClosureFingerprintAtRevision(
+                      work,
+                      step.task.id,
+                      workflow.work.generation,
+                      completedTaskPlanRevision,
+                    )
+                  : undefined
 
               if (taskIds.length > 0 && reviewedWave) {
                 // Wave review ended the execution lease. Later gates/documentation
@@ -5309,15 +7615,50 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   work, workflow.id, workflow.work.generation,
                   taskSteps.map((taskStep) => ({
                     taskId: taskStep.task!.id,
-                    complete: taskStep.status === "complete",
-                    ...(taskStep.id === stepId && taskStep.status === "complete"
+                    complete: plannedTaskSatisfied(workflow, taskStep),
+                    ...(taskStep.id === stepId && (taskStep.status === "complete" || taskStep.status === "passed")
                       ? {
-                          result: {
+                          result: (() => {
+                            const nativePath = nativeTaskPath(taskStep.task!)
+                            const result: WorkTaskResult = {
                             workflowId,
                             ...(taskStep.summary ? { summary: taskStep.summary } : {}),
                             evidenceClaimIds: completedTaskClaims.map((claim) => claim.id),
                             completedAt: now,
-                          },
+                            completedAttempt: taskStep.attempt ?? 0,
+                            producerAgent: taskStep.agent,
+                            ...(nativePath?.stepKind === "work" || nativePath?.nativeKind === "acceptance" ? {
+                              nativeKind: nativePath.nativeKind,
+                              generation: workflow.work!.generation,
+                              taskId: taskStep.task!.id,
+                              stepId: taskStep.id,
+                              producerSessionId: tool.sessionID,
+                            } : {}),
+                            ...(taskStep.task!.adviceForTaskId ? { adviceForTaskId: taskStep.task!.adviceForTaskId } : {}),
+                            ...(adviceResolutions !== undefined ? { adviceResolutions } : {}),
+                            executableTaskFingerprint: createHash("sha256")
+                              .update(JSON.stringify(taskStep.task)).digest("hex"),
+                            dependencyResultDigests: Object.fromEntries(
+                              resultDependencyIds(work, workflow.work!.generation, taskStep.task!).flatMap((dependencyId) => {
+                                const dependency = work.nodes.find((node) =>
+                                  node.generation === workflow.work!.generation &&
+                                  node.type === "task" && node.logicalId === dependencyId &&
+                                  node.status !== "superseded")
+                                return dependency?.result
+                                  ? [[dependencyId, createHash("sha256")
+                                      .update(JSON.stringify(dependency.result)).digest("hex")]]
+                                  : []
+                              }),
+                            ),
+                            ...(cleanTaskHead ? { cleanRepositoryHead: cleanTaskHead } : {}),
+                            ...(completedTaskPlanRevision ? { planRevision: completedTaskPlanRevision } : {}),
+                            ...(completedTaskSemanticClosure
+                              ? { semanticClosureFingerprint: completedTaskSemanticClosure }
+                              : {}),
+                            }
+                            if (result.nativeKind === "advisory") result.resultDigest = advisoryResultDigest(result)
+                            return result
+                          })(),
                         }
                       : {}),
                   })),
@@ -5330,12 +7671,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 resolvedOutcome === "pass" &&
                 taskIds.length > 0
               ) {
+                const bindingFingerprint = executableTaskPlanFingerprint(workflow)
+                if (!bindingFingerprint) throw new Error("Reviewed Wave receipt requires its admitted Task role/slot graph fingerprint.")
                 completeWaveForTasks(
                   work,
                   workflow.id,
                   workflow.work.generation,
                   taskIds,
                   now,
+                  bindingFingerprint,
                 )
               }
 
@@ -5369,6 +7713,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
           }
 
+          const coordinatorNotification = await notifyBackgroundChildCoordinator(
+            ctx,
+            runtime,
+            workflow,
+            tool.sessionID,
+            tool.agent,
+            {
+              kind: "step-terminal",
+              stepId,
+              outcome: resolvedOutcome,
+            },
+          )
+
           return {
             content: renderToolOutput({
               finished: stepId,
@@ -5385,8 +7742,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   }
                 : {}),
               blocked: workflow.steps.filter((candidate) => candidate.status === "failed").map((candidate) => candidate.id),
-              runnable: runnable(workflow).map((candidate) => ({ id: candidate.id, agent: candidate.agent })),
+              dagRunnable: runnable(workflow).map((candidate) => ({ id: candidate.id, agent: candidate.agent })),
               questions: questionState(questions, workflow),
+              coordinatorNotification,
             }),
           }
         },
@@ -5777,6 +8135,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             let reset: string[] = []
             let hadPlanReviewClaim = false
             let hadTaskExecution = false
+            let invalidatedPlanRecovery = false
+            let staleCompiledPlan = false
+            let staleCompiledClaimBroken = false
+            let satisfiedBeforeReopen = new Set<string>()
+            const preservedTaskSteps = new Map<string, {
+              status: "complete" | "passed"
+              attempt: number
+              summary?: string
+            }>()
             const commitReopen = async () => {
               await validateWorkflowMutationLocked(ctx, runtime, workflow)
 
@@ -5784,19 +8151,73 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               if (workflow.work) {
                 work = await readWork(ctx, workflow.work.objectiveId)
                 if (!work) throw new Error("Persistent work hierarchy not found.")
-                assertWorkGeneration(work, workflow.work.generation)
+                const currentPlan = workPlanContext(work, undefined, "focused", workflow.work.generation)
+                if (currentPlan?.invalidated) {
+                  invalidatedPlanRecovery = true
+                  if (stepId !== "plan") {
+                    throw new Error("Only planning can reopen an invalidated Plan generation.")
+                  }
+                  assertInvalidatedPlanReopenable(work, workflow.work.generation)
+                  if (plannedTaskSteps(workflow).some((taskStep) => taskStep.status !== "pending")) {
+                    throw new Error("Invalidated Plan cannot be reopened after Task execution has started.")
+                  }
+                } else {
+                  assertWorkGeneration(work, workflow.work.generation)
+                }
                 const currentTaskSteps = plannedTaskSteps(workflow)
+                satisfiedBeforeReopen = new Set(currentTaskSteps.filter(satisfied).map((step) => step.id))
                 const taskIds = currentTaskSteps.map((taskStep) => taskStep.task!.id)
-                hadTaskExecution = currentTaskSteps.some((taskStep) => taskStep.status === "complete")
+                // Planner OQs may remove or move a claimed Task. The old DAG
+                // cannot prove its claim after that amendment, but General must
+                // still be able to reopen Plan and compile the current Wave.
+                staleCompiledPlan =
+                  stepId === "plan" &&
+                  Number.isSafeInteger(workflow.work.taskPlanRevision) &&
+                  workflow.work.taskPlanRevision !== currentPlan?.revision
+                hadTaskExecution = currentTaskSteps.some((taskStep) => taskStep.status === "complete" || taskStep.status === "passed")
+                if (stepId === "plan") {
+                  // Check stored semantic receipts AND exact-attempt evidence.
+                  // Invalid historical receipts are rerun, not re-attested.
+                  const verifiedTaskIds = new Set(
+                    await reusableCompletedTaskIds(ctx, work, workflow, currentTaskSteps, "rerun"),
+                  )
+                  for (const taskStep of currentTaskSteps) {
+                    if (!taskStep.task || !verifiedTaskIds.has(taskStep.task.id)) continue
+                    preservedTaskSteps.set(taskStep.id, {
+                      status: taskStep.status as "complete" | "passed",
+                      attempt: taskStep.attempt ?? 0,
+                      ...(taskStep.summary ? { summary: taskStep.summary } : {}),
+                    })
+                  }
+                }
                 if (taskIds.length > 0) {
                   const reviewed = workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")
                   const hasPlanReview = workflow.steps.some((candidate) => candidate.id === "review-plan")
                   const planReviewed =
                     !hasPlanReview ||
                     workflow.steps.some((candidate) => candidate.id === "review-plan" && candidate.status === "passed")
-                  if (reviewed) await ensureCompletedWaveHistory(ctx.storage as any, work, workflow)
-                  else if (planReviewed) {
-                    assertWaveClaimForTasks(work, workflow.id, workflow.work.generation, taskIds)
+                  if (reviewed) {
+                    await ensureCompletedWaveHistory(ctx.storage as any, work, workflow)
+                    if (stepId === "plan") {
+                      // Plan recovery must not reset a reviewed Wave already
+                      // consumed by another running or completed Wave.
+                      assertCompletedWaveMayReopen(
+                        work, workflow.id, workflow.work.generation, taskIds,
+                      )
+                    }
+                  } else if (planReviewed && !invalidatedPlanRecovery) {
+                    if (staleCompiledPlan) {
+                      // Planner may have removed or moved an old claimed Task.
+                      // The claim is then structurally obsolete, not evidence
+                      // that General must be prevented from replanning.
+                      try {
+                        assertWaveClaimForTasks(work, workflow.id, workflow.work.generation, taskIds)
+                      } catch {
+                        staleCompiledClaimBroken = true
+                      }
+                    } else {
+                      assertWaveClaimForTasks(work, workflow.id, workflow.work.generation, taskIds)
+                    }
                     hadPlanReviewClaim = hasPlanReview
                   }
                 }
@@ -5821,7 +8242,30 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   : reviewBeforeReopen?.review?.lastReviewerSessionId
 
               reset = reopenFrom(workflow, stepId)
-              resetVerificationAfterReopen(workflow, reset)
+              if (stepId === "plan" && preservedTaskSteps.size > 0) {
+                for (const [preservedStepId, preserved] of preservedTaskSteps) {
+                  const taskStep = workflow.steps.find((candidate) => candidate.id === preservedStepId)
+                  if (!taskStep?.task) continue
+                  taskStep.status = preserved.status
+                  taskStep.attempt = preserved.attempt
+                  if (preserved.summary) taskStep.summary = preserved.summary
+                  else delete taskStep.summary
+                }
+                reset = reset.filter((candidate) => !preservedTaskSteps.has(candidate))
+              }
+              if (stepId === "plan") {
+                for (const handoff of workflow.steps.filter((candidate) => candidate.id.startsWith("task-review:"))) {
+                  if (!handoff.dependsOn.includes("review-plan")) {
+                    handoff.dependsOn = ["review-plan", ...handoff.dependsOn]
+                  }
+                }
+              }
+              resetVerificationAfterReopen(
+                workflow,
+                stepId === "plan"
+                  ? reset.filter((candidate) => !preservedTaskSteps.has(candidate))
+                  : reset,
+              )
               if (reset.includes("review-implementation")) {
                 const reopenedReview = workflow.steps.find(
                   (candidate) => candidate.id === "review-implementation" && candidate.agent === "reviewer",
@@ -5852,10 +8296,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 delete workflow.work.reviewedPlanFingerprint
               }
 
-              if (reset.includes("product-acceptance")) {
+              const acceptanceGate = nativeAcceptanceGate(workflow)
+              if (acceptanceGate && reset.includes(acceptanceGate.id)) {
                 const acceptance = (await ctx.storage.get(acceptanceKey(workflowId))) as AcceptancePlan | undefined
                 if (acceptance) {
-                  resetAcceptance(acceptance)
+                  resetAcceptance(acceptance, acceptanceGate.attempt ?? 0)
                   await ctx.storage.set(acceptanceKey(workflowId), acceptance)
                 }
               }
@@ -5869,6 +8314,12 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               }
 
               const now = new Date().toISOString()
+              // Workflow step transitions own invalidation. An ordinary Work
+              // status synchronization must never erase an execution receipt
+              // merely because independent implementation review is pending.
+              const restartedTaskIds = plannedTaskSteps(workflow)
+                .filter((step) => satisfiedBeforeReopen.has(step.id) && reset.includes(step.id))
+                .map((step) => step.task!.id)
               await ctx.storage.set(
                 `progress/${workflowId}/${stepId}/${crypto.randomUUID()}`,
                 { reason: value.reason, ...progress, at: now },
@@ -5877,6 +8328,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               if (work && workflow.work) {
                 const taskSteps = plannedTaskSteps(workflow)
                 const taskIds = taskSteps.map((taskStep) => taskStep.task!.id)
+                const expectedBindingFingerprint = taskSteps.every((taskStep) => taskStep.task?.role && taskStep.task.responsibility)
+                  ? executableTaskPlanFingerprint(workflow)
+                  : undefined
                 const hasPlanReview = workflow.steps.some((candidate) => candidate.id === "review-plan")
                 const planReviewedAfterReset =
                   !hasPlanReview ||
@@ -5887,13 +8341,47 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 // Planner can safely amend/recompile the unconsumed contract.
                 if (
                   hadPlanReviewClaim &&
+                  staleCompiledClaimBroken &&
+                  reset.includes("review-plan")
+                ) {
+                  // A stale compiled Task set no longer constitutes one
+                  // claimed Wave. Release the old lease, including when some
+                  // old Task executions are preserved for later reuse.
+                  releaseCancelledWorkflowClaims(work, workflow.id, now)
+                } else if (
+                  hadPlanReviewClaim &&
                   reset.includes("review-plan") &&
                   taskIds.length > 0 &&
                   !hadTaskExecution
                 ) {
-                  releaseWorkflowWave(work, workflow.id, workflow.work.generation, taskIds, now)
-                } else if (reset.includes("review-implementation") && taskIds.length > 0) {
-                  reopenWaveForTasks(work, workflow.id, workflow.work.generation, taskIds, now)
+                  if (staleCompiledPlan) {
+                    // Releasing an obsolete DAG cannot use Task IDs removed
+                    // by Planner; release only this workflow's surviving leases.
+                    releaseCancelledWorkflowClaims(work, workflow.id, now)
+                  } else {
+                    releaseWorkflowWave(work, workflow.id, workflow.work.generation, taskIds, now)
+                  }
+                } else if (
+                  !invalidatedPlanRecovery &&
+                  stepId !== "plan" &&
+                  reset.includes("review-implementation") &&
+                  taskIds.length > 0
+                ) {
+                  reopenWaveForTasks(work, workflow.id, workflow.work.generation, taskIds, now, expectedBindingFingerprint)
+                }
+
+                // A previously reviewed Wave must first be reclaimed through
+                // its independent-review receipt. Only then may restarted
+                // Task executions be invalidated and archived.
+                if (restartedTaskIds.length > 0) {
+                  invalidateWorkflowTaskResults(
+                    work, workflow.id, workflow.work.generation,
+                    restartedTaskIds,
+                    stepId === "plan"
+                      ? "Plan reopened: original completion lacks a valid current semantic receipt."
+                      : `Task reset by workflow reopen at ${stepId}.`,
+                    now,
+                  )
                 }
 
                 // Documentation-only reopening does not resurrect the Wave lease.
@@ -5901,15 +8389,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 // and therefore no runtime Task status to synchronize.
                 if (
                   taskIds.length > 0 &&
+                  !invalidatedPlanRecovery &&
                   planReviewedAfterReset &&
                   !workflow.steps.some((candidate) => candidate.id === "review-implementation" && candidate.status === "passed")
                 ) {
                   syncWorkTaskStatuses(
                     work, workflow.id, workflow.work.generation,
-                    taskSteps.map((taskStep) => ({ taskId: taskStep.task!.id, complete: taskStep.status === "complete" })),
+                    taskSteps.map((taskStep) => ({ taskId: taskStep.task!.id, complete: plannedTaskSatisfied(workflow, taskStep) })),
                     now,
                   )
                 }
+
                 await ctx.storage.set(workKey(work.objectiveId), work)
               }
 
@@ -5935,7 +8425,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               content: renderToolOutput({
                 reopened: stepId,
                 reset,
-                runnable: runnable(workflow).map((candidate) => ({ id: candidate.id, agent: candidate.agent })),
+                dagRunnable: runnable(workflow).map((candidate) => ({ id: candidate.id, agent: candidate.agent })),
                 ...(reopenedReview
                   ? {
                       reviewContinuation: {
@@ -5961,7 +8451,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "oq_raise",
         description:
-          "Raise a shared peer OQ to any Loom role or the user. Planned Worker questions inherit their Task automatically; a non-Task step may supply an existing taskId to correlate the OQ with that Plan context. Ask the role that owns or can best answer the specific question; an OQ answer does not substitute for that role's independent gate when one exists. Mutation-scope coordination returns to General directly. Blocking questions automatically make the raising step a required consumer.",
+          "Raise a shared peer OQ to any Loom role or the user. A blocking OQ must be self-contained enough for a fresh session to understand what is unresolved, why that affected boundary cannot proceed, and what kind of answer would satisfy the question; do not make a particular external source part of the OQ semantic unless accepted authority actually requires that source. For a user-owned Plan Task wait, General raises a blocking OQ with its exact taskId and sole Task consumerStepId; only the actual user answer recorded with source=user resolves that wait. Other planned Task questions inherit their exact Task context. Ask the role that owns or can best answer the specific question; an OQ answer does not substitute for an independent gate. When a child raises a blocking OQ, Loom queues a resume-enabled routing notification to the workflow's bound General session without steering an active turn; specialist responders still require the normal exact OQ dispatch path.",
         input: {
           type: "object",
           properties: {
@@ -5975,6 +8465,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               enum: [
                 "user",
                 "general",
+                "brainstorm",
                 "designer",
                 "specifier",
                 "architect",
@@ -6053,6 +8544,37 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 throw new Error(`OQ taskId ${requestedTaskId} does not match the attached Task ${inferredTaskId}.`)
               }
               const correlatedTaskId = inferredTaskId ?? requestedTaskId
+              let decisionStepAttempt: number | undefined
+              if (value.responder === "user" && requestedTaskId) {
+                const decisionStep = current.steps.find((candidate) => candidate.task?.id === requestedTaskId)
+                if (decisionStep?.task?.responsibility === "obtain-user-decision") {
+                  if (decisionStep.kind !== "wait" || decisionStep.agent !== "user" || decisionStep.status !== "waiting") {
+                    throw new Error(`User decision Task ${requestedTaskId} is not an unresolved user-owned wait.`)
+                  }
+                  if (!value.blocking || JSON.stringify([...(value.consumerStepIds ?? [])].sort()) !== JSON.stringify([decisionStep.id])) {
+                    throw new Error("User decision OQ must be blocking and name only its exact Task wait as consumer.")
+                  }
+                  if (!decisionStep.dependsOn.every((dependency) => {
+                    const upstream = current.steps.find((candidate) => candidate.id === dependency)
+                    return upstream && satisfied(upstream)
+                  })) {
+                    throw new Error(`User decision Task ${requestedTaskId} is waiting for its planned dependencies.`)
+                  }
+                  if (decisionStep.agent !== "user" || decisionStep.task.role !== "user") {
+                    throw new Error("User-owned decision Task is not bound to the non-agent user wait slot.")
+                  }
+                  decisionStepAttempt = decisionStep.attempt ?? 0
+                }
+              }
+              const userDecisionConsumers = (value.consumerStepIds ?? []).filter((stepId) => {
+                const consumer = current.steps.find((step) => step.id === stepId)
+                return consumer?.kind === "wait" && consumer.task?.responsibility === "obtain-user-decision"
+              })
+              if (userDecisionConsumers.length > 0 &&
+                  (!requestedTaskId || decisionStepAttempt === undefined || userDecisionConsumers.length !== 1 ||
+                    userDecisionConsumers[0] !== `task:${requestedTaskId}`)) {
+                throw new Error("A user-decision Task consumer must be raised with its exact taskId and wait attempt.")
+              }
               if (requestedTaskId && !current.work) {
                 throw new Error("OQ taskId requires a persistent Objective Plan.")
               }
@@ -6069,6 +8591,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       correlatedPlanRevision,
                     )
                   : null
+                const decisionTaskContract = context?.focus?.task
+                if (decisionStepAttempt !== undefined &&
+                    (!decisionTaskContract || decisionTaskContract.role !== "user" || decisionTaskContract.responsibility !== "obtain-user-decision")) {
+                  throw new Error("User-decision OQ does not match the current semantic Plan Task owner/responsibility.")
+                }
                 if (correlatedTaskId && !context?.focus?.task) {
                   const legacyTask = work?.nodes.find(
                     (node) =>
@@ -6105,6 +8632,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                         generation: (parentQuestion?.work ?? current.work)!.generation,
                         ...(correlatedPlanRevision !== undefined ? { revision: correlatedPlanRevision } : {}),
                         ...(correlatedTaskId ? { taskId: correlatedTaskId } : {}),
+                        ...(decisionStepAttempt !== undefined ? { stepAttempt: decisionStepAttempt } : {}),
                       },
                     }
                   : {}),
@@ -6117,10 +8645,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             if (tool.agent !== "general" && value.stepId) {
               await bindSessionEvidence(ctx, tool.sessionID, value.workflowId, value.stepId)
             }
+            const notifications = await notifyRaisedBlockingQuestionCoordinator(
+              ctx,
+              runtime,
+              question,
+            )
             return {
               content: renderToolOutput({
                 question: questionView(question),
                 routeTo: question.requiredAuthority,
+                notifications,
               }),
             }
           } catch (error) {
@@ -6193,30 +8727,131 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           try {
-            const question = await withRuntimeLock(runtime, "workflow", value.workflowId, async () => {
-              const current = (await ctx.storage.get(oqKey(value.workflowId, value.questionId))) as OpenQuestion | undefined
-              if (!current) throw new Error("Question not found.")
+            const recordAnswer = async () => {
+              const currentWorkflow = await readWorkflow(ctx, value.workflowId)
+              const currentQuestion = (await ctx.storage.get(oqKey(value.workflowId, value.questionId))) as OpenQuestion | undefined
+              if (!currentWorkflow || !currentQuestion) throw new Error("Workflow or question not found.")
+              if (tool.agent === "diagnostic" && value.source === "agent" &&
+                  currentQuestion.requiredAuthority === "diagnostic") {
+                const target = await currentDiagnosticSandboxAttachment(ctx, tool.sessionID)
+                if (target?.questionId !== value.questionId || target.workflowId !== value.workflowId) {
+                  throw new Error("Diagnostic OQ answer requires its exact current unanswered attachment attempt.")
+                }
+                const sandbox = (await ctx.storage.get(
+                  diagnosticSandboxSessionKey(tool.sessionID),
+                )) as DiagnosticSandboxRecord | undefined
+                if (sandbox?.active) {
+                  throw new Error("Destroy the Diagnostic experiment sandbox before answering this OQ.")
+                }
+              }
+              const now = new Date().toISOString()
+              const taskId = currentQuestion.work?.taskId
+              let decisionStep: Workflow["steps"][number] | undefined
+              let work: WorkHierarchy | undefined
+              if (currentQuestion.work?.stepAttempt !== undefined) {
+                if (value.source !== "user" || tool.agent !== "general" || currentQuestion.requiredAuthority !== "user") {
+                  throw new Error("A user-decision Task can only resolve from its exact recorded user-owned OQ answer.")
+                }
+                if (!taskId || !currentWorkflow.work || currentWorkflow.work.objectiveId !== currentQuestion.work.objectiveId ||
+                    currentWorkflow.work.generation !== currentQuestion.work.generation) {
+                  throw new Error("User-decision OQ belongs to a stale or different Objective generation.")
+                }
+                const stepId = taskStepId(taskId)
+                decisionStep = currentWorkflow.steps.find((candidate) => candidate.id === stepId)
+                if (!decisionStep || decisionStep.kind !== "wait" || decisionStep.agent !== "user" ||
+                    decisionStep.status !== "waiting" || decisionStep.attempt !== currentQuestion.work.stepAttempt ||
+                    decisionStep.task?.id !== taskId || decisionStep.task.role !== "user" ||
+                    decisionStep.task.responsibility !== "obtain-user-decision" ||
+                    !currentQuestion.blocking || JSON.stringify(currentQuestion.consumerStepIds) !== JSON.stringify([stepId])) {
+                  throw new Error("User-decision OQ is not bound to the exact current wait Task attempt.")
+                }
+                if (!decisionStep.dependsOn.every((dependency) => {
+                  const upstream = currentWorkflow.steps.find((candidate) => candidate.id === dependency)
+                  return upstream && satisfied(upstream)
+                })) {
+                  throw new Error("User-decision Task dependencies are no longer satisfied.")
+                }
+                work = await readWork(ctx, currentWorkflow.work.objectiveId)
+                const plan = work
+                  ? workPlanContext(work, undefined, "focused", currentWorkflow.work.generation)
+                  : null
+                const taskContext = work
+                  ? workPlanContext(work, taskId, "focused", currentWorkflow.work.generation)
+                  : null
+                if (!work || !plan || !taskContext?.focus?.task || plan.revision !== currentQuestion.work.revision ||
+                    taskContext.focus.task.role !== "user" || taskContext.focus.task.responsibility !== "obtain-user-decision") {
+                  throw new Error("User-decision OQ Plan revision is stale; reopen planning and issue a fresh decision wait.")
+                }
+                assertWorkGeneration(work, currentWorkflow.work.generation)
+                assertWaveClaimForTasks(
+                  work,
+                  currentWorkflow.id,
+                  currentWorkflow.work.generation,
+                  plannedTaskSteps(currentWorkflow).map((candidate) => candidate.task!.id),
+                )
+              }
+
               answerQuestion(
-                current,
+                currentQuestion,
                 tool.agent,
                 value.source,
                 value.answer,
                 value.evidence ?? [],
-                new Date().toISOString(),
+                now,
               )
-              await saveQuestion(ctx, current)
-              await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
-              return current
-            })
+              if (decisionStep && work && taskId) {
+                decisionStep.status = "complete"
+                decisionStep.summary = value.answer
+                reconcileUserDecisionQuestion(currentQuestion, decisionStep.id, now)
+                syncWorkTaskStatuses(
+                  work,
+                  currentWorkflow.id,
+                  currentWorkflow.work!.generation,
+                  [{
+                    taskId,
+                    complete: true,
+                    result: {
+                      workflowId: currentWorkflow.id,
+                      summary: value.answer,
+                      evidenceClaimIds: [],
+                      completedAt: now,
+                    },
+                  }],
+                  now,
+                )
+                await ctx.storage.set(workKey(work.objectiveId), work)
+                await saveQuestion(ctx, currentQuestion)
+                await persistWorkflowMutationLocked(ctx, runtime, currentWorkflow)
+              } else {
+                await saveQuestion(ctx, currentQuestion)
+                await bumpWorkflowRevisionLocked(ctx, runtime, value.workflowId)
+              }
+              return currentQuestion
+            }
+            const question = workflow.work
+              ? await withWorkflowWorkLocks(runtime, value.workflowId, workflow.work.objectiveId, recordAnswer)
+              : await withRuntimeLock(runtime, "workflow", value.workflowId, recordAnswer)
             const notifications = await notifyAnsweredQuestionConsumers(
               ctx,
               runtime,
               question,
             )
+            const coordinatorNotification = await notifyBackgroundChildCoordinator(
+              ctx,
+              runtime,
+              workflow,
+              tool.sessionID,
+              tool.agent,
+              {
+                kind: "oq-answered",
+                questionId: question.id,
+              },
+            )
             return {
               content: renderToolOutput({
                 question: questionView(question),
                 notifications,
+                coordinatorNotification,
               }),
             }
           } catch (error) {
@@ -6312,8 +8947,33 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           try {
             const question = await withRuntimeLock(runtime, "workflow", value.workflowId, async () => {
+              const currentWorkflow = await readWorkflow(ctx, value.workflowId)
               const current = (await ctx.storage.get(oqKey(value.workflowId, value.questionId))) as OpenQuestion | undefined
-              if (!current) throw new Error("Question not found.")
+              if (!current || !currentWorkflow) throw new Error("Workflow or question not found.")
+              if (current.work?.stepAttempt !== undefined) {
+                if (current.requiredAuthority !== "user" || !current.work.taskId || !currentWorkflow.work ||
+                    currentWorkflow.work.objectiveId !== current.work.objectiveId ||
+                    currentWorkflow.work.generation !== current.work.generation) {
+                  throw new Error("User-decision OQ is not bound to the current Objective generation.")
+                }
+                const decisionStep = currentWorkflow.steps.find((candidate) => candidate.id === taskStepId(current.work!.taskId!))
+                if (!decisionStep || decisionStep.kind !== "wait" || decisionStep.agent !== "user" ||
+                    decisionStep.task?.responsibility !== "obtain-user-decision") {
+                  throw new Error("The exact user-decision wait Task no longer exists.")
+                }
+                if (decisionStep.status === "complete") {
+                  throw new Error("Reopen the exact decision Task first so downstream work and satisfaction are invalidated.")
+                }
+                if (decisionStep.status !== "waiting" || value.preserveAnswer) {
+                  throw new Error("A reopened user-decision Task requires a waiting attempt and must discard its prior answer.")
+                }
+                const work = await readWork(ctx, currentWorkflow.work.objectiveId)
+                const plan = work ? workPlanContext(work, undefined, "focused", currentWorkflow.work.generation) : null
+                if (!plan || plan.revision !== current.work.revision) {
+                  throw new Error("User-decision OQ Plan revision is stale; create a fresh Plan decision question.")
+                }
+                current.work.stepAttempt = decisionStep.attempt ?? 0
+              }
               reopenQuestion(
                 current,
                 tool.agent,
@@ -6825,7 +9485,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
           const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
           if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
-          if (!workflow.steps.some((step) => step.id === "product-acceptance")) {
+          if (!nativeAcceptanceGate(workflow)) {
             return { content: renderToolOutput({ error: "Workflow does not require Product Acceptance." }) }
           }
 
@@ -6837,6 +9497,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 throw new Error("Workflow belongs to another project.")
               }
 
+              const gate = nativeAcceptanceGate(currentWorkflow)
+              if (!gate || gate.status === "passed" || gate.status === "failed") {
+                throw new Error("Product Acceptance plan requires the current, uncompleted native gate.")
+              }
               const existing = (await ctx.storage.get(acceptanceKey(value.workflowId))) as AcceptancePlan | undefined
               if (existing?.scenarios.some((scenario) => scenario.outcome !== "pending")) {
                 throw new Error("Product Acceptance plan cannot change after results exist; reopen/reset first.")
@@ -6846,6 +9510,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 workflowId: value.workflowId,
                 createdBy: tool.agent,
                 scenarios: value.scenarios,
+                stepId: gate.id,
+                stepAttempt: gate.attempt ?? 0,
                 now: new Date().toISOString(),
               })
               await ctx.storage.set(acceptanceKey(value.workflowId), next)
@@ -6887,7 +9553,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "pa_result",
         description:
-          "Record one immutable Product Acceptance scenario result for the current attempt. PASS requires product-acceptance evidence claims from the Product Acceptance step.",
+          "Record one immutable Product Acceptance scenario result for the current attempt. PASS requires product-acceptance evidence claims from the attached native Acceptance gate.",
         input: {
           type: "object",
           properties: {
@@ -6913,11 +9579,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             evidenceClaimIds: string[]
             note: string
           }
-          if (!(await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession))) {
+          const bound = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
+          if (!bound) {
             return { content: renderToolOutput({ error: "Workflow not found or current session is not bound to it." }) }
           }
-          if (!(await exactStepBinding(ctx, tool.sessionID, value.workflowId, "product-acceptance"))) {
-            return { content: renderToolOutput({ error: "Product Acceptance results require the exact product-acceptance attachment." }) }
+          const gate = nativeAcceptanceGate(bound)
+          if (!gate || !(await exactStepAttemptBinding(ctx, tool.sessionID, value.workflowId, gate.id))) {
+            return { content: renderToolOutput({ error: "Product Acceptance results require the exact current native-gate attachment." }) }
           }
 
           try {
@@ -6936,11 +9604,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 throw new Error("Product Acceptance evidence claims must be produced by acceptance.")
               }
               const current = await readWorkflow(ctx, value.workflowId)
-              if (!current || !(await exactStepBinding(ctx, tool.sessionID, value.workflowId, "product-acceptance"))) {
+              const currentGate = current && nativeAcceptanceGate(current)
+              if (!current || !currentGate || currentGate.status !== "pending" ||
+                  !(await exactStepAttemptBinding(ctx, tool.sessionID, value.workflowId, currentGate.id))) {
                 throw new Error("Product Acceptance attachment changed before result commit.")
               }
               assertWorkflowNotCancelled(current)
-              const attempt = current.steps.find((step) => step.id === "product-acceptance")?.attempt ?? 0
+              const attempt = currentGate.attempt ?? 0
+              if (plan.workflowId !== value.workflowId || plan.stepId !== currentGate.id ||
+                  plan.stepAttempt !== attempt) {
+                throw new Error("Product Acceptance scenarios are bound to an old native gate or attempt.")
+              }
               if (value.outcome === "passed" && claims.some((claim) => (claim.attempt ?? 0) !== attempt)) {
                 throw new Error("Product Acceptance claims must belong to the current step attempt.")
               }
@@ -6948,6 +9622,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               const scenario = recordAcceptanceResult({
                 plan,
                 scenarioId: value.scenarioId,
+                stepId: currentGate.id,
                 outcome: value.outcome,
                 claims,
                 byAgent: tool.agent,
@@ -7375,7 +10050,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "work_plan",
         description:
-          "Create or replace the persistent holistic Plan for the accepted Objective: goal, authority, risks, acceptance, relationships, correction routing, and rich Phase/Wave/Task contracts. Planner only. Replacing an existing generation requires its exact current version and a reason.",
+          "Create or replace the persistent holistic Plan for the accepted Objective, including accountable role and responsibility for every Task. Planner only. Replacing an existing generation requires its exact current version and a reason.",
         input: {
           type: "object",
           properties: {
@@ -7492,6 +10167,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                               subtasks: { type: "array", items: { type: "string" } },
                               integration: { type: "array", items: { type: "string" } },
                               verify: { type: "array", items: { type: "string" } },
+                              role: { type: "string" },
+                              adviceForTaskId: { type: "string" },
+                              responsibility: { type: "string", enum: ["produce", "execute", "review", "obtain-user-decision"] },
                             },
                             required: [
                               "id",
@@ -7505,6 +10183,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                               "subtasks",
                               "integration",
                               "verify",
+                              "role",
+                              "responsibility",
                             ],
                             additionalProperties: false,
                           },
@@ -7624,7 +10304,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "work_amend",
         description:
-          "Atomically amend a bounded part of the current Plan generation without replacing the whole Plan. Planner only. Pending/unclaimed Tasks may be edited/added/removed; completed semantic contracts cannot be rewritten. Supports local Phase/Wave/Task/subtask changes plus matching Plan metadata updates.",
+          "Atomically amend a bounded part of the current Plan generation without replacing the whole Plan. Planner only. Pending/unclaimed Tasks may be edited/added/removed; completed semantic contracts cannot be rewritten. Supports local Phase/Wave/Task/subtask changes, atomic authority-reference add/remove operations, plus matching Plan metadata updates. Prefer authority-reference operations over reconstructing the bounded Plan projection.",
         input: {
           type: "object",
           properties: {
@@ -7638,7 +10318,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 goal: { type: "string" },
                 assumptions: { type: "array", items: { type: "string" } },
                 outOfScope: { type: "array", items: { type: "string" } },
-                authorityRefs: { type: "array", items: { type: "string" } },
                 obligations: {
                   type: "array",
                   items: {
@@ -7723,6 +10402,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   action: {
                     type: "string",
                     enum: [
+                      "add-authority-ref",
+                      "remove-authority-ref",
                       "patch-phase",
                       "patch-wave",
                       "patch-task",
@@ -7734,6 +10415,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       "remove-task",
                     ],
                   },
+                  authorityRef: { type: "string" },
                   phaseId: { type: "string" },
                   waveId: { type: "string" },
                   taskId: { type: "string" },
@@ -7750,6 +10432,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       subtasks: { type: "array", items: { type: "string" } },
                       integration: { type: "array", items: { type: "string" } },
                       verify: { type: "array", items: { type: "string" } },
+                      role: { type: "string" },
+                      adviceForTaskId: { type: "string" },
+                      responsibility: { type: "string", enum: ["produce", "execute", "review", "obtain-user-decision"] },
                     },
                     additionalProperties: false,
                   },
@@ -7767,11 +10452,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   subtasks: { type: "array", items: { type: "string" } },
                   integration: { type: "array", items: { type: "string" } },
                   verify: { type: "array", items: { type: "string" } },
+                  role: { type: "string" },
+                  adviceForTaskId: { type: "string" },
+                  responsibility: { type: "string", enum: ["produce", "execute", "review", "obtain-user-decision"] },
                 },
                     required: [
                       "id", "title", "objective", "rationale", "dependsOn", "authorityRefs",
                       "constraints", "acceptanceCriteria", "subtasks", "integration",
-                      "verify",
+                      "verify", "role", "responsibility",
                     ],
                     additionalProperties: false,
                   },
@@ -7798,11 +10486,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   subtasks: { type: "array", items: { type: "string" } },
                   integration: { type: "array", items: { type: "string" } },
                   verify: { type: "array", items: { type: "string" } },
+                  role: { type: "string" },
+                  responsibility: { type: "string", enum: ["produce", "execute", "review", "obtain-user-decision"] },
+                  adviceForTaskId: { type: "string" },
                 },
                           required: [
                             "id", "title", "objective", "rationale", "dependsOn", "authorityRefs",
                             "constraints", "acceptanceCriteria", "subtasks", "integration",
-                            "verify",
+                            "verify", "role", "responsibility",
                           ],
                           additionalProperties: false,
                         },
@@ -7839,14 +10530,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   authorityRefs: { type: "array", items: { type: "string" } },
                   constraints: { type: "array", items: { type: "string" } },
                   acceptanceCriteria: { type: "array", items: { type: "string" } },
-                  subtasks: { type: "array", items: { type: "string" } },
-                  integration: { type: "array", items: { type: "string" } },
-                  verify: { type: "array", items: { type: "string" } },
-                },
+                                  subtasks: { type: "array", items: { type: "string" } },
+                                  integration: { type: "array", items: { type: "string" } },
+                                  verify: { type: "array", items: { type: "string" } },
+                                  role: { type: "string" },
+                                  adviceForTaskId: { type: "string" },
+                                  responsibility: { type: "string", enum: ["produce", "execute", "review", "obtain-user-decision"] },
+                                },
                                 required: [
                                   "id", "title", "objective", "rationale", "dependsOn", "authorityRefs",
                                   "constraints", "acceptanceCriteria", "subtasks", "integration",
-                                  "verify",
+                                  "verify", "role", "responsibility",
                                 ],
                                 additionalProperties: false,
                               },
@@ -7880,7 +10574,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             expectedVersion: number
             reason: string
             operations: WorkPlanAmendOperation[]
-            planPatch?: WorkPlanTopLevelPatch
+            planPatch?: WorkPlanAmendTopLevelPatch
           }
           const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
           if (!workflow?.work) {
@@ -7984,20 +10678,43 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   },
                   new Date().toISOString(),
                 )
-                const currentFingerprint =
-                  currentTaskIds.length > 0
-                    ? workflowTaskSemanticFingerprint(
-                        work,
-                        currentTaskIds,
-                        workflow.work!.generation,
-                      )
-                    : undefined
+                let currentFingerprint: string | undefined
+                if (currentTaskIds.length > 0) {
+                  try {
+                    currentFingerprint = workflowTaskSemanticFingerprint(
+                      work,
+                      currentTaskIds,
+                      workflow.work!.generation,
+                    )
+                  } catch {
+                    // Removing/replacing a currently compiled Task is a valid
+                    // Plan revision. The old executable DAG is simply stale.
+                    currentFingerprint = undefined
+                  }
+                }
                 const taskPlanRefreshRequired =
-                  Boolean(priorFingerprint && currentFingerprint && priorFingerprint !== currentFingerprint)
+                  Boolean(priorFingerprint && (!currentFingerprint || priorFingerprint !== currentFingerprint)) ||
+                  amended.affectedTaskIds.some((taskId) => currentTaskIds.includes(taskId))
                 if (workflow.work && currentTaskIds.length > 0 && !taskPlanRefreshRequired) {
                   workflow.work.taskPlanRevision = amended.plan.revision
                   workflow.work.taskPlanFingerprint = currentFingerprint
                 }
+
+                if (attachedPlanStep && amended.affectedTaskIds.length > 0) {
+                  const affected = new Set(amended.affectedTaskIds)
+                  const invalidatedStepIds: string[] = []
+                  for (const taskStep of plannedTaskSteps(workflow)) {
+                    if (!affected.has(taskStep.task!.id) || !satisfied(taskStep)) continue
+                    taskStep.attempt = (taskStep.attempt ?? 0) + 1
+                    taskStep.status = taskStep.kind === "wait" ? "waiting" : "pending"
+                    delete taskStep.summary
+                    invalidatedStepIds.push(taskStep.id)
+                  }
+                  if (invalidatedStepIds.length > 0) {
+                    resetVerificationAfterReopen(workflow, invalidatedStepIds)
+                  }
+                }
+
                 await ctx.storage.set(workKey(work.objectiveId), work)
                 await persistWorkflowMutationLocked(ctx, runtime, workflow)
                 return { ...amended, taskPlanRefreshRequired }
@@ -8013,6 +10730,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 revision: result.plan.revision,
                 amendment: result.amendment,
                 changedTaskIds: result.changedTaskIds,
+                affectedTaskIds: result.affectedTaskIds,
                 changedWaveKeys: result.changedWaveKeys,
                 taskPlanRefreshRequired: result.taskPlanRefreshRequired,
                 tree: workTree(result.hierarchy),
@@ -8108,6 +10826,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   },
                   new Date().toISOString(),
                 )
+                delete workflow.work!.taskPlanRevision
+                delete workflow.work!.taskPlanFingerprint
+                delete workflow.work!.reviewedPlanRevision
+                delete workflow.work!.reviewedPlanFingerprint
                 await ctx.storage.set(workKey(work.objectiveId), work)
                 await persistWorkflowMutationLocked(ctx, runtime, workflow)
                 return invalidated
@@ -8152,13 +10874,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             objectiveId?: string
             taskId?: string
             revision?: number
-          }
-          if (value.revision !== undefined && !value.taskId) {
-            return {
-              content: renderToolOutput({
-                error: "Plan revision selection requires taskId; whole-Plan status always uses the latest revision.",
-              }),
-            }
           }
           let objectiveId = value.objectiveId
 
@@ -8212,10 +10927,579 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         },
       })
 
+
+      addLoomTool({
+        name: "work_reconcile",
+        description:
+          "Reconcile pending producer Tasks from original current or last archived completion receipts after independent review-plan PASS. Archive recovery requires exact original evidence, unchanged code, executable contracts and dependencies. General can run this without Worker dispatch; Planner needs an exact Planner OQ attachment. On refusal, call loom_work_reconcile_diagnose to inspect the exact proof and contract checks before attempting any Worker rerun.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            questionId: { type: "string" },
+            taskIds: { type: "array", items: { type: "string" } },
+          },
+          required: ["workflowId"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general" && tool.agent !== "planner") {
+            return { content: renderToolOutput({ error: "Only General or an attached Planner can reconcile Task results." }) }
+          }
+          const value = input as { workflowId: string; questionId?: string; taskIds?: string[] }
+          const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
+          if (!workflow?.work) {
+            return { content: renderToolOutput({ error: "Bound workflow with persistent Work is required." }) }
+          }
+          if (tool.agent === "planner") {
+            const question = value.questionId
+              ? await ctx.storage.get(oqKey(workflow.id, value.questionId)) as OpenQuestion | undefined
+              : undefined
+            if (!question || question.requiredAuthority !== "planner" || question.status === "closed" ||
+                !(await exactOqBinding(ctx, tool.sessionID, workflow.id, question.id)) ||
+                (question.work && (
+                  question.work.objectiveId !== workflow.work.objectiveId ||
+                  question.work.generation !== workflow.work.generation
+                ))) {
+              return { content: renderToolOutput({ error: "Planner needs an exact current-generation Planner OQ attachment." }) }
+            }
+          }
+          try {
+            const outcome = await withWorkflowWorkLocks(
+              runtime, workflow.id, workflow.work.objectiveId, async () => {
+                await validateWorkflowMutationLocked(ctx, runtime, workflow)
+                const work = await readWork(ctx, workflow.work!.objectiveId)
+                if (!work) throw new Error("Persistent Work hierarchy is missing.")
+                assertWorkGeneration(work, workflow.work!.generation)
+
+                const semanticPlan = work.plans?.find((candidate) => candidate.generation === workflow.work!.generation)
+                if (semanticPlan?.phases.some((phase) => phase.waves.some((wave) => wave.tasks.some((task) => task.role === "brainstorm")))) {
+                  validatePlanRoleFeasibility(semanticPlan)
+                  await assertAdviceHostPaths(ctx, work, workflow.work!.generation)
+                }
+                const plan = workPlanContext(work, undefined, "focused", work.generation)
+                const review = workflow.steps.find((step) => step.id === "review-plan")
+                if (!plan || plan.invalidated || review?.status !== "passed" ||
+                    workflow.work!.reviewedPlanRevision !== plan.revision ||
+                    workflow.work!.reviewedPlanFingerprint !== workPlanSemanticFingerprint(work, work.generation)) {
+                  throw new Error("Exact effective Plan revision has no independent review-plan PASS.")
+                }
+                const taskSteps = plannedTaskSteps(workflow)
+                const allIds = taskSteps.map((step) => step.task!.id)
+                if (workflow.work!.taskPlanRevision !== plan.revision ||
+                    workflow.work!.taskPlanFingerprint !== workflowTaskSemanticFingerprint(work, allIds, work.generation)) {
+                  throw new Error("Compiled Task DAG differs from the independently reviewed Plan.")
+                }
+                assertWaveClaimForTasks(work, workflow.id, work.generation, allIds)
+                if (workflow.steps.some((step) =>
+                  step.id === "review-implementation" && step.status === "passed")) {
+                  throw new Error("Implementation review already passed; do not re-attest pending Task state.")
+                }
+                const ids = value.taskIds ?? allIds
+                if (!Array.isArray(ids) || ids.length < 1 || ids.length > 24 ||
+                    new Set(ids).size !== ids.length || ids.some((id) => !allIds.includes(id))) {
+                  throw new Error("Choose 1-24 distinct Tasks in the current compiled Wave.")
+                }
+                const byId = new Map(taskSteps.map((step) => [step.task!.id, step]))
+                const questions = await readQuestions(ctx, workflow.id)
+                const head = await cleanRepositoryHead(ctx.location.directory)
+                const eligible = new Map<string, {
+                  step: Workflow["steps"][number]
+                  node: WorkHierarchy["nodes"][number]
+                  receipt: NonNullable<WorkHierarchy["nodes"][number]["result"]>
+                  fromArchive: boolean
+                }>()
+                const refused: Array<{ taskId: string; reason: string }> = []
+                const refuse = (taskId: string, reason: string) => refused.push({ taskId, reason })
+                const alreadyComplete = ids.filter((id) => satisfied(byId.get(id)!))
+                // Resolve dependencies first, regardless of caller order. An
+                // archived dependent may use only a newly VERIFIED source.
+                const remaining = new Set(ids)
+                const orderedIds: string[] = []
+                while (remaining.size > 0) {
+                  const next = [...remaining].find((id) =>
+                    (byId.get(id)?.task?.dependsOn ?? []).every((dep) => !remaining.has(dep)))
+                  if (!next) throw new Error("Compiled Task graph contains a dependency cycle.")
+                  orderedIds.push(next)
+                  remaining.delete(next)
+                }
+                for (const id of orderedIds) {
+                  const step = byId.get(id)!
+                  if (satisfied(step)) continue
+                  if (step.status !== "pending" || step.kind !== "work" || !step.task ||
+                      step.task.responsibility === "obtain-user-decision") {
+                    refuse(id, "Only pending producer work is eligible; gate and user decisions retain their owners.")
+                    continue
+                  }
+                  const node = work.nodes.find((candidate) =>
+                    candidate.generation === work.generation && candidate.type === "task" &&
+                    candidate.logicalId === id && candidate.status !== "superseded")
+                  const archivedReceipt = lastArchivedCompletionReceipt(node, workflow.id)
+                  const receipt = node?.result ?? archivedReceipt
+                  if (!receipt || receipt.workflowId !== workflow.id) {
+                    refuse(id, "No current persisted Task result or verifiable last archived receipt; commits cannot substitute.")
+                    continue
+                  }
+                  if (node!.claimedByWorkflowId !== workflow.id) {
+                    refuse(id, "Current workflow does not own the Task claim.")
+                    continue
+                  }
+                  // Carry-forward must honor the same blocking-question rule as
+                  // normal producer completion. An answered nonblocking advisory
+                  // need not be consumed by a reset producer attempt.
+                  const blockingQuestions = blockingQuestionsForStep(questions, step.id)
+                  if (blockingQuestions.length) {
+                    refuse(id, "Unresolved blocking question(s): " +
+                      blockingQuestions.map((question) => question.id).join(", ") + ".")
+                    continue
+                  }
+                  const openVerification = workflow.verification?.filter((requirement) =>
+                    requirement.beforeStepId === step.id && requirement.status === "open") ?? []
+                  if (openVerification.length) {
+                    refuse(id, "Required pre-Task verification remains open: " +
+                      openVerification.map((requirement) => requirement.id).join(", ") + ".")
+                    continue
+                  }
+                  const staleDependency = resultDependencyIds(work, workflow.work!.generation, step.task).some((dependencyId) => {
+                    const source = byId.get(dependencyId)
+                    const upstream = work.nodes.find((candidate) =>
+                      candidate.generation === work.generation && candidate.type === "task" &&
+                      candidate.logicalId === dependencyId && candidate.status !== "superseded")
+                    if (!source) {
+                      const wave = work.nodes.find((candidate) => candidate.id === upstream?.parentId)
+                      const completion = wave?.completion
+                      if (upstream?.status !== "complete" || !upstream.result || !completion?.bindingFingerprint) return true
+                      try { assertCompletedWaveForTasks(work, upstream.result.workflowId, work.generation, completion.taskIds, completion.bindingFingerprint) } catch { return true }
+                    }
+                    // A dependent's old result cannot survive a newer producer
+                    // execution or an archived dependency not yet verified here.
+                    const upstreamStep = byId.get(dependencyId)
+                    // An in-Wave pending producer is not trusted merely
+                    // because Work still contains its old result. It must
+                    // satisfy this reconciliation or already be complete.
+                    if (upstreamStep && !satisfied(upstreamStep) &&
+                        !eligible.has(dependencyId)) return true
+                    const upstreamReceipt = upstream?.result ?? eligible.get(dependencyId)?.receipt
+                    return !upstreamReceipt || (source && upstreamReceipt.workflowId !== workflow.id) ||
+                      !receipt.dependencyResultDigests?.[dependencyId] ||
+                      createHash("sha256").update(JSON.stringify(upstreamReceipt)).digest("hex") !==
+                        receipt.dependencyResultDigests[dependencyId] ||
+                      !Number.isSafeInteger(upstreamReceipt.completedAttempt) ||
+                      !upstreamReceipt.completedAt || !receipt.completedAt ||
+                      upstreamReceipt.completedAt > receipt.completedAt
+                  })
+                  if (staleDependency) {
+                    refuse(id, "Dependent producer result is missing or was replaced after this completion.")
+                    continue
+                  }
+                  try {
+                    assertOriginalAdviceContract(work, workflow.work!.generation, step.task, receipt,
+                      new Map([...eligible].map(([id, candidate]) => [id, candidate.receipt])))
+                  } catch (error) {
+                    refuse(id, error instanceof Error ? error.message : String(error))
+                    continue
+                  }
+                  if (!Number.isSafeInteger(receipt.completedAttempt) ||
+                      receipt.completedAttempt! < 0 || receipt.completedAttempt! >= (step.attempt ?? 0) ||
+                      receipt.producerAgent !== step.agent || !receipt.planRevision) {
+                    refuse(id, "Original producer attempt or role is missing or inconsistent.")
+                    continue
+                  }
+                  const semantic = diagnoseTaskReceiptSemantics(work, id, receipt, work.generation)
+                  if (semantic.originalProof !== "valid") {
+                    refuse(id, "Original completion semantic proof failed: " + semantic.originalProof + ".")
+                    continue
+                  }
+                  if (semantic.currentContract !== "unchanged") {
+                    refuse(id, "Execution-significant Task/dependency/authority closure changed: " +
+                      semantic.currentContract + " (" +
+                      semantic.changedSemanticFields.slice(0, 8).join(", ") + ").")
+                    continue
+                  }
+                  const executableFingerprint = createHash("sha256")
+                    .update(JSON.stringify(step.task)).digest("hex")
+                  if (!receipt.executableTaskFingerprint ||
+                      receipt.executableTaskFingerprint !== executableFingerprint) {
+                    refuse(id, "Original full executable Task contract (including write/skills) is missing or changed.")
+                    continue
+                  }
+                  if (!head || !receipt.cleanRepositoryHead || head !== receipt.cleanRepositoryHead) {
+                    refuse(id, "No matching clean repository HEAD at original completion and now; code continuity is uncertain.")
+                    continue
+                  }
+                  const oldClaims = (await stepClaims(ctx, workflow.id, step.id)).filter(
+                    (claim) => claim.byAgent === step.agent && (claim.attempt ?? 0) === receipt.completedAttempt,
+                  )
+                  if (!Array.isArray(receipt.evidenceClaimIds)) {
+                    refuse(id, "Original evidence claim list is not a valid persisted receipt.")
+                    continue
+                  }
+                  const storedIds = [...receipt.evidenceClaimIds].sort()
+                  if (!storedIds.length ||
+                      JSON.stringify(storedIds) !== JSON.stringify(oldClaims.map((claim) => claim.id).sort())) {
+                    refuse(id, "Original exact-attempt evidence claim set is missing or incomplete.")
+                    continue
+                  }
+                  const canonical = await Promise.all(storedIds.map((claimId) =>
+                    ctx.storage.get(claimIdKey(claimId)) as Promise<EvidenceClaim | undefined>))
+                  if (canonical.some((claim) =>
+                    !claim || claim.workflowId !== workflow.id || claim.stepId !== step.id ||
+                    claim.byAgent !== step.agent || (claim.attempt ?? 0) !== receipt.completedAttempt)) {
+                    refuse(id, "Canonical producer evidence claim is missing or mismatched.")
+                    continue
+                  }
+                  const originalWorkflow: Workflow = {
+                    ...workflow,
+                    steps: workflow.steps.map((candidate) => candidate.id === step.id
+                      ? { ...candidate, attempt: receipt.completedAttempt } : candidate),
+                  }
+                  const claimObservations = await Promise.all(oldClaims.map((claim) =>
+                    Promise.all(claim.observationIds.map((observationId) =>
+                      ctx.storage.get(evidenceKey(observationId)) as Promise<EvidenceObservation | undefined>))))
+                  const observations = claimObservations.flat()
+                  if (!observations.length || observations.some((observation) =>
+                    !observation || observation.status !== "completed" || !observation.admission ||
+                    !observationMatchesStep(observation, originalWorkflow, step.id)) ||
+                    oldClaims.some((claim, index) => {
+                      const matched = claimObservations[index].filter(
+                        (observation): observation is EvidenceObservation => Boolean(observation))
+                      return matched.length !== claim.observationIds.length ||
+                        matched.some((observation, observationIndex) =>
+                          observation.id !== claim.observationIds[observationIndex]) ||
+                        !observationsSupportKind(claim.kind, matched)
+                    })) {
+                    refuse(id, "Original host observations are missing or belong to another producer attempt.")
+                    continue
+                  }
+                  eligible.set(id, { step, node: node!, receipt, fromArchive: Boolean(archivedReceipt) })
+                }
+                let changed = true
+                while (changed) {
+                  changed = false
+                  for (const [id, candidate] of eligible) {
+                    const missing = candidate.step.task!.dependsOn.find((dependency) => {
+                      const source = byId.get(dependency)
+                      return source && !satisfied(source) && !eligible.has(dependency)
+                    })
+                    if (!missing) continue
+                    eligible.delete(id)
+                    refuse(id, "Producer dependency " + missing + " must run or be reconciled.")
+                    changed = true
+                  }
+                }
+                if (eligible.size > 0 &&
+                    (!head || (await cleanRepositoryHead(ctx.location.directory)) !== head)) {
+                  throw new Error("Repository changed during reconciliation; no Task completion was restored.")
+                }
+                const reconciled: string[] = []
+                const restoredArchived: string[] = []
+                const restoredAt = new Date().toISOString()
+                for (const id of ids) {
+                  const candidate = eligible.get(id)
+                  if (!candidate) continue
+                  if (candidate.fromArchive) {
+                    // Only verified, canonical ORIGINAL proof may become current
+                    // again. Do not invent completion from Step state or commits.
+                    candidate.node.result = structuredClone(candidate.receipt)
+                    candidate.node.updatedAt = restoredAt
+                    restoredArchived.push(id)
+                  }
+                  candidate.step.status = "complete"
+                  // Keep the current reset attempt as a monotonic authority fence.
+                  // The source attempt stays only in the original Work receipt/audit.
+                  if (candidate.receipt.summary) candidate.step.summary = candidate.receipt.summary
+                  else delete candidate.step.summary
+                  reconciled.push(id)
+                }
+                const auditId = crypto.randomUUID()
+                const auditKey = "work-reconciliation/" + workflow.id + "/" + auditId
+                const audit = {
+                  workflowId: workflow.id, generation: work.generation, revision: plan.revision,
+                  at: new Date().toISOString(), byAgent: tool.agent, bySessionId: tool.sessionID,
+                  cleanHead: head ?? null,
+                  recovered: reconciled.map((id) => {
+                    const candidate = eligible.get(id)!
+                    const receipt = candidate.receipt
+                    return {
+                      taskId: id, workflowId: receipt.workflowId,
+                      receiptSource: candidate.fromArchive ? "last-archived" : "current",
+                      originalAttempt: receipt.completedAttempt!,
+                      originalPlanRevision: receipt.planRevision!,
+                      semanticClosureFingerprint: receipt.semanticClosureFingerprint!,
+                      evidenceClaimIds: receipt.evidenceClaimIds,
+                      cleanRepositoryHead: receipt.cleanRepositoryHead!,
+                    }
+                  }),
+                  refused,
+                }
+                // Crash between audit and workflow persistence must not present
+                // a prepared record as a successful carry-forward.
+                await ctx.storage.set(auditKey, { ...audit, state: "prepared" })
+                const commitReconciliation = async () => {
+                  if (restoredArchived.length) {
+                    work.version++
+                    work.updatedAt = restoredAt
+                    await ctx.storage.set(workKey(work.objectiveId), work)
+                  }
+                  if (reconciled.length) await persistWorkflowMutationLocked(ctx, runtime, workflow)
+                  await ctx.storage.set(auditKey, {
+                    ...audit, state: "committed", workflowRevision: workflow.revision,
+                  })
+                }
+                // withWorkflowWorkLocks already runs this entire callback in
+                // Loom's durable runtime transaction, covering the Work result,
+                // Workflow Step, and committed reconciliation audit together.
+                // OpenCode's StorageDomain has no transaction method.
+                await commitReconciliation()
+                return {
+                  auditId, reconciled, restoredArchived, refused, alreadyComplete,
+                  ...(refused.length ? { diagnosticTool: "loom_work_reconcile_diagnose" } : {}),
+                  planRevision: plan.revision, budgetUnchanged: true,
+                  freshImplementationReviewRequired: true,
+                }
+              },
+            )
+            return { content: renderToolOutput(outcome) }
+          } catch (error) {
+            return { content: renderToolOutput({ error: error instanceof Error ? error.message : String(error) }) }
+          }
+        },
+      })
+
+      addLoomTool({
+        name: "work_reconcile_diagnose",
+        description:
+          "Read-only original-receipt and current Plan-closure diagnostics for pending Tasks. Separates missing or mismatched original proof from changed executable semantics, code, dependencies, and host observations. This never reconciles, creates an audit, or grants Task completion.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            taskIds: { type: "array", items: { type: "string" } },
+          },
+          required: ["workflowId"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          if (tool.agent !== "general" && tool.agent !== "planner") {
+            return { content: renderToolOutput({ error: "Only General or an attached Planner may diagnose Task reconciliation." }) }
+          }
+          const value = input as { workflowId: string; taskIds?: string[] }
+          const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
+          if (!workflow?.work) {
+            return { content: renderToolOutput({ error: "Bound workflow with persistent Work is required." }) }
+          }
+          const work = await readWork(ctx, workflow.work.objectiveId)
+          if (!work) return { content: renderToolOutput({ error: "Persistent Work hierarchy is missing." }) }
+          const taskSteps = plannedTaskSteps(workflow)
+          const byId = new Map(taskSteps.map((step) => [step.task!.id, step]))
+          const ids = value.taskIds ?? [...byId.keys()]
+          if (!Array.isArray(ids) || ids.length < 1 || ids.length > 24 ||
+              new Set(ids).size !== ids.length || ids.some((id) => !byId.has(id))) {
+            return { content: renderToolOutput({ error: "Choose 1-24 distinct Tasks in the compiled Wave." }) }
+          }
+          const plan = workPlanContext(work, undefined, "focused", workflow.work.generation)
+          const reviewed = workflow.steps.find((step) => step.id === "review-plan")
+          const allIds = [...byId.keys()]
+          const reviewValid = Boolean(
+            plan && !plan.invalidated && reviewed?.status === "passed" &&
+            workflow.work.reviewedPlanRevision === plan.revision &&
+            workflow.work.reviewedPlanFingerprint ===
+              workPlanSemanticFingerprint(work, workflow.work.generation))
+          const compiledValid = Boolean(
+            plan && workflow.work.taskPlanRevision === plan.revision &&
+            workflow.work.taskPlanFingerprint ===
+              workflowTaskSemanticFingerprint(work, allIds, workflow.work.generation))
+          let claimed = false
+          try {
+            assertWaveClaimForTasks(work, workflow.id, workflow.work.generation, allIds)
+            claimed = true
+          } catch {
+            // Report a missing claim, without acquiring or changing it.
+          }
+          const head = await cleanRepositoryHead(ctx.location.directory)
+          const questions = await readQuestions(ctx, workflow.id)
+          const diagnostics = []
+          for (const id of ids) {
+            const step = byId.get(id)!
+            const node = work.nodes.find((candidate) =>
+              candidate.type === "task" && candidate.generation === workflow.work!.generation &&
+              candidate.logicalId === id && candidate.status !== "superseded")
+            const archived = lastArchivedCompletionReceipt(node, workflow.id)
+            const receipt = node?.result ?? archived
+            const source = node?.result ? "current" : archived ? "last-archived" : "missing"
+            const semantic = receipt
+              ? diagnoseTaskReceiptSemantics(work, id, receipt, workflow.work.generation)
+              : null
+            const expectedExecutable = createHash("sha256")
+              .update(JSON.stringify(step.task)).digest("hex")
+            const executable = !receipt?.executableTaskFingerprint ? "missing-receipt-fingerprint"
+              : receipt.executableTaskFingerprint === expectedExecutable ? "unchanged" : "changed"
+            const code = !receipt?.cleanRepositoryHead ? "missing-original-head"
+              : !head ? "current-head-not-clean-or-unavailable"
+              : receipt.cleanRepositoryHead === head ? "unchanged" : "changed"
+            const provenance = !receipt ? "missing-receipt"
+              : !Number.isSafeInteger(receipt.completedAttempt) ||
+                  (receipt.completedAttempt ?? -1) < 0 ||
+                  (satisfied(step)
+                    ? (receipt.completedAttempt ?? -1) > (step.attempt ?? 0)
+                    : (receipt.completedAttempt ?? -1) >= (step.attempt ?? 0)) ||
+                  receipt.producerAgent !== step.agent ||
+                  receipt.workflowId !== workflow.id
+                ? "missing-or-inconsistent-original-attempt"
+                : "consistent"
+            const dependencies = (step.task?.dependsOn ?? []).map((dependencyId) => {
+              const sourceStep = byId.get(dependencyId)
+              if (!sourceStep) return { taskId: dependencyId, status: "external-wave-not-assessed" }
+              const upstream = work.nodes.find((candidate) =>
+                candidate.type === "task" && candidate.generation === workflow.work!.generation &&
+                candidate.logicalId === dependencyId && candidate.status !== "superseded")
+              const result = upstream?.result ?? lastArchivedCompletionReceipt(upstream, workflow.id)
+              const expected = receipt?.dependencyResultDigests?.[dependencyId]
+              const actual = result && createHash("sha256").update(JSON.stringify(result)).digest("hex")
+              const status = !expected ? "missing-original-digest"
+                : !result ? "missing-dependency-result"
+                : actual !== expected ? "changed-dependency-result"
+                : !satisfied(sourceStep) ? "pending-upstream-requires-reconciliation"
+                : "matching-completed-dependency"
+              return { taskId: dependencyId, status }
+            })
+            const originalAttempt = receipt?.completedAttempt
+            const savedClaimIds = Array.isArray(receipt?.evidenceClaimIds)
+              ? receipt.evidenceClaimIds : []
+            const attemptClaims = receipt && Number.isSafeInteger(originalAttempt)
+              ? (await stepClaims(ctx, workflow.id, step.id)).filter((claim) =>
+                  (claim.attempt ?? 0) === originalAttempt && claim.byAgent === step.agent)
+              : []
+            const canonical = await Promise.all(savedClaimIds.map((claimId) =>
+              ctx.storage.get(claimIdKey(claimId)) as Promise<EvidenceClaim | undefined>))
+            const claimsValid = savedClaimIds.length > 0 &&
+              JSON.stringify([...savedClaimIds].sort()) ===
+                JSON.stringify(attemptClaims.map((claim) => claim.id).sort()) &&
+              canonical.every((claim) =>
+                claim && claim.workflowId === workflow.id && claim.stepId === step.id &&
+                claim.byAgent === step.agent && (claim.attempt ?? 0) === originalAttempt)
+            const originalWorkflow: Workflow = {
+              ...workflow,
+              steps: workflow.steps.map((candidate) => candidate.id === step.id
+                ? { ...candidate, attempt: originalAttempt ?? -1 } : candidate),
+            }
+            const observations = await Promise.all(attemptClaims.flatMap((claim) =>
+              claim.observationIds.map((observationId) =>
+                ctx.storage.get(evidenceKey(observationId)) as Promise<EvidenceObservation | undefined>)))
+            const observationsValid = claimsValid && observations.length > 0 &&
+              observations.every((observation) =>
+                observation && observation.status === "completed" && observation.admission &&
+                observationMatchesStep(observation, originalWorkflow, step.id)) &&
+              attemptClaims.every((claim) => {
+                const found = observations.filter((observation) =>
+                  claim.observationIds.includes(observation?.id ?? ""))
+                  .filter((observation): observation is EvidenceObservation => Boolean(observation))
+                return found.length === claim.observationIds.length &&
+                  observationsSupportKind(claim.kind, found)
+              })
+            const blocking = blockingQuestionsForStep(questions, step.id).map((q) => q.id)
+            const openVerification = (workflow.verification ?? [])
+              .filter((requirement) =>
+                requirement.beforeStepId === step.id && requirement.status === "open")
+              .map((requirement) => requirement.id)
+            const checks = {
+              originalSemanticProof: semantic?.originalProof ?? "missing-receipt",
+              currentExecutionContract: semantic?.currentContract ?? "unknown",
+              executableContract: executable,
+              cleanRepositoryHead: code,
+              producerAttempt: provenance,
+              dependencyResults: dependencies,
+              originalEvidenceClaims: claimsValid ? "valid" : "missing-or-mismatched",
+              originalHostObservations: observationsValid ? "valid" : "missing-or-mismatched",
+              blockingQuestionIds: blocking,
+              openVerificationIds: openVerification,
+            }
+            diagnostics.push({
+              taskId: id, stepStatus: step.status, receiptSource: source,
+              ...(receipt ? { originalPlanRevision: receipt.planRevision ?? null } : {}),
+              checks,
+              semantic: semantic ?? null,
+              // A diagnostic is not a carry-forward verdict. Even all matching
+              // fields require the normal guarded reconciliation and audit.
+              diagnosticOnly: true,
+            })
+          }
+          return { content: renderToolOutput({
+            workflowId: workflow.id, generation: workflow.work.generation,
+            currentPlanRevision: plan?.revision ?? null,
+            reviewPlanCurrent: reviewValid,
+            compiledTaskPlanCurrent: compiledValid,
+            waveClaimCurrent: claimed,
+            diagnosticOnly: true, dispatchBudgetUsed: 0,
+            tasks: diagnostics,
+          }) }
+        },
+      })
+
+      addLoomTool({
+        name: "work_reconcile_status",
+        description:
+          "Read an exact durable Task carry-forward audit receipt. A prepared/uncommitted receipt is not a completed reconciliation.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            auditId: { type: "string" },
+          },
+          required: ["workflowId", "auditId"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          const value = input as { workflowId: string; auditId: string }
+          const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
+          if (!workflow) return { content: renderToolOutput({ error: "Bound workflow not found." }) }
+          if (!/^[0-9a-f-]{36}$/i.test(value.auditId)) {
+            return { content: renderToolOutput({ error: "Exact reconciliation audit ID is required." }) }
+          }
+          const audit = await ctx.storage.get("work-reconciliation/" + workflow.id + "/" + value.auditId)
+          if (!audit || typeof audit !== "object") {
+            return { content: renderToolOutput({ error: "Reconciliation audit not found." }) }
+          }
+          const record = audit as {
+            state?: string
+            generation?: number
+            revision?: number
+            recovered?: Array<{ taskId: string; originalAttempt: number }>
+          }
+          const committed = record.state === "committed"
+          const work = workflow.work ? await readWork(ctx, workflow.work.objectiveId) : undefined
+          const plan = work && workflow.work
+            ? workPlanContext(work, undefined, "focused", workflow.work.generation) : undefined
+          const current = Boolean(
+            committed && record.recovered?.length && work && plan &&
+            workflow.work?.generation === record.generation &&
+            plan.revision === record.revision &&
+            workflow.work?.reviewedPlanRevision === record.revision &&
+            workflow.steps.some((step) => step.id === "review-plan" && step.status === "passed") &&
+            record.recovered?.every((source) =>
+              workflow.steps.some((step) => step.task?.id === source.taskId && satisfied(step)) &&
+              work.nodes.some((node) => node.type === "task" && node.logicalId === source.taskId &&
+                node.generation === record.generation &&
+                node.result?.workflowId === workflow.id &&
+                node.result?.completedAttempt === source.originalAttempt),
+            ),
+          )
+          return { content: renderToolOutput({
+            audit, committed, current,
+            ...(!committed
+              ? { warning: "Prepared or incomplete reconciliation is not a completion receipt." }
+              : !current ? { warning: "Historical reconciliation does not prove current Task satisfaction." } : {}),
+          }) }
+        },
+      })
+
       addLoomTool({
         name: "work_status",
         description:
-          "Inspect persistent Objective progress and the bounded current holistic Plan. Pass taskId to retrieve one exact persistent Plan Task contract (including future Waves) without loading the whole rich Plan; revision optionally selects an immutable revision in the current generation.",
+          "Inspect persistent Objective progress and the effective current Plan. Pass taskId for one bounded Task contract; pass revision to explicitly inspect an immutable historical Plan revision without loading revision history into normal context.",
         input: {
           type: "object",
           properties: {
@@ -8233,13 +11517,6 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             objectiveId?: string
             taskId?: string
             revision?: number
-          }
-          if (value.revision !== undefined && !value.taskId) {
-            return {
-              content: renderToolOutput({
-                error: "Plan revision selection requires taskId; whole-Plan status always uses the latest revision.",
-              }),
-            }
           }
           let objectiveId = value.objectiveId
 
@@ -8272,7 +11549,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 work.generation,
                 value.revision,
               )
-            : workPlanContext(work, undefined, "full")
+            : workPlanContext(work, undefined, "full", work.generation, value.revision)
+          if (!plan && value.revision !== undefined) {
+            return {
+              content: renderToolOutput({
+                error: `Persistent Plan revision ${value.revision} not found in current generation.`,
+              }),
+            }
+          }
           if (value.taskId && !plan?.focus?.task) {
             return {
               content: renderToolOutput({
@@ -8407,7 +11691,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "task_plan",
         description:
-          "Compile the bounded Worker DAG for exactly one remaining runnable Wave. Planner only. Executable Task semantics must match the persistent rich Task contracts; this adds immutable write scopes and skill recommendations. New workflows do not claim or authorize the Wave until independent review-plan passes.",
+          "Compile exactly one runnable Wave using each Task's persistent accountable role and responsibility. Planner only. Executable semantics must match the persistent Plan; new workflows do not claim or authorize the Wave until independent review-plan passes.",
         input: {
           type: "object",
           properties: {
@@ -8430,6 +11714,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   write: { type: "array", items: { type: "string" } },
                   skills: { type: "array", items: { type: "string" } },
                   verify: { type: "array", items: { type: "string" } },
+                  role: { type: "string" },
+                  responsibility: { type: "string", enum: ["produce", "execute", "review", "obtain-user-decision"] },
+                  adviceForTaskId: { type: "string" },
                 },
                 required: [
                   "id",
@@ -8445,6 +11732,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   "write",
                   "skills",
                   "verify",
+                  "role",
+                  "responsibility",
                 ],
                 additionalProperties: false,
               },
@@ -8473,6 +11762,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           const planStep = workflow.steps.find((step) => step.id === "plan")
           if (!planStep) return { content: renderToolOutput({ error: "Workflow has no planning step." }) }
+          if (!workflow.steps.some((step) => step.id === "review-plan" && step.agent === "reviewer" && step.kind === "gate")) {
+            return {
+              content: renderToolOutput({
+                error: "This legacy workflow has no independent review-plan gate and cannot admit Tasks. Re-route through a current Objective workflow so Planner correction and Reviewer review precede Wave claim.",
+              }),
+            }
+          }
           if (!runnable(workflow).some((step) => step.id === "plan")) {
             return { content: renderToolOutput({ error: "Planning step is not currently runnable." }) }
           }
@@ -8529,30 +11825,109 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   }
                 }
 
-                const steps = applyTaskPlan(workflow, tasks)
+                await assertAdviceHostPaths(ctx, work, workflow.work!.generation)
+                const preservedTaskIds = await reusableCompletedTaskIds(ctx, work, workflow)
+                const preserved = new Set(preservedTaskIds)
+                // Never silently discard a previously completed Step on compilation.
+                // An archived receipt requires an independently reviewed Plan and
+                // exact original-evidence reconciliation; it is NOT reusable yet.
+                const completedWithoutCurrentReceipt = plannedTaskSteps(workflow)
+                  .filter((step) => satisfied(step) && !preserved.has(step.task!.id))
+                const archivedReceiptTaskIds = completedWithoutCurrentReceipt
+                  .filter((step) => {
+                    const node = work.nodes.find((candidate) =>
+                      candidate.generation === workflow.work!.generation &&
+                      candidate.type === "task" && candidate.logicalId === step.task!.id &&
+                      candidate.status !== "superseded")
+                    return Boolean(lastArchivedCompletionReceipt(node, workflow.id))
+                  })
+                  .map((step) => step.task!.id)
+                // A changed Plan closure is work to rerun, not a proof
+                // failure. Refuse only unexplained loss of a completion
+                // where the semantic contract still matches.
+                const unprovenCompleted = completedWithoutCurrentReceipt.filter((step) => {
+                  if (archivedReceiptTaskIds.includes(step.task!.id)) return false
+                  const currentClosure = taskSemanticClosureFingerprintAtRevision(
+                    work, step.task!.id, workflow.work!.generation)
+                  const previousClosure = taskSemanticClosureFingerprintAtRevision(
+                    work, step.task!.id, workflow.work!.generation,
+                    workflow.work!.taskPlanRevision)
+                  return Boolean(currentClosure && previousClosure && currentClosure === previousClosure)
+                })
+                if (unprovenCompleted.length > 0) {
+                  throw new Error(
+                    "Refusing to recompile completed Tasks without a current completion receipt " +
+                    "or a same-workflow archived receipt: " +
+                    unprovenCompleted.map((step) => step.task!.id).join(", ") + ".",
+                  )
+                }
+                const executableTasks = tasks.filter((task) => !preserved.has(task.id))
+                const steps = applyTaskPlan(workflow, tasks, preservedTaskIds)
+                reconcileVerificationAfterRoute(workflow)
                 const currentPlan = workPlanContext(work, undefined, "full", workflow.work!.generation)
                 if (!currentPlan) throw new Error("Persistent semantic Plan snapshot not found.")
+                const compiledTaskIds = steps.map((step) => step.task!.id)
                 workflow.work!.taskPlanRevision = currentPlan.revision
                 workflow.work!.taskPlanFingerprint = workflowTaskSemanticFingerprint(
                   work,
-                  tasks.map((task) => task.id),
+                  compiledTaskIds,
                   workflow.work!.generation,
                 )
-                const hasPlanReview = workflow.steps.some((step) => step.id === "review-plan")
-                const wave = hasPlanReview
+                const wave = executableTasks.length > 0
                   ? validateWorkflowWave(
                       work,
-                      tasks,
+                      executableTasks,
                       (workflow.effects?.workLevel ?? "objective") === "objective",
+                      { workflowId: workflow.id, satisfiedTaskIds: preservedTaskIds },
                     )
-                  : claimWorkflowWave(
-                      work,
-                      workflow.id,
-                      workflow.work!.generation,
-                      tasks,
-                      (workflow.effects?.workLevel ?? "objective") === "objective",
-                      new Date().toISOString(),
-                    )
+                  : (() => {
+                      const preservedTask = work.nodes.find(
+                        (node) =>
+                          node.generation === workflow.work!.generation &&
+                          node.type === "task" &&
+                          preserved.has(node.logicalId) &&
+                          node.status !== "superseded",
+                      )
+                      const completedWave = preservedTask
+                        ? work.nodes.find((node) => node.id === preservedTask.parentId && node.type === "wave")
+                        : undefined
+                      if (!completedWave) throw new Error("Task Plan has no executable or reusable Wave.")
+                      const omitted = work.nodes.filter(
+                        (node) =>
+                          node.generation === workflow.work!.generation &&
+                          node.type === "task" &&
+                          node.parentId === completedWave.id &&
+                          node.status !== "complete" &&
+                          node.status !== "superseded" &&
+                          !preserved.has(node.logicalId),
+                      )
+                      if (omitted.length > 0) {
+                        throw new Error(
+                          "Workflow task plan must contain every remaining Task in its selected Wave: " +
+                          omitted.map((node) => node.logicalId).join(", "),
+                        )
+                      }
+                      return completedWave
+                    })()
+
+                await assertCurrentAcceptanceDependencies(ctx, workflow, work, compiledTaskIds)
+
+                // Specifier/Reviewer may have prepared scenarios against the
+                // default Objective gate before Planner compiled this Wave.
+                // Rebind only untouched definitions; never migrate a verdict.
+                const plannedAcceptance = steps.find((step) =>
+                  nativeTaskPath(step.task!)?.nativeKind === "acceptance")
+                if (plannedAcceptance) {
+                  const prepared = await ctx.storage.get(acceptanceKey(workflow.id)) as AcceptancePlan | undefined
+                  if (prepared?.stepId === "product-acceptance") {
+                    if (prepared.scenarios.some((scenario) => scenario.outcome !== "pending")) {
+                      throw new Error("Previously executed Product Acceptance cannot be rebound to a planned Task.")
+                    }
+                    prepared.stepId = plannedAcceptance.id
+                    prepared.stepAttempt = plannedAcceptance.attempt ?? 0
+                    await ctx.storage.set(acceptanceKey(workflow.id), prepared)
+                  }
+                }
 
                 for (const step of steps) {
                   const scope: TaskScope = {
@@ -8568,27 +11943,21 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
                 const persisted = await readWork(ctx, work.objectiveId)
                 if (!persisted) throw new Error("Persistent work hierarchy disappeared after task-plan compilation.")
-                if (hasPlanReview) {
+                if (executableTasks.length > 0) {
                   validateWorkflowWave(
                     persisted,
-                    tasks,
+                    executableTasks,
                     (workflow.effects?.workLevel ?? "objective") === "objective",
-                  )
-                } else {
-                  // Compatibility for already-running workflows created before
-                  // review-plan existed: preserve their historical immediate claim.
-                  assertWaveClaimForTasks(
-                    persisted,
-                    workflow.id,
-                    workflow.work!.generation,
-                    tasks.map((task) => task.id),
+                    { workflowId: workflow.id, satisfiedTaskIds: preservedTaskIds },
                   )
                 }
                 return {
                   work: persisted,
                   wave,
                   steps,
-                  planReviewRequired: hasPlanReview,
+                  reusedTaskIds: preservedTaskIds,
+                  archivedReceiptTaskIds,
+                  planReviewRequired: true,
                   workLevel: workflow.effects?.workLevel ?? "objective",
                   workLevelAuto: Boolean(workflow.effects?.workLevelAuto),
                   autoResolvedWorkLevel,
@@ -8604,6 +11973,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 workLevel: claimed.workLevel,
                 workLevelAuto: claimed.workLevelAuto,
                 autoResolvedWorkLevel: claimed.autoResolvedWorkLevel,
+                reusedTaskIds: claimed.reusedTaskIds,
+                // These Steps require a fresh review-plan PASS followed by
+                // loom_work_reconcile; the compiler does not attest old work.
+                archivedReceiptTaskIds: claimed.archivedReceiptTaskIds,
                 tasks: steps.map((step) => ({
                   stepId: step.id,
                   task: step.task,
@@ -8620,7 +11993,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "task_status",
         description:
-          "Inspect exact Task contracts and runtime status. Executable workflows return compiled Worker Tasks. Planning-only Objectives may retrieve one exact semantic Plan Task by taskId before executable scopes exist; use planContext for the bounded Plan map.",
+          "Inspect exact Task contracts and runtime status, including whether a user-decision wait is ready for its exact OQ path. Executable workflows return compiled role-owned Tasks. Planning-only Objectives may retrieve one exact semantic Plan Task by taskId before executable scopes exist; use planContext for the bounded Plan map.",
         input: {
           type: "object",
           properties: {
@@ -8677,12 +12050,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return { content: renderToolOutput({ error: `Planned Task ${taskId} not found.` }) }
           }
           const runnableIDs = new Set(runnable(workflow).map((step) => step.id))
+          const statusWork = workflow.work ? await readWork(ctx, workflow.work.objectiveId) : undefined
           return {
             content: renderToolOutput({
               tasks: tasks.map((step) => ({
                 stepId: step.id,
                 status: step.status,
+                nativePath: nativeTaskPath(step.task!),
+                result: statusWork?.nodes.find((node) => node.type === "task" && node.generation === workflow.work?.generation &&
+                  node.logicalId === step.task!.id && node.status !== "superseded")?.result,
                 runnable: runnableIDs.has(step.id),
+                ...(step.kind === "wait" && step.task?.responsibility === "obtain-user-decision"
+                  ? {
+                      decisionWait: true,
+                      decisionReady: step.dependsOn.every((dependency) => {
+                        const upstream = workflow.steps.find((candidate) => candidate.id === dependency)
+                        return upstream && satisfied(upstream)
+                      }),
+                    }
+                  : {}),
                 dependsOn: step.dependsOn,
                 task: step.task,
                 executable: true,
@@ -8718,6 +12104,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
             const step = current.steps.find((candidate) => candidate.id === value.stepId)
             if (!step) throw new Error("Step not found.")
+            if (step.kind === "wait" || step.agent === "user") {
+              throw new Error("User-decision wait steps are non-agent and cannot receive an agent write scope.")
+            }
             if (step.status !== "pending") {
               throw new Error("Step write scope cannot change after the step has finished.")
             }
@@ -8811,7 +12200,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "dispatch_grant",
         description:
-          "Issue one short-lived, single-use attachment grant for an exact runnable workflow step or unanswered OQ. General only. A Worker may be dispatched without a predeclared file list so it can inspect first and call loom_scope_elevate when it discovers the actual mutation surface. Pass the returned grantId to the child session.",
+          "General only. After loom_status or loom_route identifies an admitted pending step, or an unanswered specialist OQ, issue a one-use grant for exactly that stepId or questionId; grant issuance alone does not execute it. Pass the returned grantId, workflowId and target identity to the dispatched child, which calls loom_attach. Do not issue duplicate/ambiguous grants or treat a candidate nextAction as permission; admission revalidates state. Worker may inspect with an initially unknown write scope, then call loom_scope_elevate as needed.",
         input: {
           type: "object",
           properties: {
@@ -8883,23 +12272,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 if (!runnable(current).some((candidate) => candidate.id === value.stepId)) {
                   throw new Error("Step is no longer runnable.")
                 }
-                if (step.agent === "worker") {
-                  if (current.work && step.task) {
-                    const work = await readWork(ctx, current.work.objectiveId)
-                    const taskIds = plannedTaskSteps(current).map((taskStep) => taskStep.task!.id)
-                    const currentFingerprint = work
-                      ? workflowTaskSemanticFingerprint(work, taskIds, current.work.generation)
-                      : undefined
-                    if (
-                      currentFingerprint &&
-                      current.work.taskPlanFingerprint !== currentFingerprint
-                    ) {
-                      throw new Error(
-                        "Worker Task DAG is stale against its semantic Task/Wave contract. Reopen planning and re-run loom_task_plan before dispatch.",
-                      )
-                    }
-                  }
-                }
+                const work = current.work
+                  ? await readWork(ctx, current.work.objectiveId)
+                  : undefined
+                assertStepDispatchAdmission(current, work, step)
+                await assertStepHostAvailability(ctx, current, work, step)
               } else {
                 const question = (await ctx.storage.get(
                   oqKey(value.workflowId, value.questionId!),
@@ -9014,7 +12391,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "attach",
         description:
-          "Consume a General-issued one-use grant and attach the current child session to its exact Loom workflow step or OQ, including the relevant Task/holistic Plan context when available.",
+          "Called by a governed child before it performs assigned work. Consumes an exact one-use General-issued grant and binds this host session to its workflow step or OQ, including current Task/Plan context. A missing, expired, stale or mismatched grant does not authorize work: stop and return the error to General instead of inventing context or continuing in an unbound session.",
         input: {
           type: "object",
           properties: {
@@ -9066,8 +12443,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
           let scope: TaskScope | undefined
           let task: TaskSpec | undefined
+          let adviceInputs: ReturnType<typeof reviewedAdviceInputs> | undefined
+          let taskResult: WorkTaskResult | undefined
           let taskOutcome: string | undefined
           let stepAttempt: number | undefined
+          let questionAttempt: number | undefined
           let acceptedOutcome: string | undefined
           let acceptedAuthority: string | undefined
           let planContext: ReturnType<typeof workPlanContext> | undefined
@@ -9191,6 +12571,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   }
                   work = await readWork(ctx, workflow.work.objectiveId)
                   if (!work) throw new Error("Persistent work hierarchy not found.")
+                  if (step.task && nativeTaskPath(step.task)?.nativeKind === "producer") {
+                    adviceInputs = reviewedAdviceInputs(workflow, work, step.task.id)
+                  }
+                  const advisoryTaskId = step.task?.adviceForTaskId ? step.task.id
+                    : step.id.startsWith("task-review:") ? step.id.slice("task-review:".length) : undefined
+                  if (advisoryTaskId) {
+                    const original = work.nodes.find((node) => node.generation === workflow.work!.generation &&
+                      node.type === "task" && node.logicalId === advisoryTaskId && node.status !== "superseded")?.result
+                    if (original) taskResult = original
+                  }
                   planContext =
                     workPlanContext(
                       work,
@@ -9239,30 +12629,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                   )
                 }
 
-                if (tool.agent === "worker") {
-                  if (step.task && workflow.work && work) {
-                    const taskIds = plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id)
-                    const currentFingerprint = workflowTaskSemanticFingerprint(
-                      work,
-                      taskIds,
-                      workflow.work.generation,
-                    )
-                    if (
-                      currentFingerprint &&
-                      workflow.work.taskPlanFingerprint !== currentFingerprint
-                    ) {
-                      throw new Error(
-                        "Worker Task DAG is stale against its semantic Task/Wave contract. Reopen planning and re-run loom_task_plan before attachment.",
-                      )
-                    }
-                    assertWaveClaimForTasks(
-                      work,
-                      workflow.id,
-                      workflow.work.generation,
-                      plannedTaskSteps(workflow).map((taskStep) => taskStep.task!.id),
-                    )
-                  }
-                }
+                assertStepDispatchAdmission(workflow, work, step)
+                await assertStepHostAvailability(ctx, workflow, work, step)
               } else {
                 const question = (await ctx.storage.get(
                   oqKey(value.workflowId, value.questionId!),
@@ -9273,6 +12641,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 if (question.requiredAuthority !== tool.agent) {
                   throw new Error(`Question requires ${question.requiredAuthority}, not ${tool.agent}.`)
                 }
+                questionAttempt = question.attempt ?? 0
 
                 acceptedOutcome = workflow.request
                 acceptedAuthority = workflow.anchor
@@ -9331,6 +12700,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 }
               }
 
+              const dispatchMode = (await ctx.storage.get(
+                admittedSubagentDispatchModeKey(value.grantId),
+              )) as AdmittedSubagentDispatchMode | undefined
+              if (
+                dispatchMode &&
+                (
+                  dispatchMode.schemaVersion !== 1 ||
+                  dispatchMode.projectId !== runtime.projectId ||
+                  dispatchMode.workflowId !== value.workflowId ||
+                  dispatchMode.grantId !== value.grantId ||
+                  dispatchMode.parentSessionID !== workflow.createdBySession ||
+                  dispatchMode.expectedAgent !== tool.agent ||
+                  dispatchMode.stepId !== value.stepId ||
+                  dispatchMode.questionId !== value.questionId
+                )
+              ) {
+                throw new Error("Dispatch mode provenance does not match this exact attachment.")
+              }
+
               await consumeDispatchGrantLocked(ctx.storage as any, runtime, {
                 grantId: value.grantId,
                 workflowId: value.workflowId,
@@ -9338,6 +12726,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 expectedAgent: tool.agent,
                 consumingSessionId: tool.sessionID,
               })
+
+              await ctx.storage.set(
+                backgroundChildBindingKey(tool.sessionID),
+                {
+                  schemaVersion: 1,
+                  projectId: runtime.projectId,
+                  workflowId: value.workflowId,
+                  parentSessionID: workflow.createdBySession,
+                  childSessionID: tool.sessionID,
+                  active: dispatchMode?.background === true,
+                  observedAt: new Date().toISOString(),
+                } satisfies BackgroundChildBinding,
+              )
 
               await ctx.storage.set(sessionKey(tool.sessionID), value.workflowId)
               await scopedStorage.delete?.(`session-deletion-fence/${tool.sessionID}`)
@@ -9366,6 +12767,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 )
               }
               await ctx.storage.set(sessionOqKey(tool.sessionID), value.questionId ?? "")
+              await ctx.storage.set(sessionOqAttemptKey(tool.sessionID), value.questionId ? (questionAttempt ?? null) : null)
               if (value.stepId === "review-plan" && planContext) {
                 const planningOnly = planningOnlyObjective(workflow.effects)
                 const executableFingerprint = executableTaskPlanFingerprint(workflow)
@@ -9430,12 +12832,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 write: scope.write,
                 scopeSemantics: "starting-expectation-with-runtime-elevation",
                 scopeNote: taskOutcome
-                  ? "The attached write scope is the current mutation surface, not a prediction that every needed file is already known. taskOutcome is the bounded completion target and planContext preserves the parent goal, accepted authority, constraints, acceptance criteria, integration, dependencies, risks, and downstream acceptance context. Discover freely; call loom_scope_elevate before mutating additional project-local paths. Same-attempt admitted bytes are automatically commit-authorized across redispatch."
+                  ? "The attached write scope is the current mutation surface, not a prediction that every needed file is already known. taskOutcome is the bounded completion target and planContext preserves the parent goal, accepted authority, constraints, acceptance criteria, integration, dependencies, risks, and downstream acceptance context. Discover freely; call loom_scope_elevate before mutating additional project-local paths. Any durable project-local write scope, including scope granted by loom_scope_elevate, automatically carries commit authority for that step's admitted bytes across redispatch."
                   : acceptedOutcome
-                    ? "The attached write scope is the current mutation surface, not a prediction that every needed file is already known. acceptedOutcome is the bounded completion target and acceptedAuthority is its governing source. Discover freely; call loom_scope_elevate before mutating additional project-local paths. Same-attempt admitted bytes are automatically commit-authorized across redispatch."
-                    : "The attached write scope is the current mutation surface, not a prediction that every needed file is already known. acceptedAuthority identifies the governing source. Discover freely; call loom_scope_elevate before mutating additional project-local paths. Same-attempt admitted bytes are automatically commit-authorized across redispatch.",
+                    ? "The attached write scope is the current mutation surface, not a prediction that every needed file is already known. acceptedOutcome is the bounded completion target and acceptedAuthority is its governing source. Discover freely; call loom_scope_elevate before mutating additional project-local paths. Any durable project-local write scope, including scope granted by loom_scope_elevate, automatically carries commit authority for that step's admitted bytes across redispatch."
+                    : "The attached write scope is the current mutation surface, not a prediction that every needed file is already known. acceptedAuthority identifies the governing source. Discover freely; call loom_scope_elevate before mutating additional project-local paths. Any durable project-local write scope, including scope granted by loom_scope_elevate, automatically carries commit authority for that step's admitted bytes across redispatch.",
               } : {}),
               ...(task ? { task } : {}),
+              ...(task ? { nativePath: nativeTaskPath(task) } : {}),
+              ...(adviceInputs?.length ? { adviceInputs } : {}),
+              ...(taskResult ? { taskResult } : {}),
+              ...(tool.agent === "reviewer" && taskResult?.adviceResolutions?.length ? {
+                adviceReviewBoundary: "Validate the receiver's actual referenced decision/output. Deferred must identify exclusion, rationale, remaining work/authority (or no required meaning remaining) and the decision established. Any unresolved required meaning prevents PASS; typed disposition does not authorize Plan deferral or acceptance.",
+              } : {}),
               ...(producerSkills ? { producerSkills } : {}),
               ...(value.stepId && tool.agent === "reviewer"
                 ? {
@@ -9472,6 +12880,33 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       })
 
       addLoomTool({
+        name: "policy_status",
+        description:
+          "Inspect currently effective user-owned Loom command/write rules for this OpenCode worktree. The optional root .loom.yaml overrides the global ~/.config/opencode/.loom.yaml, including empty sections. An invalid local file blocks all configured allowances rather than falling back to global. Rules reload on every permission and execution admission. This is read-only; it neither grants permission nor modifies files.",
+        input: {
+          type: "object", properties: {}, additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async () => {
+          const policy = await currentPolicy()
+          return { content: renderToolOutput({
+            source: policy.source, status: policy.status,
+            path: policy.path, globalPath: policy.globalPath,
+            worktreePath: policy.worktreePath,
+            ...(policy.error ? { error: policy.error } : {}),
+            shell: projectShellOverrides(policy.policy, ctx.location.directory),
+            writes: Object.fromEntries(
+              ["worker", "designer", "specifier", "architect", "documenter"].map((role) => [
+                role, projectWriteOverrides(policy.policy, ctx.location.directory, role),
+              ]),
+            ),
+            precedence: "worktree-file-replaces-global-policy",
+            admission: "current-runnable-step-required",
+          }) }
+        },
+      })
+
+      addLoomTool({
         name: "scope_status",
         description:
           "Inspect one workflow step's current effective write scope, General's declared starting expectation, and durable self-elevation history.",
@@ -9495,13 +12930,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           if (!step) return { content: renderToolOutput({ error: "Step not found." }) }
           const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
           const roleWriteDefault = artifactWriteDefaults[step.agent] ?? []
-          const effectiveWrite = scope?.write.length ? scope.write : roleWriteDefault
+          const policy = await currentPolicy()
+          const policyWrite = projectWriteOverrides(policy.policy, ctx.location.directory, step.agent)
+          const effectiveWrite = mergeWriteScope(
+            scope?.write.length ? scope.write : roleWriteDefault,
+            policyWrite,
+          )
+          const committableWrite = committableWriteScope(effectiveWrite)
           return {
             content: renderToolOutput({
               scope: scope ?? null,
               agent: step.agent,
               roleWriteDefault,
+              policyWrite,
+              policySource: policy.source,
+              policyStatus: policy.status,
+              ...(policy.error ? { policyError: policy.error } : {}),
               effectiveWrite,
+              committableWrite,
+              commitAuthorized: committableWrite.length > 0,
               elevations: scope?.elevations ?? [],
               scopeSemantics: "starting-expectation-with-runtime-elevation",
             }),
@@ -9510,9 +12957,100 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       })
 
       addLoomTool({
+        name: "command_elevate",
+        description:
+          "Issue a one-use audit grant for any exact shell command, including Git, installs, pipes and shell expressions. This only applies to the requesting agents current attached runnable Loom step; it does not execute the command. Once granted, invoke the exact command using shell/bash and continue work. Loom records the request and outcome, but cannot contain or roll back command side effects, and cannot grant file/Git ownership for unknown shell effects. OS permissions still apply.",
+        input: {
+          type: "object",
+          properties: {
+            workflowId: { type: "string" },
+            stepId: { type: "string" },
+            command: { type: "string" },
+            reason: { type: "string" },
+          },
+          required: ["workflowId", "stepId", "command", "reason"],
+          additionalProperties: false,
+        },
+        options: { namespace: "loom", codemode: false },
+        execute: async (input, tool) => {
+          const value = input as {
+            workflowId: string; stepId: string; command: string; reason: string
+          }
+          const command = value.command.trim()
+          const reason = redactCommand(value.reason.trim())
+          if (!reason || reason.length > 4000 || !command || command.length > 16_384) {
+            return { content: renderToolOutput({
+              error: "Elevation requires one exact non-empty command (max 16384 characters) and a non-empty reason.",
+            }) }
+          }
+          try {
+            const receipt = await withRuntimeLocks(runtime, [
+              { aggregate: "workflow", resourceIdentity: value.workflowId },
+              stepAuthorityResource(value.workflowId, value.stepId),
+            ], async () => {
+              if (!(await exactRunnableStepAttemptBinding(
+                ctx, tool.sessionID, value.workflowId, value.stepId,
+              ))) throw new Error("Elevation needs an exact runnable step attachment.")
+              const workflow = await readWorkflow(ctx, value.workflowId)
+              const step = workflow?.steps.find((candidate) => candidate.id === value.stepId)
+              if (!step || step.agent !== tool.agent) {
+                throw new Error("Elevation needs ownership of the requested step.")
+              }
+              await assertCurrentStepPlanAdmission(ctx, value.workflowId, value.stepId)
+              if (tool.agent === "worker") {
+                await assertWorkerWorkClaim(ctx, value.workflowId, value.stepId)
+              }
+              const attempt = await ctx.storage.get(sessionStepAttemptKey(tool.sessionID))
+              if (!Number.isSafeInteger(attempt)) {
+                throw new Error("Missing step-attempt binding.")
+              }
+              const currentKey = commandElevationCurrentKey(tool.sessionID)
+              const priorId = await ctx.storage.get(currentKey) as string | undefined
+              const prior = priorId
+                ? await ctx.storage.get(commandElevationKey(priorId)) as CommandElevation | undefined
+                : undefined
+              if (prior && !prior.consumedAt && !prior.supersededAt) {
+                await ctx.storage.set(commandElevationKey(prior.id), {
+                  ...prior, supersededAt: new Date().toISOString(),
+                } satisfies CommandElevation)
+              }
+              const now = Date.now()
+              const grant: CommandElevation = {
+                id: crypto.randomUUID(),
+                workflowId: value.workflowId, stepId: value.stepId,
+                agent: tool.agent, sessionID: tool.sessionID,
+                attempt: attempt as number,
+                commandDigest: verificationCommandDigest(command),
+                commandSummary: redactCommand(command).slice(0, 1000),
+                kind: "unrestricted",
+                reason,
+                grantedAt: new Date(now).toISOString(),
+                expiresAt: new Date(now + 15 * 60_000).toISOString(),
+              }
+              await ctx.storage.set(commandElevationKey(grant.id), grant)
+              await ctx.storage.set(currentKey, grant.id)
+              return grant
+            })
+            return { content: renderToolOutput({
+              granted: true, grantId: receipt.id,
+              workflowId: receipt.workflowId, stepId: receipt.stepId,
+              command: receipt.commandSummary, kind: receipt.kind,
+              expiresAt: receipt.expiresAt, singleUse: true, continue: true,
+              next: "Run the exact command once through shell/bash and continue after recording its result.",
+              limitation: "Audit-only: commands execute with host OS permissions and may change arbitrary files, Git state or external systems. Loom does not sandbox or reverse effects, or credit unverified command writes as owned artifacts.",
+            }) }
+          } catch (error) {
+            return { content: renderToolOutput({
+              error: error instanceof Error ? error.message : String(error),
+            }) }
+          }
+        },
+      })
+
+      addLoomTool({
         name: "scope_elevate",
         description:
-          "Expand the current attached child step's write scope when discovery reveals additional files or folders. Project-local elevation is immediate, durable, and traceable; the child continues in the same session. Hard-boundary paths (outside the current project or repository-internal .git state) cannot self-authorize: this tool returns continue=false plus an exact user question payload. When continue=false, STOP the current child turn immediately and return control to General; do not retry the write or continue assuming access will arrive later.",
+          "Expand the current attached child step's write scope when discovery reveals additional files or folders. Project-local elevation is immediate, durable, and traceable; the child continues in the same session. Hard-boundary paths (outside the current project or repository-internal .git state) cannot self-authorize: this tool returns continue=false plus an exact user question payload. Do not request raw Git metadata paths for normal commits; use admitted scoped Git add/commit commands in the current worktree. When continue=false, STOP the current child turn immediately and return control to General; do not retry the write or continue assuming access will arrive later.",
         input: {
           type: "object",
           properties: {
@@ -9594,8 +13132,46 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               }),
             )
 
+          // A linked worktree's .git *file*, private gitdir and common
+          // objects/refs are updated by the Git CLI. They must not be added to
+          // Loom's product write scope, and do not require user approval for
+          // normal scoped git add/commit.
+          if (tool.agent === "worker" && projectPaths.length === 0 && hardBoundaryPaths.length > 0) {
+            const recognized = await linkedWorktreeCommitMetadataPaths(ctx.location.directory)
+            if (recognized && hardBoundaryPaths.every((path) => recognized.has(resolve(path)))) {
+              try {
+                if (!(await exactRunnableStepAttemptBinding(
+                  ctx, tool.sessionID, value.workflowId, value.stepId,
+                ))) throw new Error("Linked-worktree Git use requires the exact current Worker step attempt.")
+                await assertCurrentStepPlanAdmission(ctx, value.workflowId, value.stepId)
+                await assertWorkerWorkClaim(ctx, value.workflowId, value.stepId)
+                const scope = (await ctx.storage.get(
+                  scopeKey(value.workflowId, value.stepId),
+                )) as TaskScope | undefined
+                if (!scope || committableWriteScope(scope.write).length === 0) {
+                  throw new Error("Commit needs an admitted committable project write scope.")
+                }
+                return {
+                  content: renderToolOutput({
+                    status: "not-required",
+                    continue: true,
+                    newPermissionGranted: false,
+                    reason: "These exact paths are Git-owned metadata for the current linked worktree.",
+                    nextAction: "Do not edit .git, the linked worktree gitdir, objects or refs directly. Commit the already-admitted files using scoped git add -- <file> and git -c core.hooksPath=/dev/null commit -m <message> in the current worktree. Git resolves the .git pointer file and updates its external metadata automatically.",
+                    metadataPaths: hardBoundaryPaths,
+                  }),
+                }
+              } catch (error) {
+                return { content: renderToolOutput({
+                  error: error instanceof Error ? error.message : String(error),
+                }) }
+              }
+            }
+          }
+
           const roleWriteDefault = artifactWriteDefaults[tool.agent] ?? []
           let reviewerRepairCandidate = false
+          let reviewerAcceptanceCandidate = false
           if (tool.agent === "reviewer") {
             const workflow = await readWorkflow(ctx, value.workflowId)
             const step = workflow?.steps.find((candidate) => candidate.id === value.stepId)
@@ -9603,8 +13179,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               Boolean(step) &&
               reviewAssignmentMode(step!) === "repair-authorized" &&
               step!.review?.repairSessionId === tool.sessionID
+            if (step && hardBoundaryPaths.length === 0) {
+              reviewerAcceptanceCandidate = await reviewerAcceptanceScopeElevationAllowed(
+                ctx.location.directory, step, projectPaths,
+              )
+            }
           }
-          if (!productScopeElevatingAgents.has(tool.agent) && !reviewerRepairCandidate) {
+          if (!productScopeElevatingAgents.has(tool.agent) && !reviewerRepairCandidate && !reviewerAcceptanceCandidate) {
             const outsideRoleOutput =
               hardBoundaryPaths.length > 0 ||
               projectPaths.some(
@@ -9669,12 +13250,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     "Scope elevation requires the exact currently runnable pending step.",
                   )
                 }
+                await assertCurrentStepPlanAdmission(ctx, value.workflowId, value.stepId)
 
                 const reviewerRepair =
                   tool.agent === "reviewer" &&
                   reviewAssignmentMode(step) === "repair-authorized" &&
                   step.review?.repairSessionId === tool.sessionID
-                if (!productScopeElevatingAgents.has(tool.agent) && !reviewerRepair) {
+                const reviewerAcceptance =
+                  tool.agent === "reviewer" &&
+                  hardBoundaryPaths.length === 0 &&
+                  await reviewerAcceptanceScopeElevationAllowed(
+                    ctx.location.directory, step, projectPaths,
+                  )
+                if (!productScopeElevatingAgents.has(tool.agent) && !reviewerRepair && !reviewerAcceptance) {
                   const outsideRoleOutput =
                     hardBoundaryPaths.length > 0 ||
                     projectPaths.some(
@@ -9794,6 +13382,21 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
             if (result.boundaryRequest) {
               const question = scopeBoundaryQuestionInput(result.boundaryRequest)
+              const currentWorkflow = await readWorkflow(ctx, value.workflowId)
+              const coordinatorNotification = currentWorkflow
+                ? await notifyBackgroundChildCoordinator(
+                    ctx,
+                    runtime,
+                    currentWorkflow,
+                    tool.sessionID,
+                    tool.agent,
+                    {
+                      kind: "scope-boundary",
+                      stepId: value.stepId,
+                      requestId: result.boundaryRequest.requestId,
+                    },
+                  )
+                : { notified: [], failed: [] }
               return {
                 content: renderToolOutput({
                   status: "user_authorization_required",
@@ -9804,6 +13407,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     ? {
                         grantedProjectPaths: projectPaths,
                         effectiveWrite: result.scope?.write ?? result.roleWriteDefault,
+                        committableWrite: committableWriteScope(
+                          result.scope?.write ?? result.roleWriteDefault,
+                        ),
+                        commitAuthorized:
+                          committableWriteScope(
+                            result.scope?.write ?? result.roleWriteDefault,
+                          ).length > 0,
                         elevation: result.elevation,
                       }
                     : {}),
@@ -9816,6 +13426,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                     question,
                     rememberChoiceAllowed: false,
                   },
+                  coordinatorNotification,
                   requiredAction:
                     "Return control to General immediately. Do not continue this child turn, retry the blocked mutation, or assume access has been granted. General must ask the user with the exact supplied question payload; after an Allow once decision, General calls loom_scope_authorize_once and then resumes/redispatches this same step attempt.",
                 }),
@@ -9830,9 +13441,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 stepId: value.stepId,
                 scopeAdded: projectPaths,
                 effectiveWrite: result.scope?.write ?? result.roleWriteDefault,
+                committableWrite: committableWriteScope(
+                  result.scope?.write ?? result.roleWriteDefault,
+                ),
+                commitAuthorized:
+                  committableWriteScope(
+                    result.scope?.write ?? result.roleWriteDefault,
+                  ).length > 0,
                 elevation: result.elevation,
                 note:
-                  "Project-local scope elevation is active immediately and recorded. Continue the current step; no General round-trip is required.",
+                  "Project-local scope elevation is active immediately and recorded. Any durable committable path in the effective write scope is commit-authorized for this step's admitted bytes. Continue the current step; no General round-trip is required.",
               }),
             }
           } catch (error) {
@@ -10601,7 +14219,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
 
     })
 
-    const evaluatePermission = async (event: any) => {
+    const evaluatePermissionAdmitted = async (event: any) => {
       const delegationAction = event.action === "subagent"
       if (event.action === "edit" || event.action === "shell" || delegationAction) {
         await ensureLegacyCancellationBoundary(event.sessionID)
@@ -10613,6 +14231,34 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           event.message = new WorkflowCancelledError(bound.id).message
           return
         }
+      }
+      if (event.action === "shell" && Array.isArray(event.resources) &&
+          event.resources.length === 1 &&
+          typeof event.resources[0] === "string" &&
+          await currentCommandElevation(String(event.sessionID ?? ""),
+            String(event.agent ?? ""), event.resources[0])) {
+        event.effect = "allow"
+        return
+      }
+      // The one-use receipt was consumed by tool.execute.before. Only the
+      // originating host tool call may use it during shell permission checks.
+      if (await consumedCommandElevationForPermission(event)) {
+        event.effect = "allow"
+        return
+      }
+      if (event.action === "edit" && Array.isArray(event.resources) &&
+          (await Promise.all(event.resources.map((resource: string) =>
+            targetsEffectiveLocalPermissionPolicy(ctx.location.directory, resource),
+          ))).some(Boolean)) {
+        event.effect = "deny"
+        event.message = "Loom permission YAML is user-owned and cannot be edited through agent tools."
+        return
+      }
+      if (event.agent === "brainstorm" && (event.action === "edit" || delegationAction ||
+          (event.action === "shell" && !event.resources.every((resource: string) => isGitInspectionShellCommand(resource))))) {
+        event.effect = "deny"
+        event.message = "Brainstorm advisory work has no mutation, command execution or nested dispatch authority."
+        return
       }
       if (event.action === "edit") {
         const classified = await Promise.all(
@@ -10671,14 +14317,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             return
           }
           if (
-            !roleCanOwnRepositoryCommit(reportAgent) ||
             !commitMessageResources.every((resource: string) =>
               roleCommitMessagePath(reportAgent, resource),
             )
           ) {
             event.effect = "deny"
             event.message =
-              "Commit-message scratch is available only to a role that can own the repository commit, inside that role's own namespace."
+              "Commit-message scratch must stay inside the current Loom role's own ephemeral-reports/<role>/commit-messages/ namespace."
             return
           }
           if (reportAgent !== "general") {
@@ -10818,6 +14463,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
 
+      if (
+        event.action === "shell" &&
+        event.resources.length > 0 &&
+        event.resources.every((resource: string) =>
+          isGitInspectionShellCommand(resource)
+        )
+      ) {
+        event.effect = "allow"
+        return
+      }
+
       if (event.action === "shell") {
         const gitAuthoring = event.resources.some((resource: string) =>
           isGitAuthoringShellCommand(resource),
@@ -10852,22 +14508,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 "Git authoring requires the role's exact current runnable Loom step attempt."
               return
             }
-            if (agent === "worker") {
-              try {
+            try {
+              await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+              if (agent === "worker") {
                 await assertWorkerWorkClaim(ctx, workflowId, stepId)
-              } catch (error) {
-                event.effect = "deny"
-                event.message =
-                  error instanceof Error ? error.message : String(error)
-                return
               }
+            } catch (error) {
+              event.effect = "deny"
+              event.message =
+                error instanceof Error ? error.message : String(error)
+              return
             }
             const declaredScope = (await ctx.storage.get(
               scopeKey(workflowId, stepId),
             )) as TaskScope | undefined
-            authorScope = declaredScope?.write.length
-              ? declaredScope.write
-              : (artifactWriteDefaults[agent] ?? [])
+            authorScope = mergeWriteScope(
+              declaredScope?.write.length
+                ? declaredScope.write : (artifactWriteDefaults[agent] ?? []),
+              await policyWriteScope(agent),
+            )
           }
 
           authorScope = committableWriteScope(authorScope)
@@ -10907,29 +14566,38 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               stage.changed.join(", ")
             return
           }
-          if (
-            event.resources.some((resource: string) =>
-              isAllowedGitCommit(resource),
-            )
-          ) {
-            const error = await commitScopeError(
-              ctx,
-              event.sessionID,
-              ctx.location.directory,
-              authorScope,
-              true,
-            )
+          for (const resource of event.resources as string[]) {
+            const operation = scopedGitFileMutation(resource)
+            if (operation) {
+              const error = await scopedGitFileOperationError(
+                ctx, event.sessionID, ctx.location.directory, operation, authorScope,
+              )
+              if (error) {
+                event.effect = "deny"
+                event.message = error
+                return
+              }
+            }
+            if (!isAllowedGitCommit(resource)) continue
+            const explicitPaths = gitCommitPaths(resource)
+            const error = explicitPaths.length
+              ? await explicitGitCommitError(
+                  ctx, event.sessionID, ctx.location.directory, explicitPaths, authorScope,
+                )
+              : await commitScopeError(
+                  ctx, event.sessionID, ctx.location.directory, authorScope, true,
+                )
             if (error) {
               event.effect = "deny"
               event.message = error
               return
             }
             if (agent === "reviewer") {
-              const acceptanceError = await reviewerAcceptanceStagedCommitError(
-                ctx,
-                event.sessionID,
-                ctx.location.directory,
-              )
+              const acceptanceError = explicitPaths.length
+                ? await reviewerAcceptanceCommitError(ctx.location.directory, explicitPaths, "worktree")
+                : await reviewerAcceptanceStagedCommitError(
+                    ctx, event.sessionID, ctx.location.directory,
+                  )
               if (acceptanceError) {
                 event.effect = "deny"
                 event.message = acceptanceError
@@ -10940,6 +14608,81 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           event.effect = "allow"
           return
         }
+      }
+
+      // Global user-owned allowlist, replaced by worktree-root .loom.yaml
+      // when present. This grants command admission, not unbounded command
+      // mutation privileges or an exemption from step admission.
+      if (event.action === "shell" && Array.isArray(event.resources) &&
+          event.resources.length > 0 && loomAgents.has(String(event.agent ?? ""))) {
+        const policy = await currentPolicy()
+        const allowed = projectShellOverrides(policy.policy, ctx.location.directory)
+        if (event.resources.every((command: string) => localPolicyShellAllowed(command, allowed))) {
+          const sessionID = String(event.sessionID ?? "")
+          const workflowId = await ctx.storage.get(sessionKey(sessionID))
+          const stepId = await ctx.storage.get(sessionStepKey(sessionID))
+          if (typeof workflowId !== "string" || typeof stepId !== "string" ||
+              !(await exactRunnableStepAttemptBinding(ctx, sessionID, workflowId, stepId))) {
+            event.effect = "deny"
+            event.message = "Configured shell permission requires this role's exact current runnable Loom step, not an OQ attachment."
+            return
+          }
+          try {
+            await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+            if (event.agent === "worker") await assertWorkerWorkClaim(ctx, workflowId, stepId)
+          } catch (error) {
+            event.effect = "deny"
+            event.message = error instanceof Error ? error.message : String(error)
+            return
+          }
+          event.effect = "allow"
+          return
+        }
+      }
+
+      if (event.action === "shell" && Array.isArray(event.resources) &&
+          event.resources.some((command: string) =>
+            scopedToolOutputFlagPresent(command) && scopedToolWriteTargets(command).length === 0)) {
+        event.effect = "deny"
+        event.message = "Test artifact output is not a safe explicit project file; correct the path before retrying."
+        return
+      }
+
+      // Known explicit-output commands inherit the active step's write
+      // authority, including bounded scope_elevate and .loom.yaml rules.
+      if (event.action === "shell" && Array.isArray(event.resources) &&
+          event.resources.length > 0 &&
+          event.resources.every((command: string) => scopedToolWriteTargets(command).length > 0) &&
+          loomAgents.has(String(event.agent ?? ""))) {
+        const agent = String(event.agent)
+        const sessionID = String(event.sessionID ?? "")
+        const workflowId = await ctx.storage.get(sessionKey(sessionID))
+        const stepId = await ctx.storage.get(sessionStepKey(sessionID))
+        if (typeof workflowId !== "string" || typeof stepId !== "string" ||
+            !(await exactRunnableStepAttemptBinding(ctx, sessionID, workflowId, stepId))) {
+          event.effect = "deny"
+          event.message = "File-producing commands require the current runnable Loom step."
+          return
+        }
+        try {
+          await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+          if (agent === "worker") await assertWorkerWorkClaim(ctx, workflowId, stepId)
+          for (const command of event.resources as string[]) {
+            await assertProjectGenerationWrite(workflowId, stepId, agent, command)
+          }
+        } catch (error) {
+          event.effect = "deny"
+          event.message = error instanceof Error ? error.message : String(error)
+          return
+        }
+        event.effect = "allow"
+        return
+      }
+
+      if (event.agent === "documenter" && event.action === "shell") {
+        event.effect = "deny"
+        event.message = "Documenter shell is not admitted. Add the exact command or a bounded prefix to the global/worktree .loom.yaml, or use loom_command_elevate for one audited execution."
+        return
       }
 
       if (event.agent === "diagnostic" && event.action === "shell") {
@@ -10970,6 +14713,70 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         event.message =
           "Conversational Diagnostic shell is read-only. Arbitrary project execution is available only after attachment to a governed Diagnostic step; repository and delivery mutation remain denied."
         return
+      }
+
+      if (
+        event.action === "shell" &&
+        verificationTestAgents.has(String(event.agent ?? "")) &&
+        event.resources.length > 0
+      ) {
+        const agent = String(event.agent)
+        const routine = event.resources.every(
+          (command: string) => Boolean(classifyVerificationShell(command)),
+        )
+        const governedVerification = ["reviewer", "critic", "acceptance"].includes(agent)
+        const needsElevation = event.resources.length === 1 &&
+          (isElevatableVerificationShell(event.resources[0]) ||
+            (agent === "worker" && Boolean(elevatedGenerationOutput(event.resources[0])))) &&
+          !(agent === "worker" && workerShellResourcesAllowed(event.resources)) &&
+          !(agent === "diagnostic" &&
+            diagnosticExecutionShellResourcesAllowed(event.resources))
+        if ((governedVerification && routine) || needsElevation) {
+          const workflowId = (await ctx.storage.get(
+            sessionKey(event.sessionID),
+          )) as string | undefined
+          const stepId = (await ctx.storage.get(
+            sessionStepKey(event.sessionID),
+          )) as string | undefined
+          if (
+            !workflowId ||
+            !stepId ||
+            !(await exactRunnableStepAttemptBinding(
+              ctx, event.sessionID, workflowId, stepId,
+            ))
+          ) {
+            event.effect = "deny"
+            event.message = "Test execution requires this role's exact runnable Loom step."
+            return
+          }
+          try {
+            await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+            if (agent === "worker") await assertWorkerWorkClaim(ctx, workflowId, stepId)
+          } catch (error) {
+            event.effect = "deny"
+            event.message = error instanceof Error ? error.message : String(error)
+            return
+          }
+          if (needsElevation && !(await currentCommandElevation(
+            event.sessionID, agent, event.resources[0],
+          ))) {
+            event.effect = "deny"
+            event.message =
+              "This non-routine project command needs a one-use loom_command_elevate grant with a reason before execution."
+            return
+          }
+          if (needsElevation && elevatedGenerationOutput(event.resources[0])) {
+            try {
+              await assertProjectGenerationWrite(workflowId, stepId, agent, event.resources[0])
+            } catch (error) {
+              event.effect = "deny"
+              event.message = error instanceof Error ? error.message : String(error)
+              return
+            }
+          }
+          event.effect = "allow"
+          return
+        }
       }
 
       if (
@@ -11056,12 +14863,22 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           return
         }
 
+        try {
+          await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+        } catch (error) {
+          event.effect = "deny"
+          event.message = error instanceof Error ? error.message : String(error)
+          return
+        }
+
         const declaredScope = (await ctx.storage.get(
           scopeKey(workflowId, stepId),
         )) as TaskScope | undefined
-        const effectiveWrite = declaredScope?.write.length
-          ? declaredScope.write
-          : (artifactWriteDefaults[agent] ?? [])
+        const effectiveWrite = mergeWriteScope(
+          declaredScope?.write.length
+            ? declaredScope.write : (artifactWriteDefaults[agent] ?? []),
+          await policyWriteScope(agent),
+        )
         if (
           effectiveWrite.length === 0 ||
           !resourcesWithinScope(event.resources, effectiveWrite)
@@ -11071,6 +14888,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             "Specialist edit is outside the current Loom write scope. Call loom_scope_elevate for the additional project-local path(s) before retrying. If that tool returns continue=false, return control immediately."
           return
         }
+        event.effect = "allow"
         return
       }
 
@@ -11092,10 +14910,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
 
         const scope = (await ctx.storage.get(scopeKey(workflowId, stepId))) as TaskScope | undefined
-        if (!workerShellResourcesAllowed(event.resources, scope?.write ?? [])) {
+        const effectiveWrite = mergeWriteScope(scope?.write ?? [], await policyWriteScope("worker"))
+        if (!workerShellResourcesAllowed(event.resources, effectiveWrite)) {
           event.effect = "deny"
           event.message =
-            "Worker shell is limited to inspection, build/test/run, safe delivery operations, and writes already inside the current Loom scope. Call loom_scope_elevate before retrying a newly discovered project-local write target."
+            "Worker shell command is not routinely admitted, or its explicit output files are outside the current Loom write scope. For an unrecognized command use loom_command_elevate for one audited execution (or add it to .loom.yaml). Use loom_scope_elevate only when a known file-producing command needs additional project-local write paths."
           return
         }
 
@@ -11140,7 +14959,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             ctx,
             event.sessionID,
             ctx.location.directory,
-            scope.write,
+            effectiveWrite,
           )
           if (error) {
             event.effect = "deny"
@@ -11150,6 +14969,18 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
 
         event.effect = "allow"
+        return
+      }
+
+      if (
+        event.action === "shell" &&
+        event.resources.some((resource: string) =>
+          isGitShellCommand(resource)
+        )
+      ) {
+        event.effect = "deny"
+        event.message =
+          "Git command is not admitted by Loom. Read-only repository inspection is universally available; mutations must use a specifically admitted scoped authoring or delivery operation."
         return
       }
 
@@ -11183,15 +15014,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         const scope = (await ctx.storage.get(
           scopeKey(workflowId, stepId),
         )) as TaskScope | undefined
+        const effectiveWrite = mergeWriteScope(scope?.write ?? [], await policyWriteScope("worker"))
         if (
-          !scope?.write.length ||
-          !resourcesWithinScope(event.resources, scope.write)
+          !effectiveWrite.length ||
+          !resourcesWithinScope(event.resources, effectiveWrite)
         ) {
           event.effect = "deny"
           event.message =
             "Worker edit is outside the current Loom write scope. Call loom_scope_elevate for the additional project-local path(s) before retrying. If that tool returns continue=false, return control immediately."
           return
         }
+        event.effect = "allow"
         return
       }
 
@@ -11272,6 +15105,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const grantedTarget = grantedTargets[0]
       const runnableStep = grantedTarget.kind === "step" ? grantedTarget.step : undefined
       const openQuestion = grantedTarget.kind === "question" ? grantedTarget.question : undefined
+      const requestedBackground = await subagentBackgroundRequestedForPermission(ctx, event)
 
       const dispatchID = [
         event.sessionID,
@@ -11280,7 +15114,121 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         target,
       ].join(":")
       const key = runnableStep ? `step:${runnableStep.id}` : `oq:${openQuestion!.id}`
-      const recorded = await withRuntimeLock(runtime, "workflow", workflow.id, async () => {
+      const admissionLocks = [
+        { aggregate: "workflow", resourceIdentity: workflow.id },
+        ...(workflow.work
+          ? [{ aggregate: "work", resourceIdentity: workflow.work.objectiveId }]
+          : []),
+      ]
+      const recorded = await withRuntimeLocks(runtime, admissionLocks, async () => {
+        const stale = (reason: string) => ({
+          allowed: false as const,
+          duplicate: false as const,
+          staleEligibility: true as const,
+          reason: `Dispatch eligibility changed before admission: ${reason}`,
+          state: newBudgetState(),
+        })
+
+        const currentWorkflow = await readWorkflow(ctx, workflow.id)
+        if (!currentWorkflow || currentWorkflow.id !== workflow.id ||
+            currentWorkflow.projectId !== runtime.projectId || currentWorkflow.cancellation ||
+            (await ctx.storage.get(sessionKey(event.sessionID))) !== workflow.id) {
+          return stale("the selected workflow is missing, closed, foreign, or no longer current")
+        }
+        if (currentWorkflow.work?.objectiveId !== workflow.work?.objectiveId ||
+            currentWorkflow.work?.generation !== workflow.work?.generation) {
+          return stale("the Objective or Plan generation changed")
+        }
+
+        let currentWork: WorkHierarchy | undefined
+        if (currentWorkflow.work) {
+          currentWork = await readWork(ctx, currentWorkflow.work.objectiveId)
+          if (!currentWork || currentWork.objectiveId !== currentWorkflow.work.objectiveId ||
+              currentWork.generation !== currentWorkflow.work.generation) {
+            return stale("the current Objective/Plan association is missing or changed")
+          }
+        }
+
+        if (runnableStep) {
+          const currentStep = currentWorkflow.steps.find((candidate) => candidate.id === runnableStep.id)
+          if (!currentStep || currentStep.agent !== target || currentStep.kind !== runnableStep.kind ||
+              currentStep.status !== "pending" || (currentStep.attempt ?? 0) !== (runnableStep.attempt ?? 0) ||
+              JSON.stringify(currentStep.dependsOn) !== JSON.stringify(runnableStep.dependsOn) ||
+              JSON.stringify(currentStep.task) !== JSON.stringify(runnableStep.task) ||
+              !runnable(currentWorkflow).some((candidate) => candidate.id === runnableStep.id)) {
+            return stale("the selected step is no longer the exact current runnable attempt")
+          }
+          try {
+            assertStepDispatchAdmission(currentWorkflow, currentWork, currentStep)
+            await assertStepHostAvailability(ctx, currentWorkflow, currentWork, currentStep)
+          } catch (error) {
+            return stale(error instanceof Error ? error.message : String(error))
+          }
+        } else {
+          const currentQuestion = await ctx.storage.get(
+            oqKey(currentWorkflow.id, openQuestion!.id),
+          ) as OpenQuestion | undefined
+          const currentQuestionIds = (await ctx.storage.get(
+            oqIndexKey(currentWorkflow.id),
+          )) as unknown
+          if (!Array.isArray(currentQuestionIds) || !currentQuestionIds.includes(openQuestion!.id) ||
+              !currentQuestion || currentQuestion.id !== openQuestion!.id ||
+              currentQuestion.workflowId !== currentWorkflow.id ||
+              currentQuestion.status !== "open" || currentQuestion.answer ||
+              currentQuestion.requiredAuthority !== target ||
+              JSON.stringify(currentQuestion) !== JSON.stringify(openQuestion)) {
+            return stale("the selected OQ is no longer the exact unanswered current question")
+          }
+          if (currentQuestion.consumerStepIds.some((stepId) =>
+            !currentWorkflow.steps.some((step) => step.id === stepId))) {
+            return stale("the selected OQ has a missing consumer step")
+          }
+          for (const consumerStepId of currentQuestion.consumerStepIds) {
+            const consumerStep = currentWorkflow.steps.find((step) => step.id === consumerStepId)!
+            try {
+              assertPlannedTaskAdmission(currentWorkflow, currentWork, consumerStep)
+            } catch (error) {
+              return stale(error instanceof Error ? error.message : String(error))
+            }
+          }
+          if (currentQuestion.work) {
+            if (!currentWorkflow.work ||
+                currentQuestion.work.objectiveId !== currentWorkflow.work.objectiveId ||
+                currentQuestion.work.generation !== currentWorkflow.work.generation ||
+                !currentWork) {
+              return stale("the selected OQ Plan context is no longer current")
+            }
+            const currentPlan = workPlanContext(
+              currentWork,
+              undefined,
+              "focused",
+              currentWorkflow.work.generation,
+            )
+            const pinnedPlan = workPlanContext(
+              currentWork,
+              currentQuestion.work.taskId,
+              "focused",
+              currentWorkflow.work.generation,
+              currentQuestion.work.revision,
+            )
+            if (!currentPlan || currentPlan.invalidated || !pinnedPlan || pinnedPlan.invalidated ||
+                (currentQuestion.work.revision !== undefined &&
+                  pinnedPlan.revision !== currentQuestion.work.revision)) {
+              return stale("the selected OQ Plan context is unavailable or invalidated")
+            }
+          }
+        }
+
+        const currentGrant = await findUsableDispatchGrant(ctx.storage as any, runtime, {
+          workflowId: currentWorkflow.id,
+          ...(runnableStep ? { stepId: runnableStep.id } : { oqId: openQuestion!.id }),
+          expectedAgent: target,
+          issuingParentSessionId: event.sessionID,
+        })
+        if (!currentGrant || currentGrant.grantId !== grantedTarget.grant.grantId) {
+          return stale("the selected dispatch grant is no longer unused and eligible")
+        }
+
         const limits = await readLimits(ctx, workflow.id)
         const budget = await readBudget(ctx, workflow.id)
         try {
@@ -11314,10 +15262,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         return result
       })
 
-      if (!recorded.allowed) {
-        const reason = recorded.reason ?? "Unknown dispatch denial."
-        event.effect = "deny"
-        if (reason.startsWith("Dispatch grant admission failed:")) {
+        if (!recorded.allowed) {
+          const reason = recorded.reason ?? "Unknown dispatch denial."
+          event.effect = "deny"
+          if (reason.startsWith("Dispatch eligibility changed before admission:")) {
+            event.message = reason
+            return
+          }
+          if (reason.startsWith("Dispatch grant admission failed:")) {
           event.message = `${reason} Issue a fresh exact loom_dispatch_grant before retrying.`
         } else {
           const blocked: BudgetBlockedTarget = {
@@ -11346,7 +15298,35 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         return
       }
 
+      await ctx.storage.set(
+        admittedSubagentDispatchModeKey(grantedTarget.grant.grantId),
+        {
+          schemaVersion: 1,
+          projectId: runtime.projectId,
+          workflowId: workflow.id,
+          grantId: grantedTarget.grant.grantId,
+          parentSessionID: event.sessionID,
+          expectedAgent: target,
+          background: requestedBackground,
+          dispatchID,
+          observedAt: new Date().toISOString(),
+          ...(runnableStep ? { stepId: runnableStep.id } : { questionId: openQuestion!.id }),
+        } satisfies AdmittedSubagentDispatchMode,
+      )
+
       event.effect = "allow"
+    }
+
+    const evaluatePermission = async (event: any) => {
+      if (event.action !== "subagent") return evaluatePermissionAdmitted(event)
+      try {
+        return await withCoordinatorAdmission(String(event.sessionID ?? ""), async () =>
+          evaluatePermissionAdmitted(event),
+        )
+      } catch (error) {
+        event.effect = "deny"
+        event.message = `Loom delegation admission failed: ${error instanceof Error ? error.message : String(error)}`
+      }
     }
 
     await ctx.permission.hook("evaluate", evaluatePermission)
@@ -11361,7 +15341,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           observedAt: new Date().toISOString(),
         } satisfies ObservedUserMessage)
       }
-      event.system.push({ type: "text", text: LOOM_NATIVE_TOOL_GUIDANCE })
+      const contract = roleContracts.get(String(raw.agent ?? "") as LoomAgentRole) ?? roleContracts.get("*")
+      if (contract) event.system.push({ type: "text", text: contract })
 
       // Compatibility guidance is deliberately conditional and tiny. Detailed
       // one-shot migration instructions live behind loom_upgrade_status.
@@ -11399,19 +15380,122 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         await ensureLegacyCancellationBoundary(String(raw.sessionID))
         await assertCancelledChildToolAdmission(ctx.storage as any, tool, raw.input, String(raw.sessionID))
       }
-      const mutationLockPaths = toolMutationLockPaths(
-        tool,
-        raw.input,
-        ctx.location.directory,
-      )
-      const lockGitIndex = toolNeedsGitIndexLock(tool, raw.input)
-      const directMutationPaths = successfulMutationPaths(
-        tool,
-        raw.input,
-        ctx.location.directory,
-      )
+      const shellCommand =
+        (tool === "shell" || tool === "bash") &&
+        raw.input &&
+        typeof raw.input === "object" &&
+        typeof (raw.input as any).command === "string"
+          ? String((raw.input as any).command)
+          : undefined
+      const activeShellElevation = shellCommand && raw.sessionID && raw.agent
+        ? await currentCommandElevation(String(raw.sessionID), String(raw.agent), shellCommand)
+        : undefined
+      if (!activeShellElevation && shellCommand &&
+          scopedToolOutputFlagPresent(shellCommand) &&
+          scopedToolWriteTargets(shellCommand).length === 0) {
+        throw new Error("Test artifact output is not a safe explicit project file.")
+      }
+      const generationPaths = !activeShellElevation && shellCommand &&
+          loomAgents.has(String(raw.agent ?? "")) && raw.agent !== "general"
+        ? scopedToolWriteTargets(shellCommand) : []
+      // Generator output flags are relative to the shell cwd. A different
+      // workdir would make the granted output paths refer to different files.
+      if (generationPaths.length > 0) {
+        const input = raw.input as Record<string, unknown>
+        const directories = [input.workdir, input.cwd].filter(
+          (value) => value !== undefined,
+        )
+        const root = await realpath(ctx.location.directory)
+        for (const directory of directories) {
+          const target = typeof directory === "string"
+            ? (isAbsolute(directory) ? directory : resolve(root, directory))
+            : ""
+          if (!target || await realpath(target).catch(() => "") !== root) {
+            throw new Error(
+              "Generator elevation requires execution from the current project root; remove the alternate workdir.",
+            )
+          }
+        }
+      }
+      // Check output scope before executing and again under file locks.
+      if (generationPaths.length > 0 && shellCommand) {
+        const sessionID = String(raw.sessionID ?? "")
+        const workflowId = await ctx.storage.get(sessionKey(sessionID))
+        const stepId = await ctx.storage.get(sessionStepKey(sessionID))
+        if (typeof workflowId !== "string" || typeof stepId !== "string" ||
+            !(await exactRunnableStepAttemptBinding(ctx, sessionID, workflowId, stepId))) {
+          throw new Error("File-producing command requires the current runnable Loom step.")
+        }
+        await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+        if (raw.agent === "worker") await assertWorkerWorkClaim(ctx, workflowId, stepId)
+        await assertProjectGenerationWrite(workflowId, stepId, String(raw.agent), shellCommand)
+      }
 
-      await revalidateDirectMutationUnderLock(raw, directMutationPaths)
+      // A current, user-owned exact/prefix command rule avoids per-invocation
+      // elevation, but still needs this session's current executable step.
+      let configuredShell = false
+      if (!activeShellElevation && shellCommand && raw.sessionID &&
+          loomAgents.has(String(raw.agent ?? ""))) {
+        const policy = await currentPolicy()
+        const shell = projectShellOverrides(policy.policy, ctx.location.directory)
+        if (localPolicyShellAllowed(shellCommand, shell)) {
+          const workflowId = await ctx.storage.get(sessionKey(String(raw.sessionID)))
+          const stepId = await ctx.storage.get(sessionStepKey(String(raw.sessionID)))
+          if (typeof workflowId !== "string" || typeof stepId !== "string" ||
+              !(await exactRunnableStepAttemptBinding(
+                ctx, String(raw.sessionID), workflowId, stepId,
+              ))) throw new Error("Configured shell command requires the exact current runnable Loom step.")
+          await assertCurrentStepPlanAdmission(ctx, workflowId, stepId)
+          if (raw.agent === "worker") await assertWorkerWorkClaim(ctx, workflowId, stepId)
+          if (generationPaths.length > 0) {
+            await assertProjectGenerationWrite(workflowId, stepId, String(raw.agent), shellCommand)
+          }
+          configuredShell = true
+        }
+      }
+      let elevationRequired = Boolean(activeShellElevation)
+      if (elevationRequired && !observationCallKey(raw)) {
+        throw new Error("Command execution blocked: a stable tool-call identity is required before consuming command elevation.")
+      }
+      if (!activeShellElevation && shellCommand && raw.sessionID &&
+          verificationTestAgents.has(String(raw.agent ?? "")) &&
+          (isElevatableVerificationShell(shellCommand) || generationPaths.length > 0)) {
+        const agent = String(raw.agent)
+        const allowedWithoutElevation = agent === "worker"
+          ? workerShellResourcesAllowed([shellCommand])
+          : agent === "diagnostic"
+            ? diagnosticExecutionShellResourcesAllowed([shellCommand])
+            : Boolean(classifyVerificationShell(shellCommand))
+        if (!allowedWithoutElevation && !configuredShell &&
+            generationPaths.length === 0) {
+          elevationRequired = true
+          if (!observationCallKey(raw)) {
+            throw new Error(
+              "Command execution blocked: a stable tool-call identity is required before consuming command elevation.",
+            )
+          }
+          await assertProjectVerificationEntrypoint(shellCommand)
+          if (generationPaths.length > 0) {
+            const workflowId = await ctx.storage.get(sessionKey(String(raw.sessionID)))
+            const stepId = await ctx.storage.get(sessionStepKey(String(raw.sessionID)))
+            if (typeof workflowId !== "string" || typeof stepId !== "string") {
+              throw new Error("Generator execution needs the current attached Worker step.")
+            }
+            await assertProjectGenerationWrite(workflowId, stepId, String(raw.agent), shellCommand)
+          }
+        }
+      }
+      // An arbitrary elevated command is audit-only; its side effects cannot
+      // be inferred as scoped writes or become Git authorship evidence.
+      const mutationLockPaths = activeShellElevation ? [] : [
+        ...toolMutationLockPaths(tool, raw.input, ctx.location.directory),
+        ...generationPaths,
+      ]
+      const lockGitIndex = activeShellElevation ? false : toolNeedsGitIndexLock(tool, raw.input)
+      const directMutationPaths = activeShellElevation ? [] : successfulMutationPaths(
+        tool, raw.input, ctx.location.directory,
+      )
+      if (!activeShellElevation) await revalidateDirectMutationUnderLock(raw, directMutationPaths)
 
       if (tool === "question") {
         const sessionID = String(raw.sessionID ?? "").trim()
@@ -11539,6 +15623,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       // remain passive, but a second mutation must fail closed rather than
       // sharing the first call's lock identity.
       if (pendingObservations.has(key)) {
+        // A rejected second execution must not poison the first execution's
+        // evidence or spend another command grant.
+        if (elevationRequired) {
+          throw new Error(
+            "Command execution blocked: this tool-call identity already has an in-flight execution.",
+          )
+        }
         pendingObservations.get(key)!.ambiguous = true
         if (mutationNeedsLock) {
           throw new Error(
@@ -11553,35 +15644,90 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         ambiguous: boolean; ready: boolean; inputDigest?: string
         summary?: ReturnType<typeof safeInputSummary>; admission?: EvidenceAdmission
         gitStageBefore?: GitStageSnapshot
-      } = { ambiguous: false, ready: false }
+        startedAtMs?: number; startedAt?: string
+        commandElevationId?: string
+        generationBefore?: Record<string, string>
+        generationPaths?: string[]
+        verification?: ReturnType<typeof classifyVerificationShell>
+      } = {
+        ambiguous: false, ready: false,
+        ...(shellCommand ? {
+          startedAtMs: Date.now(),
+          startedAt: new Date().toISOString(),
+          verification: classifyVerificationShell(shellCommand),
+        } : {}),
+      }
       pendingObservations.set(key, pending)
       if (pendingObservations.size > 1024) pendingObservations.delete(pendingObservations.keys().next().value!)
-      pending.admission = await captureEvidenceAdmission(ctx.storage as any, runtime, String(raw.sessionID), String(raw.agent ?? ""))
-      pending.inputDigest = raw.input === undefined ? undefined : await digest(raw.input)
-      pending.summary = safeInputSummary(tool, raw.input)
-      pending.ready = true
+      try {
+        pending.admission = await captureEvidenceAdmission(ctx.storage as any, runtime, String(raw.sessionID), String(raw.agent ?? ""))
+        pending.inputDigest = raw.input === undefined ? undefined : await digest(raw.input)
+        pending.summary = safeInputSummary(tool, raw.input)
+        pending.ready = true
+      } catch (error) {
+        // A failed preflight did not run a tool and must not poison retries.
+        pendingObservations.delete(key)
+        throw error
+      }
 
       if (mutationNeedsLock) {
         try {
           await acquireGitWriteLocks(raw, mutationLockPaths, lockGitIndex)
           await revalidateDirectMutationUnderLock(raw, directMutationPaths)
+          if (generationPaths.length > 0 && shellCommand) {
+            const workflowId = await ctx.storage.get(sessionKey(String(raw.sessionID)))
+            const stepId = await ctx.storage.get(sessionStepKey(String(raw.sessionID)))
+            if (typeof workflowId !== "string" || typeof stepId !== "string") {
+              throw new Error("Generator execution lost its current Worker attachment.")
+            }
+            await assertProjectGenerationWrite(workflowId, stepId, String(raw.agent), shellCommand)
+            pending.generationPaths = generationPaths
+            pending.generationBefore = Object.fromEntries(await Promise.all(
+              generationPaths.map(async (path) => [
+                path, await worktreeFingerprint(ctx.location.directory, path),
+              ] as const),
+            ))
+          }
           if (lockGitIndex) {
             await revalidateGitMutationUnderLock(raw)
             const command =
               raw.input && typeof raw.input === "object"
                 ? (raw.input as any).command
                 : undefined
-            const addTargets =
-              typeof command === "string"
-                ? (scopedGitAddTargets(command) ?? [])
-                : []
-            if (addTargets.length > 0) {
+            const operation = typeof command === "string"
+              ? scopedGitFileMutation(command) : undefined
+            const stagedTargets = typeof command === "string"
+              ? [...(scopedGitAddTargets(command) ?? []),
+                  ...(operation?.stagesChanges ? operation.paths : [])]
+              : []
+            if (stagedTargets.length > 0) {
               pending.gitStageBefore = await gitStageSnapshot(
-                ctx.location.directory,
-                addTargets,
+                ctx.location.directory, stagedTargets,
               )
             }
           }
+        } catch (error) {
+          await releaseGitWriteLocks(raw)
+          pendingObservations.delete(key)
+          throw error
+        }
+      }
+
+      // Consume only after a stable observation identity and all admission
+      // preflights have succeeded. A malformed/duplicate rejected invocation
+      // must not spend the single-use grant without a tool execution.
+      if (elevationRequired && shellCommand) {
+        try {
+          const consumed = await consumeCommandElevation(
+            String(raw.sessionID), String(raw.agent), shellCommand,
+            generationPaths.length > 0,
+          )
+          if (!consumed) {
+            throw new Error(
+              "Command execution blocked: this command has no unconsumed exact loom_command_elevate grant.",
+            )
+          }
+          pending.commandElevationId = consumed.id
         } catch (error) {
           await releaseGitWriteLocks(raw)
           pendingObservations.delete(key)
@@ -11777,10 +15923,15 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const input = raw.input
       const inputDigest = input === undefined ? undefined : await digest(input)
       const eventMatches = Boolean(pending) && inputDigest === pending!.inputDigest
+      const generatorToolError = pending?.generationPaths?.length
+        ? generatorResultError(raw.result ?? raw.output)
+        : undefined
+      let generatorOutputError: string | undefined
 
       if (
         raw.agent === "general" &&
-        eventMatches
+        eventMatches &&
+        !pending?.commandElevationId
       ) {
         const generalScope = generalGitWriteScope
         const sessionID = String(raw.sessionID)
@@ -11823,11 +15974,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             input && typeof input === "object"
               ? (input as any).command
               : undefined
+          const fileOperation = typeof command === "string"
+            ? scopedGitFileMutation(command) : undefined
           const staged =
             typeof command === "string"
-              ? (scopedGitAddTargets(command) ?? []).filter((path) =>
-                  resourcesWithinScope([path], generalScope),
-                )
+              ? [...(scopedGitAddTargets(command) ?? []),
+                  ...(fileOperation?.stagesChanges ? fileOperation.paths : [])].filter((path) =>
+                    resourcesWithinScope([path], generalScope),
+                  )
               : []
           await recordGitSessionStagingResult(
             ctx,
@@ -11837,12 +15991,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             String(raw.status ?? ""),
             pending?.gitStageBefore,
           )
+          if (raw.status === "completed" && fileOperation?.unstagesChanges) {
+            await clearGitSessionStaging(ctx, sessionID, fileOperation.paths)
+          }
           if (
             raw.status === "completed" &&
             typeof command === "string" &&
             isAllowedGitCommit(command)
           ) {
-            await clearGitSessionStaging(ctx, sessionID)
+            const paths = gitCommitPaths(command)
+            await clearGitSessionStaging(ctx, sessionID, paths.length ? paths : undefined)
             const messageFile = gitCommitMessageFile(command)
             if (messageFile) {
               await consumeCommitMessageFile(
@@ -11859,7 +16017,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       if (
         raw.agent &&
         eventMatches &&
-        pending?.admission
+        pending?.admission &&
+        !pending?.commandElevationId
       ) {
         const admission = pending.admission
         const sessionID = String(raw.sessionID)
@@ -11888,11 +16047,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           )) as TaskScope | undefined
           const defaultScope =
             artifactWriteDefaults[String(raw.agent)] ?? []
-          const writeScope = committableWriteScope(
+          const writeScope = committableWriteScope(mergeWriteScope(
             declaredScope?.write.length
-              ? declaredScope.write
-              : defaultScope,
-          )
+              ? declaredScope.write : defaultScope,
+            await policyWriteScope(String(raw.agent)),
+          ))
 
           if (raw.status === "completed") {
             const commitMessageOwned = successfulMutationPaths(
@@ -11914,14 +16073,50 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
 
           if (writeScope.length) {
+            // A completed tool call is not a successful generator result when
+            // its content reports an error. Do not confer Git provenance on
+            // a failed or unverified generation.
+            if (raw.status === "completed" &&
+                !generatorToolError &&
+                pending.generationBefore && pending.generationPaths) {
+              const command = (input as { command?: unknown } | undefined)?.command
+              if (typeof command !== "string") {
+                generatorOutputError = "Generated-file provenance requires the exact observed command."
+              } else {
+                try {
+                  // Detect output symlink/authority changes during host execution.
+                  // This does not sandbox the host process; it prevents false
+                  // claims of owned outputs and preserves an error receipt.
+                  await assertProjectGenerationWrite(
+                    admission.workflowId, admission.stepId, String(raw.agent), command,
+                  )
+                } catch (error) {
+                  generatorOutputError = error instanceof Error ? error.message : String(error)
+                }
+              }
+              if (!generatorOutputError) {
+                const changed: string[] = []
+                for (const path of pending.generationPaths) {
+                  const after = await worktreeFingerprint(ctx.location.directory, path)
+                  if (after !== pending.generationBefore[path] &&
+                      resourcesWithinScope([path], writeScope)) changed.push(path)
+                }
+                if (changed.length > 0) {
+                  await recordGitSessionOwnership(
+                    ctx, sessionID, ctx.location.directory, changed,
+                  )
+                }
+              }
+            }
             if (raw.status === "completed") {
-              const owned = successfulMutationPaths(
-                tool,
-                input,
-                ctx.location.directory,
-              ).filter(
-                (path) =>
-                  !isAbsolute(path) &&
+              // File-producing shell commands become Git-owned only after
+              // observed changed-byte fingerprints, not merely shell status.
+              const knownOutputs = typeof (input as any)?.command === "string"
+                ? scopedToolWriteTargets((input as any).command) : []
+              const owned = (knownOutputs.length ? [] : successfulMutationPaths(
+                tool, input, ctx.location.directory,
+              )).filter(
+                (path) => !isAbsolute(path) &&
                   resourcesWithinScope([path], writeScope!),
               )
               if (owned.length > 0) {
@@ -11939,11 +16134,14 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 input && typeof input === "object"
                   ? (input as any).command
                   : undefined
+              const fileOperation = typeof command === "string"
+                ? scopedGitFileMutation(command) : undefined
               const staged =
                 typeof command === "string"
-                  ? (scopedGitAddTargets(command) ?? []).filter((path) =>
-                      resourcesWithinScope([path], writeScope!),
-                    )
+                  ? [...(scopedGitAddTargets(command) ?? []),
+                      ...(fileOperation?.stagesChanges ? fileOperation.paths : [])].filter((path) =>
+                        resourcesWithinScope([path], writeScope!),
+                      )
                   : []
               await recordGitSessionStagingResult(
                 ctx,
@@ -11953,12 +16151,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 String(raw.status ?? ""),
                 pending.gitStageBefore,
               )
+              if (raw.status === "completed" && fileOperation?.unstagesChanges) {
+                await clearGitSessionStaging(ctx, sessionID, fileOperation.paths)
+              }
               if (
                 raw.status === "completed" &&
                 typeof command === "string" &&
                 isAllowedGitCommit(command)
               ) {
-                await clearGitSessionStaging(ctx, sessionID)
+                const paths = gitCommitPaths(command)
+                await clearGitSessionStaging(ctx, sessionID, paths.length ? paths : undefined)
                 const messageFile = gitCommitMessageFile(command)
                 if (messageFile) {
                   await consumeCommitMessageFile(
@@ -11999,7 +16201,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       const summary = pending?.summary ?? safeInputSummary(tool, input)
       const returnedResult = raw.result ?? raw.output
       const reportedError =
-        raw.status === "completed" ? safeResultError(returnedResult) : undefined
+        raw.status === "completed"
+          ? (pending?.commandElevationId ? generatorResultError(returnedResult) : undefined) ??
+            generatorOutputError ?? generatorToolError ?? safeResultError(returnedResult)
+          : undefined
       const resultSummary =
         raw.status === "completed" && !reportedError ? safeResultSummary(tool, returnedResult) : {}
       let reportPromotion: EvidenceObservation["reportPromotion"]
@@ -12035,6 +16240,26 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
         }
       }
 
+      const unclassifiedRunner = String((input as any)?.command ?? "")
+        .trim().split(/\s+/)
+        .find((word: string) => word && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) ?? ""
+
+      const shellTrace: EvidenceObservation["commandTrace"] | undefined =
+        (tool === "shell" || tool === "bash") &&
+        pending?.startedAtMs !== undefined && pending.startedAt
+          ? {
+            family: pending.verification?.family ?? "custom",
+            runner: pending.verification?.runner ??
+              redactCommand(unclassifiedRunner).slice(0, 64),
+            access: pending.commandElevationId
+              ? "elevated"
+              : pending.verification ? "routine" : "unclassified",
+            startedAt: pending.startedAt,
+            durationMs: Math.max(0, Date.now() - pending.startedAtMs),
+            ...(pending.commandElevationId ? { grantId: pending.commandElevationId } : {}),
+          }
+          : undefined
+
       const observation: EvidenceObservation = {
         id: crypto.randomUUID(),
         sessionID: String(raw.sessionID),
@@ -12051,11 +16276,22 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             : {}),
         ...summary,
         ...resultSummary,
+        ...(shellTrace ? { commandTrace: shellTrace } : {}),
         ...(reportPromotion ? { reportPromotion } : {}),
         ...(!eventMatches && pending ? { unscopedReason: "input-changed" } : {}),
       }
 
       await persistEvidenceObservation(ctx.storage as any, runtime, observation, pending?.admission)
+      if (pending?.commandElevationId) {
+        const key = commandElevationKey(pending.commandElevationId)
+        const grant = await ctx.storage.get(key) as CommandElevation | undefined
+        if (grant && grant.consumedAt && !grant.observationId) {
+          await ctx.storage.set(key, {
+            ...grant, observationId: observation.id,
+            outcome: observation.status, observedAt: observation.observedAt,
+          } satisfies CommandElevation)
+        }
+      }
       } finally {
         await releaseGitWriteLocks(raw)
       }

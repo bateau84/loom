@@ -9,15 +9,27 @@ metadata:
 
 **This skill governs commit frequency, message format, and destructive-git-command safety. Not for merge/rebase/cherry-pick conflict resolution — see `git-conflicts`.**
 
+
+## Composition with the git skill
+
+Use `git` for tool selection, bounded command sequencing, staging inspection, and truthful interpretation of Git results. This skill still owns **what commits mean**: their boundaries, checkpoint timing, order, messages, and destructive-operation safety.
+
+Use plain Git as the sole command interface, limited to the forms admitted by the active runtime. A successful mutation does not establish semantic correctness. Run each dependent Git mutation separately; inspect its result before issuing the next.
+
+**Linked-worktree commits:** Git's `.git` entry in a linked worktree is a pointer file; the metadata lives in the primary repository, often outside Loom's project root. Run the same admitted scoped `git add` and hookless `git commit` commands in that worktree. Git itself may update its private index, objects and refs. No additional `.git` write scope or one-time hard-boundary approval is needed. Do not call `loom_scope_elevate` for those paths or edit them directly. Loom recognizes these exact paths as Git-owned for permitted commands, without granting raw filesystem access. Ordinary external-path edits still require their normal permission decision.
+
+**Governed Loom runtime:** ordinary non-elevated commits use the effective write scope, explicit paths and bounded commands below. With a separate exact one-use `loom_command_elevate` grant, any shell Git command can run under host OS permissions, with an audit receipt but **without Loom's normal Git provenance guarantee**. Elevated shell effects must not be reported as scoped/owned changes or independent verification. Never disguise an ungranted command through alternate executable names or wrappers.
+
+
 > **House skill.** Born from a CRITICAL incident: a long-running multi-wave, multi-task session had its entire body of work eradicated by a single `git reset --hard HEAD~1`, because the work had never been committed incrementally - one destructive command deleted hours of multiple waves at once. This skill exists so that never happens again: commit small and often, so the blast radius of any mistake - yours or a destructive command - is never more than the last few minutes of work.
 
 **Persona:** You treat commits as checkpoints (safety) **and** documentation (understanding) - not paperwork. A completed task gets a commit before you move to the next one - not "I'll commit everything at the end." - and that commit's message earns its keep for a human reading it cold, six months later, without you in the room. You treat `git reset --hard`, `git clean -fdx`, `git push --force`, and `git branch -D` as **loaded weapons**: never reached for casually, never used to "clean up" or "undo" without the human explicitly saying those words in THIS turn, and never chained after a failed command out of frustration.
 
 A commit small enough to be safe (§1) is also small enough to explain honestly (§2) - the two disciplines reinforce each other. A commit that mixes three concerns is both a recovery hazard (you can't revert one without the others) and an explanation hazard (there's no single "why" to write down). Split it for either reason and you've split it for both.
 
-## Loom-compatible Git commands
+## Loom-compatible Git mechanics
 
-When Loom's runtime is active, its Git surface is intentionally narrower than generic Git. Use these forms rather than improvising equivalent commands. Outside Loom, use the repository/host's normal approved commit mechanism; this skill does not independently authorize disabling repository hooks.
+Within Loom, raw Git is intentionally narrower than generic Git. Use the following admitted forms rather than improvising equivalents; issue each dependent mutation as a separate command. Outside Loom, use normal repository hooks and the approved commit mechanism. This skill does not independently authorize disabling hooks.
 
 ```bash
 git status --short
@@ -29,8 +41,10 @@ git diff --cached --check
 git diff --cached --stat
 git diff --cached
 
-git -c core.hooksPath=/dev/null commit -m "<type>(<scope>): <subject>"
+git -c core.hooksPath=/dev/null commit -m "<type>(<scope>): <subject>" -- path/to/fileA path/to/fileB
 ```
+
+The explicit `-- path/to/fileA path/to/fileB` form commits only those files, leaving unrelated staged entries untouched. It works with the effective Loom write scope, including new files granted by `loom_scope_elevate` after they have been authored by the current step. The earlier permitted no-path commit form remains available when the entire staged index belongs to the current step.
 
 For a short or medium multi-paragraph message, repeat `-m`:
 
@@ -47,8 +61,10 @@ ephemeral-reports/<role>/commit-messages/<unique-name>.md
 Then use the file as the complete commit message:
 
 ```bash
-git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<unique-name>.md
+git -c core.hooksPath=/dev/null commit -F ephemeral-reports/<role>/commit-messages/<unique-name>.md -- path/to/fileA path/to/fileB
 ```
+
+Omit the `-- <files>` suffix only if the entire staged index is owned by the current Loom step.
 
 The scratch file is non-committable. Never stage it. The current commit-owning role/session must write the exact file bytes before using `-F`; Loom rejects a pre-existing, cross-role, stale/changed, symlink, hardlinked, or other non-single-link regular message file. A successful file-backed commit consumes the scratch file, so write a fresh message file for the next commit. Do not use shell redirection, heredocs, arbitrary `-F` paths, or another role's scratch namespace to construct a commit message.
 

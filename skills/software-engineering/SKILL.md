@@ -46,12 +46,12 @@ A short function or small file is not automatically simple. Likewise, a module c
 
 Tests are part of implementation when behavior changes.
 
-- Add or update tests alongside the code. Bugs should gain a regression test when the behavior can be exercised.
-- Test the defining behavior before exotic cases.
+- Add or update tests when they protect a distinct accepted behavior or credible regression; reuse existing sufficient tests instead of adding duplicates. Confirmed bugs should normally gain a regression test when practical.
+- Test the defining behavior before exotic cases; do not enumerate speculative failures to inflate coverage.
 - Prefer real inputs through the real code path. Mock external boundaries when needed; do not mock away the behavior being verified.
 - A test that passes because expected pipeline output was hand-injected, the component under test was bypassed, the hard case was skipped, or the assertion was weakened is not evidence of correctness.
 - Do not claim build, test, lint, security, runtime, or integration success without observed evidence.
-- Load `test-driven-development` when implementing new behavior, fixing a defect, or when test-first work will materially improve the change; load the applicable language testing skill for mechanics.
+- Load `test-driven-development` for test selection and meaningful regression protection when changing behavior. Use its Red → Green → Refactor workflow when test-first development is appropriate, not as mandatory ceremony for every code change. Load language testing skills for relevant mechanics only.
 
 ## Errors and operational visibility
 

@@ -75,6 +75,71 @@ class ActivationTests(unittest.TestCase):
         self.assertIn("grep -Fxq 'PASS missing plugin rejected'", workflow)
 
 
+class AgentGitPermissionTests(unittest.TestCase):
+    def test_every_loom_agent_retains_git_fail_safe_in_plugin_policy(self):
+        source = (ROOT / "plugins/loom/agent-contracts.ts").read_text()
+        definition = source.split("export const LOOM_ROLE_PERMISSIONS = ", 1)[1]
+        encoded = definition.split(" as const", 1)[0]
+        policies = json.loads(encoded)
+        agent_names = {path.stem for path in (ROOT / "agents").glob("*.md")}
+        self.assertEqual(set(policies), agent_names)
+
+        for role, rules in policies.items():
+            with self.subTest(agent=role):
+                fallback = {"action": "shell", "resource": "git *", "effect": "ask"}
+                self.assertIn(fallback, rules)
+                wildcard_deny = {"action": "shell", "resource": "*", "effect": "deny"}
+                if wildcard_deny in rules:
+                    self.assertGreater(
+                        rules.index(fallback), rules.index(wildcard_deny),
+                        "Git ask fallback must follow wildcard shell deny",
+                    )
+                text = (ROOT / "agents" / f"{role}.md").read_text()
+                self.assertNotIn("permissions:", text.split("---", 2)[1])
+
+    def test_runtime_has_universal_git_inspection_and_fail_closed_fallback(self):
+        source = (ROOT / "plugins/loom/index.ts").read_text()
+        agents = "\n".join(
+            path.read_text() for path in sorted((ROOT / "agents").glob("*.md"))
+        )
+        self.assertNotIn('resource: "git *"\n    effect: allow', agents)
+        self.assertIn("isGitInspectionShellCommand(resource)", source)
+        self.assertIn(
+            "Read-only repository inspection is universally available",
+            source,
+        )
+
+
+class CommitScopeAuthorityTests(unittest.TestCase):
+    def test_commit_authority_is_scope_derived_not_role_allowlisted(self):
+        source = (ROOT / "plugins/loom/index.ts").read_text()
+        self.assertNotIn("repositoryCommitAgents", source)
+        self.assertNotIn("roleCanOwnRepositoryCommit", source)
+        self.assertIn(
+            'if (agent !== "general" && !loomAgents.has(agent)) return false',
+            source,
+        )
+        self.assertIn("committableWriteScope(effectiveWrite)", source)
+        self.assertIn("commitAuthorized: committableWrite.length > 0", source)
+
+    def test_scope_elevation_reports_commit_authority_from_effective_scope(self):
+        source = (ROOT / "plugins/loom/index.ts").read_text()
+        self.assertIn("grantedProjectPaths: projectPaths", source)
+        self.assertIn(
+            "committableWriteScope(\n                          result.scope?.write ?? result.roleWriteDefault",
+            source,
+        )
+        self.assertIn(
+            "Any durable project-local write scope, including scope granted by loom_scope_elevate",
+            source,
+        )
+        granted = source.index('status: "granted"')
+        next_tool = source.index('name: "scope_authorize_once"', granted)
+        granted_block = source[granted:next_tool]
+        self.assertIn("commitAuthorized:", granted_block)
+        self.assertIn("committableWrite:", granted_block)
+
+
 class OpenCodeVersionContractTests(unittest.TestCase):
     def test_primary_host_matches_plugin_dependency(self):
         package = json.loads((ROOT / "package.json").read_text())
@@ -90,8 +155,11 @@ class OpenCodeVersionContractTests(unittest.TestCase):
             f'opencode --version | grep -F "{plugin_version}"',
             workflow,
         )
+        # The isolated eval boundary is pinned independently from the host
+        # plugin dependency. Task 7 requires the reviewed runtime-evidence
+        # image, which currently carries stock OpenCode 2.0.23.
         self.assertIn(
-            f'docker run --rm --entrypoint opencode "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" --version | grep -F "{plugin_version}"',
+            'docker run --rm --entrypoint opencode "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" --version | grep -F "2.0.23"',
             workflow,
         )
         self.assertIn(
@@ -143,7 +211,27 @@ class UnitDiscoveryTests(unittest.TestCase):
             (root / "scripts/a space.test.ts").write_text("")
             with patch.object(RUNNER.subprocess, "run", return_value=subprocess.CompletedProcess([], 7)) as run:
                 self.assertEqual(RUNNER.run_unit_tests(root), 7)
-            run.assert_called_once_with(["bun", "test", "./scripts/a space.test.ts"], cwd=root, check=False)
+            args, kwargs = run.call_args
+            self.assertEqual(args, (["bun", "test", "./scripts/a space.test.ts"],))
+            self.assertEqual(kwargs["cwd"], root)
+            self.assertFalse(kwargs["check"])
+            env = kwargs["env"]
+            isolation_root = Path(env["LOOM_TEST_ISOLATION_ROOT"])
+            self.assertEqual(Path(env["HOME"]), isolation_root / "home")
+            self.assertEqual(Path(env["XDG_STATE_HOME"]), isolation_root / "state")
+            self.assertEqual(Path(env["XDG_RUNTIME_DIR"]), isolation_root / "runtime")
+            self.assertEqual(Path(env["TMPDIR"]), isolation_root / "tmp")
+            self.assertNotIn("LOOM_TOOL_OUTPUT", env)
+            self.assertFalse((Path(env["XDG_STATE_HOME"]) / "loom" / "runtime-root.json").exists())
+
+    def test_isolated_environment_rejects_a_nonfresh_root(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "state").mkdir()
+            (root / "state/loom").mkdir()
+            (root / "state/loom/runtime-root.json").write_text("{}")
+            with self.assertRaisesRegex(RuntimeError, "fresh and empty"):
+                RUNNER.isolated_test_environment(root)
 
     def test_normal_entrypoint_uses_discovery(self):
         script = json.loads((ROOT / "package.json").read_text())["scripts"]["test"]

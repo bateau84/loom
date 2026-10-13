@@ -1,0 +1,61 @@
+{
+  "skill": "skills-eval",
+  "version": "1.1.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "Skills-Eval-01",
+      "name": "separate-skill-value-from-native-integration",
+      "trap": "Under model-budget pressure, collapse two different claims into one cheap test: use native loading as proof the methodology helps, or use a good ablation response as proof production roles really consume companion methodology.",
+      "prompt": "A new incident-triage skill is about to be rolled out broadly, but the model budget for evaluation is tight. Maintainers want confidence in two things: whether its evidence-triage method improves decisions compared with the model unaided, and whether production Reviewer actually consumes the skill's ASSESSMENT companion when relevant. Design the minimum defensible evaluation plan.",
+      "expectations": [
+        "Separates the two claims instead of trying to prove both with one case.",
+        "Uses a skill-owned baseline/candidate ablation case for whether incident-triage materially improves the model's reasoning, with the same task on both sides and only the candidate receiving the target skill.",
+        "Uses a central runtime native-integration case for whether production Reviewer actually loads the skill and consumes its assessment path.",
+        "For the ablation case, requires absolute candidate correctness while preserving baseline-to-candidate delta as skill-value evidence rather than PASS by improvement alone.",
+        "For the runtime integration case, requires observed skill loading and assessment action bound to incident-triage rather than accepting final prose as proof.",
+        "States that an ablation result does not prove production integration and a native load does not prove the methodology adds value."
+      ],
+      "negative_expectations": [
+        "Must not use presence of a skill tool call as the primary proof that the skill improves reasoning.",
+        "Must not claim a reasoning-only candidate response proves Reviewer consumed the companion in production.",
+        "Must not give the ablation candidate extra task hints beyond the target skill."
+      ]
+    },
+    {
+      "id": "Skills-Eval-02",
+      "name": "choose-runtime-for-native-skill-integration",
+      "trap": "Design a runtime-looking integration test but then score success from the current reasoning-only response or from prose claiming that the skill was used, instead of requiring the proposed runtime case to observe native actions.",
+      "prompt": "A regression report says Reviewer sometimes reviews Go work without actually loading the relevant skill assessment companion. The behavior we need to prove is production integration: Reviewer must natively load the skill and invoke the Loom assessment path for that skill. Design the focused eval.",
+      "expectations": [
+        "Chooses a central native skill integration case, normally in evals/skills.json, rather than a skill-owned ablation case.",
+        "Selects the real Loom runtime path capable of observing native skill/tool actions; in the current harness this is the OpenCode target, not provider-neutral reasoning-only ablation.",
+        "Designs the proposed runtime case to require observed native skill loading and the relevant loom_assessment action bound to the intended skill; the current reasoning-only response itself is not expected to produce that runtime trace.",
+        "Keeps the scenario realistic and checks the production behavior without teaching the target the harness assertion.",
+        "Explains that the resulting runtime evidence proves native integration only; whether the methodology improves reasoning quality requires separate skill-value ablation."
+      ],
+      "negative_expectations": [
+        "Must not claim that a reasoning-only candidate response proves native production loading.",
+        "Must not require the current skill-owned ablation response to contain the runtime trace that the proposed integration case would later observe.",
+        "Must not accept a final answer that merely says the skill was used as sufficient integration evidence."
+      ]
+    },
+    {
+      "id": "Skills-Eval-03",
+      "name": "validate-consumer-before-claiming-skill-evidence",
+      "trap": "Treat self-validating eval fixtures as runnable Loom ablation and report skill effectiveness without a compatible consumer or observed paired results.",
+      "prompt": "A team ships a reusable migration-advice skill outside Loom. Under skills/migration-advice/evals/cases.json it writes cases with request, expect, reject; its local test checks those keys and green-lights the package. They intend Loom's skill-owned paired evaluation to consume the JSON and say the skill has been evaluated. Outline the smallest defensible correction and verification plan. No live model runs are available for this task.",
+      "expectations": [
+        "Checks the intended Loom consumer's actual case schema and parser before claiming executability; recognizes request/expect/reject are not Loom skill-owned aliases for prompt/expectations/negative_expectations.",
+        "Recommends parsing the authored cases with the real consumer or the consumer-backed validator rather than extending local fixture tests to bless their own keys.",
+        "Describes a realistic skill-owned baseline/candidate case grounded in an ordinary migration decision and plausible near miss, not a copied skill-rule recall quiz.",
+        "Clearly separates written cases, parsed cases, and observed paired-model results; cannot claim effectiveness or baseline delta from schema validation."
+      ],
+      "negative_expectations": [
+        "Must not count local shape checks as executable Loom ablation evidence.",
+        "Must not invent a PASS, baseline score, or candidate improvement without a run.",
+        "Must not require actual migration file writes in reasoning-only ablation."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+.container-results/
+.container-builds/
+.container-comparisons/
+.container-build-*/
+.container-run-*/
+.podman-witness-*/
+__pycache__/

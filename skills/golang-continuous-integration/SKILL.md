@@ -71,7 +71,7 @@ Test flags:
 
 ### Coverage Configuration
 
-CI SHOULD enforce code coverage thresholds. Configure thresholds in `codecov.yml` at the repo root — see [codecov.yml](./assets/codecov.yml)
+Coverage reports can point to untested behavior, but percentage is not proof of correctness. Enforce a numerical threshold **only when the repository explicitly chooses one with a maintenance rationale**; do not add tests solely to satisfy a target. For an opt-in example, see [codecov.yml](./assets/codecov.yml)
 
 ---
 

@@ -142,6 +142,13 @@ return {attachment, result: unpack(await pending)};`)
       `return await tools.loom.code.oq_raise(${JSON.stringify(raiseInput)})`,
     )
     assert.ok(raised?.question?.id, `Real-host OQ raise failed: ${JSON.stringify(raised)}`)
+    assert.deepEqual(raised?.notifications, { notified: ["general"], failed: [] })
+
+    const routingWakePrompt = await driver.waitForPrompt(
+      (prompt) => prompt.includes(`Loom blocking OQ ${raised.question.id} was raised for user.`),
+    )
+    assert.match(routingWakePrompt, /loom_oq_list/)
+    assert.equal(routingWakePrompt.includes(raiseInput.question), false)
 
     const authoritativeAnswer = "Use strict mode from persisted OQ state."
     const answerInput = {
@@ -176,7 +183,8 @@ return {attachment, result: unpack(await pending)};`)
       authoritativeAnswer,
     )
 
-    console.log("PASS real-host OQ wake-up: persisted answer steers the attached Worker and the Worker re-reads authoritative OQ state")
+    console.log("PASS real-host OQ routing wake-up: blocking child OQ queues General without carrying question content")
+    console.log("PASS real-host OQ answer wake-up: persisted answer steers the attached Worker and the Worker re-reads authoritative OQ state")
     console.log("PASS real-host lifecycle: cancelled Code Mode recovery, invalid/reused grants rejected, delayed old result denied as replacement claim/verification, fresh result accepted")
   } finally {
     // Unblock outstanding fixture calls on assertion failure; no orphan tasks.

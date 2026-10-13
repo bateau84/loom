@@ -1,5 +1,5 @@
 import type { OpenQuestion } from "./oq"
-import { plannedTaskSteps, planningOnlyObjective, runnable, type Workflow } from "./workflow"
+import { plannedTaskSteps, planningOnlyObjective, runnable, userDecisionWaitSteps, type Workflow } from "./workflow"
 import { workPlanContext, workTree, type WorkHierarchy } from "./work"
 import type {
   LoomSidebarSnapshot,
@@ -21,12 +21,13 @@ export function buildSidebarSnapshot(
       progress: { finished: 0, total: 0, failed: 0 },
       tasks: [],
       now: [],
+      userDecisions: [],
       openQuestions: 0,
       openVerification: 0,
     }
   }
 
-  const ready = runnable(workflow)
+  const ready = runnable(workflow).filter((step) => step.kind === "work" || step.kind === "gate")
   const readyIDs = new Set(ready.map((step) => step.id))
   const readyTaskIDs = new Set(
     ready.filter((step) => step.task).map((step) => step.task!.id),
@@ -123,11 +124,24 @@ export function buildSidebarSnapshot(
         status,
       }
     }),
-    now: ready.map((step) => ({
-      id: step.id,
-      label: step.task?.title ?? step.id,
-      agent: step.agent,
-      kind: step.kind,
+    now: ready.flatMap((step) => {
+      if (step.kind === "wait") return []
+      return [{
+        id: step.id,
+        label: step.task?.title ?? step.id,
+        agent: step.agent,
+        kind: step.kind,
+      }]
+    }),
+    userDecisions: userDecisionWaitSteps(workflow).map(({ step, ready, waitsFor }) => ({
+      step: step.id,
+      taskId: step.task.id,
+      title: step.task.title,
+      objective: step.task.objective,
+      ...(step.task.rationale ? { rationale: step.task.rationale } : {}),
+      acceptanceCriteria: step.task.acceptanceCriteria ?? [],
+      ready,
+      waitsFor,
     })),
     openQuestions: questions.filter((question) => question.status !== "closed").length,
     openVerification: (workflow.verification ?? []).filter(

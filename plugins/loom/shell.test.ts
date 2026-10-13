@@ -3,16 +3,117 @@ import {
   authorGitShellResourcesAllowed,
   diagnosticExecutionShellResourcesAllowed,
   diagnosticShellResourcesAllowed,
+  classifyVerificationShell,
+  isElevatableVerificationShell,
+  elevatedGenerationOutput,
+  elevatedGenerationPaths,
+  generationElevationError,
+  elevatedVerificationEntrypoint,
   isAllowedGitCommit,
+  gitCommitPaths,
+  scopedGitFileMutation,
+  isAllowedPackageScriptShell,
   isAllowedWorkerShell,
+  isGitInspectionShellCommand,
+  isGitShellCommand,
   isGitAuthoringShellCommand,
   scopedGitAddTargets,
   scopedGofmtWriteTargets,
+  scopedToolWriteTargets,
+  scopedToolOutputFlagPresent,
   shellResourcesAllowed,
   workerShellResourcesAllowed,
 } from "./shell"
 
 describe("Loom Worker shell policy", () => {
+  test("classifies unsafe Git command chains so runtime can fail closed", () => {
+    expect(isGitShellCommand("git status && rm -f README.md")).toBe(true)
+    expect(isGitInspectionShellCommand("git status && rm -f README.md")).toBe(false)
+
+  })
+
+
+  test("allows universal read-only Git inspection and rejects mutation-shaped or escaping forms", () => {
+    for (const command of [
+      "git status --short",
+      "git diff --stat",
+      "git --no-pager log --oneline -20",
+      "git show HEAD",
+      "git rev-parse --show-toplevel",
+      "git grep TODO",
+      "git ls-files",
+      "git blame src/runtime.ts",
+      "git shortlog -sn",
+      "git describe --always --dirty",
+      "git merge-base HEAD origin/main",
+      "git name-rev HEAD",
+      "git ls-tree -r HEAD",
+      "git branch --show-current",
+      "git branch",
+      "git branch -a",
+      "git branch -r",
+      "git branch --all -vv",
+      "git remote -v",
+      "git tag --list",
+    ]) {
+      expect(isGitShellCommand(command)).toBe(true)
+      expect(isGitInspectionShellCommand(command)).toBe(true)
+      expect(isAllowedWorkerShell(command)).toBe(true)
+    }
+
+    for (const command of [
+      "git reset --hard HEAD",
+      "git checkout main",
+      "git restore .",
+      "git clean -fd",
+      "git branch -D feature",
+      "git branch --delete feature",
+      "git branch --move old new",
+      "git branch -a --edit-description",
+      "git branch --set-upstream-to origin/main",
+      "git remote set-url origin https://example.invalid/repo",
+      "git tag v1",
+      "git diff --output=diff.txt",
+      "git diff --no-index /etc/passwd README.md",
+      "git show --ext-diff HEAD",
+      "git log --output history.txt",
+      "git grep --open-files-in-pager=cat TODO",
+      "git -C ../other status",
+      "git -c core.pager=cat log",
+    ]) {
+      expect(isGitInspectionShellCommand(command)).toBe(false)
+    }
+  })
+
+
+  test("allows bounded GitHub repository inspection without repo mutation", () => {
+    const reads = [
+      "gh repo view",
+      "gh repo view nrkno/plattform-vulnerability-dashboard --json defaultBranchRef,url",
+      "gh repo view --json nameWithOwner",
+      "gh repo view owner/repo --json=defaultBranchRef,url",
+    ]
+    for (const command of reads) {
+      expect(diagnosticShellResourcesAllowed([command])).toBe(true)
+      expect(workerShellResourcesAllowed([command])).toBe(true)
+    }
+
+    for (const command of [
+      "gh repo edit owner/repo --default-branch main",
+      "gh repo create owner/repo",
+      "gh repo view owner/repo --web",
+      "gh repo view owner/repo --jq .url",
+      "gh repo view owner/repo --template '{{.url}}'",
+      "gh repo view owner/repo --json ../secret",
+      "gh repo view owner/repo --json url --json name",
+      "gh repo view owner/repo extra",
+      "gh repo view owner/repo --json url && rm -rf src",
+    ]) {
+      expect(diagnosticShellResourcesAllowed([command])).toBe(false)
+      expect(workerShellResourcesAllowed([command])).toBe(false)
+    }
+  })
+
   test("allows common inspection and verification commands", () => {
     for (const command of [
       "git status --short",
@@ -33,6 +134,201 @@ describe("Loom Worker shell policy", () => {
     ]) {
       expect(isAllowedWorkerShell(command)).toBe(true)
     }
+  })
+
+  test("allows named package scripts for project verification", () => {
+    for (const command of [
+      "bun run test:unit",
+      "npm run test:unit",
+      "pnpm run quality:check",
+      "yarn run build:prod",
+      "bun run my.task",
+      "npm run lint:fix -- --write",
+      "XDG_CACHE_HOME=/tmp/loom-cache bun run test:unit -- --filter unit",
+    ]) {
+      expect(isAllowedPackageScriptShell(command)).toBe(true)
+      expect(isAllowedWorkerShell(command)).toBe(false)
+      expect(shellResourcesAllowed([command])).toBe(false)
+      expect(diagnosticShellResourcesAllowed([command])).toBe(true)
+      expect(diagnosticExecutionShellResourcesAllowed([command])).toBe(true)
+      expect(workerShellResourcesAllowed([command])).toBe(true)
+    }
+
+    for (const command of [
+      "bun run",
+      "npm run --prefix ../other test",
+      "bun run ./scripts/probe.ts",
+      "npm run ../other",
+      "npm install",
+      "npm run test:unit && rm -rf src",
+      "npm run test:unit | cat",
+      "npm run test:unit > results.txt",
+      "npm run test:unit$(touch pwn)",
+      "PATH=/tmp npm run test:unit",
+    ]) {
+      expect(isAllowedPackageScriptShell(command)).toBe(false)
+    }
+  })
+
+  test("admits Python, Go, and shell testing for the verification roles", () => {
+    const groups = [
+      ["package", [
+        "bun test ./plugins/loom/shell.test.ts",
+        "npm test",
+        "pnpm test",
+        "yarn test",
+      ]],
+      ["python", [
+        "python -m unittest discover -s tests",
+        "python3 -m pytest tests -q",
+        "python3.12 -m coverage run -m pytest",
+        "python scripts/test_api.py",
+        "python ./tests/run.py",
+        "pytest -q",
+        "tox -e py312",
+        "ruff check .",
+      ]],
+      ["go", [
+        "go test ./...",
+        "go test -race -count=1 ./...",
+        "go vet ./...",
+        "go tool cover -func=coverage.out",
+      ]],
+      ["shell", [
+        "bash scripts/test-unit.sh",
+        "sh ./tests/run.sh",
+        "bash -n scripts/deploy.sh",
+        "shellcheck ./scripts/test-unit.sh",
+        "bats tests/example.bats",
+        "shfmt -d scripts/test-unit.sh",
+        "./scripts/test-unit.sh",
+      ]],
+    ] as const
+    for (const [family, commands] of groups) {
+      for (const command of commands) {
+        expect(classifyVerificationShell(command)?.family).toBe(family)
+        expect(diagnosticShellResourcesAllowed([command])).toBe(true)
+        expect(workerShellResourcesAllowed([command])).toBe(true)
+      }
+    }
+    // Research does not inherit the new project-execution entitlement.
+    expect(shellResourcesAllowed(["bash scripts/test-unit.sh"])).toBe(false)
+    expect(shellResourcesAllowed(["python -m unittest discover"])).toBe(false)
+  })
+
+  test("rejects shell code injection and non-test entrypoints", () => {
+    for (const command of [
+      "bash -c 'rm -rf src'",
+      "sh -lc 'go test ./...'",
+      "python -c 'import os; os.system(\"touch /tmp/pwn\")'",
+      "go generate ./...",
+      "go env -w GOPROXY=direct",
+      "bash ../outside/test.sh",
+      "bash /tmp/test.sh",
+      "bash scripts/deploy.sh",
+      "python scripts/deploy.py",
+      "bash scripts/test.sh && git push origin main",
+      "python -m pip install -r requirements.txt",
+      "ruff check --fix .",
+      "python -m ruff check --fix .",
+      "shfmt -d -w scripts/test.sh",
+    ]) {
+      expect(classifyVerificationShell(command)).toBeUndefined()
+    }
+  })
+
+  test("project generation elevation admits scoped Swagger output without shell escape", () => {
+    const command = "swag init -g doc.go -d ./internal/apiv2,./internal/app --parseDependency --parseInternal --output ./internal/swagger/v2 --tags 'internal-app-v1' --requiredByDefault"
+    expect(elevatedGenerationOutput(command)).toBe("internal/swagger/v2")
+    expect(elevatedGenerationPaths(command)).toEqual([
+      "internal/swagger/v2/docs.go",
+      "internal/swagger/v2/swagger.json",
+      "internal/swagger/v2/swagger.yaml",
+    ])
+    expect(isElevatableVerificationShell(command)).toBe(false)
+    expect(elevatedGenerationOutput("swag init --output=internal/swagger/v2 --outputTypes=json,yaml")).toBe("internal/swagger/v2")
+    expect(elevatedGenerationOutput("swag init -o internal/swagger/v2 -t 'internal-app-v1'")).toBe("internal/swagger/v2")
+    expect(elevatedGenerationOutput("swag init --ot json,yaml -o internal/swagger/v2")).toBe("internal/swagger/v2")
+    expect(elevatedGenerationOutput("swag init --parseDepth 100 --pdl 3 -q -o internal/swagger/v2")).toBe("internal/swagger/v2")
+    expect(elevatedGenerationOutput("swag init --tags '!internal-app-v1' -o internal/swagger/v2")).toBe("internal/swagger/v2")
+    expect(generationElevationError("swag init --badOption 1 -o internal/swagger/v2")).toContain("Unsupported swag init option")
+    expect(generationElevationError("swag init --output ../outside")).toContain("project-relative")
+    expect(elevatedGenerationOutput("swag init -g doc.go")).toBe("docs")
+    expect(elevatedGenerationPaths("swag init")).toEqual([
+      "docs/docs.go", "docs/swagger.json", "docs/swagger.yaml",
+    ])
+
+    for (const invalid of [
+      "swag init --output .",
+      "swag init --output ../outside",
+      "swag init --output /tmp/out",
+      "swag init --output .git/hooks",
+      "swag init --output .loom/private",
+      "swag init --output internal/swagger/v2 --output /tmp/also",
+      "swag init --output internal/swagger/v2 --dir ../outside",
+      "swag init --output internal/swagger/v2 -g ../outside/doc.go",
+      "swag init --output internal/swagger/v2 --outputTypes xml",
+      "swag init --output internal/swagger/v2 --ot html",
+      "swag init --output internal/swagger/v2 --parseDepth 0",
+      "swag init --output internal/swagger/v2 --parseDepth 1001",
+      "swag init --output internal/swagger/v2 --templateDelims unsafe",
+      "swag init --output internal/swagger/v2 && git push origin main",
+      "swag init --output 'internal/swagger/v2;rm'",
+      "swag fmt --output internal/swagger/v2",
+      "go generate ./...",
+      "git push origin main",
+      "npm install",
+    ]) {
+      expect(elevatedGenerationOutput(invalid)).toBeUndefined()
+    }
+  })
+
+  test("explicit verification elevation accepts only bounded runner shapes", () => {
+    for (const command of [
+      "make test",
+      "just test:unit",
+      "bash scripts/ci.sh",
+      "sh ./scripts/ci.sh",
+      "python scripts/reproduce.py",
+      "python3 -m custom_test_runner",
+      "python3 -m tests.runner",
+      "go run ./cmd/test-runner",
+    ]) {
+      expect(isElevatableVerificationShell(command)).toBe(true)
+    }
+    for (const command of [
+      "bash scripts/deploy.sh",
+      "python scripts/migrate-db.py",
+      "go run ./cmd/deploy",
+      "python3 -m pip._internal",
+      "make test-clean",
+      "make deploy",
+      "make test -f /tmp/outside.mk",
+      "make test --eval 'target:; echo unsafe'",
+      "make test -C /tmp",
+      "just test -f /tmp/Justfile",
+      "python3 -m http.server",
+      "python3 -m os",
+      "just clean",
+      "bash -c 'echo hello'",
+      "sh -lc 'echo hello'",
+      "python -c 'print(1)'",
+      "python -m pip install",
+      "go run ../other",
+      "go run /tmp/script.go",
+      "bash /tmp/ci.sh",
+      "bash scripts/test.sh; rm -rf src",
+      "git push origin main",
+      "npm install",
+      "rm -rf src",
+    ]) {
+      expect(isElevatableVerificationShell(command)).toBe(false)
+    }
+    expect(elevatedVerificationEntrypoint("bash scripts/ci.sh")).toBe("scripts/ci.sh")
+    expect(elevatedVerificationEntrypoint("python scripts/reproduce.py")).toBe("scripts/reproduce.py")
+    expect(elevatedVerificationEntrypoint("go run ./cmd/test-runner")).toBe("./cmd/test-runner")
+    expect(elevatedVerificationEntrypoint("make test")).toBeUndefined()
+    expect(elevatedVerificationEntrypoint("python -m tests.runner")).toBeUndefined()
   })
 
   test("allows constrained Go environment prefixes", () => {
@@ -341,6 +637,89 @@ describe("Loom Worker shell policy", () => {
     expect(workerShellResourcesAllowed(["gh pr edit --body-file /etc/passwd"], scope)).toBe(false)
     expect(workerShellResourcesAllowed(["gh run rerun 456 --failed"], scope)).toBe(false)
     expect(workerShellResourcesAllowed(["gh pr merge 123"], scope)).toBe(false)
+  })
+
+  test("grants bounded Git file operations from the same file scope", () => {
+    const scope = ["src/**"]
+    const selected = "git -c core.hooksPath=/dev/null commit -m 'fix: selected files' -- src/app.go src/new.go"
+    expect(gitCommitPaths(selected)).toEqual(["src/app.go", "src/new.go"])
+    expect(isAllowedGitCommit(selected)).toBe(true)
+    expect(authorGitShellResourcesAllowed([selected], scope)).toBe(true)
+    expect(workerShellResourcesAllowed([selected], scope)).toBe(true)
+    expect(authorGitShellResourcesAllowed([
+      "git -c core.hooksPath=/dev/null commit -m fix -- docs/outside.md",
+    ], scope)).toBe(false)
+
+    const permitted = [
+      "git rm -- src/app.go",
+      "git mv -- src/app.go src/new.go",
+      "git restore -- src/app.go",
+      "git restore --staged -- src/app.go",
+      "git restore --staged --worktree -- src/app.go",
+      "git reset HEAD -- src/app.go",
+      "git checkout -- src/app.go",
+    ]
+    for (const command of permitted) {
+      expect(scopedGitFileMutation(command)?.paths.length).toBeGreaterThan(0)
+      expect(isGitAuthoringShellCommand(command)).toBe(true)
+      expect(authorGitShellResourcesAllowed([command], scope)).toBe(true)
+      expect(workerShellResourcesAllowed([command], scope)).toBe(true)
+    }
+    for (const command of [
+      "git rm -r -- src/app.go",
+      "git mv -- src/app.go docs/outside.md",
+      "git restore -- src/../outside.md",
+      "git reset --hard HEAD -- src/app.go",
+      "git checkout main",
+      "git checkout -- .",
+      "git rm -- :/src/app.go",
+      "git commit -a -m all -- src/app.go",
+      "git -c core.hooksPath=/dev/null commit -m fix -- src/*",
+    ]) expect(authorGitShellResourcesAllowed([command], scope)).toBe(false)
+  })
+
+  test("bounded test, generator, Go, Python and JS tool output files", () => {
+    const examples: Array<[string, string[]]> = [
+      ["go mod tidy", ["go.mod", "go.sum"]],
+      ["go fmt src/app.go", ["src/app.go"]],
+      ["gofmt -w src/app.go", ["src/app.go"]],
+      ["goimports -w src/app.go", ["src/app.go"]],
+      ["gofumpt -w src/app.go", ["src/app.go"]],
+      ["ruff check --fix scripts/main.py", ["scripts/main.py"]],
+      ["python3 -m ruff format scripts/main.py", ["scripts/main.py"]],
+      ["black scripts/main.py", ["scripts/main.py"]],
+      ["isort scripts/main.py", ["scripts/main.py"]],
+      ["autopep8 --in-place scripts/main.py", ["scripts/main.py"]],
+      ["prettier --write src/app.ts", ["src/app.ts"]],
+      ["eslint --fix src/app.ts", ["src/app.ts"]],
+      ["go test ./... -coverprofile=reports/coverage.out", ["reports/coverage.out"]],
+      ["pytest -q --junitxml=reports/junit.xml", ["reports/junit.xml"]],
+      ["swag init --output docs/swagger", [
+        "docs/swagger/docs.go", "docs/swagger/swagger.json", "docs/swagger/swagger.yaml",
+      ]],
+      ["swag init", ["docs/docs.go", "docs/swagger.json", "docs/swagger.yaml"]],
+    ]
+    for (const [command, outputs] of examples) {
+      expect(scopedToolWriteTargets(command)).toEqual(outputs)
+      expect(workerShellResourcesAllowed([command], outputs)).toBe(true)
+      expect(workerShellResourcesAllowed([command], ["src/unrelated.ts"])).toBe(false)
+    }
+    for (const command of [
+      "go fmt ./...", "goimports -w ../outside.go",
+      "go mod tidy -modfile ../external.mod", "ruff check --fix .",
+      "ruff check --fix ../outside.py", "ruff format --check scripts/main.py",
+      "python -m black .", "prettier --write .", "eslint --fix src/**",
+      "pytest --junitxml=../outside.xml", "go test ./... -coverprofile=../../outside",
+      "swag init --output ../outside", "gofmt -w src/app.go && rm -rf src",
+    ]) expect(scopedToolWriteTargets(command)).toEqual([])
+    expect(workerShellResourcesAllowed(["go version"])).toBe(true)
+    expect(workerShellResourcesAllowed(["go mod verify"])).toBe(true)
+    expect(workerShellResourcesAllowed(["go mod tidy -diff"])).toBe(true)
+    for (const command of ["go test ./... -coverprofile=../outside.out",
+      "pytest --junitxml=../outside.xml", "go test -coverprofile=a -coverprofile=b ./..."]) {
+      expect(scopedToolOutputFlagPresent(command)).toBe(true)
+      expect(workerShellResourcesAllowed([command], ["src/**"])).toBe(false)
+    }
   })
 
   test("lets durable artifact authors stage and commit only their owned files", () => {

@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test"
+import { assertIsolatedTestProcess } from "./test-isolation"
 import { mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { fileURLToPath } from "node:url"
 import { RUNTIME_STATE_VERSION, consumeDispatchGrant, createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, findUsableDispatchGrant, importLegacyPluginStorage, issueDispatchGrant, migrateLegacySessionState, resolveRuntimeIdentity, sessionBoundToOq, sessionBoundToStep, sessionBoundToWorkflow, tryAcquireRuntimeLocks } from "./runtime"
+
+await assertIsolatedTestProcess()
 
 // These identity fixtures intentionally model the pre-upgrade v1 store.
 // Schema transformation/replay is tested separately above and at the plugin boundary.
@@ -846,6 +849,158 @@ describe("Loom pre-project-epoch continuity schema upgrades", () => {
 })
 
 describe("Loom crash-safe durable storage", () => {
+  test("concurrent storage opens reuse the same SQLite handle within a process", async () => {
+    await withRoots(async (root) => {
+      const project = join(root, "concurrent-open-project")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, new MemoryStorage() as any)
+      const handles = await Promise.all(
+        Array.from({ length: 8 }, () => createTransactionalStorage(runtime)),
+      )
+      for (const handle of handles) expect(handle).toBe(handles[0])
+    })
+  })
+
+  test("version-fenced reads and scans do not wait behind another process's writer", async () => {
+    await withRoots(async (root) => {
+      const project = join(root, "sqlite-reader-project")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, new MemoryStorage() as any)
+      const raw = await createTransactionalStorage(runtime)
+      await ensureRuntimeStateVersion(raw, runtime)
+      const scoped = createProjectStorage(raw, runtime.projectId, {
+        expectedRuntimeVersion: RUNTIME_STATE_VERSION,
+      })
+      const localKey = "workflow/reader"
+      const key = `project/${runtime.projectId}/${localKey}`
+      await scoped.set(localKey, { revision: 1 })
+
+      const ready = join(root, "writer-ready")
+      const release = join(root, "release-writer")
+      const fixturePath = fileURLToPath(new URL("./runtime-process-fixture.ts", import.meta.url))
+      const proc = Bun.spawn(
+        [process.execPath, fixturePath, "sqlite-hold-write", project, key, ready, release],
+        {
+          env: fixtureProcessEnv({
+            XDG_STATE_HOME: join(root, "state"),
+            XDG_RUNTIME_DIR: join(root, "runtime"),
+          }),
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      )
+      const stdoutPromise = new Response(proc.stdout).text()
+      const stderrPromise = new Response(proc.stderr).text()
+      let pendingRead: Promise<unknown> | undefined
+      try {
+        await waitForFixtureFile(ready)
+        // The second process has started BEGIN IMMEDIATE and made an
+        // uncommitted change. WAL readers must still see the old snapshot.
+        const reads = Promise.all([
+          scoped.get(localKey),
+          scoped.scan({ prefix: "workflow/" }),
+        ])
+        pendingRead = reads
+        const outcome = await Promise.race([
+          reads.then(
+            (value) => ({ status: "ok" as const, value }),
+            (error: unknown) => ({ status: "error" as const, error }),
+          ),
+          Bun.sleep(2000).then(() => ({ status: "timeout" as const })),
+        ])
+        if (outcome.status === "error") throw outcome.error
+        expect(outcome.status).toBe("ok")
+        if (outcome.status === "ok") {
+          expect(outcome.value[0]).toEqual({ revision: 1 })
+          expect(outcome.value[1].entries).toEqual([
+            { key, value: { revision: 1 } },
+          ])
+        }
+      } finally {
+        await writeFile(release, "released", "utf8")
+        const [stdout, stderr, exitCode] = await Promise.all([
+          stdoutPromise, stderrPromise, proc.exited,
+        ])
+        await pendingRead?.catch(() => {})
+        if (exitCode !== 0) throw new Error(`SQLite writer fixture exited ${exitCode}: ${stderr}`)
+        expect(stdout.trim()).toBe("committed")
+      }
+
+      expect(await scoped.get(localKey)).toEqual({ revision: 2 })
+    })
+  })
+
+  test("a read snapshot allows concurrent commits without mixing values", async () => {
+    await withRoots(async (root) => {
+      const project = join(root, "sqlite-snapshot-project")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, new MemoryStorage() as any)
+      const raw = await createTransactionalStorage(runtime)
+      await ensureRuntimeStateVersion(raw, runtime)
+      const scoped = createProjectStorage(raw, runtime.projectId, {
+        expectedRuntimeVersion: RUNTIME_STATE_VERSION,
+      })
+      const key = `project/${runtime.projectId}/workflow/snapshot`
+      await scoped.set("workflow/snapshot", { revision: 1 })
+      const env = {
+        XDG_STATE_HOME: join(root, "state"),
+        XDG_RUNTIME_DIR: join(root, "runtime"),
+      }
+
+      await raw.readTransaction!(async () => {
+        expect(await scoped.get("workflow/snapshot")).toEqual({ revision: 1 })
+        expect(await runFixture(["sqlite-write", project, key, "2"], env)).toBe("written")
+        expect(await scoped.get("workflow/snapshot")).toEqual({ revision: 1 })
+        expect((await scoped.scan({ prefix: "workflow/" })).entries).toEqual([
+          { key, value: { revision: 1 } },
+        ])
+      })
+      expect(await scoped.get("workflow/snapshot")).toEqual({ revision: 2 })
+
+      await expect(raw.readTransaction!(async () => raw.set(key, { revision: 3 })))
+        .rejects.toThrow("read-only transaction")
+      await expect(raw.readTransaction!(async () => raw.delete!(key)))
+        .rejects.toThrow("read-only transaction")
+      await expect(raw.readTransaction!(async () =>
+        raw.transaction!(async () => raw.set(key, { revision: 3 })),
+      )).rejects.toThrow("read-only transaction")
+
+      await raw.transaction!(async () => {
+        expect(await raw.readTransaction!(async () => raw.get(key))).toEqual({ revision: 2 })
+        await raw.set(key, { revision: 3 })
+      })
+      expect(await scoped.get("workflow/snapshot")).toEqual({ revision: 3 })
+    })
+  })
+
+  test("a read snapshot pins the version fence across another process's upgrade", async () => {
+    await withRoots(async (root) => {
+      const project = join(root, "sqlite-upgrade-reader")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, new MemoryStorage() as any)
+      const raw = await createTransactionalStorage(runtime)
+      await ensureRuntimeStateVersion(raw, runtime, { targetVersion: 1 })
+      const scoped = createProjectStorage(raw, runtime.projectId, {
+        expectedRuntimeVersion: 1,
+      })
+      await scoped.set("format", { version: 1 })
+      const env = {
+        XDG_STATE_HOME: join(root, "state"),
+        XDG_RUNTIME_DIR: join(root, "runtime"),
+      }
+      const upgradedPath = join(root, "upgraded")
+      await raw.readTransaction!(async () => {
+        expect(await scoped.get("format")).toEqual({ version: 1 })
+        expect(await runFixture(["version-skew-upgrade", project, upgradedPath], env))
+          .toBe("upgraded")
+        expect(await scoped.get("format")).toEqual({ version: 1 })
+      })
+      await expect(scoped.get("format")).rejects.toThrow(
+        "does not match this running build (1)",
+      )
+    })
+  })
+
   test("crash inside a workflow transaction rolls back every aggregate key", async () => {
     await withRoots(async (root) => {
       const legacy = new MemoryStorage()
@@ -1024,6 +1179,15 @@ describe("Loom runtime identity and scoped storage", () => {
       const runtime = await resolveRuntimeIdentity(project, raw as any)
       const storage = createProjectStorage(raw as any, runtime.projectId)
       const now = new Date("2026-09-21T12:00:00.000Z")
+      await storage.set("workflow/workflow-a", {
+        id: "workflow-a",
+        projectId: runtime.projectId,
+        revision: 1,
+        anchor: "task:workflow-a",
+        createdBySession: "general-session",
+        createdAt: now.toISOString(),
+        steps: [],
+      })
 
       const grant = await issueDispatchGrant(storage, runtime, {
         workflowId: "workflow-a",
@@ -1086,6 +1250,15 @@ describe("Loom runtime identity and scoped storage", () => {
       const runtime = await resolveRuntimeIdentity(project, raw as any)
       const storage = createProjectStorage(raw as any, runtime.projectId)
       const issuedAt = new Date("2026-09-21T12:00:00.000Z")
+      await storage.set("workflow/workflow-a", {
+        id: "workflow-a",
+        projectId: runtime.projectId,
+        revision: 1,
+        anchor: "task:workflow-a",
+        createdBySession: "general-session",
+        createdAt: issuedAt.toISOString(),
+        steps: [],
+      })
 
       const grant = await issueDispatchGrant(storage, runtime, {
         workflowId: "workflow-a",
@@ -1202,6 +1375,15 @@ describe("Loom runtime identity and scoped storage", () => {
       const runtimeB = await resolveRuntimeIdentity(b, raw as any)
       const storageA = createProjectStorage(raw as any, runtimeA.projectId)
       const now = new Date("2026-09-21T12:00:00.000Z")
+      await storageA.set("workflow/workflow-a", {
+        id: "workflow-a",
+        projectId: runtimeA.projectId,
+        revision: 1,
+        anchor: "task:workflow-a",
+        createdBySession: "general-a",
+        createdAt: now.toISOString(),
+        steps: [],
+      })
       const grant = await issueDispatchGrant(storageA, runtimeA, {
         workflowId: "workflow-a",
         stepId: "task:a",
@@ -1220,6 +1402,23 @@ describe("Loom runtime identity and scoped storage", () => {
           now,
         }),
       ).rejects.toThrow("another project")
+    })
+  })
+
+  test("dispatch grant creation fails closed when its workflow record is absent", async () => {
+    await withRoots(async (root) => {
+      const raw = new MemoryStorage()
+      const project = join(root, "missing-workflow-project")
+      await mkdir(project, { recursive: true })
+      const runtime = await resolveRuntimeIdentity(project, raw as any)
+      const storage = createProjectStorage(raw as any, runtime.projectId)
+
+      await expect(issueDispatchGrant(storage, runtime, {
+        workflowId: "workflow-missing",
+        stepId: "step",
+        expectedAgent: "worker",
+        issuingParentSessionId: "general-session",
+      })).rejects.toThrow("workflow is missing")
     })
   })
 
@@ -2298,7 +2497,7 @@ describe("Loom runtime identity and scoped storage", () => {
 
 
 describe("production runtime writer fencing", () => {
-  test("legacy records survive v7 and all older fence-capable writers are rejected", async () => {
+  test("legacy records survive v10 without advisory backfill and older writers are rejected", async () => {
     await withRoots(async (root) => {
       const project = join(root, "holistic-plan-upgrade")
       await mkdir(project, { recursive: true })
@@ -2329,11 +2528,23 @@ describe("production runtime writer fencing", () => {
       const priorV6 = createProjectStorage(raw, runtime.projectId, { expectedRuntimeVersion: 6 })
       expect(await priorV6.get("workflow/before-upgrade")).toEqual(history)
 
+      await ensureRuntimeStateVersion(raw, runtime, { targetVersion: 7 })
+      const priorV7 = createProjectStorage(raw, runtime.projectId, { expectedRuntimeVersion: 7 })
+      expect(await priorV7.get("workflow/before-upgrade")).toEqual(history)
+
+      await ensureRuntimeStateVersion(raw, runtime, { targetVersion: 8 })
+      const priorV8 = createProjectStorage(raw, runtime.projectId, { expectedRuntimeVersion: 8 })
+      expect(await priorV8.get("workflow/before-upgrade")).toEqual(history)
+
+      await ensureRuntimeStateVersion(raw, runtime, { targetVersion: 9 })
+      const priorV9 = createProjectStorage(raw, runtime.projectId, { expectedRuntimeVersion: 9 })
+      expect(await priorV9.get("workflow/before-upgrade")).toEqual(history)
+
       const schema = await ensureRuntimeStateVersion(raw, runtime)
       expect(schema.currentVersion).toBe(RUNTIME_STATE_VERSION)
-      expect(schema.lastUpgradeId).toBe("traceable-scope-elevation-v7")
+      expect(schema.lastUpgradeId).toBe("brainstorm-native-advice-v10")
 
-      for (const stale of [old, draftV2, priorV3, priorV4, priorV5, priorV6]) {
+      for (const stale of [old, draftV2, priorV3, priorV4, priorV5, priorV6, priorV7, priorV8, priorV9]) {
         await expect(stale.set("workflow/before-upgrade", { overwritten: true })).rejects.toThrow("does not match")
         await expect(stale.get("workflow/before-upgrade")).rejects.toThrow("does not match")
       }
@@ -2341,7 +2552,7 @@ describe("production runtime writer fencing", () => {
       const current = createProjectStorage(raw, runtime.projectId, { expectedRuntimeVersion: RUNTIME_STATE_VERSION })
       expect(await current.get("workflow/before-upgrade")).toEqual(history)
       const receipts = await raw.scan({ prefix: "installation/runtime-upgrades/" })
-      expect(receipts.entries).toHaveLength(6)
+      expect(receipts.entries).toHaveLength(9)
       await ensureRuntimeStateVersion(raw, runtime)
       expect(await raw.scan({ prefix: "installation/runtime-upgrades/" })).toEqual(receipts)
       expect(await current.get("workflow/before-upgrade")).toEqual(history)

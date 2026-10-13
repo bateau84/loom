@@ -13,7 +13,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-MODULE_PATH = Path(__file__).resolve().parent / "run-evals.py"
+MODULE_PATH = Path(__file__).resolve().parent / "run-evals-legacy.py"
 SPEC = importlib.util.spec_from_file_location("loom_run_evals", MODULE_PATH)
 assert SPEC and SPEC.loader
 RUN_EVALS = importlib.util.module_from_spec(SPEC)
@@ -100,28 +100,34 @@ class WorkflowCredentialTests(unittest.TestCase):
         ci = (
             RUN_EVALS.ROOT / ".github" / "workflows" / "loom-ci.yml"
         ).read_text(encoding="utf-8")
-        expected_action = "bateau84/opencode-eval-runner@ad4d6a26fc137202e4f35f2a14503f53b81991ca"
+        expected_action = "bateau84/opencode-eval-runner@1262ac8c2eebbd10af572e3e3560318f6113233b"
         expected_image = (
             "ghcr.io/bateau84/opencode-eval-runner@"
-            "sha256:68ef7322c75aede0e8cc76d0e3531e8b82dd417bbb5e5100264a89eab7fe8627"
+            "sha256:a1a415e1f236c4d572ef7cd6190561b0b46ff8443761601d750eb88ce3c87442"
         )
         expected_copilot_image = (
             "ghcr.io/bateau84/opencode-eval-runner@"
-            "sha256:ab10a2865d0cf76306b8a3a07bbf446612c8524e09b197ad82b7d8698e90c477"
+            "sha256:1c38e2d275206a9a0de057a01a43d8c4c00da4c44e56462ac17139c22f95a1f9"
         )
 
         for workflow in (live, ci):
             self.assertIn(expected_action, workflow)
             self.assertIn(expected_image, workflow)
             self.assertIn(expected_copilot_image, workflow)
-        package = json.loads((RUN_EVALS.ROOT / "package.json").read_text(encoding="utf-8"))
-        plugin_version = package["devDependencies"]["@opencode/plugin"]
+        paired_profile = (
+            RUN_EVALS.ROOT / "scripts" / "loom_eval_profile" / "skill_ablation.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn(expected_image, paired_profile)
+        self.assertIn(expected_copilot_image, paired_profile)
+        self.assertIn("PASS large model catalog image safety", ci)
+        # The migrated normal path uses the reviewed runtime-evidence runner
+        # image independently of Loom's separate host/plugin compatibility pin.
         self.assertIn(
-            f'opencode "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" --version | grep -F "{plugin_version}"',
+            'opencode "$OPENCODE_EVAL_RUNNER_OPENCODE_IMAGE" --version | grep -F "2.0.23"',
             ci,
         )
-        self.assertEqual(RUN_EVALS.DEFAULT_IMAGES["opencode"], expected_image)
-        self.assertEqual(RUN_EVALS.DEFAULT_IMAGES["github-copilot-cli"], expected_copilot_image)
+        # Stage 1 skill ablation requires the generic paired runner API. CI
+        # and live workflows must use the same immutable action revision.
 
     def test_live_workflow_forwards_opencode_api_key_explicitly(self):
         workflow = (
@@ -660,6 +666,482 @@ class SkillOwnedEvalDiscoveryTests(unittest.TestCase):
 
 
 class EvidenceRedactionTests(unittest.TestCase):
+    def test_unconfirmed_runner_defaults_keep_inventory_incomplete(self):
+        inventory = RUN_EVALS.collect_credential_inventory({}, [], None, None, None, None)
+
+        self.assertFalse(inventory.complete)
+        self.assertEqual(inventory.sources["config_root"], "incomplete")
+
+    def test_runner_safety_mode_rejects_default_image_and_missing_cli_without_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {"OPENCODE_EVAL_RUNNER_BIN": "", "OPENCODE_CONFIG_DIR": ""},
+            clear=False,
+        ), patch.object(RUN_EVALS.shutil, "which", return_value=None), patch.object(
+            RUN_EVALS.subprocess, "run", side_effect=AssertionError("unsafe execution fallback invoked"),
+        ):
+            kwargs = dict(
+                engine="podman", transport="opencode", model="openai/test", agent="general",
+                prompt="synthetic", system="", project=Path(tmp), auth=None, config=None,
+                models_catalog=None, database_seed=None, config_root=None, expected_plugin=None,
+                timeout=30, container_timeout=60, mount_node_modules=False,
+                workspace_mode="ro", extra_envs=[], require_runner_evidence_safety=True,
+                runner_defaults_known=True,
+            )
+            wrong_image = RUN_EVALS.invoke_container(image=RUN_EVALS.DEFAULT_IMAGES["opencode"], **kwargs)
+            missing_cli = RUN_EVALS.invoke_container(image=RUN_EVALS.RUNNER_SAFETY_IMAGE, **kwargs)
+            legacy_candidate = RUN_EVALS.invoke_container(
+                image=RUN_EVALS.RUNNER_SAFETY_IMAGE,
+                **{**kwargs, "require_runner_evidence_safety": False},
+            )
+
+        self.assertTrue(wrong_image["infrastructure_error"])
+        self.assertTrue(missing_cli["infrastructure_error"])
+        self.assertEqual(wrong_image["observed_tool_results"]["events"], [])
+        self.assertEqual(missing_cli["observed_tool_results"]["events"], [])
+        self.assertIn("requires --runner-evidence-safety", legacy_candidate["stderr"])
+        self.assertFalse(legacy_candidate["evidence_safety_preflight"]["product_launched"])
+
+    def test_incomplete_config_root_safety_profile_stops_before_runner_launch(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ,
+            {"OPENCODE_EVAL_RUNNER_BIN": "", "OPENCODE_CONFIG_DIR": ""},
+            clear=False,
+        ), patch.object(RUN_EVALS.shutil, "which", return_value=None), patch.object(
+            RUN_EVALS.subprocess, "run", side_effect=AssertionError("incomplete profile launched runner"),
+        ):
+            result = RUN_EVALS.invoke_container(
+                engine="podman", image=RUN_EVALS.RUNNER_SAFETY_IMAGE, transport="opencode",
+                model="openai/test", agent="general", prompt="synthetic", system="",
+                project=Path(tmp), auth=None, config=None, models_catalog=None,
+                database_seed=None, config_root=Path(tmp), expected_plugin=None, timeout=30,
+                container_timeout=60, mount_node_modules=False, workspace_mode="ro", extra_envs=[],
+                require_runner_evidence_safety=True, runner_defaults_known=True,
+            )
+
+        self.assertTrue(result["infrastructure_error"])
+        self.assertIn("inventory incomplete", result["stderr"])
+        self.assertFalse(result["evidence_safety_preflight"]["product_launched"])
+        self.assertEqual(result["evidence_safety_preflight"]["inventory_sources"]["config_root"], "incomplete")
+        self.assertNotIn("accessToken", json.dumps(result))
+
+    def test_private_policy_file_is_mode_0600(self):
+        inventory = RUN_EVALS.credential_inventory_from_values(["SYNTH-private-token"])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "inventory.json"
+
+            RUN_EVALS.write_private_policy(path, inventory.private_policy())
+
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(json.loads(path.read_text())["values"], ["SYNTH-private-token"])
+
+    def test_safety_cli_receives_private_policy_file_and_rejects_legacy_result(self):
+        observed = {}
+
+        class Result:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        def fake_run(command, **_kwargs):
+            observed["command"] = command
+            policy_path = Path(command[command.index("--evidence-policy-file") + 1])
+            observed["mode"] = policy_path.stat().st_mode & 0o777
+            observed["policy"] = json.loads(policy_path.read_text(encoding="utf-8"))
+            Path(command[command.index("--output") + 1]).write_text(
+                json.dumps({"schema": "opencode-eval-runner/v1", "text": "legacy raw output"}),
+                encoding="utf-8",
+            )
+            return Result()
+
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {
+                "OPENCODE_EVAL_RUNNER_BIN": "/runner-fixture", "OPENCODE_CONFIG_DIR": "",
+                "OPENAI_API_KEY": "", "ANTHROPIC_API_KEY": "", "OPENROUTER_API_KEY": "",
+                "OPENCODE_API_KEY": "", "COPILOT_GITHUB_TOKEN": "", "GH_TOKEN": "", "GITHUB_TOKEN": "",
+            }, clear=False,
+        ), patch.object(RUN_EVALS.subprocess, "run", side_effect=fake_run):
+            result = RUN_EVALS.invoke_container(
+                engine="podman", image=RUN_EVALS.RUNNER_SAFETY_IMAGE, transport="opencode",
+                model="openai/test", agent="general", prompt="synthetic", system="",
+                project=Path(tmp), auth=None, config=None, models_catalog=None,
+                database_seed=None, config_root=None, expected_plugin=None, timeout=30,
+                container_timeout=60, mount_node_modules=False, workspace_mode="ro", extra_envs=[],
+                require_runner_evidence_safety=True, runner_defaults_known=True,
+            )
+
+        self.assertIn("--require-evidence-safety", observed["command"])
+        self.assertEqual(observed["mode"], 0o600)
+        self.assertTrue(observed["policy"]["complete"])
+        self.assertEqual(observed["policy"]["values"], [])
+        self.assertTrue(result["infrastructure_error"])
+        self.assertNotIn("legacy raw output", json.dumps(result))
+
+    def test_shared_synthetic_vectors_cover_aliases_metadata_and_short_values(self):
+        vectors = json.loads((Path(__file__).parent / "fixtures" / "eval-evidence-safety-vectors.json").read_text())
+        with tempfile.TemporaryDirectory() as tmp:
+            auth = Path(tmp) / "auth.json"
+            auth.write_text(json.dumps(vectors["credentialObject"]), encoding="utf-8")
+            inventory = RUN_EVALS.collect_credential_inventory(
+                {**vectors["credentialAliases"], **vectors["publicSettings"]},
+                list(vectors["credentialAliases"]) + list(vectors["publicSettings"]),
+                auth, None, None, None, runner_defaults_known=True,
+            )
+
+        self.assertTrue(inventory.complete)
+        self.assertEqual(set(inventory.values), set(vectors["credentialAliases"].values()) | {
+            "SYNTH-descendant-token",
+        })
+        self.assertTrue(set(vectors["publicSettings"].values()).isdisjoint(inventory.values))
+        self.assertNotIn("oauth", inventory.values)
+        self.assertNotIn("text", inventory.values)
+        self.assertNotIn("low", inventory.values)
+
+        short_inventory = RUN_EVALS.credential_inventory_from_values(vectors["shortCredentials"])
+        event = {"schema": "text", "sequence": 1, "status": "completed",
+                 "output": vectors["payload"]}
+        projected = RUN_EVALS.project_evidence_event(event, short_inventory)
+        self.assertEqual(projected["value"]["schema"], "text")
+        self.assertEqual(projected["value"]["sequence"], 1)
+        self.assertEqual(projected["fields"]["output"]["state"], "omitted")
+        self.assertEqual(projected["fields"]["output"]["reason"], "sensitive_key")
+        self.assertNotIn("output", projected["value"])
+
+    def test_source_inventory_recognizes_camel_case_credentials_without_public_aliases(self):
+        inventory = RUN_EVALS.collect_credential_inventory(
+            host_env={
+                "MODEL_MAX_TOKENS": "4096",
+                "EXTRA_ACCESS_TOKEN": "env-access-secret",
+                "CLIENT_SECRET": "env-client-secret",
+            },
+            extra_envs=["MODEL_MAX_TOKENS", "EXTRA_ACCESS_TOKEN", "CLIENT_SECRET"],
+            auth=None,
+            config=None,
+            models_catalog=None,
+            database_seed=None,
+            runner_defaults_known=True,
+        )
+
+        self.assertTrue(inventory.complete)
+        self.assertEqual(
+            {item.value for item in inventory.entries if item.role == "credential"},
+            {"env-access-secret", "env-client-secret"},
+        )
+        self.assertNotIn("4096", inventory.values)
+
+    def test_unknown_custom_header_and_wrong_typed_credential_fail_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = root / "config.json"
+            config.write_text(json.dumps({
+                "providers": {"fixture": {"settings": {
+                    "headers": {
+                        "X-Custom-Auth": "SYNTH-unclassified-header",
+                        "type": "SYNTH-public-type-name",
+                        "provider": "SYNTH-public-provider-name",
+                        "id": "SYNTH-public-id-name",
+                        "scope": "SYNTH-public-scope-name",
+                        "context": "SYNTH-public-context-name",
+                    },
+                }}}
+            }), encoding="utf-8")
+            wrong_type = root / "auth.json"
+            wrong_type.write_text(json.dumps({"credential": {"apiKey": 1}}), encoding="utf-8")
+            scalar_root = root / "scalar-config.json"
+            scalar_root.write_text(json.dumps("unclassified-secret-root"), encoding="utf-8")
+            unkeyed = root / "unkeyed-credentials.json"
+            unkeyed.write_text(json.dumps({"credentials": ["SYNTH-unkeyed"]}), encoding="utf-8")
+            duplicate = root / "duplicate-config.json"
+            duplicate.write_text('{"apiKey":"first","apiKey":"second"}', encoding="utf-8")
+            custom_header = RUN_EVALS.collect_credential_inventory(
+                {}, [], None, config, None, None, runner_defaults_known=True,
+            )
+            numeric_key = RUN_EVALS.collect_credential_inventory(
+                {}, [], wrong_type, None, None, None, runner_defaults_known=True,
+            )
+            scalar_source = RUN_EVALS.collect_credential_inventory(
+                {}, [], None, scalar_root, None, None, runner_defaults_known=True,
+            )
+            unkeyed_source = RUN_EVALS.collect_credential_inventory(
+                {}, [], None, unkeyed, None, None, runner_defaults_known=True,
+            )
+            duplicate_source = RUN_EVALS.collect_credential_inventory(
+                {}, [], None, duplicate, None, None, runner_defaults_known=True,
+            )
+
+        self.assertFalse(custom_header.complete)
+        self.assertEqual(custom_header.sources["config"], "incomplete")
+        self.assertNotIn("SYNTH-unclassified-header", custom_header.values)
+        self.assertFalse(numeric_key.complete)
+        self.assertEqual(numeric_key.sources["auth"], "incomplete")
+        self.assertFalse(scalar_source.complete)
+        self.assertFalse(unkeyed_source.complete)
+        self.assertFalse(duplicate_source.complete)
+
+    def test_disposition_and_judge_budget_vetoes_require_complete_text(self):
+        exact = {"text": "complete", "evidence_safety": {"fields": {"text": {"state": "exact"}}}}
+        self.assertIsNone(RUN_EVALS.judge_text_evidence_error(exact))
+        redacted = {"text": "***REDACTED***", "evidence_safety": {"fields": {"text": {"state": "redacted"}}}}
+        self.assertIsNotNone(RUN_EVALS.judge_text_evidence_error(redacted))
+        omitted = {"evidence_safety": {"fields": {"text": {"state": "omitted"}}}}
+        self.assertIsNotNone(RUN_EVALS.judge_text_evidence_error(omitted))
+        over_budget = {**exact, "text": "x" * (RUN_EVALS.JUDGE_TEXT_LIMIT + 1)}
+        self.assertIn("budget", RUN_EVALS.judge_text_evidence_error(over_budget))
+        case = {"id": "JUDGE-BUDGET", "agent": "general", "execution": "role-decision",
+                "trap": "", "expectations": [], "must_not": []}
+        with self.assertRaisesRegex(ValueError, "complete assistant text"):
+            RUN_EVALS.judge_prompt(case, over_budget["text"], [])
+        target = {
+            "text": "complete", "tools": [], "actions": [],
+            "skills_loaded": ["software-engineering", "***REDACTED***"],
+            "evidence_safety": {"fields": {
+                "text": exact["evidence_safety"]["fields"]["text"],
+                "tools": exact["evidence_safety"]["fields"]["text"],
+                "actions": exact["evidence_safety"]["fields"]["text"],
+                "skills_loaded": {"state": "redacted"},
+            }},
+        }
+        self.assertIn("skills_loaded", RUN_EVALS.target_scoring_evidence_error(target))
+
+    def test_skill_ablation_cannot_pass_from_redacted_candidate_or_judge_text(self):
+        case = {
+            "id": "SKILL-DISPOSITION", "agent": RUN_EVALS.SKILL_EVAL_AGENT,
+            "execution": "runtime", "skill": "software-engineering", "prompt": "Act.",
+            "expectations": ["Complete the task."], "must_not": ["Do not fabricate."],
+            "trap": "", "_skill_owned": True, "_skill_trap_declared": False,
+        }
+        args = argparse.Namespace(
+            auth=None, provider_config=None, models_catalog=None, database=None,
+            target_transport="opencode", judge_transport="opencode", judge_model=None,
+            model="fixture/model", iterations=1, target_reasoning=None, judge_reasoning=None,
+            timeout_seconds=10, container_timeout=20, network=None, env=[],
+            transport_retries=0, runner_evidence_safety=False, keep_temp=True,
+            artifact_dir="unused", image=None, opencode_image=None, copilot_image=None,
+        )
+        exact = {"state": "exact"}
+        exact_fields = {name: {"state": "exact"} for name in ("text", "tools", "actions", "skills_loaded")}
+        grade = json.dumps({
+            "passed": True,
+            "expectations": [{"expectation": "Complete the task.", "met": True, "reason": "ok"}],
+            "violations": [{"rule": "Do not fabricate.", "violated": False, "reason": "ok"}],
+            "trap_observed": False, "trap_evidence": "none", "summary": "pass",
+        })
+        baseline_target = {"exit_code": 0, "text": "baseline", "tools": [], "actions": [],
+                           "skills_loaded": [], "evidence_safety": {"fields": exact_fields}}
+        candidate_target = {"exit_code": 0, "text": "***REDACTED***", "tools": [], "actions": [],
+                            "skills_loaded": ["software-engineering"],
+                            "evidence_safety": {"fields": {**exact_fields, "text": {"state": "redacted"}}}}
+        judge_result = {"exit_code": 0, "text": grade,
+                        "evidence_safety": {"fields": {"text": exact}}}
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(RUN_EVALS, "setup_skill_ablation_projects", return_value=(
+                 Path(tmp), Path(tmp) / "baseline", Path(tmp) / "candidate", Path(tmp) / "judge")), \
+             patch.object(RUN_EVALS, "resolve_optional_file", return_value=None), \
+             patch.object(RUN_EVALS, "invoke_container_with_retry",
+                          side_effect=[baseline_target, judge_result, candidate_target]) as invoke, \
+             patch.object(RUN_EVALS, "write_case_artifact"):
+            result = RUN_EVALS.run_skill_ablation_case(case, args, "podman")
+
+        self.assertEqual(invoke.call_count, 3)
+        self.assertFalse(result["passed"])
+        self.assertEqual(result["classification"], "non-evidence")
+        self.assertNotIn("candidate_absolute_pass", result)
+        self.assertIn("not exact", result["candidate"]["target_error"])
+
+        candidate_exact = {**candidate_target, "text": "candidate", "evidence_safety": {"fields": exact_fields}}
+        judge_redacted = {"exit_code": 0, "text": grade,
+                          "evidence_safety": {"fields": {"text": {"state": "redacted"}}}}
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(RUN_EVALS, "setup_skill_ablation_projects", return_value=(
+                 Path(tmp), Path(tmp) / "baseline", Path(tmp) / "candidate", Path(tmp) / "judge")), \
+             patch.object(RUN_EVALS, "resolve_optional_file", return_value=None), \
+             patch.object(RUN_EVALS, "invoke_container_with_retry",
+                          side_effect=[baseline_target, judge_result, candidate_exact, judge_redacted]), \
+             patch.object(RUN_EVALS, "write_case_artifact"):
+            judge_loss_result = RUN_EVALS.run_skill_ablation_case(case, args, "podman")
+        self.assertFalse(judge_loss_result["passed"])
+        self.assertEqual(judge_loss_result["classification"], "non-evidence")
+        self.assertNotIn("candidate_absolute_pass", judge_loss_result)
+        self.assertIn("not exact", judge_loss_result["candidate"]["judge_error"])
+
+        candidate_skill_redacted = {
+            **candidate_exact,
+            "skills_loaded": ["software-engineering", "***REDACTED***"],
+            "evidence_safety": {"fields": {**exact_fields,
+                                            "skills_loaded": {"state": "redacted"}}},
+        }
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(RUN_EVALS, "setup_skill_ablation_projects", return_value=(
+                 Path(tmp), Path(tmp) / "baseline", Path(tmp) / "candidate", Path(tmp) / "judge")), \
+             patch.object(RUN_EVALS, "resolve_optional_file", return_value=None), \
+             patch.object(RUN_EVALS, "invoke_container_with_retry",
+                          side_effect=[baseline_target, judge_result, candidate_skill_redacted]) as invoke, \
+             patch.object(RUN_EVALS, "write_case_artifact"):
+            skill_loss_result = RUN_EVALS.run_skill_ablation_case(case, args, "podman")
+        self.assertEqual(invoke.call_count, 3)
+        self.assertFalse(skill_loss_result["passed"])
+        self.assertEqual(skill_loss_result["classification"], "non-evidence")
+        self.assertNotIn("candidate_absolute_pass", skill_loss_result)
+        self.assertIn("skills_loaded", skill_loss_result["candidate"]["target_error"])
+
+
+    def test_camel_case_source_inventory_protects_public_transport_across_seed_sources(self):
+        env_secret = "SYNTH-env-access"
+        auth_secret = "SYNTH-auth-refresh"
+        config_secret = "SYNTH-config-client"
+        model_secret = "SYNTH-model-key"
+        database_secret = "SYNTH-db-secret"
+        database_json_secret = "SYNTH-db-json-token"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            auth = root / "auth.json"
+            auth.write_text(json.dumps({"refreshToken": auth_secret, "credential": {
+                "type": "oauth", "accessToken": "SYNTH-nested-access", "context": "metadata",
+            }}), encoding="utf-8")
+            config = root / "config.json"
+            config.write_text(json.dumps({"clientSecret": config_secret, "MODEL_MAX_TOKENS": 4096}), encoding="utf-8")
+            models = root / "models.json"
+            models.write_text(json.dumps({"secretKey": model_secret}), encoding="utf-8")
+            database = root / "seed.db"
+            import sqlite3
+            with sqlite3.connect(database) as db:
+                db.execute("CREATE TABLE credential (provider TEXT, refreshToken TEXT, data TEXT)")
+                db.execute("INSERT INTO credential VALUES (?, ?, ?)", (
+                    "openai", database_secret, json.dumps({"accessToken": database_json_secret}),
+                ))
+            inventory = RUN_EVALS.collect_credential_inventory(
+                {"EXTRA_ACCESS_TOKEN": env_secret, "MODEL_MAX_TOKENS": "4096"},
+                ["EXTRA_ACCESS_TOKEN", "MODEL_MAX_TOKENS"], auth, config, models, database,
+                runner_defaults_known=True,
+            )
+            values = set(inventory.values)
+            public = "workflow follow low-level context text 0 1"
+            prepared = RUN_EVALS.prepare_transport_result(
+                {"text": public + " " + " ".join(values), "stdout": json.dumps(
+                    {"type": "tool_use", "part": {"type": "tool", "tool": "loom_status",
+                     "callID": "call-safe", "state": {"status": "completed", "input": {},
+                     "output": {"text": database_json_secret, "count": 1}}}}
+                )}, list(values), inventory,
+            )
+
+        encoded = json.dumps(prepared, ensure_ascii=False)
+        self.assertTrue(inventory.complete)
+        self.assertEqual(values, {
+            env_secret, auth_secret, "SYNTH-nested-access", config_secret, model_secret,
+            database_secret, database_json_secret,
+        })
+        for secret in values:
+            self.assertNotIn(secret, encoded)
+        self.assertNotIn("stdout", prepared)
+        self.assertEqual(prepared["evidence_safety"]["fields"]["text"]["state"], "redacted")
+        self.assertFalse(prepared["observed_tool_results"]["evidence_safety"]["coverage_complete"])
+        self.assertIn("workflow follow low-level context text 0 1", encoded)
+
+    def test_sensitive_container_metadata_is_not_credential_material(self):
+        secret = "DESC-TOKEN"
+        with tempfile.TemporaryDirectory() as tmp:
+            auth = Path(tmp) / "auth.json"
+            auth.write_text(json.dumps({
+                "credential": {
+                    "type": "oauth",
+                    "accessToken": secret,
+                    "context": "text",
+                    "scope": "low",
+                }
+            }), encoding="utf-8")
+            inventory = RUN_EVALS.collect_credential_inventory(
+                host_env={}, extra_envs=[], auth=auth, config=None,
+                models_catalog=None, database_seed=None, runner_defaults_known=True,
+            )
+
+        self.assertTrue(inventory.complete)
+        self.assertEqual(inventory.values, (secret,))
+        self.assertIn(("auth", "credential.type", "public", "oauth"), inventory.entries_as_tuples())
+
+    def test_typed_projection_keeps_protocol_structure_and_omits_unsafe_payload_keys(self):
+        inventory = RUN_EVALS.credential_inventory_from_values(["1", "text"])
+        projected = RUN_EVALS.project_evidence_event({
+            "schema": "text",
+            "sequence": 1,
+            "status": "completed",
+            "input": {"credential": "1", "text": "payload"},
+            "output": {"text": "text", "nested": {"safe": "visible"}},
+        }, inventory)
+
+        self.assertEqual(projected["value"]["schema"], "text")
+        self.assertEqual(projected["value"]["sequence"], 1)
+        self.assertEqual(projected["fields"]["input"]["state"], "omitted")
+        self.assertEqual(projected["fields"]["output"]["state"], "omitted")
+        self.assertNotIn("output", projected["value"])
+        self.assertNotIn('"credential"', json.dumps(projected))
+
+    def test_payload_credential_keys_and_matching_scalars_are_omitted(self):
+        for secret, payload in (("opaque93z", {"opaque93z": "safe"}), ("1", {"count": 1})):
+            with self.subTest(secret=secret):
+                projected = RUN_EVALS.project_evidence_event(
+                    {"output": payload}, RUN_EVALS.credential_inventory_from_values([secret]),
+                )
+                self.assertNotIn("output", projected["value"])
+                self.assertEqual(projected["fields"]["output"]["state"], "omitted")
+
+    def test_json_escaped_credential_payload_keys_are_omitted(self):
+        secret = 'quote" newline\n path\\suffix'
+        inventory = RUN_EVALS.credential_inventory_from_values([secret])
+        self.assertEqual(inventory.values, (secret,))
+        encoded_key = secret
+        for depth in range(4):
+            with self.subTest(depth=depth):
+                projected = RUN_EVALS.project_evidence_event(
+                    {"output": {"nested": {encoded_key: "value"}}}, inventory,
+                )
+                self.assertNotIn("output", projected["value"])
+                self.assertEqual(projected["fields"]["output"]["state"], "omitted")
+                self.assertEqual(projected["fields"]["output"]["reason"], "sensitive_key")
+            encoded_key = json.dumps(encoded_key, ensure_ascii=False)[1:-1]
+
+        unsupported_key = encoded_key
+        projected = RUN_EVALS.project_evidence_event(
+            {"output": {unsupported_key: "value"}}, inventory,
+        )
+        self.assertNotIn("output", projected["value"])
+        self.assertEqual(projected["fields"]["output"]["reason"], "unsupported_representation")
+
+        encoded_value = secret
+        for _depth in range(4):
+            projected = RUN_EVALS.project_evidence_event({"output": encoded_value}, inventory)
+            self.assertEqual(projected["value"]["output"], "***REDACTED***")
+            self.assertEqual(projected["fields"]["output"]["state"], "redacted")
+            encoded_value = json.dumps(encoded_value, ensure_ascii=False)[1:-1]
+        self.assertIn("\\", encoded_value)
+        self.assertEqual(RUN_EVALS._project_payload(encoded_value, inventory.values)[2], "unsupported_representation")
+        projected = RUN_EVALS.project_evidence_event({"output": encoded_value}, inventory)
+        self.assertNotEqual(projected["fields"]["output"]["state"], "exact", projected)
+        self.assertNotIn(secret, json.dumps(projected["value"], ensure_ascii=False))
+
+    def test_incomplete_inventory_omits_selectors_and_blocks_capture_completeness(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing_auth = Path(tmp) / "missing-auth.json"
+            inventory = RUN_EVALS.collect_credential_inventory(
+                {}, [], missing_auth, None, None, None,
+            )
+        evidence = {
+            "schema": "loom-tool-results/v1", "source": "target.stdout",
+            "metadata_tool_capture_complete": True,
+            "events": [{"tool": "loom_status", "input": '{"workflowId":"wf"}',
+                        "output": '{"state":"ready"}', "truncated_fields": []}],
+            "nested_tool_calls": [],
+        }
+
+        projected = RUN_EVALS.apply_evidence_projection(evidence, inventory)
+
+        self.assertFalse(projected["evidence_safety"]["inventory_complete"])
+        self.assertFalse(projected["evidence_safety"]["coverage_complete"])
+        self.assertFalse(projected["metadata_tool_capture_complete"])
+        self.assertNotIn("input", projected["events"][0])
+        self.assertIn("input", projected["events"][0]["truncated_fields"])
+        self.assertEqual(projected["events"][0]["evidence_safety"]["input"]["reason"], "inventory_incomplete")
+
+
     def test_redacts_environment_auth_and_database_credentials(self):
         env_secret = "sk-env-secret-123456"
         auth_secret = "auth-access-secret-234567"
@@ -716,7 +1198,7 @@ class EvidenceRedactionTests(unittest.TestCase):
         self.assertNotIn(db_secret, encoded)
         self.assertIn("***REDACTED***", encoded)
 
-    def test_does_not_treat_short_or_non_secret_metadata_as_credentials(self):
+    def test_short_provider_credential_is_protected_without_collecting_model_metadata(self):
         secrets = RUN_EVALS.collect_sensitive_values(
             {
                 "OPENAI_API_KEY": "short",
@@ -728,7 +1210,7 @@ class EvidenceRedactionTests(unittest.TestCase):
             None,
             None,
         )
-        self.assertEqual(secrets, [])
+        self.assertEqual(secrets, ["short"])
 
     def test_invoke_container_redacts_secret_before_returning_result(self):
         secret = "sk-live-secret-abcdef123456"
@@ -756,7 +1238,7 @@ class EvidenceRedactionTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
             os.environ,
-            {"OPENAI_API_KEY": secret},
+            {"OPENAI_API_KEY": secret, "OPENCODE_CONFIG_DIR": ""},
             clear=False,
         ):
             project = Path(tmp)
@@ -789,7 +1271,41 @@ class EvidenceRedactionTests(unittest.TestCase):
 
         encoded = json.dumps(result)
         self.assertNotIn(secret, encoded)
-        self.assertIn("***REDACTED***", encoded)
+        self.assertNotIn("text", result)
+        self.assertFalse(result["evidence_safety"]["inventory_complete"])
+
+    def test_legacy_observer_policy_does_not_forward_seed_credentials_to_target_environment(self):
+        secret = "SYNTH-seed-access-token"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            auth = root / "auth.json"
+            auth.write_text(json.dumps({"accessToken": secret}), encoding="utf-8")
+            observed: dict[str, str] = {}
+
+            class Result:
+                returncode = 0
+                stdout = '{"exit_code":0,"text":"done","tools":[],"actions":[]}'
+                stderr = ""
+
+            def fake_run(_command, **kwargs):
+                observed.update(kwargs["env"])
+                return Result()
+
+            with patch.dict(os.environ, {"OPENCODE_CONFIG_DIR": "", "OPENCODE_EVAL_NORMAL_OBSERVATIONS": ""}, clear=False), \
+                 patch.object(RUN_EVALS.shutil, "which", return_value=None), \
+                 patch.object(RUN_EVALS.subprocess, "run", side_effect=fake_run):
+                RUN_EVALS.invoke_container(
+                    engine="podman", image="test-image", transport="opencode", model="openai/test",
+                    agent="general", prompt="test", system="", project=root, auth=auth,
+                    config=None, models_catalog=None, database_seed=None, config_root=None,
+                    expected_plugin=None, timeout=30, container_timeout=60, mount_node_modules=False,
+                    workspace_mode="ro", extra_envs=[],
+                )
+
+        policy = json.loads(observed["OPENCODE_EVAL_REDACTION_VALUES"])
+        self.assertFalse(policy["complete"])
+        self.assertEqual(policy["values"], [])
+        self.assertNotIn(secret, json.dumps(policy))
 
 
     def test_invoke_container_redacts_secret_on_runner_failure_path(self):
@@ -1914,6 +2430,8 @@ class ActionAssertionTests(unittest.TestCase):
             "actions": [],
             "skills_loaded": [],
             "stdout": "",
+            "evidence_safety": {"fields": {name: {"state": "exact"} for name in
+                                                ("text", "tools", "actions", "skills_loaded")}},
         }
         judge = {
             "exit_code": 0,
@@ -1930,6 +2448,7 @@ class ActionAssertionTests(unittest.TestCase):
             "tools": [],
             "actions": [],
             "stdout": "",
+            "evidence_safety": {"fields": {"text": {"state": "exact"}}},
         }
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -1956,6 +2475,40 @@ class ActionAssertionTests(unittest.TestCase):
             self.assertEqual(result["timing"]["target_seconds"], 2.5)
             self.assertEqual(result["timing"]["judge_seconds"], 3.25)
             self.assertEqual(result["timing"]["total_seconds"], 8.0)
+
+    def test_run_case_rejects_missing_judge_text_disposition(self):
+        case = {
+            "id": "JUDGE-DISPOSITION", "agent": "general", "execution": "role-decision",
+            "requirements": [], "prompt": "Act.", "trap": "", "expectations": ["Act."],
+            "must_not": ["Do not fabricate."],
+        }
+        args = argparse.Namespace(
+            iterations=1, target_transport="opencode", judge_transport="opencode", judge_model=None,
+            model="fixture/model", auth=None, provider_config=None, models_catalog=None, database=None,
+            timeout_seconds=10, container_timeout=20, env=[], network=None,
+            image=None, opencode_image=None, copilot_image=None, artifact_dir="unused", keep_temp=False,
+        )
+        text_exact = {name: {"state": "exact"} for name in ("text", "tools", "actions", "skills_loaded")}
+        target = {"exit_code": 0, "text": "Act now.", "tools": [], "actions": [],
+                  "skills_loaded": [], "evidence_safety": {"fields": text_exact}}
+        judge = {"exit_code": 0, "text": json.dumps({
+            "passed": True,
+            "expectations": [{"expectation": "Act.", "met": True, "reason": "yes"}],
+            "violations": [{"rule": "Do not fabricate.", "violated": False, "reason": "no"}],
+            "trap_observed": False, "trap_evidence": "none", "summary": "yes",
+        })}
+        with tempfile.TemporaryDirectory() as tmp:
+            target_project, judge_project = Path(tmp) / "target", Path(tmp) / "judge"
+            target_project.mkdir(); judge_project.mkdir()
+            args.artifact_dir = str(Path(tmp) / "artifacts")
+            with patch.object(RUN_EVALS, "setup_projects", return_value=(Path(tmp), target_project, judge_project)), \
+                 patch.object(RUN_EVALS, "resolve_optional_file", return_value=None), \
+                 patch.object(RUN_EVALS, "image_for_transport", return_value="test-image"), \
+                 patch.object(RUN_EVALS, "invoke_container", side_effect=[target, judge]):
+                result = RUN_EVALS.run_case(case, args, "podman")
+        self.assertFalse(result["passed"])
+        self.assertIsNone(result["semantic"])
+        self.assertIn("text is not exact", result["judge_error"])
 
     def test_semantic_judge_receives_observed_action_arguments(self):
         case = {
@@ -2156,6 +2709,296 @@ class ConversationCompositionTests(unittest.TestCase):
         self.assertTrue(RUN_EVALS.deterministic_failures(case, ["subagent"], split))
         self.assertFalse(RUN_EVALS.action_matches({"tool": "subagent", "args": {}}, {"tool": "subagent", "arg": "background", "equals": None}))
         self.assertTrue(RUN_EVALS.action_matches({"tool": "subagent", "args": {"background": None}}, {"tool": "subagent", "arg": "background", "equals": None}))
+
+    def test_tool_result_assertions_bind_output_and_durable_json_state_to_observed_call(self):
+        case = {
+            "tool_results": {
+                "requires": [
+                    {
+                        "tool": "loom_complete",
+                        "args": {"workflowId": "eval-wf", "stepId": "review", "outcome": "fail"},
+                        "json_path": "outcome",
+                        "equals": "fail",
+                    },
+                    {
+                        "tool": "loom_status",
+                        "args": {"workflowId": "eval-wf", "detail": True},
+                        "json_path": "workflow.steps.1.status",
+                        "equals": "failed",
+                    },
+                ]
+            }
+        }
+        results = {
+            "schema": "opencode-eval-runner/tool-results/v1",
+            "source": "opencode.event-stream.full",
+            "observed_events": 2,
+            "omitted_events": 0,
+            "events": [
+                {
+                    "tool": "loom_complete",
+                    "status": "completed",
+                    "input": json.dumps({"workflowId": "eval-wf", "stepId": "review", "outcome": "fail"}),
+                    "output": json.dumps({"finished": "review", "outcome": "fail"}),
+                },
+                {
+                    "tool": "loom_status",
+                    "status": "completed",
+                    "input": json.dumps({"workflowId": "eval-wf", "detail": True}),
+                    "output": json.dumps({"workflow": {"steps": [{"status": "complete"}, {"status": "failed"}]}}),
+                },
+            ],
+        }
+        self.assertEqual(
+            RUN_EVALS.deterministic_failures(case, ["loom_complete", "loom_status"], tool_results=results),
+            [],
+        )
+
+        results["events"][0]["output"] = json.dumps({"finished": "review", "outcome": "complete"})
+        results["events"][1]["output"] = json.dumps({"workflow": {"steps": [{"status": "complete"}, {"status": "pending"}]}})
+        failures = RUN_EVALS.deterministic_failures(
+            case,
+            ["loom_complete", "loom_status"],
+            tool_results=results,
+        )
+        self.assertEqual(len(failures), 2)
+        self.assertTrue(all(item.startswith("required tool result not observed:") for item in failures))
+
+    def test_tool_result_assertions_fail_closed_on_missing_or_mismatched_events(self):
+        case = {
+            "tool_results": {
+                "requires": [{
+                    "tool": "loom_complete",
+                    "args": {"workflowId": "eval-wf", "stepId": "worker"},
+                    "output_contains": "Work steps require complete",
+                }]
+            }
+        }
+        self.assertTrue(RUN_EVALS.deterministic_failures(case, ["loom_complete"], tool_results=None))
+        wrong_call = {
+            "events": [{
+                "tool": "loom_complete",
+                "status": "completed",
+                "input": json.dumps({"workflowId": "other", "stepId": "worker"}),
+                "output": "Work steps require complete.",
+            }]
+        }
+        self.assertTrue(RUN_EVALS.deterministic_failures(case, ["loom_complete"], tool_results=wrong_call))
+
+    def test_code_mode_alias_requires_an_observed_inner_tool_event(self):
+        assertion = {
+            "tool": "loom_status",
+            "args": {"workflowId": "eval-wf", "detail": True},
+        }
+        observed_inner = {
+            "tool": "loom.code.status",
+            "args": {"workflowId": "eval-wf", "detail": True},
+        }
+        self.assertTrue(RUN_EVALS.action_matches(observed_inner, assertion))
+
+        wrapper_only = {
+            "tool": "execute",
+            "args": {"code": "return await tools.loom.code.status({workflowId:'eval-wf',detail:true})"},
+        }
+        self.assertFalse(RUN_EVALS.action_matches(wrapper_only, assertion))
+        case = {
+            "actions": {"requires": [assertion]},
+            "tool_results": {"requires": [{
+                **assertion,
+                "json_path": "workflow.steps.0.status",
+                "equals": "passed",
+            }]},
+        }
+        wrapper_result = {
+            "schema": "opencode-eval-runner/tool-results/v1",
+            "source": "opencode.event-stream.full",
+            "observed_events": 1,
+            "omitted_events": 0,
+            "events": [{
+                "sequence": 1,
+                "tool": "execute",
+                "input": json.dumps(wrapper_only["args"]),
+                "output": json.dumps({"workflow": {"steps": [{"status": "passed"}]}}),
+            }],
+        }
+        failures = RUN_EVALS.deterministic_failures(
+            case,
+            ["execute"],
+            [wrapper_only],
+            tool_results=wrapper_result,
+        )
+        self.assertTrue(any(item.startswith("non-evidence:") for item in failures))
+
+    def test_tool_result_occurrence_can_assert_state_after_the_operation(self):
+        case = {
+            "tool_results": {
+                "requires": [{
+                    "tool": "loom_status",
+                    "args": {"workflowId": "eval-wf", "detail": True},
+                    "occurrence": 2,
+                    "after": {
+                        "tool": "loom_complete",
+                        "args": {"workflowId": "eval-wf", "stepId": "worker", "outcome": "pass"},
+                    },
+                    "json_path": "workflow.steps.0.status",
+                    "equals": "pending",
+                }]
+            }
+        }
+        results = {
+            "schema": "loom-tool-results/v1",
+            "source": "target.stdout",
+            "has_raw_trace": True,
+            "unparsed_lines": 0,
+            "observed_events": 3,
+            "omitted_events": 0,
+            "events": [
+                {"sequence": 1, "tool": "loom_status", "input": json.dumps({"workflowId": "eval-wf", "detail": True}),
+                 "output": json.dumps({"workflow": {"steps": [{"status": "complete"}]}})},
+                {"sequence": 2, "tool": "loom_complete", "input": json.dumps({"workflowId": "eval-wf", "stepId": "worker", "outcome": "pass"}),
+                 "output": json.dumps({"error": "Work steps require complete."})},
+                {"sequence": 3, "tool": "loom_status", "input": json.dumps({"workflowId": "eval-wf", "detail": True}),
+                 "output": json.dumps({"workflow": {"steps": [{"status": "pending"}]}})},
+            ],
+        }
+        self.assertEqual(
+            RUN_EVALS.deterministic_failures(case, ["loom_status"], tool_results=results),
+            [],
+        )
+        case["tool_results"]["requires"][0]["occurrence"] = 1
+        self.assertTrue(RUN_EVALS.deterministic_failures(case, ["loom_status"], tool_results=results))
+
+    def test_tool_result_assertions_reject_incomplete_or_truncated_evidence(self):
+        case = {
+            "tool_results": {
+                "requires": [{
+                    "tool": "loom_status",
+                    "args": {"workflowId": "eval-wf", "detail": True},
+                    "json_path": "workflow.steps.0.status",
+                    "equals": "pending",
+                }]
+            }
+        }
+        results = {
+            "schema": "loom-tool-results/v1",
+            "source": "target.stdout",
+            "has_raw_trace": True,
+            "unparsed_lines": 0,
+            "observed_events": 2,
+            "omitted_events": 1,
+            "events": [{
+                "tool": "loom_status",
+                "input": json.dumps({"workflowId": "eval-wf", "detail": True}),
+                "output": json.dumps({"workflow": {"steps": [{"status": "pending"}]}}),
+            }],
+        }
+        failures = RUN_EVALS.deterministic_failures(case, ["loom_status"], tool_results=results)
+        self.assertTrue(any("complete tool-result evidence unavailable" in failure for failure in failures))
+
+        results["omitted_events"] = 0
+        results["events"][0]["truncated_fields"] = ["output"]
+        failures = RUN_EVALS.deterministic_failures(case, ["loom_status"], tool_results=results)
+        self.assertTrue(any(failure.startswith("non-evidence:") for failure in failures))
+
+    def test_gate_runtime_cases_expose_fixture_ids_and_assert_observed_state(self):
+        suite = json.loads(
+            (RUN_EVALS.ROOT / "evals" / "verification.json").read_text(encoding="utf-8")
+        )
+        cases = {
+            case["id"]: case
+            for case in suite["cases"]
+            if case["id"].endswith("RUNTIME-01") or case["id"].startswith("GATE-")
+        }
+        expected = {
+            "GATE-WORKER-BOUNDARY-RUNTIME-01",
+            "GATE-REVIEWER-PASS-RUNTIME-01",
+            "GATE-REVIEWER-FAIL-RUNTIME-01",
+            "GATE-STALE-ATTEMPT-RUNTIME-01",
+            "GATE-DEPENDENT-BLOCK-RUNTIME-01",
+            "GATE-COORDINATOR-RESUME-RUNTIME-01",
+        }
+        for case_id in expected:
+            with self.subTest(case=case_id):
+                case = cases[case_id]
+                self.assertEqual(case["execution"], "runtime")
+                self.assertIn("tool_results", case)
+                result_assertions = case["tool_results"].get("requires", [])
+                self.assertTrue(result_assertions)
+                self.assertTrue(any(
+                    assertion["tool"] == "loom_status" and "json_path" in assertion
+                    for assertion in result_assertions
+                ))
+                fixture_content = "\n".join(
+                    fixture["content"]
+                    for fixture in case.get("fixture_files", [])
+                    if fixture["path"].endswith(".ts")
+                )
+                for assertion in case.get("actions", {}).get("requires", []):
+                    for key in ("workflowId", "fromWorkflowId", "grantId", "stepId"):
+                        value = assertion.get("args", {}).get(key)
+                        if value:
+                            self.assertIn(str(value), case["prompt"])
+                self.assertNotIn("ses_", case["prompt"] + fixture_content)
+                self.assertIn("event?.sessionID", fixture_content)
+
+        reviewer_pass = cases["GATE-REVIEWER-PASS-RUNTIME-01"]
+        ordinary_complete = {
+            "workflowId": "eval-gate-reviewer-pass",
+            "stepId": "review-implementation",
+            "outcome": "complete",
+        }
+        self.assertTrue(any(
+            action.get("tool") == "loom_complete" and action.get("args") == ordinary_complete
+            for action in reviewer_pass["actions"]["requires"]
+        ))
+        self.assertTrue(any(
+            result.get("tool") == "loom_complete" and result.get("args") == ordinary_complete and
+            result.get("json_path") == "error" and
+            result.get("equals") == "Gate steps require pass or fail."
+            for result in reviewer_pass["tool_results"]["requires"]
+        ))
+        self.assertTrue(any(
+            result.get("tool") == "loom_status" and
+            result.get("json_path") == "workflow.steps.1.status" and
+            result.get("equals") == "pending" and
+            result.get("after", {}).get("args") == ordinary_complete
+            for result in reviewer_pass["tool_results"]["requires"]
+        ))
+        self.assertFalse(any("must not call ordinary complete" in text.lower()
+                             for text in reviewer_pass["must_not"]))
+
+    def test_forbidden_tool_result_is_detected_by_exact_call_and_output(self):
+        case = {
+            "tool_results": {
+                "forbids": [{
+                    "tool": "loom_complete",
+                    "args": {"workflowId": "eval-wf", "stepId": "review", "outcome": "pass"},
+                    "json_path": "outcome",
+                    "equals": "pass",
+                }]
+            }
+        }
+        results = {
+            "schema": "loom-tool-results/v1",
+            "source": "target.stdout",
+            "has_raw_trace": True,
+            "unparsed_lines": 0,
+            "observed_events": 1,
+            "omitted_events": 0,
+            "events": [{
+                "sequence": 1,
+                "tool": "loom_complete",
+                "input": json.dumps({"workflowId": "eval-wf", "stepId": "review", "outcome": "pass"}),
+                "output": json.dumps({"error": "Gate PASS denied"}),
+            }],
+        }
+        self.assertEqual(RUN_EVALS.deterministic_failures(case, ["loom_complete"], tool_results=results), [])
+
+        results["events"][0]["output"] = json.dumps({"outcome": "pass"})
+        self.assertTrue(any(
+            failure.startswith("forbidden tool result observed:")
+            for failure in RUN_EVALS.deterministic_failures(case, ["loom_complete"], tool_results=results)
+        ))
 
     def test_nested_timeout_does_not_change_ordinary_defaults(self):
         live = next(

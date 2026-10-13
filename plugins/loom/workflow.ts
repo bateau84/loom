@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto"
-import { taskStepId, type TaskSpec } from "./tasks"
+import { LOOM_AGENT_ROLES, nativeTaskPath, validateAdviceAssociation, taskStepId, type TaskSpec } from "./tasks"
 import type { EvidenceKind } from "./evidence"
 
-export type StepKind = "work" | "gate"
-export type StepStatus = "pending" | "complete" | "passed" | "failed"
+export type StepKind = "work" | "gate" | "wait"
+export type StepStatus = "pending" | "waiting" | "complete" | "passed" | "failed"
 
 export type ReviewAssignmentMode =
   | "review-only"
@@ -139,7 +139,8 @@ export type Workflow = {
 }
 
 export function satisfied(step: Step) {
-  return step.kind === "gate" ? step.status === "passed" : step.status === "complete"
+  if (step.kind === "gate") return step.status === "passed"
+  return step.status === "complete"
 }
 
 function stepDependsOn(workflow: Workflow, targetId: string, sourceId: string, seen = new Set<string>()): boolean {
@@ -250,9 +251,13 @@ export function resetVerificationAfterReopen(workflow: Workflow, resetStepIds: s
       continue
     }
 
+    // Reopening only the consumer gate does not invalidate an existing proof.
+    // Proof follows the producer/evidence path; the fresh gate may review the
+    // same proof again without redispatching unchanged work.
     if (
       requirement.status === "satisfied" &&
-      (reset.has(requirement.beforeStepId) || (requirement.proof?.stepId && reset.has(requirement.proof.stepId)))
+      requirement.proof?.stepId &&
+      reset.has(requirement.proof.stepId)
     ) {
       requirement.status = "open"
       delete requirement.proof
@@ -264,8 +269,33 @@ export function runnable(workflow: Workflow) {
   if (workflow.cancellation) return []
   const done = new Set(workflow.steps.filter(satisfied).map((step) => step.id))
   return workflow.steps.filter(
-    (step) => step.status === "pending" && step.dependsOn.every((dependency) => done.has(dependency)),
+    (step) => step.kind !== "wait" && step.status === "pending" && step.dependsOn.every((dependency) => done.has(dependency)),
   )
+}
+
+export type UserDecisionWaitStep = Step & {
+  id: string
+  agent: "user"
+  kind: "wait"
+  status: "waiting"
+  task: TaskSpec & { role: "user"; responsibility: "obtain-user-decision" }
+}
+
+/** Decision waits are visible to General when their dependencies are ready, but are never dispatchable. */
+export function userDecisionWaitSteps(workflow: Workflow) {
+  if (workflow.cancellation) return []
+  return workflow.steps
+    .filter((step): step is UserDecisionWaitStep =>
+      step.kind === "wait" && step.status === "waiting" && step.agent === "user" &&
+      step.task?.role === "user" && step.task.responsibility === "obtain-user-decision",
+    )
+    .map((step) => {
+      const waitsFor = step.dependsOn.filter((dependency) => {
+        const upstream = workflow.steps.find((candidate) => candidate.id === dependency)
+        return !upstream || !satisfied(upstream)
+      })
+      return { step, ready: waitsFor.length === 0, waitsFor }
+    })
 }
 
 function work(id: string, agent: string, dependsOn: string[] = []): Step {
@@ -476,6 +506,7 @@ export function finishStep(
   const step = workflow.steps.find((candidate) => candidate.id === stepId)
   if (!step) throw new Error("Step not found.")
   if (step.agent !== agent) throw new Error(`Step ${stepId} belongs to ${step.agent}, not ${agent}.`)
+  if (step.kind === "wait") throw new Error("User-decision waits resolve only from the exact answered user-owned OQ.")
 
   const available = runnable(workflow).some((candidate) => candidate.id === stepId)
   if (!available) throw new Error("Step is not currently runnable.")
@@ -523,7 +554,7 @@ export function reopenFrom(workflow: Workflow, stepId: string) {
   for (const step of workflow.steps) {
     if (affected.has(step.id)) {
       step.attempt = (step.attempt ?? 0) + 1
-      step.status = "pending"
+      step.status = step.kind === "wait" ? "waiting" : "pending"
       delete step.summary
     }
   }
@@ -777,58 +808,187 @@ export function knownReviewerSessions(step: Step) {
 }
 
 export function plannedTaskSteps(workflow: Workflow) {
-  return workflow.steps.filter((step) => step.id.startsWith("task:") && step.task)
+  return workflow.steps.filter((step) => step.task)
 }
 
 export function executableTaskPlanFingerprint(workflow: Workflow) {
-  const tasks = plannedTaskSteps(workflow)
-    .map((step) => ({
+  const taskGraph = workflow.steps.filter((step) => step.task || step.id.startsWith("task-review:"))
+  if (taskGraph.length === 0) return undefined
+  const taskGraphIds = new Set(taskGraph.map((step) => step.id))
+  const tasks = workflow.steps.filter((step) => taskGraphIds.has(step.id) ||
+    step.id === "review-plan" || step.id === "review-implementation"
+    ).map((step) => ({
       stepId: step.id,
+      agent: step.agent,
+      kind: step.kind,
       dependsOn: [...step.dependsOn],
       task: step.task,
     }))
     .sort((a, b) => a.stepId.localeCompare(b.stepId))
-  if (tasks.length === 0) return undefined
   return createHash("sha256").update(JSON.stringify(tasks)).digest("hex")
 }
 
-export function applyTaskPlan(workflow: Workflow, tasks: TaskSpec[]) {
+function userDecisionContract(task: TaskSpec) {
+  return JSON.stringify([
+    task.id,
+    task.title,
+    task.objective,
+    task.rationale ?? "",
+    task.dependsOn,
+    task.authorityRefs ?? [],
+    task.constraints ?? [],
+    task.acceptanceCriteria ?? [],
+    task.subtasks ?? [],
+    task.integration ?? [],
+    task.write,
+    task.skills,
+    task.verify,
+    task.role,
+    task.responsibility,
+    task.adviceForTaskId,
+  ])
+}
+
+export function applyTaskPlan(
+  workflow: Workflow,
+  tasks: TaskSpec[],
+  preserveSatisfiedTaskIds: string[] = [],
+) {
   const plan = workflow.steps.find((step) => step.id === "plan")
   if (!plan) throw new Error("Workflow has no planning step.")
   if (plan.status !== "pending") throw new Error("Planning step must be pending before replacing the task graph.")
-
-  const existing = plannedTaskSteps(workflow)
-  if (existing.some((step) => step.status !== "pending")) {
-    throw new Error("Task graph cannot change after task execution has started.")
+  if (!workflow.steps.some((step) => step.id === "review-plan" && step.agent === "reviewer" && step.kind === "gate")) {
+    throw new Error("Legacy workflow cannot admit Plan Tasks without the independent reviewer-owned review-plan gate; re-route to a current Objective workflow.")
   }
 
-  // New Objective workflows place an independent Plan review between
-  // planning and execution. Legacy/in-flight workflows may not have that
-  // gate yet, so retain their historical dependency on plan.
-  const executionGateId = workflow.steps.some((step) => step.id === "review-plan")
-    ? "review-plan"
-    : "plan"
-  const taskSteps: Step[] = tasks.map((task) => ({
-    id: taskStepId(task.id),
-    agent: "worker",
-    kind: "work",
-    dependsOn: [executionGateId, ...task.dependsOn.map(taskStepId)],
-    status: "pending",
-    task,
-    attempt: (existing.find((step) => step.id === taskStepId(task.id))?.attempt ?? -1) + 1,
-  }))
+  const existing = plannedTaskSteps(workflow)
+  const preserve = new Set(preserveSatisfiedTaskIds)
+  const preserved = existing.filter(
+    (step) => step.task && preserve.has(step.task.id) && satisfied(step),
+  )
 
-  const withoutTasks = workflow.steps.filter((step) => !step.id.startsWith("task:"))
+  for (const step of preserved) {
+    const refreshed = tasks.find((candidate) => candidate.id === step.task!.id)
+    if (refreshed && JSON.stringify(refreshed) !== JSON.stringify(step.task)) {
+      throw new Error(
+        `Completed Task ${step.task!.id} cannot reuse its result with a changed executable contract; invalidate/replan that Task instead.`,
+      )
+    }
+  }
+
+  for (const step of existing) {
+    if (step.status !== "waiting" || preserve.has(step.task!.id)) continue
+    const task = step.task!
+    const refreshed = tasks.find((candidate) => candidate.id === task.id)
+    if (
+      !refreshed ||
+      task.role !== "user" ||
+      task.responsibility !== "obtain-user-decision" ||
+      userDecisionContract(task) !== userDecisionContract(refreshed)
+    ) {
+      throw new Error(`Cannot refresh while unanswered user-owned decision Task ${task.id} is pending.`)
+    }
+  }
+
+  const executableTasks = tasks.filter((task) => !preserve.has(task.id))
+  const allTaskSpecs = [
+    ...preserved.map((step) => step.task!),
+    ...executableTasks,
+  ]
+  const taskById = new Map(allTaskSpecs.map((task) => [task.id, task]))
+  if (taskById.size !== allTaskSpecs.length) {
+    throw new Error("Task graph contains duplicate Task identities after completion reuse.")
+  }
+
+  const executionGateId = "review-plan"
+  const rebuilt: Step[] = executableTasks.map((task) => {
+    if (!task.role || !task.responsibility) {
+      throw new Error(`Task ${task.id} requires an accountable role and responsibility; amend and review the Plan before admission.`)
+    }
+    const role = task.role
+    const responsibility = task.responsibility
+    const path = nativeTaskPath(task)
+    validateAdviceAssociation(task)
+    const reviewerTask = role === "reviewer" && responsibility === "review"
+    const acceptanceTask = path?.nativeKind === "acceptance"
+    const decisionTask = responsibility === "obtain-user-decision"
+    if (decisionTask) {
+      if (role !== "user") throw new Error(`Task ${task.id} user-decision responsibility requires user ownership.`)
+      if (task.write.length > 0) throw new Error(`Task ${task.id} user-decision wait cannot own a write scope.`)
+    } else if (!LOOM_AGENT_ROLES.includes(role as (typeof LOOM_AGENT_ROLES)[number])) {
+      throw new Error(`Task ${task.id} role ${role} has no implemented/enabled execution path.`)
+    }
+    if (reviewerTask && role !== "reviewer") throw new Error(`Task ${task.id} review responsibility requires reviewer ownership.`)
+    if (!reviewerTask && role === "reviewer") throw new Error(`Task ${task.id} reviewer ownership requires review responsibility.`)
+    if (!path) {
+      throw new Error(`Task ${task.id} role ${role} has no supported Task execution slot.`)
+    }
+    // Executable TaskSpecs list only dependencies inside this Wave. A native
+    // Acceptance gate may review completed upstream Waves with no local deps;
+    // validateWorkflowWave enforces its full persistent Plan dependency set.
+    if (reviewerTask && task.dependsOn.length === 0) throw new Error(`Task ${task.id} review Task must name reviewed work as dependencies.`)
+    if (!decisionTask && role === "user") throw new Error(`Task ${task.id} user ownership requires user-decision responsibility.`)
+    const deps = task.dependsOn.map((dependency) => {
+      const source = taskById.get(dependency)
+      return source && role !== source.role && !reviewerTask && source.responsibility !== "review" && source.responsibility !== "obtain-user-decision"
+        ? `task-review:${dependency}`
+        : taskStepId(dependency)
+    })
+    return {
+      id: taskStepId(task.id),
+      agent: role,
+      kind: path.stepKind,
+      dependsOn: [executionGateId, ...deps],
+      status: decisionTask ? "waiting" : "pending",
+      task,
+      attempt: (existing.find((step) => step.id === taskStepId(task.id))?.attempt ?? -1) + 1,
+    }
+  })
+
+  const preservedById = new Map(preserved.map((step) => [step.task!.id, step]))
+  const taskSteps = allTaskSpecs.map((task) =>
+    preservedById.get(task.id) ?? rebuilt.find((step) => step.task?.id === task.id)!,
+  )
+
+  const handoffGates: Step[] = allTaskSpecs
+    .filter((source) => source.responsibility !== "review" && source.responsibility !== "obtain-user-decision" &&
+      allTaskSpecs.some((target) => target.role !== source.role && target.role !== "reviewer" && target.dependsOn.includes(source.id)))
+    .map((source) => ({
+      id: `task-review:${source.id}`, agent: "reviewer", kind: "gate",
+      dependsOn: [executionGateId, taskStepId(source.id)], status: "pending",
+    }))
+
+  const withoutTasks = workflow.steps.filter((step) => !step.task && !step.id.startsWith("task-review:"))
   const insertionIndex = withoutTasks.findIndex((step) => step.id === executionGateId)
   workflow.steps = [
     ...withoutTasks.slice(0, insertionIndex + 1),
     ...taskSteps,
+    ...handoffGates,
     ...withoutTasks.slice(insertionIndex + 1),
   ]
 
   const review = workflow.steps.find((step) => step.id === "review-implementation")
   if (!review) throw new Error("Workflow has no implementation review step.")
-  review.dependsOn = taskSteps.map((step) => step.id)
+  review.dependsOn = [...taskSteps.map((step) => step.id), ...handoffGates.map((step) => step.id)]
+
+  // A planned Acceptance task is itself the native gate. Never also schedule
+  // the Objective-closure gate for the same product, or create a second PASS
+  // that is detached from the persistent Task identity.
+  const plannedAcceptance = taskSteps.filter((step) =>
+    nativeTaskPath(step.task!)?.nativeKind === "acceptance")
+  if (plannedAcceptance.length > 1) {
+    throw new Error("A compiled Wave may have only one native Product Acceptance gate.")
+  }
+  if (plannedAcceptance.length === 1) {
+    const nativeGate = plannedAcceptance[0]!.id
+    const oldClosure = workflow.steps.find((step) => step.id === "product-acceptance" && !step.task)
+    if (oldClosure) {
+      workflow.steps = workflow.steps.filter((step) => step !== oldClosure)
+      for (const step of workflow.steps) {
+        step.dependsOn = step.dependsOn.map((id) => id === "product-acceptance" ? nativeGate : id)
+      }
+    }
+  }
 
   return taskSteps
 }

@@ -124,6 +124,14 @@ fuzzy/new product intent when needed
   -> done
 ```
 
+### Planned Task admission and waits
+
+Execution of a persisted Objective Plan is role-bound. Each admitted Task must match the current Plan's accountable role and responsibility; supported responsibilities distinguish production, execution, independent review, and a user-owned decision. Plan Tasks without that role contract (including legacy Tasks) must be amended and independently reviewed before admission. The compiled Wave preserves declared dependencies and inserts independent Reviewer handoffs where work crosses producer roles. A Wave is not runnable until external Task dependencies are complete in a reviewed Wave, and completing implementation does not itself mark the Wave reviewed or release its claim.
+
+User-decision Tasks are represented as user-owned wait steps, never agent work. Status exposes them separately as waiting for a decision, whether that decision is ready or still blocked by upstream dependencies; even a ready decision is explicitly non-dispatchable. Once the user decision is recorded, dependent work can become eligible through normal dependency and review gates.
+
+These statements describe current Plan Task execution only. Command/Git capability elevation, Archive/Permanent Delete, and pause/resume or backtracking controls are not part of this implemented behavior; proposed lifecycle designs and future Anchor targets do not imply those capabilities exist.
+
 ### Escalation rule
 
 > The workflow must be cheaper and simpler than the work it coordinates.

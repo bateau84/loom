@@ -102,6 +102,35 @@ describe("conversation-first eval schema", () => {
     suite.cases[0]!.actions!.requires![0]!.contains_all = []
     expect(validateSuite(suite, root).some((error) => error.includes("contains_all"))).toBe(true)
   })
+  test("accepts runtime tool-result assertions and rejects unbound JSON paths", () => {
+    const suite = fixture()
+    suite.cases = [suite.cases.find((item) => item.id === "CONVERSATION-01")!]
+    suite.cases[0]!.execution = "runtime"
+    suite.cases[0]!.tool_results = {
+      requires: [{
+        tool: "loom_status",
+        args: { workflowId: "eval-wf", detail: true },
+        occurrence: 2,
+        after: { tool: "loom_complete", args: { workflowId: "eval-wf", stepId: "review", outcome: "pass" } },
+        json_path: "workflow.steps.1.status",
+        equals: "failed",
+      }],
+    }
+    expect(validateSuite(suite, root)).toEqual([])
+
+    delete suite.cases[0]!.tool_results!.requires![0]!.equals
+    expect(validateSuite(suite, root).some((error) => error.includes("json_path and equals"))).toBe(true)
+
+    suite.cases[0]!.tool_results!.requires![0]!.equals = "failed"
+    suite.cases[0]!.tool_results!.requires![0]!.occurrence = 0
+    expect(validateSuite(suite, root).some((error) => error.includes("occurrence must be an integer"))).toBe(true)
+    suite.cases[0]!.tool_results!.requires![0]!.occurrence = 2
+    suite.cases[0]!.tool_results!.requires![0]!.after!.args = {}
+    expect(validateSuite(suite, root).some((error) => error.includes("after must select"))).toBe(true)
+    suite.cases[0]!.tool_results!.requires![0]!.after!.args = { workflowId: "eval-wf", stepId: "review", outcome: "pass" }
+    suite.cases[0]!.execution = "role-decision"
+    expect(validateSuite(suite, root).some((error) => error.includes("require runtime execution"))).toBe(true)
+  })
   test("rejects invalid response limits", () => {
     const suite = fixture()
     suite.cases[0]!.target_timeout_seconds = 601

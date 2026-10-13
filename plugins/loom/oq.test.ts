@@ -4,6 +4,7 @@ import {
   blockingQuestionsForStep,
   raiseQuestion,
   reconcileQuestion,
+  reconcileUserDecisionQuestion,
   reopenQuestion,
 } from "./oq"
 import { buildSteps, finishStep, runnable, type Workflow } from "./workflow"
@@ -72,7 +73,7 @@ describe("Loom shared OQ board", () => {
   })
 
   test("any Loom role may be the named OQ responder without turning the answer into a gate verdict", () => {
-    for (const requiredAuthority of ["planner", "worker", "reviewer", "critic", "documenter", "acceptance"] as const) {
+    for (const requiredAuthority of ["planner", "worker", "reviewer", "critic", "documenter", "acceptance", "brainstorm"] as const) {
       const q = raiseQuestion({
         id: `q-${requiredAuthority}`,
         workflow: workflow(),
@@ -253,6 +254,22 @@ describe("Loom shared OQ board", () => {
     expect(q.answer?.by).toBe("user")
   })
 
+  test("a user decision OQ closes only for its exact recorded user-wait consumer", () => {
+    const w = workflow()
+    w.steps.push({ id: "task:decision", agent: "user", kind: "wait", dependsOn: [], status: "waiting" })
+    const q = raiseQuestion({
+      id: "decision", workflow: w, question: "Choose A or B.",
+      raisedByAgent: "general", raisedByStepId: "general", requiredAuthority: "user",
+      blocking: true, consumerStepIds: ["task:decision"], now: "now",
+    })
+    answerQuestion(q, "general", "user", "A", [], "answered")
+    expect(() => reconcileUserDecisionQuestion(q, "task:other", "consumed")).toThrow("does not name this exact wait Task")
+    expect(q.status).toBe("answered")
+    reconcileUserDecisionQuestion(q, "task:decision", "consumed")
+    expect(q.status).toBe("closed")
+    expect(q.reconciliations["task:decision"]?.byAgent).toBe("user")
+  })
+
   test("reopen can invalidate a stale answer and clears reconciliation", () => {
     const w = workflow()
     const q = raiseQuestion({
@@ -268,10 +285,14 @@ describe("Loom shared OQ board", () => {
     answerQuestion(q, "architect", "agent", "answer", [], "t1")
     reconcileQuestion(q, w, "specifier", "specifier", "incorporated", "done", "t2")
     expect(q.status).toBe("closed")
+    expect(q.attempt).toBe(0)
 
     reopenQuestion(q, "specifier", false, "source changed", "t3")
     expect(q.status).toBe("open")
+    expect(q.attempt).toBe(1)
     expect(q.answer).toBeUndefined()
     expect(q.reconciliations).toEqual({})
+    reopenQuestion(q, "specifier", false, "investigate again", "t4")
+    expect(q.attempt).toBe(2)
   })
 })

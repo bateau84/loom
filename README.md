@@ -165,16 +165,11 @@ bun run eval:stress -- \
 
 Use `--parallel` without a number for the whole selected matrix, or `--parallel N` to cap concurrency. The default is sequential execution.
 
-Each live invocation gets a generated run ID. Without `--artifact-dir`, artifacts are isolated under:
+Each live invocation gets a generated run ID. Without `--artifact-dir`, the generic runner writes a `run.json` manifest and per-job artifacts beneath `.loom-evals/<RUN-ID>/`. Skill-owned baseline/candidate runs use paired artifacts at `pairs/<case>/iteration-N.json`; mixed selections split into `normal/` and `skill-ablation/` roots. An explicit artifact directory must be empty.
 
-```text
-.loom-evals/<RUN-ID>/<CASE>.json
-.loom-evals/<RUN-ID>/<CASE>.iteration-<N>.json
-```
+The reusable eval engine owns invocation, scheduling, evidence readiness and artifact integrity. Loom owns cases, fixtures, deterministic assertions, the judge contract and skill comparison policy. Runtime cases use isolated OpenCode target containers, with target and judge separated.
 
-An explicit `--artifact-dir` is a single-run evidence destination and must be empty before the run starts.
-
-Runtime cases use isolated OpenCode target containers with Loom injected into the standalone runtime. Target and judge run separately.
+See [behavioral evals](evals/README.md) and [Task 9 cutover and validation](docs/eval-engine-task-9-cutover.md) for the ownership contract, supported modes, intentional differences and validation matrix.
 
 ## Repository maps
 

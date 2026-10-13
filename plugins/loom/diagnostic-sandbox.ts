@@ -16,6 +16,9 @@ export type DiagnosticSandboxRecord = {
   sessionId: string
   workflowId: string
   stepId: string
+  /** Present only for an exact Diagnostic OQ attachment; stepId is then empty. */
+  questionId?: string
+  /** Step attempt or OQ reopen attempt, respectively. */
   attempt: number
   projectId: string
   rootPath: string
@@ -32,6 +35,27 @@ export type DiagnosticSandboxRecord = {
   snapshotDigest?: string
   active: boolean
   destroyedAt?: string
+}
+
+/** A sandbox may run only for the original, still-authorized step or question attempt. */
+export type DiagnosticSandboxTarget = {
+  workflowId: string
+  stepId: string
+  questionId?: string
+  attempt: number
+}
+
+export function diagnosticSandboxMatchesTarget(
+  record: DiagnosticSandboxRecord,
+  target: DiagnosticSandboxTarget | undefined,
+) {
+  return Boolean(
+    target &&
+    record.workflowId === target.workflowId &&
+    record.stepId === target.stepId &&
+    (record.questionId ?? "") === (target.questionId ?? "") &&
+    record.attempt === target.attempt,
+  )
 }
 
 export type DiagnosticSandboxExecInput = {
@@ -375,6 +399,7 @@ export function allocateDiagnosticSandbox(input: {
   sessionId: string
   workflowId: string
   stepId: string
+  questionId?: string
   attempt: number
   image: string
   imageId: string
@@ -383,6 +408,9 @@ export function allocateDiagnosticSandbox(input: {
   id?: string
   now?: string
 }): DiagnosticSandboxRecord {
+  if (Boolean(input.stepId) === Boolean(input.questionId)) {
+    throw new Error("Diagnostic sandbox requires exactly one step or question target.")
+  }
   const image = validateDiagnosticSandboxImage(input.image)
   const imageId = validateDiagnosticSandboxImageId(input.imageId)
   const id = sandboxId(input.id ?? randomUUID())
@@ -398,6 +426,7 @@ export function allocateDiagnosticSandbox(input: {
     sessionId: input.sessionId,
     workflowId: input.workflowId,
     stepId: input.stepId,
+    ...(input.questionId ? { questionId: input.questionId } : {}),
     attempt: input.attempt,
     projectId: input.projectId,
     rootPath,
@@ -504,6 +533,7 @@ export async function createDiagnosticSandbox(input: {
   sessionId: string
   workflowId: string
   stepId: string
+  questionId?: string
   attempt: number
   image: string
   imageId?: string
@@ -543,6 +573,7 @@ export async function createDiagnosticSandbox(input: {
     sessionId: input.sessionId,
     workflowId: input.workflowId,
     stepId: input.stepId,
+    ...(input.questionId ? { questionId: input.questionId } : {}),
     attempt: input.attempt,
     image: resolvedImage.reference,
     imageId: resolvedImage.id,

@@ -38,6 +38,17 @@
         "Provides ids or otherwise identifies each case",
         "Does NOT assert inside a for-loop over the cases"
       ]
+    },
+    {
+      "id": 4,
+      "name": "parametrize-only-when-useful",
+      "prompt": "A small pytest test verifies one config parser behavior and already reports the failing input clearly. A reviewer insists on converting it to @pytest.mark.parametrize, extracting conftest.py fixtures, and writing ten nearby examples just to standardize test style. Should you?",
+      "trap": "The model mandates a large fixture/table rewrite and new cases with no distinct regression protection.",
+      "expectations": [
+        "Accepts one clear pytest test without parametrization when it is enough.",
+        "Uses fixtures/parametrize when reuse or independent meaningful cases justify them, not as quotas.",
+        "Does not add redundant input cases or global shared fixtures just to fit a pattern."
+      ]
     }
   ]
 }

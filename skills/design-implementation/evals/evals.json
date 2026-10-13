@@ -1,0 +1,53 @@
+{
+  "skill": "design-implementation",
+  "version": "2.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "DESIGN-IMPL-EXCEPTIONS-01",
+      "name": "accepted-exceptions-beat-generic-recipes",
+      "prompt": "Implement this accepted export-dialog design in outline or inline code only: long action labels may wrap at narrow widths; the results table scrolls horizontally within its own region; failures keep the dialog and error message open; a navigation link has no async lifecycle. Our old recipe says root overflow clipping, no wrapping clickable text, eight states for every element, and success/error auto-dismiss. Explain the concrete implementation decisions and checks.",
+      "trap": "Generic UI recipes override explicit accepted exceptions and fabricate unnecessary states.",
+      "expectations": [
+        "Preserves wrapping labels and a deliberately scrollable table without clipping required content.",
+        "Keeps failed export feedback and recovery available as specified.",
+        "Implements only relevant states on the navigation link while considering reachable dialog states.",
+        "Explains the accepted design-to-change-to-check mapping."
+      ],
+      "negative_expectations": [
+        "Do not enforce the old recipe over the accepted design.",
+        "Do not invent a loading/error/success lifecycle for a plain navigation link."
+      ]
+    },
+    {
+      "id": "DESIGN-IMPL-TOKENS-01",
+      "name": "shared-token-evolution-is-controlled",
+      "prompt": "The accepted design revision changes the shared muted-text token because its old value is unreadable. The authorized task includes updating the token and its table/empty-state consumers. A prior instruction says tokens are append-only. Explain how you would implement and verify this accepted change, without editing files.",
+      "trap": "Append-only dogma causes duplicated tokens, while a local-only fix ignores other consumers.",
+      "expectations": [
+        "Updates the accepted shared decision within the authorized scope rather than making a duplicate token solely to preserve append-only behavior.",
+        "Inspects and checks the named consumers and relevant contrast/hierarchy outcomes.",
+        "Keeps unrelated shared decisions unchanged and distinguishes source reasoning from observed rendering."
+      ],
+      "negative_expectations": [
+        "Do not refuse the accepted token update or require a new gate merely because of the generic rule.",
+        "Do not change all global tokens or claim visual checks ran."
+      ]
+    },
+    {
+      "id": "DESIGN-IMPL-CAPABILITY-01",
+      "name": "visual-success-does-not-invent-backend",
+      "prompt": "An accepted web form reports that an upload was received, then shows a separate processing state until the server confirms completion. It cannot undo a received upload. A UI recipe recommends immediate success, an Undo button, and rollback on any error. Give the implementation approach and checks inline.",
+      "trap": "Optimistic polish silently invents completion and rollback semantics.",
+      "expectations": [
+        "Keeps received, processing, completed, and failed meanings distinct according to the accepted design.",
+        "Does not offer unsupported undo/rollback and uses the real status capability.",
+        "Covers delayed/error paths and identifies the real observations needed before completion claims."
+      ],
+      "negative_expectations": [
+        "Do not turn receipt into completed processing.",
+        "Do not use a successful mock animation as evidence of backend success."
+      ]
+    }
+  ]
+}

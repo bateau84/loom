@@ -32,7 +32,7 @@ Go's concurrency model is built on goroutines and channels. Goroutines are cheap
 6. **Default to unbuffered channels** — larger buffers mask backpressure; use them only with measured justification
 7. **Always include `ctx.Done()` in select** — without it, goroutines leak after caller cancellation
 8. **Avoid repeated `time.After` in hot loops** — each call allocates a timer and creates unnecessary churn; use `time.NewTimer` + `Reset` for long-running loops
-9. **Track goroutine leaks in tests** with `go.uber.org/goleak`
+9. **Verify owned goroutine shutdown when it matters**; `go.uber.org/goleak` is one optional tool, not a required dependency for every concurrent package
 
 For detailed channel/select code examples, see [Channels and Select Patterns](references/channels-and-select.md).
 

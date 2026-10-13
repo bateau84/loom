@@ -13,6 +13,9 @@ Reviewer verifies that validation is a trustworthy comparison between accepted d
 - Severity follows human/task/accessibility/trust/recovery consequence rather than pixel difference.
 - Prototype/mock behavior does not prove the real product journey.
 - Untested scenarios/states/surfaces/input modes and evidence limitations bound the claimed PASS.
+- Accepted product character and craft criteria are assessed across the assembled journey, not presumed satisfied by functional conformance or isolated screenshots.
+- Optional polish is not converted to a new requirement, novelty quota, taste score, or extra gate. Missing brand authority is not a license to invent one.
+- Corrections have fresh evidence for the affected path; an earlier PASS is not reused after the implementation changes.
 
 ## Review depth
 

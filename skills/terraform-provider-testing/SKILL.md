@@ -19,6 +19,8 @@ metadata:
 
 # Provider Acceptance Test Patterns
 
+`test-driven-development` owns test value, accepted behavior, credible regression risks, and stopping rules. This is a Terraform-provider mechanics reference: apply import, update, disappearance, sweeper, and ephemeral patterns **only when the resource contract needs them**, not as a required suite for every resource.
+
 Patterns for writing acceptance tests using
 [terraform-plugin-testing](https://github.com/hashicorp/terraform-plugin-testing)
 with the [Plugin Framework](https://github.com/hashicorp/terraform-plugin-framework).
@@ -259,15 +261,15 @@ After a config step, verify import produces identical state. Use
 },
 ```
 
-### Regression (two-commit workflow)
+### Regression (reproduce the defect)
 
-A proper bug fix uses at least two commits: first commit the regression test
-(which fails, confirming the bug), then commit the fix (test passes). This
-lets reviewers independently verify the test reproduces the issue by checking
-out the first commit, then advancing to the fix.
+For a confirmed provider bug, use a focused regression test when practical,
+and observe it fail before the fix if the test can run safely. Two separate
+commits can help review but are **not required**: preserve the failing-before /
+passing-after evidence without imposing commit ceremony. Reuse an existing test
+if it already detects the issue.
 
-Name and document regression tests to identify the issue they fix. Include a
-link to the original bug report when possible.
+Name tests so the protected behavior is clear; link the original issue when useful.
 
 ```go
 // TestAccExample_regressionGH1234 verifies fix for https://github.com/org/repo/issues/1234

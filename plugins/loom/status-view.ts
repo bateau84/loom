@@ -11,7 +11,7 @@ import { effectiveTotalDispatchLimit, type BudgetState, type ExecutionLimits } f
 import type { KnowledgeReport } from "./knowledge"
 import type { OpenQuestion } from "./oq"
 import type { LoomRuntimeIdentity } from "./runtime"
-import { planningOnlyObjective, runnable, type Workflow } from "./workflow"
+import { planningOnlyObjective, runnable, userDecisionWaitSteps, type Workflow } from "./workflow"
 import {
   nextRunnableWaves,
   workPlanContext,
@@ -25,6 +25,70 @@ export function clippedSummary(value?: string, max = 180) {
   if (!value) return undefined
   const normalized = value.replace(/\s+/g, " ").trim()
   return normalized.length <= max ? normalized : normalized.slice(0, max - 1) + "…"
+}
+
+export type StepDispatchReadiness = {
+  state: "ready" | "blocked" | "unknown"
+  reason?: string
+}
+
+export type StepExecutionObservation = {
+  state: "unknown"
+  evidence?: "current_attachment"
+  attachedAt?: string
+}
+
+export type StepReadinessObservation = {
+  dispatch: StepDispatchReadiness
+  execution: StepExecutionObservation
+}
+
+export type StepCompletionConstraint = {
+  source: string
+  kind: "oq" | "verification"
+  boundary: "completion" | "pass"
+  state: "awaiting_answer" | "reconciliation_pending" | "verification_pending"
+  detail?: string
+  responder?: string
+}
+
+function completionConstraints(
+  workflow: Workflow,
+  questions: OpenQuestion[],
+  stepId: string,
+): StepCompletionConstraint[] {
+  const oqConstraints = questions
+    .filter(
+      (question) =>
+        question.status !== "closed" &&
+        question.blocking &&
+        question.consumerStepIds.includes(stepId) &&
+        (!question.answer || !question.reconciliations[stepId]),
+    )
+    .map((question): StepCompletionConstraint => ({
+      source: question.id,
+      kind: "oq",
+      boundary: "completion",
+      state: question.answer ? "reconciliation_pending" : "awaiting_answer",
+      detail: clippedSummary(question.question, 180),
+      responder: question.requiredAuthority,
+    }))
+
+  const verificationConstraints = (workflow.verification ?? [])
+    .filter(
+      (requirement) =>
+        requirement.status === "open" &&
+        requirement.beforeStepId === stepId,
+    )
+    .map((requirement): StepCompletionConstraint => ({
+      source: requirement.id,
+      kind: "verification",
+      boundary: "pass",
+      state: "verification_pending",
+      detail: clippedSummary(requirement.statement, 180),
+    }))
+
+  return [...oqConstraints, ...verificationConstraints]
 }
 
 export function compactQuestions(questions: OpenQuestion[], workflow: Workflow) {
@@ -74,6 +138,7 @@ export function compactWorkflowState(
   limits: ExecutionLimits,
   acceptance?: AcceptancePlan,
   knowledge?: KnowledgeReport,
+  stepReadiness: Record<string, StepReadinessObservation> = {},
 ) {
   const ready = runnable(workflow)
   const finished = workflow.steps.filter((step) => ["complete", "passed", "failed"].includes(step.status))
@@ -81,6 +146,27 @@ export function compactWorkflowState(
   const pending = workflow.steps.filter((step) => step.status === "pending")
   const readyIds = new Set(ready.map((step) => step.id))
   const blockedPending = pending.filter((step) => !readyIds.has(step.id))
+  const questionsSummary = compactQuestions(questions, workflow)
+  const userAttention = workflow.cancellation
+    ? []
+    : questions
+        .filter(
+          (question) =>
+            question.status !== "closed" &&
+            !question.answer &&
+            question.blocking &&
+            question.requiredAuthority === "user" &&
+            question.consumerStepIds.some((stepId) => readyIds.has(stepId)),
+        )
+        .slice(0, 4)
+        .map((question) => ({
+          questionId: question.id,
+          question: clippedSummary(question.question, 220),
+          responder: question.requiredAuthority,
+          blocking: question.blocking,
+          consumers: [...question.consumerStepIds],
+          state: "awaiting_answer" as const,
+        }))
 
   const state =
     workflow.cancellation ? "cancelled" :
@@ -104,6 +190,8 @@ export function compactWorkflowState(
       step: step.id,
       agent: step.agent,
       kind: step.kind,
+      ...(step.id === "review-implementation" && !workflow.steps.some((candidate) => candidate.task && candidate.agent === "worker")
+        ? { scope: "role-work Wave review" } : {}),
       ...(step.agent === "reviewer"
         ? {
             reviewMode: step.review?.mode ?? "review-only",
@@ -114,6 +202,40 @@ export function compactWorkflowState(
               step.review?.ineligibleIndependentSessionIds ?? [],
           }
         : {}),
+    })),
+    readiness: ready.map((step) => {
+      const constraints = completionConstraints(workflow, questions, step.id)
+      const observed = stepReadiness[step.id]
+      return {
+        step: step.id,
+        agent: step.agent,
+        kind: step.kind,
+        structurallyRunnable: true as const,
+        dispatch: observed?.dispatch ?? {
+          state: "unknown" as const,
+          reason: "Dispatch admission was not evaluated for this status projection.",
+        },
+        execution: observed?.execution ?? {
+          state: "unknown" as const,
+        },
+        completion: {
+          eligible: constraints.some((constraint) => constraint.boundary === "completion")
+            ? false as const
+            : "unknown" as const,
+          constraints,
+        },
+      }
+    }),
+    userAttention,
+    userDecisions: userDecisionWaitSteps(workflow).map(({ step, ready, waitsFor }) => ({
+      step: step.id,
+      taskId: step.task.id,
+      title: step.task.title,
+      objective: step.task.objective,
+      rationale: step.task.rationale,
+      acceptanceCriteria: step.task.acceptanceCriteria ?? [],
+      ready,
+      waitsFor,
     })),
     recent: finished.slice(-5).map((step) => ({
       step: step.id,
@@ -139,7 +261,7 @@ export function compactWorkflowState(
           ),
       ),
     })),
-    questions: compactQuestions(questions, workflow),
+    questions: questionsSummary,
     verification: compactVerification(workflow),
     budget: {
       dispatches: budget.totalDispatches,
@@ -172,9 +294,18 @@ export function buildStatusView(
   acceptance?: AcceptancePlan,
   knowledge?: KnowledgeReport,
   work?: WorkHierarchy,
+  stepReadiness: Record<string, StepReadinessObservation> = {},
 ): StatusView {
   return {
-    ...compactWorkflowState(workflow, questions, budget, limits, acceptance, knowledge),
+    ...compactWorkflowState(
+      workflow,
+      questions,
+      budget,
+      limits,
+      acceptance,
+      knowledge,
+      stepReadiness,
+    ),
     work: work
       ? {
           tree: workTree(work),
@@ -193,7 +324,7 @@ function markdownCode(value: string) {
 function statusGlyph(status: string) {
   if (status === "complete" || status === "passed") return "✓"
   if (status === "failed" || status === "blocked") return "!"
-  if (status === "active" || status === "runnable") return "→"
+  if (status === "active" || status === "dag-ready" || status === "runnable") return "→"
   if (status === "cancelled" || status === "superseded") return "×"
   return "○"
 }
@@ -311,7 +442,71 @@ export function renderStatusMarkdown(view: StatusView, artifact?: StatusArtifact
           : ""
       lines.push(`- → **${step.agent}** · ${markdownCode(step.step)}${review}`)
     }
-    if (view.now.length > 5) lines.push(`- … +${view.now.length - 5} more runnable steps`)
+  }
+
+  if (view.readiness.length) {
+    lines.push("", "### Execution readiness")
+    for (const step of view.readiness.slice(0, 5)) {
+      const details = ["DAG ready"]
+      if (step.dispatch.state === "ready") details.push("dispatch ready")
+      if (step.dispatch.state === "blocked") details.push(`dispatch blocked: ${clippedSummary(step.dispatch.reason) ?? "admission denied"}`)
+      if (step.dispatch.state === "unknown") details.push("dispatch readiness unknown")
+      details.push("active execution unknown")
+      const completionBlocks = step.completion.constraints.filter(
+        (constraint) => constraint.boundary === "completion",
+      )
+      const passBlocks = step.completion.constraints.filter(
+        (constraint) => constraint.boundary === "pass",
+      )
+      if (completionBlocks.length > 0) {
+        details.push(
+          "cannot complete: " +
+            completionBlocks
+              .map((constraint) => {
+                const state = constraint.state.replaceAll("_", " ")
+                return constraint.detail
+                  ? `${constraint.source} ${state}: ${constraint.detail}`
+                  : `${constraint.source} ${state}`
+              })
+              .join(", "),
+        )
+      }
+      if (passBlocks.length > 0) {
+        details.push(
+          "cannot pass: " +
+            passBlocks
+              .map((constraint) => {
+                const state = constraint.state.replaceAll("_", " ")
+                return constraint.detail
+                  ? `${constraint.source} ${state}: ${constraint.detail}`
+                  : `${constraint.source} ${state}`
+              })
+              .join(", "),
+        )
+      }
+      lines.push(`- → **${step.agent}** · ${markdownCode(step.step)} · ${details.join(" · ")}`)
+    }
+    if (view.readiness.length > 5) lines.push(`- … +${view.readiness.length - 5} more structurally runnable steps`)
+  }
+
+  if (view.userAttention.length) {
+    lines.push("", "### Needs your input")
+    for (const question of view.userAttention.slice(0, 4)) {
+      lines.push(`- **${markdownCode(question.questionId)}:** ${question.question ?? "User input required."}`)
+      if (question.consumers.length) {
+        lines.push(`  - Affects completion of ${question.consumers.map(markdownCode).join(", ")}`)
+      }
+    }
+  }
+
+  if (view.userDecisions.length) {
+    lines.push("", "### User decisions")
+    for (const decision of view.userDecisions) {
+      lines.push(`- **${decision.title}** · ${markdownCode(decision.taskId)}${decision.ready ? " · ready for your decision" : ` · waiting for ${decision.waitsFor.map(markdownCode).join(", ")}`}`)
+      lines.push(`  - ${clippedSummary(decision.objective)}`)
+      if (decision.rationale) lines.push(`  - Why: ${clippedSummary(decision.rationale)}`)
+      for (const criterion of decision.acceptanceCriteria) lines.push(`  - Decision context: ${clippedSummary(criterion)}`)
+    }
   }
 
   const attention: string[] = []
@@ -355,13 +550,17 @@ function attr(value: unknown) {
   return esc(value)
 }
 
+function statusLabel(status: string) {
+  return status === "dag-ready" || status === "runnable" ? "DAG ready" : status
+}
+
 function htmlStatus(status: string) {
-  return `<span class="status" data-status="${attr(status)}">${esc(statusGlyph(status))} ${esc(status)}</span>`
+  return `<span class="status" data-status="${attr(status)}">${esc(statusGlyph(status))} ${esc(statusLabel(status))}</span>`
 }
 
 function taskRuntimeStatus(view: StatusView, taskId: string, stored: WorkNodeStatus) {
   if (stored !== "pending") return stored
-  return view.now.some((step) => step.step === `task:${taskId}`) ? "runnable" : stored
+  return view.readiness.some((step) => step.step === `task:${taskId}`) ? "dag-ready" : stored
 }
 
 function nodeOpen(status: string) {
@@ -430,19 +629,58 @@ function hierarchyHtml(view: StatusView) {
 }
 
 function currentHtml(view: StatusView) {
-  const current = view.now.length
-    ? view.now
-        .map(
-          (step) => {
-            const review =
-              "reviewMode" in step && step.reviewMode
-                ? ` · ${esc(step.reviewMode)}${step.independentApprovalPending ? " · independent approval pending" : ""}`
-                : ""
-            return `<li><span class="agent">${esc(step.agent)}</span><code>${esc(step.step)}</code><span class="muted">${esc(step.kind)}${review}</span></li>`
-          },
-        )
+  const current = view.readiness.length
+    ? view.readiness
+        .map((step) => {
+          const details = [
+            "DAG ready",
+            step.dispatch.state === "ready"
+              ? "dispatch ready"
+              : step.dispatch.state === "blocked"
+                ? `dispatch blocked: ${step.dispatch.reason ?? "admission denied"}`
+                : "dispatch readiness unknown",
+            "active execution unknown",
+          ]
+          const completionBlocks = step.completion.constraints.filter(
+            (constraint) => constraint.boundary === "completion",
+          )
+          const passBlocks = step.completion.constraints.filter(
+            (constraint) => constraint.boundary === "pass",
+          )
+          if (completionBlocks.length > 0) {
+            details.push(
+              "completion blocked by " +
+                completionBlocks
+                  .map((constraint) => {
+                    const state = constraint.state.replaceAll("_", " ")
+                    return constraint.detail
+                      ? `${constraint.source} (${state}: ${constraint.detail})`
+                      : `${constraint.source} (${state})`
+                  })
+                  .join(", "),
+            )
+          }
+          if (passBlocks.length > 0) {
+            details.push(
+              "PASS blocked by " +
+                passBlocks
+                  .map((constraint) => {
+                    const state = constraint.state.replaceAll("_", " ")
+                    return constraint.detail
+                      ? `${constraint.source} (${state}: ${constraint.detail})`
+                      : `${constraint.source} (${state})`
+                  })
+                  .join(", "),
+            )
+          }
+          const reviewer = view.now.find((candidate) => candidate.step === step.step)
+          const review = reviewer && "reviewMode" in reviewer && reviewer.reviewMode
+            ? ` · ${esc(reviewer.reviewMode)}${reviewer.independentApprovalPending ? " · independent approval pending" : ""}`
+            : ""
+          return `<li><span class="agent">${esc(step.agent)}</span><code>${esc(step.step)}</code><span class="muted">${esc(details.join(" · "))}${review}</span></li>`
+        })
         .join("")
-    : '<li class="muted">No runnable step.</li>'
+    : '<li class="muted">No structurally runnable step.</li>'
 
   const upcoming = view.upcoming.length
     ? view.upcoming
@@ -453,9 +691,33 @@ function currentHtml(view: StatusView) {
         .join("")
     : '<li class="muted">No blocked upcoming step.</li>'
 
+  const userAttention = view.userAttention.length
+    ? view.userAttention
+        .map((question) => `<li>
+          <strong>${esc(question.questionId)}</strong>
+          <span>${esc(question.question ?? "User input required.")}</span>
+          <span class="muted">Blocks completion of ${esc(question.consumers.join(", "))}</span>
+        </li>`)
+        .join("")
+    : '<li class="muted">No blocking user OQ affects current runnable work.</li>'
+
+  const decisions = view.userDecisions.length
+    ? view.userDecisions
+        .map((decision) => `<li>
+          <strong>${esc(decision.title)}</strong> <code>${esc(decision.taskId)}</code>
+          <span class="muted">${decision.ready ? "Ready for your decision · not dispatchable" : `Waiting for ${esc(decision.waitsFor.join(", "))}`}</span>
+          <p>${esc(decision.objective)}</p>
+          ${decision.rationale ? `<p class="muted">Why: ${esc(decision.rationale)}</p>` : ""}
+          ${decision.acceptanceCriteria.length ? `<ul>${decision.acceptanceCriteria.map((criterion) => `<li>${esc(criterion)}</li>`).join("")}</ul>` : ""}
+        </li>`)
+        .join("")
+    : '<li class="muted">No pending user decisions.</li>'
+
   return `<section class="split">
-    <div class="panel"><h2>Now</h2><ul class="flat">${current}</ul></div>
+    <div class="panel"><h2>Execution readiness</h2><ul class="flat">${current}</ul></div>
     <div class="panel"><h2>Upcoming</h2><ul class="flat">${upcoming}</ul></div>
+    <div class="panel"><h2>Needs your input</h2><ul class="flat">${userAttention}</ul></div>
+    <div class="panel"><h2>User decisions · not dispatchable</h2><ul class="flat">${decisions}</ul></div>
   </section>`
 }
 
@@ -484,7 +746,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wra
 .muted { color: var(--muted); }
 .status { white-space: nowrap; font-size: .9rem; }
 .status[data-status="blocked"], .status[data-status="failed"] { font-weight: 700; }
-.status[data-status="active"], .status[data-status="runnable"] { font-weight: 700; }
+.status[data-status="active"], .status[data-status="dag-ready"], .status[data-status="runnable"] { font-weight: 700; }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 10px; margin-bottom: 18px; }
 .card, .panel { border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
 .card { padding: 12px; }
@@ -549,7 +811,7 @@ ul { margin: 0; padding-left: 22px; }
       <div class="field"><label for="status-filter">Status</label><select id="status-filter">
         <option value="all">All</option>
         <option value="attention">Needs attention</option>
-        <option value="runnable">Runnable</option>
+        <option value="dag-ready">DAG ready</option>
         <option value="active">Active</option>
         <option value="blocked">Blocked</option>
         <option value="pending">Pending</option>
@@ -570,7 +832,8 @@ ul { margin: 0; padding-left: 22px; }
 
   const statusMatch = (status, wanted) => {
     if (wanted === "all") return true;
-    if (wanted === "attention") return ["active", "blocked", "failed", "runnable"].includes(status);
+    if (wanted === "attention") return ["active", "blocked", "failed", "dag-ready", "runnable"].includes(status);
+    if (wanted === "dag-ready") return status === "dag-ready" || status === "runnable";
     return status === wanted;
   };
 

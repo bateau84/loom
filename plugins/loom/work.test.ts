@@ -4,6 +4,7 @@ import {
   amendWorkPlan,
   assertCompletedWaveForTasks,
   invalidateWorkPlan,
+  invalidateWorkflowTaskResults,
   releaseCancelledWorkflowClaims,
   claimWorkflowWave,
   completeObjective,
@@ -20,12 +21,65 @@ import {
   workTree,
   workPlanContext,
   workPlanSemanticFingerprint,
+  taskSemanticFingerprintAtRevision,
+  taskSemanticClosureFingerprintAtRevision,
+  inspectTaskSemanticClosure,
+  taskExecutionClosureFingerprintAtRevision,
+  diagnoseTaskReceiptSemantics,
   workflowTaskSemanticFingerprint,
+  validatePlanRoleFeasibility,
   type WorkPlanDefinition,
+  type WorkPlanAmendOperation,
 } from "./work"
 
 const now = "2026-09-21T00:00:00Z"
 const PLAN_CONTEXT_TEST_MAX = 340
+const graphFingerprint = "a".repeat(64)
+
+test("whole-Plan advice requires an actual receiver and prevents direct meaning bypass across Waves", () => {
+  const definition = plan()
+  const advice = definition.phases[0].waves[0].tasks[0]
+  advice.role = "brainstorm"
+  advice.responsibility = "produce"
+  Object.assign(advice, { adviceForTaskId: "b" })
+  expect(validatePlanRoleFeasibility(validateWorkPlan(definition))).toBe(true)
+  Object.assign(advice, { adviceForTaskId: "c" })
+  expect(() => validatePlanRoleFeasibility(validateWorkPlan(definition))).toThrow("directly depend")
+  Object.assign(advice, { adviceForTaskId: "b" })
+  definition.phases[0].waves[1].tasks[0].dependsOn = ["a"]
+  expect(() => validatePlanRoleFeasibility(validateWorkPlan(definition))).toThrow("receiver")
+  definition.phases[0].waves[1].tasks[0].dependsOn = ["b"]
+  definition.phases[0].waves[0].tasks[1].role = "reviewer"
+  definition.phases[0].waves[0].tasks[1].responsibility = "review"
+  expect(() => validatePlanRoleFeasibility(validateWorkPlan(definition))).toThrow("receiver")
+})
+
+test("reviewed delivery Plan admits native Acceptance before cutover without resolving user waits", () => {
+  const definition = plan()
+  const acceptance = definition.phases[0]!.waves[0]!.tasks[1]!
+  acceptance.role = "acceptance"
+  acceptance.responsibility = "review"
+  const cutover = definition.phases[0]!.waves[1]!.tasks[0]!
+  const waits = Array.from({ length: 4 }, (_, i) => ({
+    ...structuredClone(cutover),
+    id: `user-policy-${i + 1}`,
+    title: `Policy decision ${i + 1}`,
+    role: "user",
+    responsibility: "obtain-user-decision" as const,
+    dependsOn: ["b"],
+  }))
+  cutover.dependsOn = ["b", ...waits.map((task) => task.id)]
+  definition.phases[0]!.waves[1]!.tasks.unshift(...waits)
+  expect(validatePlanRoleFeasibility(validateWorkPlan(definition))).toBe(true)
+  expect(definition.phases[0]!.waves[0]!.tasks[1]!.role).toBe("acceptance")
+  expect(definition.phases[0]!.waves[1]!.tasks[0]!.responsibility).toBe("obtain-user-decision")
+  const duplicate = { ...structuredClone(acceptance), id: "second-acceptance" }
+  definition.phases[0]!.waves[0]!.tasks.push(duplicate)
+  expect(() => validatePlanRoleFeasibility(validateWorkPlan(definition))).toThrow("only one native Product Acceptance")
+  definition.phases[0]!.waves[0]!.tasks.pop()
+  acceptance.dependsOn = ["c"]
+  expect(() => validateWorkPlan(definition)).toThrow("dependency cycle")
+})
 
 function plan(): WorkPlanDefinition {
   const richTask = (id: string, title: string, objective: string, dependsOn: string[]) => ({
@@ -40,6 +94,8 @@ function plan(): WorkPlanDefinition {
     subtasks: [`Implement ${title}`],
     integration: [`${title} composes with the surrounding plan.`],
     verify: ["go test ./..."],
+    role: "worker",
+    responsibility: "execute" as const,
   })
 
   return {
@@ -102,6 +158,72 @@ function plan(): WorkPlanDefinition {
   }
 }
 
+function historicalOrderPlan(kind: "phase" | "wave" | "task") {
+  const definition = plan()
+  const tasks = new Map(
+    definition.phases.flatMap((phase) => phase.waves.flatMap((wave) => wave.tasks))
+      .map((item) => [item.id, { ...item, dependsOn: [] }]),
+  )
+  const wave = (id: string, taskId: string): WorkPlanDefinition["phases"][number]["waves"][number] => ({
+    id,
+    title: `${id} Wave`,
+    objective: `${id} wave objective`,
+    constraints: [],
+    tasks: [tasks.get(taskId)!],
+  })
+  const phase = (id: string, taskId: string): WorkPlanDefinition["phases"][number] => ({
+    id,
+    title: `${id} Phase`,
+    objective: `${id} phase objective`,
+    waves: [wave(`${id}-wave`, taskId)],
+  })
+
+  if (kind === "phase") {
+    definition.phases = [phase("current", "a"), phase("middle", "b"), phase("last", "c")]
+  } else if (kind === "wave") {
+    definition.phases = [{
+      id: "current",
+      title: "Current Phase",
+      objective: "Keep the claimed Wave first.",
+      waves: [wave("current", "a"), wave("middle", "b"), wave("last", "c")],
+    }]
+  } else {
+    definition.phases = [{
+      id: "current",
+      title: "Current Phase",
+      objective: "Keep the task order explicit.",
+      waves: [{
+        id: "current",
+        title: "Current Wave",
+        objective: "Three ordered unclaimed Tasks.",
+        constraints: [],
+        tasks: [tasks.get("a")!, tasks.get("b")!, tasks.get("c")!],
+      }],
+    }]
+  }
+  return definition
+}
+
+function phaseFrom(definition: WorkPlanDefinition, phaseId: string) {
+  return structuredClone(definition.phases.find((phase) => phase.id === phaseId)!)
+}
+
+function waveFrom(definition: WorkPlanDefinition, phaseId: string, waveId: string) {
+  return structuredClone(definition.phases.find((phase) => phase.id === phaseId)!.waves.find((wave) => wave.id === waveId)!)
+}
+
+function taskFrom(definition: WorkPlanDefinition, taskId: string) {
+  return structuredClone(definition.phases.flatMap((phase) => phase.waves)
+    .flatMap((wave) => wave.tasks).find((task) => task.id === taskId)!)
+}
+
+function planOrder(definition: { phases?: Array<any>; planMap?: Array<any> }, kind: "phase" | "wave" | "task") {
+  const phases = definition.phases ?? definition.planMap ?? []
+  if (kind === "phase") return phases.map((phase) => phase.id)
+  if (kind === "wave") return phases[0]?.waves.map((wave: any) => wave.id) ?? []
+  return phases[0]?.waves[0]?.tasks.map((task: any) => task.id) ?? []
+}
+
 function task(id: string, dependsOn: string[] = []): TaskSpec {
   const source = plan().phases.flatMap((phase) => phase.waves).flatMap((wave) => wave.tasks).find((item) => item.id === id)!
   return {
@@ -118,10 +240,66 @@ function task(id: string, dependsOn: string[] = []): TaskSpec {
     write: [`internal/${id}/**`],
     skills: ["golang"],
     verify: source.verify,
+    role: source.role,
+    responsibility: source.responsibility,
   }
 }
 
 describe("Loom persistent work hierarchy", () => {
+  test("role feasibility examines later Waves and rejects roles without a real runtime route", () => {
+    const candidate = plan()
+    candidate.phases[0]!.waves[1]!.tasks[0] = {
+      ...candidate.phases[0]!.waves[1]!.tasks[0]!,
+      role: "future-specialist",
+      responsibility: "produce",
+    }
+    expect(() => validatePlanRoleFeasibility(candidate)).toThrow(
+      "Plan role path unavailable for Task c (obligations: obl-product) in core/runtime: role future-specialist has no supported Task execution slot",
+    )
+    candidate.phases[0]!.waves[1]!.tasks[0]!.role = "worker"
+    expect(validatePlanRoleFeasibility(candidate)).toBe(true)
+  })
+
+  test("standalone native Acceptance Wave validates reviewed cross-Wave prerequisite with no local edge", () => {
+    const definition = plan()
+    const acceptance = definition.phases[0]!.waves[1]!.tasks[0]!
+    acceptance.role = "acceptance"
+    acceptance.responsibility = "review"
+    const cutover = { ...structuredClone(acceptance), id: "release-cutover",
+      title: "Release cutover", objective: "Deploy after independent Acceptance",
+      role: "worker", responsibility: "execute" as const, dependsOn: ["c"] }
+    definition.phases[0]!.waves.push({
+      id: "cutover", title: "Separately authorized cutover",
+      objective: "Deploy only after prior Acceptance", constraints: [],
+      tasks: [cutover],
+    })
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-source", now)
+    materializeWorkPlan(work, "wf-source", definition, now)
+    expect(validatePlanRoleFeasibility(definition)).toBe(true)
+    claimWorkflowWave(work, "wf-source", work.generation, [task("a"), task("b", ["a"])], false, now)
+    syncWorkTaskStatuses(work, "wf-source", work.generation,
+      [{ taskId: "a", complete: true }, { taskId: "b", complete: true }], now)
+    completeWaveForTasks(work, "wf-source", work.generation, ["a", "b"], now, graphFingerprint)
+    expect(nextRunnableWaves(work).map((wave) => wave.id)).toEqual(["runtime"])
+    const nativeSpec: TaskSpec = {
+      ...task("c"), role: "acceptance", responsibility: "review",
+      dependsOn: [], write: [], skills: [],
+    }
+    expect(validateWorkflowWave(work, [nativeSpec], false).logicalId).toBe("runtime")
+  })
+
+  test("legacy role-less Plan Tasks fail executable Wave admission instead of defaulting to Worker", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-legacy", now)
+    materializeWorkPlan(work, "wf-legacy", plan(), now)
+    const snapshot = work.plans?.find((candidate) => candidate.generation === work.generation)
+    const legacyTask = snapshot?.phases[0]?.waves[0]?.tasks.find((candidate) => candidate.id === "a")
+    expect(legacyTask).toBeDefined()
+    delete legacyTask!.role
+    delete legacyTask!.responsibility
+    expect(() => validateWorkflowWave(work, [task("a"), task("b")], false)).toThrow(
+      "Legacy Plan Task a has no accountable role/responsibility; amend and independently review the Plan before admission.",
+    )
+  })
   test("rejects oversized persistent Plan identifiers", () => {
     const oversized = plan()
     oversized.phases[0].id = "p".repeat(97)
@@ -291,6 +469,84 @@ describe("Loom persistent work hierarchy", () => {
     expect(() => validateWorkPlan(oversized)).toThrow("exceeds executable maximum of 24 Tasks")
   })
 
+  test("amends large Plan authority sets atomically without rewriting protected Task semantics", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-authority-amend", now)
+    const definition = plan()
+    definition.authorityRefs.push(
+      ...Array.from({ length: 40 }, (_, index) => `docs/authority/ref-${String(index + 1).padStart(2, "0")}.md`),
+    )
+    materializeWorkPlan(work, "wf-authority-amend", definition, now)
+
+    const generation = work.generation
+    const protectedFingerprint = workflowTaskSemanticFingerprint(work, ["a", "b"])
+    const focused = workPlanContext(work, "c", "focused")
+    const full = workPlanContext(work, undefined, "full")
+
+    expect(focused?.authorityRefs).toHaveLength(32)
+    expect(focused?.projection.authorityRefsOmitted).toBe(10)
+    expect(full?.authorityRefs).toHaveLength(42)
+    expect(full?.projection.authorityRefsOmitted).toBe(0)
+
+    claimWorkflowWave(
+      work,
+      "wf-authority-amend",
+      generation,
+      [task("a"), task("b", ["a"])],
+      false,
+      now,
+    )
+    syncWorkTaskStatuses(
+      work,
+      "wf-authority-amend",
+      generation,
+      [{ taskId: "a", complete: true }],
+      now,
+    )
+    releaseCancelledWorkflowClaims(work, "wf-authority-amend", "released")
+
+    const amended = amendWorkPlan(work, {
+      expectedVersion: work.version,
+      by: "planner",
+      reason: "New accepted authority applies to future work.",
+      operations: [{ action: "add-authority-ref", authorityRef: "ARS-025" }],
+    }, "r2")
+
+    expect(amended.plan.authorityRefs).toContain("ARS-025")
+    expect(amended.amendment.operations).toEqual(["add-authority-ref:ARS-025"])
+    expect(workflowTaskSemanticFingerprint(work, ["a", "b"])).toBe(protectedFingerprint)
+    expect(workPlanContext(work, undefined, "full", generation, 1)?.authorityRefs).not.toContain("ARS-025")
+    expect(workPlanContext(work, undefined, "full")?.authorityRefs).toHaveLength(43)
+
+    expect(() => amendWorkPlan(work, {
+      expectedVersion: work.version,
+      by: "planner",
+      reason: "Replace-all authority mutation must not be reachable from bounded context.",
+      planPatch: { authorityRefs: ["docs/anchors/product/anchor.md"] } as any,
+      operations: [],
+    }, "unsafe-replace")).toThrow("must be amended with add-authority-ref/remove-authority-ref")
+
+    const removedUnused = amendWorkPlan(work, {
+      expectedVersion: work.version,
+      by: "planner",
+      reason: "Remove future authority that no current Task consumes.",
+      operations: [{ action: "remove-authority-ref", authorityRef: "docs/authority/ref-01.md" }],
+    }, "r3")
+    expect(removedUnused.plan.revision).toBe(3)
+    expect(removedUnused.plan.authorityRefs).not.toContain("docs/authority/ref-01.md")
+    expect(workflowTaskSemanticFingerprint(work, ["a", "b"])).toBe(protectedFingerprint)
+    expect(workPlanContext(work, undefined, "full", generation, 2)?.authorityRefs)
+      .toContain("docs/authority/ref-01.md")
+    expect(workPlanContext(work, undefined, "full")?.authorityRefs)
+      .not.toContain("docs/authority/ref-01.md")
+
+    expect(() => amendWorkPlan(work, {
+      expectedVersion: work.version,
+      by: "planner",
+      reason: "Removing authority consumed by existing Tasks is unsafe.",
+      operations: [{ action: "remove-authority-ref", authorityRef: "docs/architecture/product.md" }],
+    }, "r4")).toThrow("not declared by the parent Plan")
+  })
+
   test("retains immutable Plan revisions and stales only semantically affected Wave contracts", () => {
     const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-1", now)
     materializeWorkPlan(work, "wf-1", plan(), now)
@@ -343,6 +599,331 @@ describe("Loom persistent work hierarchy", () => {
       .toEqual(["Implement C"])
     expect(workPlanContext(work, "c", "focused", 1, 2)?.focus?.task.subtasks)
       .toEqual(["Implement C", "Exercise runtime recovery"])
+  })
+
+  test("delta history restores exact non-final Phase, Wave, and Task ordering and fingerprints", () => {
+    const scenarios: Array<{
+      kind: "phase" | "wave" | "task"
+      operations: WorkPlanAmendOperation[]
+      historicalOrder: string[]
+      currentOrder: string[]
+    }> = [
+      {
+        kind: "phase",
+        operations: [
+          { action: "remove-phase", phaseId: "middle" },
+          { action: "add-phase", phase: phaseFrom(historicalOrderPlan("phase"), "middle") },
+        ],
+        historicalOrder: ["current", "middle", "last"],
+        currentOrder: ["current", "last", "middle"],
+      },
+      {
+        kind: "wave",
+        operations: [
+          { action: "remove-wave", phaseId: "current", waveId: "middle" },
+          { action: "add-wave", phaseId: "current", wave: waveFrom(historicalOrderPlan("wave"), "current", "middle") },
+        ],
+        historicalOrder: ["current", "middle", "last"],
+        currentOrder: ["current", "last", "middle"],
+      },
+      {
+        kind: "task",
+        operations: [
+          { action: "remove-task", taskId: "b" },
+          { action: "add-task", phaseId: "current", waveId: "current", task: taskFrom(historicalOrderPlan("task"), "b") },
+        ],
+        historicalOrder: ["a", "b", "c"],
+        currentOrder: ["a", "c", "b"],
+      },
+    ]
+
+    for (const scenario of scenarios) {
+      const baseline = historicalOrderPlan(scenario.kind)
+      const work = createWorkHierarchy("docs/anchors/product/anchor.md", `wf-history-${scenario.kind}`, now)
+      materializeWorkPlan(work, `wf-history-${scenario.kind}`, baseline, now)
+      const generation = work.generation
+      const originalPlanFingerprint = workPlanSemanticFingerprint(work, generation)
+      const originalTaskFingerprint = taskSemanticFingerprintAtRevision(work, "a", generation, 1)
+      const originalWaveFingerprint = workflowTaskSemanticFingerprint(work, ["a"], generation)
+
+      const amendment = amendWorkPlan(work, {
+        expectedVersion: work.version,
+        by: "planner",
+        reason: `Reorder a non-final ${scenario.kind} without changing the reviewed current Task contract.`,
+        operations: scenario.operations,
+      }, "r2")
+      expect(amendment.plan.revision, scenario.kind).toBe(2)
+      expect(planOrder(amendment.plan, scenario.kind), scenario.kind).toEqual(scenario.currentOrder)
+
+      const historical = workPlanContext(work, undefined, "full", generation, 1)
+      expect(historical, scenario.kind).toBeDefined()
+      expect(planOrder(historical!, scenario.kind), scenario.kind).toEqual(scenario.historicalOrder)
+      expect(workPlanSemanticFingerprint(work, generation, 1), scenario.kind).toBe(originalPlanFingerprint)
+      expect(taskSemanticFingerprintAtRevision(work, "a", generation, 1), scenario.kind)
+        .toBe(originalTaskFingerprint)
+      expect(workflowTaskSemanticFingerprint(work, ["a"], generation, 1), scenario.kind)
+        .toBe(originalWaveFingerprint)
+    }
+  })
+
+  test("rev32 c03/c10 amendment leaves c01/c02 original completion proofs reusable", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-rev32", now)
+    const definition = plan()
+    materializeWorkPlan(work, "wf-rev32", definition, now)
+    const receipt = (id: string) => ({
+      workflowId: "wf-rev32",
+      completedAt: now,
+      planRevision: 1,
+      evidenceClaimIds: ["historical-claim"],
+      semanticClosureFingerprint: taskSemanticClosureFingerprintAtRevision(work, id, work.generation, 1)!,
+    })
+    // a and b correspond to the completed c01/c02; c is pending c03.
+    const completeA = receipt("a")
+    const completeB = receipt("b")
+    const completeC = receipt("c")
+    const runtime = definition.phases[0].waves[1]
+    const c = structuredClone(runtime.tasks[0])
+    const c10 = {
+      ...structuredClone(c), id: "c10", title: "C10",
+      objective: "Prepare the new precondition", dependsOn: ["b"],
+      rationale: "Supply the dependency needed before c03",
+    }
+    const changedC = { ...c, dependsOn: ["b", "c10"] }
+    const amendments = amendWorkPlan(work, {
+      expectedVersion: work.version, by: "planner",
+      reason: "Rev32 adds c10 as a c03 dependency; c01/c02 remain unchanged.",
+      operations: [
+        { action: "remove-task", taskId: "c" },
+        { action: "add-task", phaseId: "core", waveId: "runtime", task: c10 },
+        { action: "add-task", phaseId: "core", waveId: "runtime", task: changedC },
+      ],
+      planPatch: {
+        obligations: [...definition.obligations, {
+          id: "obl-c10", sourceRef: "docs/anchors/product/anchor.md",
+          statement: "Deliver the c03 prerequisite.", disposition: "implement",
+          taskIds: ["c10"], verification: ["c10 is independently checked"],
+        }],
+        acceptanceCoverage: [...definition.acceptanceCoverage, {
+          id: "pa-c10", title: "C10 prerequisite",
+          criterion: "The prerequisite is available before c03.", taskIds: ["c10"],
+        }],
+      },
+    }, "rev32")
+    expect(amendments.affectedTaskIds).not.toContain("a")
+    expect(amendments.affectedTaskIds).not.toContain("b")
+    expect(amendments.affectedTaskIds).toContain("c")
+
+    for (const [id, original] of [["a", completeA], ["b", completeB]] as const) {
+      const diagnostic = diagnoseTaskReceiptSemantics(work, id, original)
+      expect(diagnostic.originalProof).toBe("valid")
+      expect(diagnostic.currentContract).toBe("unchanged")
+      expect(diagnostic.changedSemanticFields).toEqual([])
+      expect(taskExecutionClosureFingerprintAtRevision(work, id, work.generation, 1))
+        .toBe(taskExecutionClosureFingerprintAtRevision(work, id))
+    }
+    const changed = diagnoseTaskReceiptSemantics(work, "c", completeC)
+    expect(changed.originalProof).toBe("valid")
+    expect(changed.currentContract).toBe("changed")
+    expect(changed.changedSemanticFields).toContain("task:c.task.dependsOn")
+  })
+
+  test("display-only Phase/Wave renames do not invalidate authenticated Task receipts", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-rename", now)
+    materializeWorkPlan(work, "wf-rename", plan(), now)
+    const previous = taskSemanticClosureFingerprintAtRevision(work, "a")!
+    const receipt = {
+      workflowId: "wf-rename", evidenceClaimIds: ["original-claim"], completedAt: now,
+      planRevision: 1, semanticClosureFingerprint: previous,
+    }
+    const amended = amendWorkPlan(work, {
+      expectedVersion: work.version, by: "planner", reason: "Rename headings only.",
+      operations: [
+        { action: "patch-phase", phaseId: "core", patch: { title: "Core (new heading)" } },
+        { action: "patch-wave", phaseId: "core", waveId: "foundation",
+          patch: { title: "Foundation (new heading)" } },
+      ],
+    }, "rev2")
+    expect(amended.affectedTaskIds).not.toContain("a")
+    expect(amended.affectedTaskIds).not.toContain("b")
+    expect(taskSemanticClosureFingerprintAtRevision(work, "a")).not.toBe(previous)
+    const status = diagnoseTaskReceiptSemantics(work, "a", receipt)
+    expect(status.originalProof).toBe("valid")
+    expect(status.currentContract).toBe("unchanged")
+    expect(status.changedSemanticFields).toEqual([])
+    expect(status.changedDisplayFields).toEqual([
+      "task:a.phase.title", "task:a.wave.title",
+    ])
+  })
+
+  test("changed objectives and missing/mismatched historical proof remain fail-closed", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-semantic-negative", now)
+    materializeWorkPlan(work, "wf-semantic-negative", plan(), now)
+    const original = taskSemanticClosureFingerprintAtRevision(work, "b", work.generation, 1)!
+    const receipt = {
+      workflowId: "wf-semantic-negative", evidenceClaimIds: ["historical-claim"],
+      completedAt: now, planRevision: 1, semanticClosureFingerprint: original,
+    }
+    const amended = amendWorkPlan(work, {
+      expectedVersion: work.version, by: "planner",
+      reason: "Parent objective materially changes.",
+      operations: [{ action: "patch-phase", phaseId: "core",
+        patch: { objective: "Changed accepted phase outcome." } }],
+    }, "rev2")
+    expect(amended.affectedTaskIds).toContain("a")
+    expect(amended.affectedTaskIds).toContain("b")
+    const changed = diagnoseTaskReceiptSemantics(work, "b", receipt)
+    expect(changed.originalProof).toBe("valid")
+    expect(changed.currentContract).toBe("changed")
+    expect(changed.changedSemanticFields).toContain("task:b.phase.objective")
+    expect(diagnoseTaskReceiptSemantics(work, "b", {
+      ...receipt, semanticClosureFingerprint: undefined,
+    }).originalProof).toBe("missing-receipt-fingerprint")
+    expect(diagnoseTaskReceiptSemantics(work, "b", {
+      ...receipt, semanticClosureFingerprint: "f".repeat(64),
+    }).originalProof).toBe("original-proof-mismatch")
+    expect(diagnoseTaskReceiptSemantics(work, "b", {
+      ...receipt, planRevision: 999,
+    }).originalProof).toBe("original-plan-unavailable")
+  })
+
+  test("Task semantic closure changes when a transitive dependency contract changes", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-closure", now)
+    materializeWorkPlan(work, "wf-closure", plan(), now)
+    const generation = work.generation
+
+    const beforeA = taskSemanticClosureFingerprintAtRevision(work, "a", generation, 1)
+    const beforeB = taskSemanticClosureFingerprintAtRevision(work, "b", generation, 1)
+    expect(beforeA).toBeDefined()
+    expect(beforeB).toBeDefined()
+
+    const amended = amendWorkPlan(work, {
+      expectedVersion: work.version,
+      by: "planner",
+      reason: "Change the upstream Task contract before execution.",
+      operations: [{
+        action: "patch-task",
+        taskId: "a",
+        patch: { acceptanceCriteria: ["A now carries a materially different acceptance contract."] },
+      }],
+    }, "r2")
+    expect(amended.plan.revision).toBe(2)
+
+    expect(taskSemanticClosureFingerprintAtRevision(work, "a", generation, 2)).not.toBe(beforeA)
+    expect(taskSemanticClosureFingerprintAtRevision(work, "b", generation, 2)).not.toBe(beforeB)
+  })
+
+  test("reconciles a split Wave's descriptive objective only after validating the original closure", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-closure", now)
+    materializeWorkPlan(work, "wf-closure", plan(), now)
+    const receiptA = taskSemanticClosureFingerprintAtRevision(work, "a")!
+    const receiptB = taskSemanticClosureFingerprintAtRevision(work, "b")!
+    amendWorkPlan(work, {
+      expectedVersion: work.version, by: "planner", reason: "Split remaining work",
+      operations: [{ action: "patch-wave", phaseId: "core", waveId: "foundation", patch: {
+        objective: "Deliver completed foundations and hand the remaining work to the next Wave.",
+      } }],
+    }, "r2")
+    expect(inspectTaskSemanticClosure(work, "a", 1, receiptA)).toMatchObject({
+      status: "unchanged", changedFields: ["a.wave.objective"],
+    })
+    expect(inspectTaskSemanticClosure(work, "b", 1, receiptB)).toMatchObject({ status: "unchanged" })
+    expect(inspectTaskSemanticClosure(work, "a", 1, undefined).status).toBe("missing-receipt")
+    expect(inspectTaskSemanticClosure(work, "a", 1, "bad").status).toBe("invalid-original")
+    amendWorkPlan(work, {
+      expectedVersion: work.version, by: "planner", reason: "New scope",
+      operations: [{ action: "patch-wave", phaseId: "core", waveId: "foundation", patch: {
+        constraints: ["New mandatory scope"],
+      } }],
+    }, "r3")
+    expect(inspectTaskSemanticClosure(work, "a", 1, receiptA)).toMatchObject({
+      status: "changed-current", changedFields: expect.arrayContaining(["a.wave.constraints"]),
+    })
+  })
+
+  test("rev31 to rev32 split preserves completed c01/c02 receipts but not altered scope or prerequisites", () => {
+    const definition = plan()
+    const foundation = definition.phases[0].waves[0]
+    const remaining = definition.phases[0].waves[1]
+    foundation.objective = "c01, c02, c03"
+    const renamed = (id: string) => ({ ...structuredClone(foundation.tasks[0]),
+      id, title: id, objective: `Build ${id}`, dependsOn: [],
+      acceptanceCriteria: [`${id} is complete and integrated.`] })
+    foundation.tasks = [renamed("c01"), renamed("c02"), renamed("c03")]
+    remaining.tasks = [renamed("c11")]
+    definition.obligations[0].taskIds = ["c01", "c02", "c03", "c11"]
+    definition.acceptanceCoverage[0].taskIds = ["c01", "c02", "c03", "c11"]
+    definition.relationships[0].taskIds = ["c01", "c02", "c03", "c11"]
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-split", now)
+    materializeWorkPlan(work, "wf-split", definition, now)
+    // The immutable prior revision is reconstructed by the real amendment path.
+    // The two receipt hashes are the original full semantic closures, not new stamps.
+    const c01 = taskSemanticClosureFingerprintAtRevision(work, "c01")!
+    const c02 = taskSemanticClosureFingerprintAtRevision(work, "c02")!
+    const executable = foundation.tasks.map((item) =>
+      ({ ...item, write: [`internal/${item.id}/**`], skills: ["golang"] }))
+    claimWorkflowWave(work, "wf-split", work.generation, executable, false, now)
+    syncWorkTaskStatuses(work, "wf-split", work.generation, [
+      { taskId: "c01", complete: true, result: { workflowId: "wf-split", evidenceClaimIds: ["claim-c01"],
+        completedAt: now, planRevision: 1, semanticClosureFingerprint: c01 } },
+      { taskId: "c02", complete: true, result: { workflowId: "wf-split", evidenceClaimIds: ["claim-c02"],
+        completedAt: now, planRevision: 1, semanticClosureFingerprint: c02 } },
+    ], now)
+    releaseWorkflowWave(work, "wf-split", work.generation, ["c01", "c02", "c03"], "split")
+    const amendment = amendWorkPlan(work, {
+      expectedVersion: work.version, by: "planner", reason: "Split c03 and introduce c10 delivery",
+      operations: [{ action: "patch-wave", phaseId: "core", waveId: "foundation", patch: {
+        objective: "Completed c01/c02 foundations; c03 delivery is separately tracked with c10.",
+      } }, { action: "patch-task", taskId: "c03", patch: {
+        subtasks: ["Split remaining work with c10"],
+      } }, { action: "add-task", phaseId: "core", waveId: "runtime", task: renamed("c10") }],
+    }, "r32")
+    expect(amendment.plan.revision).toBe(2)
+    expect(amendment.affectedTaskIds).not.toContain("c01")
+    expect(amendment.affectedTaskIds).not.toContain("c02")
+    for (const [id, receipt] of [["c01", c01], ["c02", c02]] as const) {
+      expect(workPlanContext(work, id)?.focus?.task).toEqual(definition.phases[0].waves[0].tasks.find((task) => task.id === id))
+      expect(executable.find((task) => task.id === id)?.write).toEqual([`internal/${id}/**`])
+      expect(inspectTaskSemanticClosure(work, id, 1, receipt).status).toBe("unchanged")
+      expect(work.nodes.find((node) => node.type === "task" && node.logicalId === id)?.result?.semanticClosureFingerprint)
+        .toBe(receipt)
+    }
+    expect(inspectTaskSemanticClosure(work, "c03", 1,
+      taskSemanticClosureFingerprintAtRevision(work, "c03", work.generation, 1)).status).toBe("changed-current")
+    const before = structuredClone(work)
+    expect(inspectTaskSemanticClosure(work, "c01", 1, "invalid").status).toBe("invalid-original")
+    expect(work).toEqual(before)
+    amendWorkPlan(work, { expectedVersion: work.version, by: "planner", reason: "Change authority and dependencies",
+      operations: [{ action: "patch-task", taskId: "c02", patch: { dependsOn: ["c03"] } }],
+    }, "r33")
+    expect(inspectTaskSemanticClosure(work, "c02", 1, c02)).toMatchObject({
+      status: "changed-current", changedFields: expect.arrayContaining(["c02.task"]),
+    })
+    const cosmetic = amendWorkPlan(work, {
+      expectedVersion: work.version, by: "planner", reason: "Cosmetic Wave heading change",
+      operations: [{ action: "patch-wave", phaseId: "core", waveId: "foundation",
+        patch: { title: "A different foundation heading" } }],
+    }, "r34")
+    expect(cosmetic.affectedTaskIds).not.toContain("c01")
+    expect(inspectTaskSemanticClosure(work, "c01", 1, c01)).toMatchObject({
+      status: "unchanged", changedFields: expect.arrayContaining(["c01.wave.title"]),
+    })
+    const material = amendWorkPlan(work, {
+      expectedVersion: work.version, by: "planner", reason: "Material Wave constraint change",
+      operations: [{ action: "patch-wave", phaseId: "core", waveId: "foundation",
+        patch: { constraints: ["New binding delivery constraint"] } }],
+    }, "r35")
+    expect(material.affectedTaskIds).toContain("c01")
+    expect(inspectTaskSemanticClosure(work, "c01", 1, c01)).toMatchObject({
+      status: "changed-current", changedFields: expect.arrayContaining(["c01.wave.constraints"]),
+    })
+    amendWorkPlan(work, { expectedVersion: work.version, by: "planner", reason: "Authority reassignment",
+      operations: [{ action: "patch-task", taskId: "c01", patch: {
+        authorityRefs: ["docs/anchors/product/anchor.md"],
+      } }],
+    }, "r36")
+    expect(inspectTaskSemanticClosure(work, "c01", 1, c01)).toMatchObject({
+      status: "changed-current", changedFields: expect.arrayContaining(["c01.task"]),
+    })
   })
 
   test("preserves early full-snapshot revision history when converting to delta-backed amendments", () => {
@@ -481,26 +1062,192 @@ describe("Loom persistent work hierarchy", () => {
     expect(work.nodes.find((node) => node.logicalId === "a")?.status).toBe("complete")
   })
 
-  test("refuses to rewrite completed Task semantics in-place", () => {
+  test("Planner can add Tasks and Waves as a new revision while the current Wave is claimed", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-adaptive-plan", now)
+    materializeWorkPlan(work, "wf-adaptive-plan", plan(), now)
+    claimWorkflowWave(
+      work,
+      "wf-adaptive-plan",
+      work.generation,
+      [task("a"), task("b", ["a"])],
+      false,
+      now,
+    )
+    syncWorkTaskStatuses(work, "wf-adaptive-plan", work.generation, [{
+      taskId: "a",
+      complete: true,
+      result: {
+        workflowId: "wf-adaptive-plan",
+        summary: "A is already complete.",
+        evidenceClaimIds: ["claim-a"],
+        completedAt: now,
+      },
+    }], now)
+
+    const extraTask = {
+      id: "extra",
+      title: "Extra",
+      objective: "Handle a newly discovered execution hurdle.",
+      rationale: "Execution revealed a missing bounded contribution.",
+      dependsOn: ["a"],
+      authorityRefs: ["docs/architecture/product.md"],
+      constraints: ["Preserve the completed foundation."],
+      acceptanceCriteria: ["The newly discovered path is covered."],
+      subtasks: ["Implement the additional path"],
+      integration: ["Consume A without rerunning it."],
+      verify: ["go test ./..."],
+      role: "worker",
+      responsibility: "execute" as const,
+    }
+    const lateTask = {
+      id: "late",
+      title: "Late follow-up",
+      objective: "Complete newly discovered follow-up work.",
+      rationale: "The Plan adapts to execution findings.",
+      dependsOn: ["extra"],
+      authorityRefs: ["docs/architecture/product.md"],
+      constraints: [],
+      acceptanceCriteria: ["The follow-up is integrated."],
+      subtasks: [],
+      integration: ["Build on Extra."],
+      verify: ["go test ./..."],
+      role: "worker",
+      responsibility: "execute" as const,
+    }
+
+    const amended = amendWorkPlan(work, {
+      expectedVersion: work.version,
+      by: "planner",
+      reason: "Execution exposed additional work; layer it onto the current Plan.",
+      operations: [
+        { action: "add-task", phaseId: "core", waveId: "foundation", task: extraTask },
+        {
+          action: "add-wave",
+          phaseId: "core",
+          wave: {
+            id: "follow-up",
+            title: "Follow-up",
+            objective: "Address the newly discovered follow-up.",
+            constraints: [],
+            tasks: [lateTask],
+          },
+        },
+      ],
+    }, "adaptive-r2")
+
+    expect(amended.plan.revision).toBe(2)
+    expect(amended.changedTaskIds).toEqual(expect.arrayContaining(["extra", "late"]))
+    expect(amended.changedWaveKeys).toEqual(expect.arrayContaining(["core/foundation", "core/follow-up"]))
+    expect(workPlanContext(work, "extra")?.focus?.task.objective)
+      .toBe("Handle a newly discovered execution hurdle.")
+    expect(workPlanContext(work, "late")?.focus?.task.objective)
+      .toBe("Complete newly discovered follow-up work.")
+    expect(workPlanContext(work, "extra", "focused", 1, 1)?.focus?.task).toBeUndefined()
+
+    const a = work.nodes.find(
+      (node) => node.generation === work.generation && node.type === "task" && node.logicalId === "a",
+    )
+    expect(a?.status).toBe("complete")
+    expect(a?.result?.summary).toBe("A is already complete.")
+    expect(work.nodes.find(
+      (node) => node.generation === work.generation && node.type === "task" && node.logicalId === "extra",
+    )?.status).toBe("pending")
+  })
+
+  test("reopening unverified execution archives a receipt even after its claim was released", () => {
     const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-1", now)
     materializeWorkPlan(work, "wf-1", plan(), now)
     claimWorkflowWave(work, "wf-1", work.generation, [task("a"), task("b", ["a"])], false, now)
-    syncWorkTaskStatuses(work, "wf-1", work.generation, [{ taskId: "a", complete: true }], now)
+    const result = {
+      workflowId: "wf-1",
+      summary: "Completed under old receipt contract.",
+      evidenceClaimIds: ["claim-a"],
+      completedAt: now,
+    }
+    syncWorkTaskStatuses(work, "wf-1", work.generation, [{ taskId: "a", complete: true, result }], now)
+    releaseCancelledWorkflowClaims(work, "wf-1", "released")
+    invalidateWorkflowTaskResults(work, "wf-1", work.generation, ["a"], "Unverified receipt", "review")
+    const node = work.nodes.find((candidate) => candidate.type === "task" && candidate.logicalId === "a")
+    expect(node?.status).toBe("pending")
+    expect(node?.result).toBeUndefined()
+    expect(node?.priorResults?.at(-1)).toMatchObject({
+      ...result, invalidatedReason: "Unverified receipt", invalidatedByRevision: 1,
+    })
+  })
+
+  test("retains a reopened Task result as historical evidence rather than silently discarding it", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-1", now)
+    materializeWorkPlan(work, "wf-1", plan(), now)
+    claimWorkflowWave(work, "wf-1", work.generation, [task("a"), task("b", ["a"])], false, now)
+    const result = {
+      workflowId: "wf-1",
+      summary: "Legacy result awaiting re-attestation",
+      evidenceClaimIds: ["claim-a"],
+      completedAt: now,
+    }
+    syncWorkTaskStatuses(work, "wf-1", work.generation, [{ taskId: "a", complete: true, result }], now)
+    syncWorkTaskStatuses(work, "wf-1", work.generation, [{ taskId: "a", complete: false }], "awaiting-review")
+    const node = work.nodes.find((candidate) => candidate.type === "task" && candidate.logicalId === "a")
+    // Status is pending until independent review, but the execution receipt
+    // remains valid until the workflow explicitly reopens its Task step.
+    expect(node?.status).toBe("pending")
+    expect(node?.result).toEqual(result)
+    expect(node?.priorResults).toBeUndefined()
+    invalidateWorkflowTaskResults(work, "wf-1", work.generation, ["a"], "Task explicitly reopened", "reopened")
+    expect(node?.result).toBeUndefined()
+    expect(node?.priorResults).toEqual([{
+      ...result,
+      invalidatedAt: "reopened",
+      invalidatedByRevision: 1,
+      invalidatedReason: "Task explicitly reopened",
+    }])
+  })
+
+  test("records a new Plan revision and invalidates only completion receipts affected by the semantic delta", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-1", now)
+    materializeWorkPlan(work, "wf-1", plan(), now)
+    claimWorkflowWave(work, "wf-1", work.generation, [task("a"), task("b", ["a"])], false, now)
+    syncWorkTaskStatuses(work, "wf-1", work.generation, [{
+      taskId: "a",
+      complete: true,
+      result: {
+        workflowId: "wf-1",
+        summary: "A completed under revision 1.",
+        evidenceClaimIds: ["claim-a"],
+        completedAt: now,
+      },
+    }], now)
     releaseCancelledWorkflowClaims(work, "wf-1", "released")
 
-    expect(() => amendWorkPlan(work, {
+    const amended = amendWorkPlan(work, {
       expectedVersion: work.version,
       by: "planner",
-      reason: "Unsafe retroactive change",
+      reason: "The foundation contract changed after execution.",
       operations: [{
         action: "patch-task",
         taskId: "a",
         patch: { objective: "A different meaning" },
       }],
-    }, "later")).toThrow("cannot rewrite semantic context")
+    }, "later")
+
+    expect(amended.plan.revision).toBe(2)
+    expect(amended.changedTaskIds).toContain("a")
+    expect(amended.affectedTaskIds).toEqual(expect.arrayContaining(["a", "b", "c"]))
+    expect(workPlanContext(work, "a", "focused", 1, 1)?.focus?.task.objective).toBe("Build A")
+    expect(workPlanContext(work, "a")?.focus?.task.objective).toBe("A different meaning")
+
+    const a = work.nodes.find((node) => node.logicalId === "a" && node.generation === work.generation)!
+    expect(a.status).toBe("pending")
+    expect(a.result).toBeUndefined()
+    expect(a.priorResults?.at(-1)).toMatchObject({
+      workflowId: "wf-1",
+      summary: "A completed under revision 1.",
+      evidenceClaimIds: ["claim-a"],
+      invalidatedByRevision: 2,
+    })
   })
 
-  test("fails closed on malformed local amendment shapes and claimed semantic changes", () => {
+  test("rejects malformed deltas but lets Planner revise claimed Plan semantics as a new revision", () => {
     const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-1", now)
     materializeWorkPlan(work, "wf-1", plan(), now)
 
@@ -518,30 +1265,37 @@ describe("Loom persistent work hierarchy", () => {
     claimWorkflowWave(work, "wf-1", work.generation, [task("a"), task("b", ["a"])], false, now)
     const obligations = structuredClone(plan().obligations)
     obligations[0].statement = "Different obligation meaning"
-    expect(() => amendWorkPlan(work, {
+    const first = amendWorkPlan(work, {
       expectedVersion: work.version,
       by: "planner",
-      reason: "Unsafe claimed contract rewrite",
+      reason: "Adapt the claimed Plan without rewriting revision 1.",
       planPatch: { obligations },
       operations: [],
-    }, "later")).toThrow("claimed/completed Task")
-    const correctionRouting = structuredClone(plan().correctionRouting)
+    }, "later")
+    expect(first.plan.revision).toBe(2)
+    expect(first.affectedTaskIds).toEqual(expect.arrayContaining(["a", "b", "c"]))
+
+    const correctionRouting = structuredClone(first.plan.correctionRouting)
     correctionRouting.unshift({
       condition: "New global recovery route",
       routeTo: "planner",
     })
-    expect(() => amendWorkPlan(work, {
+    const second = amendWorkPlan(work, {
       expectedVersion: work.version,
       by: "planner",
-      reason: "Unsafe claimed correction-route rewrite",
+      reason: "Layer another Planner correction on the effective Plan.",
       planPatch: { correctionRouting },
       operations: [],
-    }, "later")).toThrow("correction routing for claimed/completed Task")
+    }, "later-2")
+    expect(second.plan.revision).toBe(3)
+    expect(workPlanContext(work, "a", "focused", 1, 1)?.revision).toBe(1)
+    expect(workPlanContext(work, "a", "focused", 1, 2)?.revision).toBe(2)
+
     expect(() => invalidateWorkPlan(work, {
       expectedVersion: work.version,
       by: "planner",
-      reason: "Cannot invalidate under a live claim",
-    }, "later")).toThrow("cannot be amended")
+      reason: "Generation invalidation still requires released live claims",
+    }, "later-3")).toThrow("cannot be amended")
   })
 
   test("whole-Plan fingerprint changes when the current Plan is invalidated", () => {
@@ -598,7 +1352,7 @@ describe("Loom persistent work hierarchy", () => {
       ],
       now,
     )
-    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now)
+    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now, graphFingerprint)
 
     claimWorkflowWave(work, "wf-2", work.generation, [task("c")], true, now)
     syncWorkTaskStatuses(
@@ -608,7 +1362,7 @@ describe("Loom persistent work hierarchy", () => {
       [{ taskId: "c", complete: true }],
       now,
     )
-    completeWaveForTasks(work, "wf-2", work.generation, ["c"], now)
+    completeWaveForTasks(work, "wf-2", work.generation, ["c"], now, graphFingerprint)
 
     expect(workTree(work).phases[0].status).toBe("complete")
     expect(work.objectiveStatus).toBe("active")
@@ -639,7 +1393,7 @@ describe("Loom persistent work hierarchy", () => {
       ],
       now,
     )
-    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now)
+    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now, graphFingerprint)
 
     claimWorkflowWave(work, "wf-2", work.generation, [task("c")], true, now)
     syncWorkTaskStatuses(
@@ -649,7 +1403,7 @@ describe("Loom persistent work hierarchy", () => {
       [{ taskId: "c", complete: true }],
       now,
     )
-    completeWaveForTasks(work, "wf-2", work.generation, ["c"], now)
+    completeWaveForTasks(work, "wf-2", work.generation, ["c"], now, graphFingerprint)
 
     expect(workTree(work).phases[0].status).toBe("complete")
     expect(() => completeObjective(work, work.generation, now)).toThrow(
@@ -677,7 +1431,7 @@ describe("Loom persistent work hierarchy", () => {
     )
     expect(nextRunnableWaves(work)).toHaveLength(0)
 
-    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now)
+    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now, graphFingerprint)
     expect(nextRunnableWaves(work).map((wave) => wave.id)).toEqual(["runtime"])
   })
 
@@ -710,7 +1464,7 @@ describe("Loom persistent work hierarchy", () => {
       ],
       now,
     )
-    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now)
+    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now, graphFingerprint)
 
     expect(objectiveWorkLevel(work)).toBe("objective")
   })
@@ -734,7 +1488,7 @@ describe("Loom persistent work hierarchy", () => {
       ],
       now,
     )
-    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now)
+    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now, graphFingerprint)
 
     expect(() => validateWorkflowWave(work, [task("c")], true)).not.toThrow()
   })
@@ -776,7 +1530,12 @@ describe("Loom persistent work hierarchy", () => {
       ],
       now,
     )
-    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now)
+    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now, graphFingerprint)
+    expect(workTree(work).phases[0].waves[0].status).toBe("complete")
+
+    expect(() => reopenWaveForTasks(work, "wf-1", work.generation, ["a", "b"], "stale-review", "b".repeat(64))).toThrow(
+      "does not match the current Task role/slot graph and independent gates",
+    )
     expect(workTree(work).phases[0].waves[0].status).toBe("complete")
 
     reopenWaveForTasks(work, "wf-1", work.generation, ["a", "b"], "later")
@@ -870,14 +1629,48 @@ describe("reviewed Wave history and cancellation claims", () => {
     syncWorkTaskStatuses(work, "wf-1", work.generation, [
       { taskId: "a", complete: true }, { taskId: "b", complete: true },
     ], now)
-    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now)
+    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now, graphFingerprint)
     return work
   }
+
+  test("all-reused Wave cannot be re-claimed after downstream work has started", () => {
+    const work = createWorkHierarchy("docs/anchors/product/anchor.md", "wf-1", now)
+    materializeWorkPlan(work, "wf-1", plan(), now)
+    claimWorkflowWave(work, "wf-1", work.generation, [task("a"), task("b", ["a"])], false, now)
+    const result = (id: string) => ({
+      workflowId: "wf-1",
+      summary: `Completed ${id}.`,
+      evidenceClaimIds: [],
+      completedAt: now,
+      semanticClosureFingerprint: taskSemanticClosureFingerprintAtRevision(work, id)!,
+    })
+    syncWorkTaskStatuses(work, "wf-1", work.generation, [
+      { taskId: "a", complete: true, result: result("a") },
+      { taskId: "b", complete: true, result: result("b") },
+    ], now)
+    completeWaveForTasks(work, "wf-1", work.generation, ["a", "b"], now, graphFingerprint)
+
+    // Re-review is allowed before the reviewed result is consumed.
+    const control = structuredClone(work)
+    expect(() => claimWorkflowWave(control, "wf-1", control.generation, [], false, "rereview", ["a", "b"])).not.toThrow()
+
+    // Once the next Wave owns dependent work, reopening the foundation
+    // must not steal its completed review or turn it back into an active Wave.
+    claimWorkflowWave(work, "wf-2", work.generation, [task("c")], false, "downstream")
+    const before = structuredClone(work)
+    expect(() =>
+      claimWorkflowWave(work, "wf-1", work.generation, [], false, "rereview", ["a", "b"]),
+    ).toThrow("downstream")
+    expect(work).toEqual(before)
+  })
 
   test("completion proof is exact to owner, generation and reviewed task set", () => {
     const work = completedFoundation()
     const before = structuredClone(work)
-    expect(assertCompletedWaveForTasks(work, "wf-1", work.generation, ["b", "a"]).completion!.provenance).toBe("implementation-review")
+    expect(assertCompletedWaveForTasks(work, "wf-1", work.generation, ["b", "a"], graphFingerprint).completion!.provenance).toBe("implementation-review")
+    expect(() => assertCompletedWaveForTasks(work, "wf-1", work.generation, ["a", "b"], "b".repeat(64))).toThrow(
+      "does not match the current Task role/slot graph and independent gates",
+    )
     for (const ids of [[], ["a"], ["a", "a"], ["a", "c"], ["missing"]]) {
       expect(() => assertCompletedWaveForTasks(work, "wf-1", work.generation, ids)).toThrow()
     }
@@ -901,7 +1694,7 @@ describe("reviewed Wave history and cancellation claims", () => {
     expect(releaseCancelledWorkflowClaims(work, "wf-1", "retry")).toEqual([])
     claimWorkflowWave(work, "wf-2", work.generation, [task("b")], false, "resumed")
     syncWorkTaskStatuses(work, "wf-2", work.generation, [{ taskId: "b", complete: true }], "finished")
-    completeWaveForTasks(work, "wf-2", work.generation, ["b"], "reviewed")
+      completeWaveForTasks(work, "wf-2", work.generation, ["b"], "reviewed", graphFingerprint)
     expect(work.nodes.find((node) => node.logicalId === "a")).toEqual(priorTask)
     expect(assertCompletedWaveForTasks(work, "wf-2", work.generation, ["b"]).completion).toMatchObject({
       workflowId: "wf-2", taskIds: ["b"], reviewedTaskIds: ["a", "b"],
@@ -920,7 +1713,7 @@ describe("reviewed Wave history and cancellation claims", () => {
     expect(() => reopenWaveForTasks(work, "wf-1", work.generation, ["a", "b"], "bad")).toThrow("downstream")
     expect(work).toEqual(claimed)
     syncWorkTaskStatuses(work, "wf-2", work.generation, [{ taskId: "c", complete: true }], "done")
-    completeWaveForTasks(work, "wf-2", work.generation, ["c"], "reviewed")
+      completeWaveForTasks(work, "wf-2", work.generation, ["c"], "reviewed", graphFingerprint)
     expect(() => reopenWaveForTasks(work, "wf-1", work.generation, ["a", "b"], "bad")).toThrow("downstream")
   })
 

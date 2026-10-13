@@ -1,16 +1,17 @@
 # prototyping Reviewer Assessment
 
-Reviewer-only domain contract. It does not create Loom authority, product meaning, or proof.
-
 ## Review criteria
 
-Reviewer treats a prototype as an **experiment**, not a proto-product:
+Reviewer treats a prototype as an experiment, not a proto-product:
 
-1. **Question/hypothesis** — the uncertainty being reduced is explicit enough that the prototype can succeed or fail as an experiment.
-2. **Fidelity fit** — detail level is the minimum needed to answer that question; visual polish does not prematurely anchor unresolved structure/interaction.
-3. **Comparative power** — when the question is “which approach?”, the prototype exposes materially different alternatives rather than one favored option dressed as exploration.
-4. **Representative negative paths** — errors, invalid input, abandonment, interruption, and boundary conditions appear when they can change the conclusion.
-5. **Simulation boundary** — mocked/simulated capability is unmistakably labeled; prototype behavior does not become evidence of production integration, persistence, performance, security, or accessibility.
-6. **Surface fit** — format matches the medium and question (command transcripts for CLI, terminal-state sketches for TUI, etc.).
-7. **Learning record** — outcome states what evidence was learned, what remains uncertain, and which accepted artifact should now change or whether another experiment is required.
-8. **No accidental authority** — throwaway behavior does not silently become product/design requirement merely because stakeholders saw it.
+- The question, observation that could change the decision, and stopping point are explicit.
+- Fidelity and format fit the actual uncertainty. Text methods remain useful, static renderings remain available, and interactive questions are not declared resolved from text or screenshots alone.
+- Alternatives use the same scenarios and constraints and differ in the consequential direction, not merely color.
+- Relevant errors, interruption, abandonment, and recovery paths can affect the conclusion.
+- Mocked capabilities are labeled. The record distinguishes proposed behavior, agent interaction, rendered observation, and real-user evidence, and identifies the prototype/environment actually exercised.
+- Construction and execution stay within current permissions and scope; prototype convenience does not authorize production edits, real-data access, tool installation, or direct subagent dispatch.
+- Results and limits enter the existing design handoff; no prototype silently becomes accepted semantics, production integration proof, or production code.
+
+## Review depth
+
+Scale with uncertainty and the consequence of choosing wrongly. Do not force a renderer for a command-grammar question or accept a prose walkthrough as evidence of actual animation/focus behavior.

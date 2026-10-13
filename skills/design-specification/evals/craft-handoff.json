@@ -1,0 +1,37 @@
+{
+  "skill": "design-specification",
+  "version": "2.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "DESIGN-SPEC-DIRECTION-01",
+      "name": "cold-implementation-retains-intent",
+      "prompt": "Prepare a compact handoff for a web review queue. Accepted intent: calm oversight, retain item identity through review and return, urgent corrections before general activity. The real project has ui/queue.html, ui/tokens.css, and docs/patterns/review-return.md; all are current. An accepted exception lets long reviewer names wrap. A static prototype informed density but did not exercise keyboard behavior. Describe the handoff inline, without writing files or claiming to inspect the files.",
+      "trap": "An implementation-ready handoff names components but loses character, accepted exceptions, and evidence limitations.",
+      "expectations": [
+        "Carries concrete character and craft criteria inside the existing handoff, not a separate authority hierarchy.",
+        "References the supplied real patterns for downstream inspection and describes how the review/return journey must compose.",
+        "Distinguishes the wrapping exception from general defaults and identifies unresolved/material keyboard observations.",
+        "Keeps static-prototype evidence bounded and does not claim it proves production interaction."
+      ],
+      "negative_expectations": [
+        "Do not invent file contents or claim references were inspected.",
+        "Do not require a new brand approval or present prototype behavior as established production proof."
+      ]
+    },
+    {
+      "id": "DESIGN-SPEC-LOCAL-01",
+      "name": "small-handoff-stays-small",
+      "prompt": "The accepted settings design already defines the interaction, keyboard behavior, and product direction. We are only clarifying one field's empty-state help text to say which format is accepted. Give the smallest useful design handoff, inline.",
+      "trap": "The expanded handoff shape becomes a mandatory branding and documentation quota.",
+      "expectations": [
+        "Inherits the accepted design and limits the handoff to the relevant copy change and its intent.",
+        "States a concrete check of the new help text without inventing a product-wide direction.",
+        "Avoids reopening settled interaction choices."
+      ],
+      "negative_expectations": [
+        "Do not mandate new personas, alternative layouts, brand documents, or additional approval stages."
+      ]
+    }
+  ]
+}

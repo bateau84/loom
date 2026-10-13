@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto"
 import {
+  LOOM_AGENT_ROLES,
   MAX_TASKS,
   MAX_TASK_CONTEXT_ITEMS,
   MAX_TASK_TEXT_LENGTH,
   type TaskSpec,
 } from "./tasks"
+import { nativeTaskPath, validateAdviceAssociation } from "./tasks"
 
 export const MAX_WORK_ID_LENGTH = 96
 export const MAX_WORK_PHASES = 32
@@ -15,6 +17,7 @@ export const MAX_WORK_RISK_BOUNDARIES = 64
 export const MAX_WORK_ACCEPTANCE_COVERAGE = 64
 export const MAX_WORK_RELATIONSHIPS = 64
 export const MAX_WORK_CORRECTION_ROUTES = 64
+export const MAX_WORK_AUTHORITY_REFS = 64
 
 export type WorkNodeStatus =
   | "pending"
@@ -39,6 +42,10 @@ export type WorkPlanTask = {
   subtasks: string[]
   integration: string[]
   verify: string[]
+  /** Accountable role; absent only in truthful legacy Plan history. */
+  role?: string
+  responsibility?: "produce" | "execute" | "review" | "obtain-user-decision"
+  adviceForTaskId?: string
 }
 
 export type WorkPlanObligationDisposition =
@@ -120,7 +127,7 @@ export type WorkPlanAmendmentRecord = {
   operations: string[]
   at: string
   /** Internal inverse delta used to reconstruct immutable earlier revisions without copying the whole Plan. */
-  inverseOperations?: WorkPlanAmendOperation[]
+  inverseOperations?: WorkPlanInverseOperation[]
   /** Previous values for top-level fields changed by this revision. */
   inversePlanPatch?: WorkPlanTopLevelPatch
 }
@@ -154,7 +161,12 @@ export type WorkPlanTopLevelPatch = Partial<
   >
 >
 
+/** Public in-place metadata patch. authorityRefs use explicit delta operations only. */
+export type WorkPlanAmendTopLevelPatch = Omit<WorkPlanTopLevelPatch, "authorityRefs">
+
 export type WorkPlanAmendOperation =
+  | { action: "add-authority-ref"; authorityRef: string }
+  | { action: "remove-authority-ref"; authorityRef: string }
   | { action: "patch-phase"; phaseId: string; patch: WorkPlanPhasePatch }
   | { action: "patch-wave"; phaseId: string; waveId: string; patch: WorkPlanWavePatch }
   | { action: "patch-task"; taskId: string; patch: WorkPlanTaskPatch }
@@ -165,13 +177,87 @@ export type WorkPlanAmendOperation =
   | { action: "add-task"; phaseId: string; waveId: string; task: WorkPlanTask }
   | { action: "remove-task"; taskId: string }
 
+type WorkPlanInverseOperation =
+  | Exclude<
+      WorkPlanAmendOperation,
+      { action: "add-phase" | "add-wave" | "add-task" | "add-authority-ref" }
+    >
+  | { action: "add-authority-ref"; authorityRef: string; index?: number }
+  | { action: "add-phase"; phase: WorkPlanPhase; index?: number }
+  | { action: "add-wave"; phaseId: string; wave: WorkPlanWave; index?: number }
+  | { action: "add-task"; phaseId: string; waveId: string; task: WorkPlanTask; index?: number }
+
 export type WaveCompletion = {
   workflowId: string
   generation: number
   taskIds: string[]
   reviewedTaskIds: string[]
+  /** Exact compiled role/slot/dependency/review-gate graph accepted by this review. */
+  bindingFingerprint?: string
   at: string
   provenance: "implementation-review" | "legacy-reviewed-workflow"
+}
+
+export type WorkTaskResult = {
+  workflowId: string
+  summary?: string
+  evidenceClaimIds: string[]
+  completedAt: string
+  /** Reviewed Plan revision under which this result was produced, when known. */
+  planRevision?: number
+  /** Task + transitive dependency semantics consumed by this result, when known. */
+  semanticClosureFingerprint?: string
+  /** Original completion attempt and producer, not a replacement Planner attestation. */
+  completedAttempt?: number
+  producerAgent?: string
+  /** Exact executable TaskSpec including role, dependencies, write and verification scope. */
+  executableTaskFingerprint?: string
+  /** Digests of original dependency execution results, not only their Plan semantics. */
+  dependencyResultDigests?: Record<string, string>
+  /** Clean Git HEAD at completion. Missing values cannot prove code continuity. */
+  cleanRepositoryHead?: string
+  nativeKind?: "advisory" | "producer" | "acceptance"
+  generation?: number
+  taskId?: string
+  stepId?: string
+  producerSessionId?: string
+  adviceForTaskId?: string
+  resultDigest?: string
+  adviceResolutions?: AdviceResolution[]
+}
+
+export type AdviceResolution = {
+  taskId: string
+  resultDigest: string
+  disposition: "adopted" | "rejected" | "deferred"
+  rationale: string
+  resolutionRef: string
+}
+
+/** Immutable advisory identity/content. Never re-digest a reused result against new semantics. */
+export function advisoryResultDigest(result: WorkTaskResult) {
+  if (result.nativeKind !== "advisory" || result.producerAgent !== "brainstorm" ||
+      !result.generation || !result.taskId || !result.stepId || !result.producerSessionId ||
+      !Number.isSafeInteger(result.completedAttempt) || result.completedAttempt! < 0 ||
+      !/^[0-9a-f]{64}$/.test(result.semanticClosureFingerprint ?? "") ||
+      !/^[0-9a-f]{64}$/.test(result.executableTaskFingerprint ?? "") || !result.adviceForTaskId ||
+      typeof result.summary !== "string" || !result.summary.trim() || result.summary.length > MAX_TASK_TEXT_LENGTH ||
+      !Array.isArray(result.evidenceClaimIds)) {
+    throw new Error("Original advisory result provenance is missing.")
+  }
+  return createHash("sha256").update(JSON.stringify({
+    workflowId: result.workflowId, generation: result.generation, taskId: result.taskId,
+    stepId: result.stepId, attempt: result.completedAttempt, producerRole: result.producerAgent,
+    nativeKind: result.nativeKind, semanticClosureFingerprint: result.semanticClosureFingerprint,
+    executableTaskFingerprint: result.executableTaskFingerprint, adviceForTaskId: result.adviceForTaskId,
+    summary: result.summary, evidenceClaimIds: [...result.evidenceClaimIds].sort(),
+  })).digest("hex")
+}
+
+export type HistoricalWorkTaskResult = WorkTaskResult & {
+  invalidatedAt: string
+  invalidatedByRevision: number
+  invalidatedReason: string
 }
 
 export type WorkNode = {
@@ -188,12 +274,9 @@ export type WorkNode = {
   claimedByWorkflowId?: string
   claimedAt?: string
   completion?: WaveCompletion
-  result?: {
-    workflowId: string
-    summary?: string
-    evidenceClaimIds: string[]
-    completedAt: string
-  }
+  result?: WorkTaskResult
+  /** Historical receipts are audit-only unless exact original evidence is reverified by work_reconcile. */
+  priorResults?: HistoricalWorkTaskResult[]
   createdAt: string
   updatedAt: string
 }
@@ -373,6 +456,13 @@ function validateWorkPlanPhases(phases: WorkPlanPhase[]) {
         if (taskIds.has(taskId)) throw new Error(`Work Task ids must be globally unique: ${taskId}`)
         taskIds.add(taskId)
         taskCount++
+        if (taskInput.role && !/^[a-z][a-z0-9-]*$/.test(taskInput.role.trim())) {
+          throw new Error(`Task ${taskId} has invalid accountable role.`)
+        }
+        if (taskInput.responsibility && !["produce", "execute", "review", "obtain-user-decision"].includes(taskInput.responsibility)) {
+          throw new Error(`Task ${taskId} has invalid responsibility.`)
+        }
+        validateAdviceAssociation({ ...taskInput, id: taskId, role: taskInput.role?.trim() })
 
         tasks.push({
           id: taskId,
@@ -392,6 +482,9 @@ function validateWorkPlanPhases(phases: WorkPlanPhase[]) {
           subtasks: normalizedTextList(taskInput.subtasks, `Task ${taskId} subtasks`),
           integration: normalizedTextList(taskInput.integration, `Task ${taskId} integration`),
           verify: normalizedTextList(taskInput.verify, `Task ${taskId} verify`, true),
+          ...(taskInput.role ? { role: taskInput.role.trim() } : {}),
+          ...(taskInput.responsibility ? { responsibility: taskInput.responsibility } : {}),
+          ...(taskInput.adviceForTaskId !== undefined ? { adviceForTaskId: taskInput.adviceForTaskId } : {}),
         })
       }
 
@@ -455,7 +548,12 @@ export function validateWorkPlan(input: WorkPlanDefinition): WorkPlanDefinition 
     phases.flatMap((phase) => phase.waves.flatMap((wave) => wave.tasks.map((task) => task.id))),
   )
 
-  const planAuthorityRefs = normalizedTextList(input.authorityRefs, "Plan authorityRefs", true, 64)
+  const planAuthorityRefs = normalizedTextList(
+    input.authorityRefs,
+    "Plan authorityRefs",
+    true,
+    MAX_WORK_AUTHORITY_REFS,
+  )
   for (const task of phases.flatMap((phase) => phase.waves.flatMap((wave) => wave.tasks))) {
     for (const authorityRef of task.authorityRefs) {
       if (!planAuthorityRefs.includes(authorityRef)) {
@@ -602,6 +700,99 @@ export function validateWorkPlan(input: WorkPlanDefinition): WorkPlanDefinition 
     correctionRouting,
     phases,
   }
+}
+
+/** Feasibility is checked against routes shipped in this runtime, not proposed architecture. */
+export function validatePlanRoleFeasibility(plan: WorkPlanDefinition) {
+  const allTasks = plan.phases.flatMap((phase) => phase.waves.flatMap((wave) => wave.tasks))
+  const taskById = new Map(allTasks.map((task) => [task.id, task]))
+  for (const phase of plan.phases) for (const wave of phase.waves) for (const task of wave.tasks) {
+    const obligationIds = plan.obligations.filter((obligation) => obligation.taskIds.includes(task.id)).map((obligation) => obligation.id)
+    const fail = (reason: string): never => {
+      throw new Error(`Plan role path unavailable for Task ${task.id} (obligations: ${obligationIds.join(", ") || "none"}) in ${phase.id}/${wave.id}: ${reason}`)
+    }
+    if (!task.role || !task.responsibility) {
+      throw new Error(`Plan role path unavailable for Task ${task.id} (obligations: ${obligationIds.join(", ") || "none"}) in ${phase.id}/${wave.id}: accountable role and responsibility are required`)
+    }
+    const role = task.role
+    const responsibility = task.responsibility
+    validateAdviceAssociation(task)
+    const path = nativeTaskPath(task)
+    if (path?.nativeKind === "advisory") {
+      const receiver = taskById.get(task.adviceForTaskId!)
+      if (!receiver || nativeTaskPath(receiver)?.nativeKind !== "producer") fail("advice receiver must have a supported non-advisory producer/executor path")
+      if (!receiver!.dependsOn.includes(task.id)) fail("advice receiver must directly depend on its advisory Task")
+      const inputs = allTasks.filter((source) => source.adviceForTaskId === receiver!.id)
+      if (inputs.length > MAX_TASK_CONTEXT_ITEMS) fail("receiver exceeds the advice resolution limit")
+      if (plan.authorityRefs.some((ref) => ref === `task:${task.id}` || ref.startsWith(`task:${task.id}#`))) {
+        fail("advisory output cannot be Plan authority or authorize obligation deferral")
+      }
+      for (const target of allTasks) {
+        if (target.dependsOn.includes(task.id) && target.id !== receiver!.id && nativeTaskPath(target)?.nativeKind !== "review") {
+          fail(`Task ${target.id} bypasses the named advice receiver ${receiver!.id}`)
+        }
+        if (target.authorityRefs.some((ref) => ref === `task:${task.id}` || ref.startsWith(`task:${task.id}#`))) {
+          fail(`Task ${target.id} uses advisory output as authority`)
+        }
+      }
+      continue
+    }
+    if (!LOOM_AGENT_ROLES.includes("reviewer")) fail("required independent Reviewer gate is unavailable")
+    if (responsibility === "obtain-user-decision") {
+      if (role !== "user") fail(`user-decision responsibility is not owned by ${role}`)
+      continue
+    }
+    if (responsibility === "review") {
+      if (role === "acceptance" && path?.nativeKind === "acceptance") {
+        if (task.dependsOn.length === 0) fail("Product Acceptance must depend on reviewed product work")
+        if (wave.tasks.filter((candidate) => nativeTaskPath(candidate)?.nativeKind === "acceptance").length !== 1) {
+          fail("only one native Product Acceptance gate can be scheduled in a Wave")
+        }
+        continue
+      }
+      if (role !== "reviewer") fail(`review responsibility is not owned by ${role}`)
+      if (task.dependsOn.length === 0) fail("independent review Task must name the work it reviews as dependencies")
+      continue
+    }
+    if (responsibility !== "produce" && responsibility !== "execute") fail("unsupported responsibility")
+    if (path?.nativeKind !== "producer") fail(`role ${role} has no supported Task execution slot`)
+  }
+  for (const phase of plan.phases) for (const wave of phase.waves) for (const task of wave.tasks) {
+    for (const dependencyId of task.dependsOn) {
+      const source = taskById.get(dependencyId)
+      if (source?.role && source.responsibility && task.role && task.responsibility && source.role !== task.role &&
+          source.responsibility !== "review" && source.responsibility !== "obtain-user-decision" && task.responsibility !== "review" &&
+          !LOOM_AGENT_ROLES.includes("reviewer")) {
+        throw new Error(`Plan role path unavailable for Task ${task.id} (dependency ${dependencyId}) in ${phase.id}/${wave.id}: required independent Reviewer handoff gate is unavailable`)
+      }
+    }
+  }
+  if (allTasks.some((task) => task.role === "brainstorm")) {
+    const owner = new Map<string, string>()
+    const dependencies = new Map<string, Set<string>>()
+    for (const phase of plan.phases) for (const wave of phase.waves) {
+      const key = `${phase.id}/${wave.id}`
+      dependencies.set(key, new Set())
+      for (const task of wave.tasks) owner.set(task.id, key)
+    }
+    for (const task of allTasks) for (const id of task.dependsOn) {
+      if (!taskById.has(id)) throw new Error(`Task ${task.id} depends on unknown Task ${id}.`)
+      const source = owner.get(id)!
+      const target = owner.get(task.id)!
+      if (source !== target) dependencies.get(target)!.add(source)
+    }
+    const visiting = new Set<string>(), visited = new Set<string>()
+    const visit = (wave: string) => {
+      if (visiting.has(wave)) throw new Error(`Advisory Plan Wave dependency cycle includes ${wave}.`)
+      if (visited.has(wave)) return
+      visiting.add(wave)
+      for (const predecessor of dependencies.get(wave)!) visit(predecessor)
+      visiting.delete(wave)
+      visited.add(wave)
+    }
+    for (const wave of dependencies.keys()) visit(wave)
+  }
+  return true
 }
 
 function phaseNodeId(generation: number, phaseId: string) {
@@ -767,7 +958,30 @@ function progressFor(hierarchy: WorkHierarchy, parentId?: string): WorkProgress 
   }
 }
 
-function applyInverseOperation(plan: WorkPlanDefinition, operation: WorkPlanAmendOperation) {
+function restoreArrayPosition<T>(items: T[], item: T, index?: number) {
+  if (index === undefined) {
+    // Historical delta records created before positional inverses used append.
+    // Keep those records readable; new removal inverses always persist an index.
+    items.push(item)
+    return
+  }
+  if (!Number.isSafeInteger(index) || index < 0 || index > items.length) {
+    throw new Error("Historical Plan inverse contains an invalid array position.")
+  }
+  items.splice(index, 0, item)
+}
+
+function applyInverseOperation(plan: WorkPlanDefinition, operation: WorkPlanInverseOperation) {
+  if (operation.action === "add-authority-ref") {
+    if (!plan.authorityRefs.includes(operation.authorityRef)) {
+      restoreArrayPosition(plan.authorityRefs, operation.authorityRef, operation.index)
+    }
+    return
+  }
+  if (operation.action === "remove-authority-ref") {
+    plan.authorityRefs = plan.authorityRefs.filter((authorityRef) => authorityRef !== operation.authorityRef)
+    return
+  }
   if (operation.action === "patch-phase") {
     const phase = findPlanPhase(plan, operation.phaseId)
     if (phase) Object.assign(phase, structuredClone(operation.patch))
@@ -784,7 +998,7 @@ function applyInverseOperation(plan: WorkPlanDefinition, operation: WorkPlanAmen
     return
   }
   if (operation.action === "add-phase") {
-    plan.phases.push(structuredClone(operation.phase))
+    restoreArrayPosition(plan.phases, structuredClone(operation.phase), operation.index)
     return
   }
   if (operation.action === "remove-phase") {
@@ -793,7 +1007,7 @@ function applyInverseOperation(plan: WorkPlanDefinition, operation: WorkPlanAmen
   }
   if (operation.action === "add-wave") {
     const phase = findPlanPhase(plan, operation.phaseId)
-    if (phase) phase.waves.push(structuredClone(operation.wave))
+    if (phase) restoreArrayPosition(phase.waves, structuredClone(operation.wave), operation.index)
     return
   }
   if (operation.action === "remove-wave") {
@@ -803,7 +1017,7 @@ function applyInverseOperation(plan: WorkPlanDefinition, operation: WorkPlanAmen
   }
   if (operation.action === "add-task") {
     const wave = findPlanWave(plan, operation.phaseId, operation.waveId)
-    if (wave) wave.tasks.push(structuredClone(operation.task))
+    if (wave) restoreArrayPosition(wave.tasks, structuredClone(operation.task), operation.index)
     return
   }
   const located = findPlanTask(plan, operation.taskId)
@@ -875,8 +1089,9 @@ function plannedTask(snapshot: WorkPlanSnapshot | undefined, taskId: string) {
 export function workPlanSemanticFingerprint(
   hierarchy: WorkHierarchy,
   generation = hierarchy.generation,
+  revision?: number,
 ) {
-  const snapshot = planSnapshot(hierarchy, generation)
+  const snapshot = planSnapshot(hierarchy, generation, revision)
   if (!snapshot) return undefined
   return createHash("sha256").update(JSON.stringify(snapshot)).digest("hex")
 }
@@ -914,6 +1129,10 @@ function contextResult(result: WorkNode["result"] | undefined) {
   if (!result) return undefined
   return {
     workflowId: result.workflowId,
+    ...(result.nativeKind ? { nativeKind: result.nativeKind } : {}),
+    ...(result.resultDigest ? { resultDigest: result.resultDigest } : {}),
+    ...(result.adviceForTaskId ? { adviceForTaskId: result.adviceForTaskId } : {}),
+    ...(result.adviceResolutions ? { adviceResolutions: result.adviceResolutions } : {}),
     ...(result.summary ? { summary: contextText(result.summary) } : {}),
     evidenceClaimIds: result.evidenceClaimIds.slice(0, PLAN_CONTEXT_EVIDENCE_LIMIT),
     ...(result.evidenceClaimIds.length > PLAN_CONTEXT_EVIDENCE_LIMIT
@@ -958,6 +1177,7 @@ export function workPlanContext(
   const relevantRelationships = task
     ? snapshot.relationships.filter((relationship) => relationship.taskIds.includes(task.id))
     : snapshot.relationships
+  const authorityRefLimit = mode === "full" ? MAX_WORK_AUTHORITY_REFS : 32
 
   return {
     generation: snapshot.generation,
@@ -980,7 +1200,7 @@ export function workPlanContext(
     goal: contextText(snapshot.goal),
     assumptions: contextList(snapshot.assumptions, 16),
     outOfScope: contextList(snapshot.outOfScope, 16),
-    authorityRefs: snapshot.authorityRefs.slice(0, 32),
+    authorityRefs: snapshot.authorityRefs.slice(0, authorityRefLimit),
     obligations: (mode === "full" || !task
       ? snapshot.obligations
       : snapshot.obligations.filter((obligation) => obligation.taskIds.includes(task.id))
@@ -1003,6 +1223,18 @@ export function workPlanContext(
           id: candidateTask.id,
           title: contextText(candidateTask.title, PLAN_CONTEXT_MAP_TEXT_LIMIT),
           objective: contextText(candidateTask.objective, PLAN_CONTEXT_MAP_TEXT_LIMIT),
+          role: candidateTask.role ?? "unassigned (legacy Plan)",
+          responsibility: candidateTask.responsibility ?? "unassigned (legacy Plan)",
+          nativeKind: nativeTaskPath(candidateTask)?.nativeKind ?? "unsupported",
+          ...(candidateTask.adviceForTaskId ? {
+            adviceForTaskId: candidateTask.adviceForTaskId,
+            adviceState: !taskNodes.get(candidateTask.id)?.result ? "pending-advice"
+              : taskNodes.get(candidateTask.id)?.status !== "complete" ? "advice-review-pending"
+              : !taskNodes.get(candidateTask.adviceForTaskId)?.result?.adviceResolutions?.some((entry) =>
+                  entry.taskId === candidateTask.id && entry.resultDigest === taskNodes.get(candidateTask.id)?.result?.resultDigest)
+                ? "receiver-resolution-pending"
+                : taskNodes.get(candidateTask.adviceForTaskId)?.status !== "complete" ? "receiver-review-pending" : "resolved-by-receiver",
+          } : {}),
           status: taskNodes.get(candidateTask.id)?.status,
           result: contextResult(taskNodes.get(candidateTask.id)?.result),
         })),
@@ -1046,7 +1278,7 @@ export function workPlanContext(
       taskIdLimit: PLAN_CONTEXT_TASK_ID_LIMIT,
       mapTextLimit: PLAN_CONTEXT_MAP_TEXT_LIMIT,
       amendmentsOmitted: Math.max(0, (snapshot.amendments ?? []).length - 20),
-      authorityRefsOmitted: Math.max(0, snapshot.authorityRefs.length - 32),
+      authorityRefsOmitted: Math.max(0, snapshot.authorityRefs.length - authorityRefLimit),
     },
     ...(task
       ? {
@@ -1113,49 +1345,11 @@ function taskNode(hierarchy: WorkHierarchy, taskId: string) {
   )
 }
 
-function taskNodesUnder(hierarchy: WorkHierarchy, parent: WorkNode) {
-  const nodes = currentGenerationNodes(hierarchy)
-  if (parent.type === "wave") {
-    return nodes.filter(
-      (node) => node.type === "task" && node.parentId === parent.id && node.status !== "superseded",
-    )
-  }
-  if (parent.type === "phase") {
-    const waveIds = new Set(
-      nodes
-        .filter(
-          (node) => node.type === "wave" && node.parentId === parent.id && node.status !== "superseded",
-        )
-        .map((node) => node.id),
-    )
-    return nodes.filter(
-      (node) =>
-        node.type === "task" &&
-        Boolean(node.parentId) &&
-        waveIds.has(node.parentId!) &&
-        node.status !== "superseded",
-    )
-  }
-  return [parent]
-}
-
 function assertNoClaim(nodes: WorkNode[], label: string) {
   const claimed = nodes.find((node) => node.claimedByWorkflowId)
   if (claimed) {
     throw new Error(
       `${label} cannot be amended while ${claimed.type} ${claimed.logicalId} is claimed by workflow ${claimed.claimedByWorkflowId}.`,
-    )
-  }
-}
-
-function assertSemanticNodeMutable(hierarchy: WorkHierarchy, node: WorkNode | undefined, label: string) {
-  if (!node) throw new Error(`${label} not found in the current Plan generation.`)
-  const affected = node.type === "task" ? [node] : [node, ...taskNodesUnder(hierarchy, node)]
-  assertNoClaim(affected, label)
-  const completed = affected.find((candidate) => candidate.status === "complete")
-  if (completed) {
-    throw new Error(
-      `${label} cannot rewrite semantic context already consumed by completed Task ${completed.logicalId}. Create a new Plan generation for that change.`,
     )
   }
 }
@@ -1178,26 +1372,19 @@ function findPlanWave(plan: WorkPlanDefinition, phaseId: string, waveId: string)
   return findPlanPhase(plan, phaseId)?.waves.find((wave) => wave.id === waveId)
 }
 
-function protectedTaskIds(hierarchy: WorkHierarchy) {
-  return new Set(
-    currentGenerationNodes(hierarchy)
-      .filter(
-        (node) =>
-          node.type === "task" &&
-          (node.status === "complete" || Boolean(node.claimedByWorkflowId)),
-      )
-      .map((node) => node.logicalId),
-  )
-}
-
-function planTaskSemanticFingerprint(plan: WorkPlanDefinition, taskId: string) {
+function planTaskFingerprintPayload(
+  plan: WorkPlanDefinition,
+  taskId: string,
+  authorityRefs: string[],
+) {
   const located = findPlanTask(plan, taskId)
   if (!located) return undefined
-  return JSON.stringify({
+  const obligations = plan.obligations.filter((item) => item.taskIds.includes(taskId))
+  return {
     goal: plan.goal,
     assumptions: plan.assumptions,
     outOfScope: plan.outOfScope,
-    authorityRefs: plan.authorityRefs,
+    authorityRefs,
     phase: { id: located.phase.id, title: located.phase.title, objective: located.phase.objective },
     wave: {
       id: located.wave.id,
@@ -1206,12 +1393,45 @@ function planTaskSemanticFingerprint(plan: WorkPlanDefinition, taskId: string) {
       constraints: located.wave.constraints,
     },
     task: located.task,
-    obligations: plan.obligations.filter((item) => item.taskIds.includes(taskId)),
+    ...(located.task.adviceForTaskId ? {
+      // Association context is fingerprinted, not an execution back-edge.
+      adviceReceiver: findPlanTask(plan, located.task.adviceForTaskId)?.task,
+    } : {}),
+    obligations,
     risks: plan.riskBoundaries.filter((item) => item.taskIds.includes(taskId)),
     acceptanceCoverage: plan.acceptanceCoverage.filter((item) => item.taskIds.includes(taskId)),
     relationships: plan.relationships.filter((item) => item.taskIds.includes(taskId)),
     correctionRouting: plan.correctionRouting.filter((item) => !item.taskId || item.taskId === taskId),
-  })
+  }
+}
+
+function relevantTaskAuthorityRefs(plan: WorkPlanDefinition, taskId: string) {
+  const located = findPlanTask(plan, taskId)
+  if (!located) return undefined
+  const relevant = new Set(located.task.authorityRefs)
+  for (const obligation of plan.obligations.filter((item) => item.taskIds.includes(taskId))) {
+    relevant.add(obligation.sourceRef)
+    if (obligation.dispositionAuthorityRef) relevant.add(obligation.dispositionAuthorityRef)
+  }
+  return plan.authorityRefs.filter((authorityRef) => relevant.has(authorityRef))
+}
+
+function planTaskSemanticFingerprint(plan: WorkPlanDefinition, taskId: string, ignoreDescriptiveFields = false) {
+  const authorityRefs = relevantTaskAuthorityRefs(plan, taskId)
+  if (!authorityRefs) return undefined
+  const payload = planTaskFingerprintPayload(plan, taskId, authorityRefs)
+  return payload ? JSON.stringify(ignoreDescriptiveFields
+    ? { ...payload, phase: { ...payload.phase, title: undefined },
+        wave: { ...payload.wave, title: undefined, objective: undefined } } : payload) : undefined
+}
+
+/**
+ * Pre-authority-delta fingerprint retained only to admit already-persisted
+ * in-flight workflow bindings across this runtime upgrade.
+ */
+function legacyPlanTaskSemanticFingerprint(plan: WorkPlanDefinition, taskId: string) {
+  const payload = planTaskFingerprintPayload(plan, taskId, plan.authorityRefs)
+  return payload ? JSON.stringify(payload) : undefined
 }
 
 export function taskSemanticFingerprintAtRevision(
@@ -1224,16 +1444,241 @@ export function taskSemanticFingerprintAtRevision(
   return snapshot ? planTaskSemanticFingerprint(snapshot, taskId) : undefined
 }
 
-export function workflowTaskSemanticFingerprint(
+function planTaskSemanticClosureFingerprint(plan: WorkPlanDefinition, taskId: string, ignoreWaveObjective = false) {
+  const fingerprints = new Map<string, string>()
+  const visiting = new Set<string>()
+  const visit = (id: string): boolean => {
+    if (fingerprints.has(id)) return true
+    if (visiting.has(id)) return false
+    const located = findPlanTask(plan, id)
+    if (!located) return false
+    visiting.add(id)
+    for (const dependency of located.task.dependsOn) {
+      if (!visit(dependency)) return false
+    }
+    visiting.delete(id)
+    const fingerprint = planTaskSemanticFingerprint(plan, id, ignoreWaveObjective)
+    if (!fingerprint) return false
+    fingerprints.set(id, fingerprint)
+    return true
+  }
+
+  if (!visit(taskId)) return undefined
+  return createHash("sha256")
+    .update(JSON.stringify([...fingerprints.entries()].sort(([a], [b]) => a.localeCompare(b))))
+    .digest("hex")
+}
+
+/**
+ * Semantic receipt for a Task plus every transitive Task dependency it consumed.
+ * A dependent completion becomes stale when any upstream contract changes.
+ */
+export function taskSemanticClosureFingerprintAtRevision(
+  hierarchy: WorkHierarchy,
+  taskId: string,
+  generation = hierarchy.generation,
+  revision?: number,
+) {
+  const snapshot = planSnapshot(hierarchy, generation, revision)
+  return snapshot ? planTaskSemanticClosureFingerprint(snapshot, taskId) : undefined
+}
+
+/** The execution-significant closure, including all transitive Task dependencies. */
+export function taskExecutionClosureFingerprintAtRevision(
+  hierarchy: WorkHierarchy,
+  taskId: string,
+  generation = hierarchy.generation,
+  revision?: number,
+) {
+  const snapshot = planSnapshot(hierarchy, generation, revision)
+  return snapshot
+    ? planTaskSemanticClosureFingerprint(snapshot, taskId, true)
+    : undefined
+}
+
+export type TaskReceiptSemanticDiagnosis = {
+  originalProof: "valid" | "missing-receipt-fingerprint" | "original-plan-unavailable" | "original-proof-mismatch"
+  currentContract: "unchanged" | "changed" | "unknown"
+  originalPlanRevision?: number
+  hashes: {
+    recordedOriginal?: string
+    reconstructedOriginal?: string
+    legacyCurrent?: string
+    executionOriginal?: string
+    executionCurrent?: string
+  }
+  changedSemanticFields: string[]
+  changedDisplayFields: string[]
+}
+
+/**
+ * Read-only diagnosis. Provenance and the current contract are independent:
+ * a receipt can be authentic for its original Plan while its Task is stale.
+ * Never infer original proof from a matching *current* fingerprint.
+ */
+export function diagnoseTaskReceiptSemantics(
+  hierarchy: WorkHierarchy,
+  taskId: string,
+  receipt: WorkTaskResult,
+  generation = hierarchy.generation,
+): TaskReceiptSemanticDiagnosis {
+  const revision = receipt.planRevision
+  const original = revision
+    ? taskSemanticClosureFingerprintAtRevision(hierarchy, taskId, generation, revision)
+    : undefined
+  const current = taskSemanticClosureFingerprintAtRevision(hierarchy, taskId, generation)
+  const originalExecution = revision
+    ? taskExecutionClosureFingerprintAtRevision(hierarchy, taskId, generation, revision)
+    : undefined
+  const currentExecution = taskExecutionClosureFingerprintAtRevision(hierarchy, taskId, generation)
+  const originalProof = !receipt.semanticClosureFingerprint
+    ? "missing-receipt-fingerprint"
+    : !original || !originalExecution
+      ? "original-plan-unavailable"
+      : receipt.semanticClosureFingerprint !== original
+        ? "original-proof-mismatch"
+        : "valid"
+  const currentContract = !originalExecution || !currentExecution
+    ? "unknown"
+    : originalExecution === currentExecution ? "unchanged" : "changed"
+
+  const oldPlan = revision ? planSnapshot(hierarchy, generation, revision) : undefined
+  const currentPlan = planSnapshot(hierarchy, generation)
+  const semanticFields = new Set<string>()
+  const displayFields = new Set<string>()
+  if (oldPlan && currentPlan) {
+    const ids = new Set<string>()
+    const visit = (plan: WorkPlanDefinition, id: string, seen: Set<string>) => {
+      if (seen.has(id)) return
+      seen.add(id)
+      ids.add(id)
+      const located = findPlanTask(plan, id)
+      for (const dep of located?.task.dependsOn ?? []) visit(plan, dep, seen)
+    }
+    visit(oldPlan, taskId, new Set())
+    visit(currentPlan, taskId, new Set())
+    for (const id of [...ids].sort()) {
+      const oldRefs = relevantTaskAuthorityRefs(oldPlan, id)
+      const newRefs = relevantTaskAuthorityRefs(currentPlan, id)
+      const before = oldRefs && planTaskFingerprintPayload(oldPlan, id, oldRefs)
+      const after = newRefs && planTaskFingerprintPayload(currentPlan, id, newRefs)
+      if (!before || !after) {
+        semanticFields.add(`task:${id}.removed-or-added`)
+        continue
+      }
+      for (const field of [
+        "goal", "assumptions", "outOfScope", "authorityRefs", "obligations",
+        "risks", "acceptanceCoverage", "relationships", "correctionRouting",
+      ] as const) {
+        if (JSON.stringify(before[field]) !== JSON.stringify(after[field])) {
+          semanticFields.add(`task:${id}.${field}`)
+        }
+      }
+      for (const field of ["id", "objective"] as const) {
+        if (before.phase[field] !== after.phase[field]) semanticFields.add(`task:${id}.phase.${field}`)
+      }
+      for (const field of ["id", "constraints"] as const) {
+        if (JSON.stringify(before.wave[field]) !== JSON.stringify(after.wave[field])) {
+          semanticFields.add(`task:${id}.wave.${field}`)
+        }
+      }
+      if (before.wave.objective !== after.wave.objective) displayFields.add(`task:${id}.wave.objective`)
+      const beforeTask = before.task
+      const afterTask = after.task
+      for (const field of new Set([...Object.keys(beforeTask), ...Object.keys(afterTask)])) {
+        const key = field as keyof WorkPlanTask
+        if (JSON.stringify(beforeTask[key]) !== JSON.stringify(afterTask[key])) {
+          semanticFields.add(`task:${id}.task.${field}`)
+        }
+      }
+      if (before.phase.title !== after.phase.title) displayFields.add(`task:${id}.phase.title`)
+      if (before.wave.title !== after.wave.title) displayFields.add(`task:${id}.wave.title`)
+    }
+  }
+  return {
+    originalProof,
+    currentContract,
+    ...(revision ? { originalPlanRevision: revision } : {}),
+    hashes: {
+      ...(receipt.semanticClosureFingerprint ? { recordedOriginal: receipt.semanticClosureFingerprint } : {}),
+      ...(original ? { reconstructedOriginal: original } : {}),
+      ...(current ? { legacyCurrent: current } : {}),
+      ...(originalExecution ? { executionOriginal: originalExecution } : {}),
+      ...(currentExecution ? { executionCurrent: currentExecution } : {}),
+    },
+    changedSemanticFields: [...semanticFields].slice(0, 64),
+    changedDisplayFields: [...displayFields].slice(0, 64),
+  }
+}
+
+/** Inspect an archived producer receipt without rewriting it or the historical Plan. */
+export function inspectTaskSemanticClosure(
+  hierarchy: WorkHierarchy,
+  taskId: string,
+  originalRevision: number,
+  receiptFingerprint: string | undefined,
+): { status: "missing-receipt" | "invalid-original" | "changed-current" | "unchanged"; changedFields: string[] } {
+  if (!receiptFingerprint) return { status: "missing-receipt", changedFields: [] }
+  const original = planSnapshot(hierarchy, hierarchy.generation, originalRevision)
+  const current = planSnapshot(hierarchy, hierarchy.generation)
+  if (!original || receiptFingerprint !== planTaskSemanticClosureFingerprint(original, taskId)) {
+    return { status: "invalid-original", changedFields: [] }
+  }
+  if (!current) return { status: "changed-current", changedFields: ["plan"] }
+  const changedFields: string[] = []
+  const visited = new Set<string>()
+  const inspect = (id: string) => {
+    if (visited.has(id)) return
+    visited.add(id)
+    const before = findPlanTask(original, id)
+    const after = findPlanTask(current, id)
+    if (!before || !after) {
+      changedFields.push(`${id}.task`)
+      return
+    }
+    const oldPayload = planTaskFingerprintPayload(original, id, relevantTaskAuthorityRefs(original, id)!)!
+    const newPayload = planTaskFingerprintPayload(current, id, relevantTaskAuthorityRefs(current, id)!)!
+    for (const field of Object.keys(oldPayload) as Array<keyof typeof oldPayload>) {
+      if (field === "wave") {
+        for (const waveField of ["id", "title", "objective", "constraints"] as const) {
+          if (JSON.stringify(oldPayload.wave[waveField]) !== JSON.stringify(newPayload.wave[waveField])) {
+            changedFields.push(`${id}.wave.${waveField}`)
+          }
+        }
+      } else if (field === "phase") {
+        for (const phaseField of ["id", "title", "objective"] as const) {
+          if (JSON.stringify(oldPayload.phase[phaseField]) !== JSON.stringify(newPayload.phase[phaseField])) {
+            changedFields.push(`${id}.phase.${phaseField}`)
+          }
+        }
+      } else if (JSON.stringify(oldPayload[field]) !== JSON.stringify(newPayload[field])) {
+        changedFields.push(`${id}.${field}`)
+      }
+    }
+    for (const dependency of before.task.dependsOn) inspect(dependency)
+  }
+  inspect(taskId)
+  // Display headings and descriptive Wave objectives do not change Task meaning.
+  // Identity, authority, constraints, dependencies and evidence remain binding.
+  const material = changedFields.some((field) =>
+    !field.endsWith(".wave.objective") &&
+    !field.endsWith(".phase.title") &&
+    !field.endsWith(".wave.title"))
+  return { status: material ? "changed-current" : "unchanged", changedFields }
+}
+
+function workflowTaskSemanticFingerprintUsing(
   hierarchy: WorkHierarchy,
   taskIds: string[],
-  generation = hierarchy.generation,
+  generation: number,
+  revision: number | undefined,
+  taskFingerprint: (plan: WorkPlanDefinition, taskId: string) => string | undefined,
 ) {
-  const snapshot = planSnapshot(hierarchy, generation)
+  const snapshot = planSnapshot(hierarchy, generation, revision)
   if (!snapshot || taskIds.length === 0) return undefined
   const selected = [...new Set(taskIds)].sort()
   const fingerprints = selected.map((taskId) => {
-    const value = planTaskSemanticFingerprint(snapshot, taskId)
+    const value = taskFingerprint(snapshot, taskId)
     if (!value) throw new Error(`Task ${taskId} has no semantic Plan contract.`)
     return value
   })
@@ -1251,6 +1696,38 @@ export function workflowTaskSemanticFingerprint(
     .digest("hex")
 }
 
+export function workflowTaskSemanticFingerprint(
+  hierarchy: WorkHierarchy,
+  taskIds: string[],
+  generation = hierarchy.generation,
+  revision?: number,
+) {
+  return workflowTaskSemanticFingerprintUsing(
+    hierarchy,
+    taskIds,
+    generation,
+    revision,
+    planTaskSemanticFingerprint,
+  )
+}
+
+export function legacyWorkflowTaskSemanticFingerprint(
+  hierarchy: WorkHierarchy,
+  taskIds: string[],
+  generation = hierarchy.generation,
+  revision?: number,
+) {
+  const plan = planSnapshot(hierarchy, generation, revision)
+  if (plan?.phases.some((phase) => phase.waves.some((wave) => wave.tasks.some((task) => task.adviceForTaskId !== undefined || task.role === "brainstorm")))) return undefined
+  return workflowTaskSemanticFingerprintUsing(
+    hierarchy,
+    taskIds,
+    generation,
+    revision,
+    legacyPlanTaskSemanticFingerprint,
+  )
+}
+
 function planWaveFingerprint(plan: WorkPlanDefinition, phaseId: string, waveId: string) {
   const wave = findPlanWave(plan, phaseId, waveId)
   return wave ? JSON.stringify(wave.tasks.map((task) => task.id)) : undefined
@@ -1264,80 +1741,39 @@ function planWaveKeys(plan: WorkPlanDefinition) {
   return plan.phases.flatMap((phase) => phase.waves.map((wave) => `${phase.id}/${wave.id}`))
 }
 
-function assertPlanPatchDoesNotRewriteCompletedWork(
-  hierarchy: WorkHierarchy,
-  before: WorkPlanSnapshot,
-  after: WorkPlanDefinition,
-  patch?: WorkPlanTopLevelPatch,
+function invalidateTaskResult(
+  task: WorkNode,
+  revision: number,
+  reason: string,
+  now: string,
 ) {
-  if (!patch) return
-  const protectedTasks = protectedTaskIds(hierarchy)
-  if (protectedTasks.size === 0) return
-
-  if (
-    patch.goal !== undefined ||
-    patch.assumptions !== undefined ||
-    patch.outOfScope !== undefined ||
-    patch.authorityRefs !== undefined
-  ) {
-    throw new Error(
-      "Plan goal/assumption/scope/authority changes while Tasks are claimed or complete require a new Plan generation.",
-    )
+  if (task.type !== "task") return
+  if (task.result) {
+    task.priorResults = [
+      ...(task.priorResults ?? []),
+      {
+        ...task.result,
+        invalidatedAt: now,
+        invalidatedByRevision: revision,
+        invalidatedReason: reason,
+      },
+    ]
+    delete task.result
   }
-
-  const oldObligations = before.obligations ?? []
-  const newObligations = after.obligations
-  for (const taskId of protectedTasks) {
-    const oldOwned = oldObligations.filter((item) => item.taskIds.includes(taskId))
-    const newOwned = newObligations.filter((item) => item.taskIds.includes(taskId))
-    if (JSON.stringify(oldOwned) !== JSON.stringify(newOwned)) {
-      throw new Error(
-        `Plan amendment would rewrite obligation ownership for claimed/completed Task ${taskId}; release/replan or create a new Plan generation.`,
-      )
-    }
-
-    const oldRisks = before.riskBoundaries.filter((item) => item.taskIds.includes(taskId))
-    const newRisks = after.riskBoundaries.filter((item) => item.taskIds.includes(taskId))
-    if (JSON.stringify(oldRisks) !== JSON.stringify(newRisks)) {
-      throw new Error(
-        `Plan amendment would rewrite risk boundaries already consumed by claimed/completed Task ${taskId}.`,
-      )
-    }
-
-    const oldAcceptance = before.acceptanceCoverage.filter((item) => item.taskIds.includes(taskId))
-    const newAcceptance = after.acceptanceCoverage.filter((item) => item.taskIds.includes(taskId))
-    if (JSON.stringify(oldAcceptance) !== JSON.stringify(newAcceptance)) {
-      throw new Error(
-        `Plan amendment would rewrite acceptance coverage already consumed by claimed/completed Task ${taskId}.`,
-      )
-    }
-
-    const oldRelationships = before.relationships.filter((item) => item.taskIds.includes(taskId))
-    const newRelationships = after.relationships.filter((item) => item.taskIds.includes(taskId))
-    if (JSON.stringify(oldRelationships) !== JSON.stringify(newRelationships)) {
-      throw new Error(
-        `Plan amendment would rewrite relationships for claimed/completed Task ${taskId}; release/replan or create a new Plan generation.`,
-      )
-    }
-
-    const oldCorrectionRouting = before.correctionRouting.filter(
-      (item) => !item.taskId || item.taskId === taskId,
-    )
-    const newCorrectionRouting = after.correctionRouting.filter(
-      (item) => !item.taskId || item.taskId === taskId,
-    )
-    if (JSON.stringify(oldCorrectionRouting) !== JSON.stringify(newCorrectionRouting)) {
-      throw new Error(
-        `Plan amendment would rewrite correction routing for claimed/completed Task ${taskId}; release/replan or create a new Plan generation.`,
-      )
-    }
-  }
+  if (task.status === "complete") task.status = "pending"
+  task.updatedAt = now
 }
 
 function syncCurrentPlanNodes(
   hierarchy: WorkHierarchy,
   plan: WorkPlanDefinition,
   now: string,
+  change: {
+    revision: number
+    reason: string
+    affectedTaskIds: Set<string>
+    changedWaveKeys: Set<string>
+  },
 ) {
   const represented = new Set<string>()
   const nodes = currentGenerationNodes(hierarchy)
@@ -1354,16 +1790,20 @@ function syncCurrentPlanNodes(
   ) => {
     represented.add(id)
     const existing = nodes.find((node) => node.id === id)
-    if (existing?.status === "superseded") {
-      throw new Error(
-        `Plan amendment cannot reuse removed ${type} id ${logicalId} inside generation ${generation}; use a new id or Plan generation.`,
-      )
-    }
     if (existing) {
+      if (existing.status === "superseded") existing.status = "pending"
+      if (type === "task" && existing.parentId !== parentId) {
+        // A Wave lease does not transfer when Planner moves a Task.
+        delete existing.claimedByWorkflowId
+        delete existing.claimedAt
+      }
       existing.title = title
       existing.parentId = parentId
       existing.objective = objective
       existing.dependsOn = dependsOn
+      if (type === "task" && change.affectedTaskIds.has(logicalId)) {
+        invalidateTaskResult(existing, change.revision, change.reason, now)
+      }
       existing.updatedAt = now
       return existing
     }
@@ -1397,15 +1837,42 @@ function syncCurrentPlanNodes(
     }
   }
 
+  // Removed nodes stay as immutable historical records but no longer
+  // participate in the effective current Plan.
   for (const node of nodes) {
     if (node.status === "superseded" || represented.has(node.id)) continue
-    if (node.claimedByWorkflowId || node.status === "complete") {
-      throw new Error(
-        `Plan amendment attempted to remove protected ${node.type} ${node.logicalId}.`,
-      )
+    if (node.type === "task") {
+      invalidateTaskResult(node, change.revision, `Removed from Plan: ${change.reason}`, now)
     }
+    delete node.claimedByWorkflowId
+    delete node.claimedAt
+    delete node.completion
     node.status = "superseded"
     node.updatedAt = now
+  }
+
+  // Any Task-semantic change or Wave-membership change invalidates the old
+  // assembled Wave review receipt. Unchanged Task completions remain reusable.
+  for (const wave of hierarchy.nodes.filter(
+    (node) => node.generation === generation && node.type === "wave" && node.status !== "superseded",
+  )) {
+    const phase = hierarchy.nodes.find(
+      (node) => node.id === wave.parentId && node.type === "phase",
+    )
+    const waveKey = phase ? `${phase.logicalId}/${wave.logicalId}` : ""
+    const semanticTaskChanged = hierarchy.nodes.some(
+      (node) =>
+        node.generation === generation &&
+        node.type === "task" &&
+        node.parentId === wave.id &&
+        node.status !== "superseded" &&
+        change.affectedTaskIds.has(node.logicalId),
+    )
+    if (semanticTaskChanged || change.changedWaveKeys.has(waveKey)) {
+      delete wave.completion
+      if (wave.status === "complete") wave.status = wave.claimedByWorkflowId ? "active" : "pending"
+      wave.updatedAt = now
+    }
   }
 
   recomputeRollup(hierarchy, now)
@@ -1424,6 +1891,10 @@ function assertPatchKeys(
 }
 
 function assertAmendOperationShape(operation: WorkPlanAmendOperation) {
+  if (operation.action === "add-authority-ref" || operation.action === "remove-authority-ref") {
+    nonEmpty(operation.authorityRef, `${operation.action} authorityRef`)
+    return
+  }
   if (operation.action === "patch-phase") {
     if (!operation.phaseId) throw new Error("patch-phase requires phaseId.")
     assertPatchKeys(operation.patch as Record<string, unknown>, ["title", "objective"], "patch-phase")
@@ -1444,7 +1915,7 @@ function assertAmendOperationShape(operation: WorkPlanAmendOperation) {
       operation.patch as Record<string, unknown>,
       [
         "title", "objective", "rationale", "dependsOn", "authorityRefs", "constraints",
-        "acceptanceCriteria", "subtasks", "integration", "verify",
+        "acceptanceCriteria", "subtasks", "integration", "verify", "role", "responsibility", "adviceForTaskId",
       ],
       "patch-task",
     )
@@ -1465,6 +1936,9 @@ function assertAmendOperationShape(operation: WorkPlanAmendOperation) {
 }
 
 function operationLabel(operation: WorkPlanAmendOperation) {
+  if (operation.action === "add-authority-ref" || operation.action === "remove-authority-ref") {
+    return `${operation.action}:${operation.authorityRef}`
+  }
   if (operation.action === "patch-phase" || operation.action === "remove-phase") {
     return `${operation.action}:${operation.phaseId}`
   }
@@ -1489,7 +1963,7 @@ export function amendWorkPlan(
     reason: string
     by: string
     operations: WorkPlanAmendOperation[]
-    planPatch?: WorkPlanTopLevelPatch
+    planPatch?: WorkPlanAmendTopLevelPatch
   },
   now: string,
 ) {
@@ -1500,6 +1974,14 @@ export function amendWorkPlan(
   }
   const reason = nonEmpty(input.reason, "Plan amendment reason")
   if (input.operations.length > 16) throw new Error("Plan amendment exceeds maximum of 16 local operations.")
+  if (
+    input.planPatch &&
+    Object.prototype.hasOwnProperty.call(input.planPatch as Record<string, unknown>, "authorityRefs")
+  ) {
+    throw new Error(
+      "Plan authorityRefs must be amended with add-authority-ref/remove-authority-ref operations.",
+    )
+  }
   if (input.operations.length === 0 && !input.planPatch) {
     throw new Error("Plan amendment requires at least one local operation or Plan metadata patch.")
   }
@@ -1521,7 +2003,10 @@ export function amendWorkPlan(
     phases: snapshot.phases,
   }
   const beforeTaskFingerprints = new Map(
-    planTaskIds(beforePlan).map((taskId) => [taskId, planTaskSemanticFingerprint(beforePlan, taskId)]),
+    planTaskIds(beforePlan).map((taskId) => [taskId, planTaskSemanticFingerprint(beforePlan, taskId, true)]),
+  )
+  const beforeTaskClosureFingerprints = new Map(
+    planTaskIds(beforePlan).map((taskId) => [taskId, planTaskSemanticClosureFingerprint(beforePlan, taskId, true)]),
   )
   const beforeWaveFingerprints = new Map(
     planWaveKeys(beforePlan).map((key) => {
@@ -1553,9 +2038,28 @@ export function amendWorkPlan(
     : undefined
   if (input.planPatch) Object.assign(draft, structuredClone(input.planPatch))
 
-  const inverseOperations: WorkPlanAmendOperation[] = []
+  const inverseOperations: WorkPlanInverseOperation[] = []
   for (const operation of input.operations) {
     assertAmendOperationShape(operation)
+    if (operation.action === "add-authority-ref") {
+      const authorityRef = nonEmpty(operation.authorityRef, "Plan authorityRef")
+      if (draft.authorityRefs.includes(authorityRef)) {
+        throw new Error(`Plan authority reference is already declared: ${authorityRef}.`)
+      }
+      inverseOperations.unshift({ action: "remove-authority-ref", authorityRef })
+      draft.authorityRefs.push(authorityRef)
+      continue
+    }
+
+    if (operation.action === "remove-authority-ref") {
+      const authorityRef = nonEmpty(operation.authorityRef, "Plan authorityRef")
+      const index = draft.authorityRefs.indexOf(authorityRef)
+      if (index < 0) throw new Error(`Plan authority reference not found: ${authorityRef}.`)
+      inverseOperations.unshift({ action: "add-authority-ref", authorityRef, index })
+      draft.authorityRefs.splice(index, 1)
+      continue
+    }
+
     if (operation.action === "patch-phase") {
       const phase = findPlanPhase(draft, operation.phaseId)
       if (phase) {
@@ -1570,7 +2074,6 @@ export function amendWorkPlan(
           ) as WorkPlanPhasePatch,
         })
       }
-      assertSemanticNodeMutable(hierarchy, phaseNode(hierarchy, operation.phaseId), `Phase ${operation.phaseId}`)
       if (!phase) throw new Error(`Phase ${operation.phaseId} not found.`)
       Object.assign(phase, structuredClone(operation.patch))
       continue
@@ -1591,11 +2094,6 @@ export function amendWorkPlan(
           ) as WorkPlanWavePatch,
         })
       }
-      assertSemanticNodeMutable(
-        hierarchy,
-        waveNode(hierarchy, operation.phaseId, operation.waveId),
-        `Wave ${operation.phaseId}/${operation.waveId}`,
-      )
       if (!wave) throw new Error(`Wave ${operation.phaseId}/${operation.waveId} not found.`)
       Object.assign(wave, structuredClone(operation.patch))
       continue
@@ -1615,7 +2113,6 @@ export function amendWorkPlan(
           ) as WorkPlanTaskPatch,
         })
       }
-      assertSemanticNodeMutable(hierarchy, taskNode(hierarchy, operation.taskId), `Task ${operation.taskId}`)
       if (!located) throw new Error(`Task ${operation.taskId} not found.`)
       Object.assign(located.task, structuredClone(operation.patch))
       continue
@@ -1630,16 +2127,16 @@ export function amendWorkPlan(
 
     if (operation.action === "remove-phase") {
       const existingPhase = findPlanPhase(draft, operation.phaseId)
+      const originalIndex = draft.phases.findIndex((phase) => phase.id === operation.phaseId)
       if (existingPhase) {
-        inverseOperations.unshift({ action: "add-phase", phase: structuredClone(existingPhase) })
+        inverseOperations.unshift({
+          action: "add-phase",
+          phase: structuredClone(existingPhase),
+          index: originalIndex,
+        })
       }
       const node = phaseNode(hierarchy, operation.phaseId)
       if (!node) throw new Error(`Phase ${operation.phaseId} not found.`)
-      const affected = [node, ...taskNodesUnder(hierarchy, node)]
-      assertNoClaim(affected, `Phase ${operation.phaseId}`)
-      if (affected.some((candidate) => candidate.status === "complete")) {
-        throw new Error(`Phase ${operation.phaseId} contains completed work and cannot be removed in-place.`)
-      }
       draft.phases = draft.phases.filter((phase) => phase.id !== operation.phaseId)
       continue
     }
@@ -1652,10 +2149,6 @@ export function amendWorkPlan(
       })
       const phase = findPlanPhase(draft, operation.phaseId)
       if (!phase) throw new Error(`Phase ${operation.phaseId} not found.`)
-      const parentNode = phaseNode(hierarchy, operation.phaseId)
-      if (parentNode?.status === "complete") {
-        throw new Error(`Completed Phase ${operation.phaseId} cannot receive a new Wave in-place.`)
-      }
       if (phase.waves.some((wave) => wave.id === operation.wave.id)) {
         throw new Error(`Wave ${operation.phaseId}/${operation.wave.id} already exists.`)
       }
@@ -1671,15 +2164,11 @@ export function amendWorkPlan(
           action: "add-wave",
           phaseId: operation.phaseId,
           wave: structuredClone(existingWave),
+          index: phase?.waves.findIndex((wave) => wave.id === operation.waveId),
         })
       }
       const node = waveNode(hierarchy, operation.phaseId, operation.waveId)
       if (!phase || !node) throw new Error(`Wave ${operation.phaseId}/${operation.waveId} not found.`)
-      const affected = [node, ...taskNodesUnder(hierarchy, node)]
-      assertNoClaim(affected, `Wave ${operation.phaseId}/${operation.waveId}`)
-      if (affected.some((candidate) => candidate.status === "complete")) {
-        throw new Error(`Wave ${operation.phaseId}/${operation.waveId} contains completed work and cannot be removed in-place.`)
-      }
       phase.waves = phase.waves.filter((wave) => wave.id !== operation.waveId)
       continue
     }
@@ -1693,10 +2182,6 @@ export function amendWorkPlan(
       if (!wave) throw new Error(`Wave ${operation.phaseId}/${operation.waveId} not found.`)
       const parentNode = waveNode(hierarchy, operation.phaseId, operation.waveId)
       if (!parentNode) throw new Error(`Wave ${operation.phaseId}/${operation.waveId} is not materialized.`)
-      if (parentNode.status === "complete") {
-        throw new Error(`Reviewed-complete Wave ${operation.phaseId}/${operation.waveId} cannot receive a new Task in-place.`)
-      }
-      assertNoClaim([parentNode, ...taskNodesUnder(hierarchy, parentNode)], `Wave ${operation.phaseId}/${operation.waveId}`)
       if (findPlanTask(draft, operation.task.id)) throw new Error(`Task ${operation.task.id} already exists.`)
       wave.tasks.push(structuredClone(operation.task))
       continue
@@ -1710,26 +2195,26 @@ export function amendWorkPlan(
           phaseId: located.phase.id,
           waveId: located.wave.id,
           task: structuredClone(located.task),
+          index: located.wave.tasks.findIndex((task) => task.id === operation.taskId),
         })
       }
       const node = taskNode(hierarchy, operation.taskId)
       if (!located || !node) throw new Error(`Task ${operation.taskId} not found.`)
-      assertNoClaim([node], `Task ${operation.taskId}`)
-      if (node.status === "complete") {
-        throw new Error(`Completed Task ${operation.taskId} cannot be removed in-place.`)
-      }
       located.wave.tasks = located.wave.tasks.filter((task) => task.id !== operation.taskId)
       continue
     }
   }
 
   const validated = validateWorkPlan(draft)
-  assertPlanPatchDoesNotRewriteCompletedWork(hierarchy, snapshot, validated, input.planPatch)
 
   const allTaskIds = new Set([...beforeTaskFingerprints.keys(), ...planTaskIds(validated)])
   const changedTaskIds = [...allTaskIds].filter(
     (taskId) =>
-      beforeTaskFingerprints.get(taskId) !== planTaskSemanticFingerprint(validated, taskId),
+      beforeTaskFingerprints.get(taskId) !== planTaskSemanticFingerprint(validated, taskId, true),
+  )
+  const affectedTaskIds = [...allTaskIds].filter(
+    (taskId) =>
+      beforeTaskClosureFingerprints.get(taskId) !== planTaskSemanticClosureFingerprint(validated, taskId, true),
   )
   const allWaveKeys = new Set([...beforeWaveFingerprints.keys(), ...planWaveKeys(validated)])
   const changedWaveKeys = [...allWaveKeys].filter((key) => {
@@ -1737,9 +2222,13 @@ export function amendWorkPlan(
     return beforeWaveFingerprints.get(key) !== planWaveFingerprint(validated, phaseId, waveId)
   })
 
-  syncCurrentPlanNodes(hierarchy, validated, now)
-
   const nextRevision = (snapshot.revision ?? 1) + 1
+  syncCurrentPlanNodes(hierarchy, validated, now, {
+    revision: nextRevision,
+    reason,
+    affectedTaskIds: new Set(affectedTaskIds),
+    changedWaveKeys: new Set(changedWaveKeys),
+  })
   const amendment: WorkPlanAmendmentRecord = {
     revision: nextRevision,
     by: nonEmpty(input.by, "Plan amendment actor"),
@@ -1774,7 +2263,7 @@ export function amendWorkPlan(
   }
   hierarchy.version++
   hierarchy.updatedAt = now
-  return { hierarchy, plan: updated, amendment, changedTaskIds, changedWaveKeys }
+  return { hierarchy, plan: updated, amendment, changedTaskIds, affectedTaskIds, changedWaveKeys }
 }
 
 export function invalidateWorkPlan(
@@ -1807,6 +2296,27 @@ export function invalidateWorkPlan(
   hierarchy.objectiveStatus = "active"
   hierarchy.updatedAt = now
   return { hierarchy, plan: updated }
+}
+
+/** Permit planning to resume only from an invalidated generation with no consumed or live work. */
+export function assertInvalidatedPlanReopenable(hierarchy: WorkHierarchy, generation: number) {
+  if (generation !== hierarchy.generation) {
+    throw new Error(
+      `Stale workflow generation: workflow=${generation}, current=${hierarchy.generation}. Reconcile/replan before mutating persistent work.`,
+    )
+  }
+  const snapshot = currentPlan(hierarchy)
+  if (!snapshot?.invalidated) {
+    throw new Error("Plan generation is not invalidated and cannot use invalidation recovery.")
+  }
+  const unsafeNode = currentGenerationNodes(hierarchy).find(
+    (node) => node.claimedByWorkflowId || (node.status !== "pending" && node.status !== "superseded"),
+  )
+  if (unsafeNode) {
+    throw new Error(
+      `Invalidated Plan generation ${generation} cannot be reopened after work was consumed or claimed (${unsafeNode.type} ${unsafeNode.logicalId}).`,
+    )
+  }
 }
 
 export function workTree(hierarchy: WorkHierarchy): WorkTree {
@@ -1888,6 +2398,52 @@ function recomputeRollup(hierarchy: WorkHierarchy, now: string) {
   }
 }
 
+/**
+ * Reopening a Task is not permission to retroactively attest an old result.
+ * Archive only this workflow's superseded receipts, including when a Plan
+ * amendment already released the original claim.
+ */
+export function invalidateWorkflowTaskResults(
+  hierarchy: WorkHierarchy,
+  workflowId: string,
+  generation: number,
+  taskIds: string[],
+  reason: string,
+  now: string,
+) {
+  assertWorkGeneration(hierarchy, generation)
+  const selected = new Set(taskIds)
+  if (selected.size === 0) return hierarchy
+  const invalidatedWaveIds = new Set<string>()
+  let changed = false
+
+  for (const task of currentGenerationNodes(hierarchy)) {
+    if (
+      task.type !== "task" ||
+      task.status === "superseded" ||
+      !selected.has(task.logicalId) ||
+      task.result?.workflowId !== workflowId
+    ) continue
+    invalidateTaskResult(task, currentPlan(hierarchy)?.revision ?? 1, reason, now)
+    if (task.parentId) invalidatedWaveIds.add(task.parentId)
+    changed = true
+  }
+  if (!changed) return hierarchy
+
+  for (const wave of currentGenerationNodes(hierarchy)) {
+    if (wave.type !== "wave" || !invalidatedWaveIds.has(wave.id)) continue
+    delete wave.completion
+    if (wave.status === "complete") {
+      wave.status = wave.claimedByWorkflowId ? "active" : "pending"
+    }
+    wave.updatedAt = now
+  }
+  recomputeRollup(hierarchy, now)
+  hierarchy.version++
+  hierarchy.updatedAt = now
+  return hierarchy
+}
+
 export function syncWorkTaskStatuses(
   hierarchy: WorkHierarchy,
   workflowId: string,
@@ -1895,12 +2451,7 @@ export function syncWorkTaskStatuses(
   statuses: Array<{
     taskId: string
     complete: boolean
-    result?: {
-      workflowId: string
-      summary?: string
-      evidenceClaimIds: string[]
-      completedAt: string
-    }
+    result?: WorkTaskResult
   }>,
   now: string,
 ) {
@@ -1917,11 +2468,10 @@ export function syncWorkTaskStatuses(
       )
     }
     const next: WorkNodeStatus = entry.complete ? "complete" : "pending"
-    if (!entry.complete && task.result) {
-      delete task.result
-      changed = true
-    }
-    if (entry.complete && entry.result && JSON.stringify(task.result) !== JSON.stringify(entry.result)) {
+    // A Task's execution result stays current while implementation review is
+    // pending. The Work roll-up is intentionally pending until that review
+    // passes; only explicit Task invalidation may archive its result.
+    if (entry.result && JSON.stringify(task.result) !== JSON.stringify(entry.result)) {
       task.result = entry.result
       changed = true
     }
@@ -1946,7 +2496,11 @@ export function completeWaveForTasks(
   generation: number,
   taskIds: string[],
   now: string,
+  bindingFingerprint: string,
 ) {
+  if (!/^[a-f0-9]{64}$/.test(bindingFingerprint)) {
+    throw new Error("Wave completion requires a SHA-256 fingerprint of the reviewed Task role/slot graph.")
+  }
   assertWorkGeneration(hierarchy, generation)
   const tasks = activeTaskMap(hierarchy)
   const selected = taskIds.map((id) => tasks.get(id))
@@ -1979,6 +2533,7 @@ export function completeWaveForTasks(
   wave.completion = {
     workflowId, generation, taskIds: [...taskIds].sort(),
     reviewedTaskIds: waveTasks.map((task) => task.logicalId).sort(),
+    bindingFingerprint,
     at: now, provenance: "implementation-review",
   }
   wave.status = "complete"
@@ -1997,28 +2552,20 @@ export function completeWaveForTasks(
   return hierarchy
 }
 
-export function reopenWaveForTasks(
+/**
+ * A reviewed Wave cannot lose its completed status after another Wave has
+ * consumed it. Used by both explicit reopen and the all-reused claim path.
+ */
+export function assertCompletedWaveMayReopen(
   hierarchy: WorkHierarchy,
   workflowId: string,
   generation: number,
   taskIds: string[],
-  now: string,
+  expectedBindingFingerprint?: string,
 ) {
-  assertWorkGeneration(hierarchy, generation)
-  const tasks = activeTaskMap(hierarchy)
-  const selected = taskIds.map((id) => tasks.get(id))
-  if (selected.some((task) => !task)) return hierarchy
-  const parentIds = new Set(selected.map((task) => task!.parentId))
-  if (parentIds.size !== 1) return hierarchy
-
-  const waveId = [...parentIds][0]!
-  const wave = activeNodes(hierarchy).find((node) => node.id === waveId && node.type === "wave")
-  if (!wave || wave.status !== "complete") return hierarchy
-  assertCompletedWaveForTasks(hierarchy, workflowId, generation, taskIds)
-
-  // Reopening invalidates the whole assembled Wave receipt, not just the
-  // Tasks this (possibly partial-recovery) workflow executed. Admission of a
-  // downstream Task depended on that whole Wave having passed review.
+  const wave = assertCompletedWaveForTasks(
+    hierarchy, workflowId, generation, taskIds, expectedBindingFingerprint,
+  )
   const dependentIds = new Set(activeNodes(hierarchy)
     .filter((node) => node.type === "task" && node.parentId === wave.id)
     .map((node) => node.logicalId))
@@ -2036,6 +2583,33 @@ export function reopenWaveForTasks(
       dependentIds.has(node.logicalId) && (node.status === "complete" || node.claimedByWorkflowId))) {
     throw new Error("Cannot reopen a Wave already consumed by downstream work; cancel/replan the affected work explicitly.")
   }
+  return wave
+}
+
+export function reopenWaveForTasks(
+  hierarchy: WorkHierarchy,
+  workflowId: string,
+  generation: number,
+  taskIds: string[],
+  now: string,
+  expectedBindingFingerprint?: string,
+) {
+  if (expectedBindingFingerprint && !/^[a-f0-9]{64}$/.test(expectedBindingFingerprint)) {
+    throw new Error("Expected Task role/slot graph binding must be a SHA-256 fingerprint.")
+  }
+  assertWorkGeneration(hierarchy, generation)
+  const tasks = activeTaskMap(hierarchy)
+  const selected = taskIds.map((id) => tasks.get(id))
+  if (selected.some((task) => !task)) return hierarchy
+  const parentIds = new Set(selected.map((task) => task!.parentId))
+  if (parentIds.size !== 1) return hierarchy
+
+  const waveId = [...parentIds][0]!
+  const wave = activeNodes(hierarchy).find((node) => node.id === waveId && node.type === "wave")
+  if (!wave || wave.status !== "complete") return hierarchy
+  assertCompletedWaveMayReopen(
+    hierarchy, workflowId, generation, taskIds, expectedBindingFingerprint,
+  )
 
   delete wave.completion
   wave.claimedByWorkflowId = workflowId
@@ -2083,6 +2657,7 @@ export function assertCompletedWaveForTasks(
   workflowId: string,
   generation: number,
   taskIds: string[],
+  expectedBindingFingerprint?: string,
 ) {
   assertWorkGeneration(hierarchy, generation)
   const tasks = activeTaskMap(hierarchy)
@@ -2099,6 +2674,9 @@ export function assertCompletedWaveForTasks(
   }
   const all = activeNodes(hierarchy).filter((node) => node.type === "task" && node.parentId === wave.id)
   const receipt = wave.completion
+  if (expectedBindingFingerprint && receipt?.bindingFingerprint !== expectedBindingFingerprint) {
+    throw new Error("Completed Wave receipt does not match the current Task role/slot graph and independent gates.")
+  }
   if (!receipt || receipt.workflowId !== workflowId || receipt.generation !== generation ||
       JSON.stringify([...receipt.taskIds].sort()) !== JSON.stringify([...taskIds].sort()) ||
       JSON.stringify([...receipt.reviewedTaskIds].sort()) !== JSON.stringify(all.map((task) => task.logicalId).sort()) ||
@@ -2164,12 +2742,49 @@ export function claimWorkflowWave(
   tasks: TaskSpec[],
   objectiveClosure: boolean,
   now: string,
+  satisfiedTaskIds: string[] = [],
 ) {
   assertWorkGeneration(hierarchy, generation)
-  const wave = validateWorkflowWave(hierarchy, tasks, objectiveClosure)
   const taskMap = activeTaskMap(hierarchy)
-  const selected = tasks.map((task) => taskMap.get(task.id)!)
+  const satisfied = [...new Set(satisfiedTaskIds)]
+  let wave: WorkNode
 
+  if (tasks.length > 0) {
+    wave = validateWorkflowWave(
+      hierarchy,
+      tasks,
+      objectiveClosure,
+      { workflowId, satisfiedTaskIds: satisfied },
+    )
+  } else {
+    if (satisfied.length === 0) throw new Error("Wave claim requires executable or reusable Tasks.")
+    const completed = satisfied.map((taskId) => taskMap.get(taskId))
+    if (completed.some((task) => !task || !task!.result)) {
+      throw new Error("Reusable Wave claim references a Task without a preserved execution result.")
+    }
+    const parentIds = new Set(completed.map((task) => task!.parentId))
+    if (parentIds.size !== 1) throw new Error("Reusable Tasks must belong to exactly one Wave.")
+    const waveId = [...parentIds][0]!
+    const foundWave = activeNodes(hierarchy).find((node) => node.id === waveId && node.type === "wave")
+    if (!foundWave) throw new Error("Reusable Wave not found.")
+    if (objectiveClosure && objectiveWorkLevel(hierarchy) === "wave") {
+      throw new Error("Objective-scoped workflow may execute only the final remaining Wave.")
+    }
+    wave = foundWave
+  }
+
+  const selected = [
+    ...tasks.map((task) => taskMap.get(task.id)!),
+    ...satisfied.map((taskId) => taskMap.get(taskId)!),
+  ]
+
+  if (wave.status === "complete") {
+    // Re-review of completed work is permitted only while no downstream
+    // execution has consumed that Wave's independently reviewed output.
+    assertCompletedWaveMayReopen(
+      hierarchy, workflowId, generation, selected.map((task) => task.logicalId),
+    )
+  }
   if (wave.claimedByWorkflowId && wave.claimedByWorkflowId !== workflowId) {
     throw new Error(
       `Wave ${wave.logicalId} is already claimed by workflow ${wave.claimedByWorkflowId}.`,
@@ -2241,17 +2856,22 @@ export function validateWorkflowWave(
   hierarchy: WorkHierarchy,
   tasks: TaskSpec[],
   objectiveClosure: boolean,
+  options: { workflowId?: string; satisfiedTaskIds?: string[] } = {},
 ) {
   if (hierarchy.generation <= 0) throw new Error("Persistent work plan is missing.")
 
   const taskMap = activeTaskMap(hierarchy)
   const selected = new Set(tasks.map((task) => task.id))
+  const satisfiedTaskIds = new Set(options.satisfiedTaskIds ?? [])
 
   for (const task of tasks) {
     const workTask = taskMap.get(task.id)
     if (!workTask) throw new Error(`Workflow Task ${task.id} is not in the current work-plan generation.`)
     if (workTask.status === "complete") throw new Error(`Workflow Task ${task.id} is already complete.`)
-    if (workTask.claimedByWorkflowId && workTask.claimedByWorkflowId !== "") {
+    if (
+      workTask.claimedByWorkflowId &&
+      workTask.claimedByWorkflowId !== options.workflowId
+    ) {
       throw new Error(
         `Workflow Task ${task.id} is already claimed by workflow ${workTask.claimedByWorkflowId}.`,
       )
@@ -2265,8 +2885,17 @@ export function validateWorkflowWave(
 
     const contract = plannedTask(planSnapshot(hierarchy), task.id)
     if (!contract) throw new Error(`Workflow Task ${task.id} has no persistent semantic contract.`)
+    if (!contract.role || !contract.responsibility) {
+      throw new Error(`Legacy Plan Task ${task.id} has no accountable role/responsibility; amend and independently review the Plan before admission.`)
+    }
+    if (!task.role || !task.responsibility) {
+      throw new Error(`Executable Task ${task.id} must repeat the current Plan role and responsibility.`)
+    }
     const exactFields: Array<[string, unknown, unknown]> = [
       ["rationale", task.rationale ?? "", contract.rationale],
+      ["role", task.role, contract.role],
+      ["responsibility", task.responsibility, contract.responsibility],
+      ["adviceForTaskId", task.adviceForTaskId, contract.adviceForTaskId],
       ["authorityRefs", task.authorityRefs ?? [], contract.authorityRefs],
       ["constraints", task.constraints ?? [], contract.constraints],
       ["acceptanceCriteria", task.acceptanceCriteria ?? [], contract.acceptanceCriteria],
@@ -2288,7 +2917,18 @@ export function validateWorkflowWave(
 
   const waveId = [...parentIds][0]!
   const waveTasks = [...taskMap.values()].filter((task) => task.parentId === waveId)
-  const remainingWaveTasks = waveTasks.filter((task) => task.status !== "complete")
+  for (const taskId of satisfiedTaskIds) {
+    const satisfiedTask = taskMap.get(taskId)
+    if (!satisfiedTask || satisfiedTask.parentId !== waveId || !satisfiedTask.result) {
+      throw new Error(`Reusable Task ${taskId} has no preserved execution result in the selected Wave.`)
+    }
+  }
+  // A reused execution result remains pending in persistent Work until the
+  // independent implementation-review gate passes. It is nevertheless not
+  // executable work that must be repeated.
+  const remainingWaveTasks = waveTasks.filter(
+    (task) => task.status !== "complete" && !satisfiedTaskIds.has(task.logicalId),
+  )
 
   if (
     remainingWaveTasks.some((task) => !selected.has(task.logicalId)) ||
@@ -2313,7 +2953,9 @@ export function validateWorkflowWave(
       }
     }
 
-    const expectedLocal = (task.dependsOn ?? []).filter((dependency) => selected.has(dependency)).sort()
+    const expectedLocal = (task.dependsOn ?? [])
+      .filter((dependency) => selected.has(dependency) || satisfiedTaskIds.has(dependency))
+      .sort()
     const actualLocal = [...new Set(tasks.find((candidate) => candidate.id === task.logicalId)!.dependsOn)].sort()
     if (JSON.stringify(expectedLocal) !== JSON.stringify(actualLocal)) {
       throw new Error(

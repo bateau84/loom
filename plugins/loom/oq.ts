@@ -3,6 +3,7 @@ import type { Workflow } from "./workflow"
 export type OQAuthority =
   | "user"
   | "general"
+  | "brainstorm"
   | "designer"
   | "specifier"
   | "architect"
@@ -53,11 +54,15 @@ export type OpenQuestion = {
     /** Immutable Plan revision that existed when the OQ was raised. */
     revision?: number
     taskId?: string
+    /** Exact attached decision-wait Task attempt, when this OQ resolves one. */
+    stepAttempt?: number
   }
   status: OQStatus
   answer?: OQAnswer
   reconciliations: Record<string, OQReconciliation>
   createdAt: string
+  /** Increments on every reopen so an earlier attachment cannot authorize new experiments. */
+  attempt?: number
   reopened?: {
     by: string
     reason: string
@@ -82,6 +87,7 @@ export type RaiseQuestionInput = {
     generation: number
     revision?: number
     taskId?: string
+    stepAttempt?: number
   }
   now: string
 }
@@ -134,6 +140,7 @@ export function raiseQuestion(input: RaiseQuestionInput): OpenQuestion {
     status: "open",
     reconciliations: {},
     createdAt: input.now,
+    attempt: 0,
   }
 }
 
@@ -159,6 +166,27 @@ export function answerQuestion(
 
   question.answer = { by: question.requiredAuthority === "user" ? "user" : actor, source, text, evidence, at: now }
   question.status = question.consumerStepIds.length === 0 ? "closed" : "answered"
+  return question
+}
+
+/** The exact user answer is also the only authority that can consume a decision-wait OQ. */
+export function reconcileUserDecisionQuestion(question: OpenQuestion, stepId: string, now: string) {
+  if (question.requiredAuthority !== "user" || question.answer?.source !== "user" || question.answer.by !== "user") {
+    throw new Error("Only the recorded user answer can resolve a user-decision Task OQ.")
+  }
+  if (!question.consumerStepIds.includes(stepId)) {
+    throw new Error("User-decision OQ does not name this exact wait Task as a consumer.")
+  }
+  question.reconciliations[stepId] = {
+    stepId,
+    byAgent: "user",
+    disposition: "incorporated",
+    summary: "The user's answer was recorded as the decision Task result.",
+    at: now,
+  }
+  question.status = question.consumerStepIds.every((consumer) => Boolean(question.reconciliations[consumer]))
+    ? "closed"
+    : "answered"
   return question
 }
 
@@ -210,6 +238,7 @@ export function reopenQuestion(
   if (!mayReopen) throw new Error("Agent is not authorized to reopen this question.")
 
   question.reconciliations = {}
+  question.attempt = (question.attempt ?? 0) + 1
   if (!preserveAnswer) delete question.answer
   question.status = preserveAnswer && question.answer ? "answered" : "open"
   question.reopened = { by: actor, reason, preservedAnswer: preserveAnswer, at: now }

@@ -344,6 +344,9 @@ export function resolveBudgetGrantTarget(input: {
   if (stepId) {
     const step = workflow.steps.find((candidate) => candidate.id === stepId)
     if (!step) return { target: undefined, reason: "Step not found." }
+    if (step.kind === "wait") {
+      return { target: undefined, reason: "User-decision waits have no agent dispatch and cannot receive budget grants." }
+    }
     if (step.status !== "pending") {
       return {
         target: undefined,

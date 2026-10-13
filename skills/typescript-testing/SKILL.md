@@ -1,13 +1,13 @@
 ---
 name: typescript-testing
-description: "TypeScript/JavaScript testing mechanics across Bun test, Vitest, Jest, and similar runners: awaited async assertions, deterministic timers and concurrency, module/global mock isolation, runtime-vs-type-level tests, environment selection, regression tests, and false-green avoidance. Use when writing or reviewing tests for TypeScript/JavaScript code. Pair with test-driven-development for red-green-refactor process."
+description: "TypeScript/JavaScript testing mechanics across Bun, Vitest, Jest, and similar runners: awaited async assertions, fake timers, module/global mock isolation, runtime vs type-level tests, and environment selection. Use when writing or reviewing JS/TS tests; test-driven-development owns which tests are valuable and the optional red-green-refactor workflow."
 license: MIT
 metadata:
   author: Bateau
   version: "1.0.0"
 ---
 
-> **House skill.** test-driven-development owns test-first process and honest behavioral intent. This skill owns TypeScript/JavaScript test mechanics and common false-green modes. Use the repository's existing runner rather than introducing another by default.
+> **House skill.** `test-driven-development` owns test value, selection, proportionality, stopping/deletion, and optional test-first process. This skill owns TypeScript/JavaScript mechanics and common false-green modes **when relevant**. Use the existing runner; do not introduce mocks, new suites, or environments solely to follow examples.
 
 ## Start from the runner and environment
 
@@ -121,15 +121,7 @@ Prefer deterministic IDs, clocks, and random sources when values affect assertio
 
 Coverage percentage is a locator, not a correctness verdict.
 
-Prioritize:
-
-- defining behavior;
-- a regression case for each fixed bug;
-- failure and rejection paths;
-- valid boundary values including falsy values;
-- cancellation and race cases for async code;
-- serialization and parse boundaries;
-- cleanup.
+Prioritize the applicable defining behavior and credible failure modes (rejections, falsy/boundary values, cancellation, races, serialization, cleanup). This is a menu, **not a test matrix**: only add a case when it detects a distinct plausible regression or guards a high-consequence contract not already proven.
 
 Snapshots are appropriate for stable, reviewable structures. Avoid giant snapshots that hide semantic changes in noise.
 

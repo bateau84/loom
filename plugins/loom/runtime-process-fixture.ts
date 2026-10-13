@@ -1,4 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises"
+import { assertIsolatedTestProcess, assertIsolatedFixturePath, assertIsolatedFixtureRuntime } from "./test-isolation"
 import { createProjectStorage, createTransactionalStorage, ensureRuntimeStateVersion, resolveRuntimeIdentity, withRuntimeLock, withRuntimeLocks, type RawStorage } from "./runtime"
 
 class ProcessStorage implements RawStorage {
@@ -11,8 +12,13 @@ class ProcessStorage implements RawStorage {
 
 const [mode, project, ...args] = process.argv.slice(2)
 if (!mode || !project) throw new Error("mode and project are required")
+// Existing child tests deliberately omit XDG_RUNTIME_DIR to exercise the
+// state-root fallback. HOME/state/temp still must be private before initialization.
+await assertIsolatedTestProcess(process.env, { allowRuntimeFallback: true })
+await assertIsolatedFixturePath(project, { allowRuntimeFallback: true })
 
 const runtime = await resolveRuntimeIdentity(project, new ProcessStorage())
+await assertIsolatedFixtureRuntime(runtime, { allowRuntimeFallback: true })
 
 if (mode === "identity") {
   process.stdout.write(runtime.projectId + "\n")
@@ -111,6 +117,46 @@ if (mode === "version-skew-upgrade") {
   })
   await writeFile(upgradedPath, "upgraded", "utf8")
   process.stdout.write("upgraded\n")
+  process.exit(0)
+}
+
+if (mode === "sqlite-hold-write") {
+  const [key, readyPath, releasePath] = args
+  if (!key || !readyPath || !releasePath) {
+    throw new Error("sqlite-hold-write requires key, readyPath and releasePath")
+  }
+  const storage = await createTransactionalStorage(runtime)
+  await ensureRuntimeStateVersion(storage, runtime)
+  await storage.transaction!(async () => {
+    await storage.set(key, { revision: 2 })
+    await writeFile(readyPath, "ready", "utf8")
+    let released = false
+    for (let i = 0; i < 200; i++) {
+      try {
+        await readFile(releasePath, "utf8")
+        released = true
+        break
+      } catch (error: any) {
+        if (error?.code !== "ENOENT") throw error
+        await Bun.sleep(50)
+      }
+    }
+    if (!released) throw new Error("Timed out waiting to release SQLite write transaction")
+  })
+  process.stdout.write("committed\n")
+  process.exit(0)
+}
+
+if (mode === "sqlite-write") {
+  const [key, revisionText] = args
+  const revision = Number(revisionText)
+  if (!key || !Number.isSafeInteger(revision)) {
+    throw new Error("sqlite-write requires key and integer revision")
+  }
+  const storage = await createTransactionalStorage(runtime)
+  await ensureRuntimeStateVersion(storage, runtime)
+  await storage.set(key, { revision })
+  process.stdout.write("written\n")
   process.exit(0)
 }
 

@@ -70,6 +70,16 @@ export type LoomSidebarSnapshot = {
     agent: string
     kind: "work" | "gate"
   }>
+  userDecisions: Array<{
+    step: string
+    taskId: string
+    title: string
+    objective: string
+    rationale?: string
+    acceptanceCriteria: string[]
+    ready: boolean
+    waitsFor: string[]
+  }>
   openQuestions: number
   openVerification: number
 }
@@ -226,6 +236,24 @@ export const LoomRpc = {
               additionalProperties: false,
             },
           },
+          userDecisions: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                step: { type: "string" },
+                taskId: { type: "string" },
+                title: { type: "string" },
+                objective: { type: "string" },
+                rationale: { type: "string" },
+                acceptanceCriteria: { type: "array", items: { type: "string" } },
+                ready: { type: "boolean" },
+                waitsFor: { type: "array", items: { type: "string" } },
+              },
+              required: ["step", "taskId", "title", "objective", "acceptanceCriteria", "ready", "waitsFor"],
+              additionalProperties: false,
+            },
+          },
           openQuestions: { type: "number" },
           openVerification: { type: "number" },
         },
@@ -236,6 +264,7 @@ export const LoomRpc = {
           "progress",
           "tasks",
           "now",
+          "userDecisions",
           "openQuestions",
           "openVerification",
         ],

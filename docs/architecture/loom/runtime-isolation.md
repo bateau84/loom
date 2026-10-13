@@ -340,9 +340,13 @@ Legacy OpenCode plugin storage is treated as baseline-version input even when it
 - workflow IDs, Objective IDs, Task IDs, paths, and other caller-supplied selectors are not authorization;
 - session-to-workflow membership is established only through Loom-controlled start/resume/attachment paths;
 - one-use dispatch grants are unguessable, scoped, expiring, and atomically consumed;
-- durable child mutation requires the exact bound project/workflow/step attempt plus the step's current effective write scope; role artifact paths are starting defaults, project-local growth is admitted only through recorded `loom_scope_elevate`, and hard-boundary growth requires exact one-time user approval; scope/attachment/lifecycle transitions serialize with active step mutations;
+- ordinary durable child mutation through structured edit tools requires the exact bound project/workflow/step attempt plus its effective write scope; role artifact paths are starting defaults, project-local growth is admitted through recorded `loom_scope_elevate`, and structured edit hard-boundary growth requires exact one-time user approval; scope/attachment/lifecycle transitions serialize with active governed mutations;
 - project markers and installation registries are operational identity metadata, not product authority;
 - lock files are user-private operational coordination and are never an external control surface.
+
+## Audit-only elevated shell exception
+
+A child with an exact current runnable step can call `loom_command_elevate` for any shell command. Its one-use, expiring grant logs the command and permits execution with host OS permissions, without ordinary command, Git, or filesystem write-scope checks. Loom cannot guarantee containment, rollback, or provenance of arbitrary side effects, and command audit evidence must not be mistaken for trusted authorship or independent PASS. Un-elevated commands and structured edit tools retain their normal restrictions.
 
 ## Implementation sequence
 

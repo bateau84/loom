@@ -8,6 +8,8 @@ metadata:
 
 # Terraform Test
 
+`test-driven-development` owns test selection, proportionality, realistic risks, and the optional TDD loop. This skill covers Terraform-specific plan/apply, provider mock, assertion, and state mechanics; its example scenarios do not impose a default test matrix.
+
 Terraform's built-in testing framework validates that configuration updates don't introduce breaking changes. Tests run against temporary resources, protecting existing infrastructure and state files.
 
 ## Reference Files
@@ -428,7 +430,7 @@ terraform test -no-cleanup                           # skip resource cleanup
 4. **Use mocks** for external dependencies — faster and no credentials needed (see `references/MOCK_PROVIDERS.md`)
 5. **Error messages**: Make them specific enough to diagnose failures without running the test again
 6. **Negative tests**: Use `expect_failures` to verify validation rules reject bad inputs
-7. **Variable coverage**: Test different variable combinations to validate all code paths — test variables have the highest precedence and override all other sources
+7. **Variable coverage**: Exercise variable combinations that distinguish accepted branches or credible regressions; do not enumerate all combinations or optimize for code-path counts
 8. **Module sources**: Test files only support local paths and registry modules — not git or HTTP URLs
 9. **Parallel execution**: Use `parallel = true` for independent tests with different state files
 10. **Cleanup**: Integration tests destroy resources in reverse run block order automatically; use `-no-cleanup` for debugging

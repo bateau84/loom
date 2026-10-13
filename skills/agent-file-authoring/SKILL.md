@@ -23,9 +23,8 @@ Agent files are executable role charters. Keep them **small enough that the prof
 9. Preserve authority ownership. A role may notice outside its domain without gaining authority to decide or mutate there.
 10. Keep independent gates outcome-neutral and keep permissions least-privilege. Preserve independent review as a separate production gate; do not make the producer/coordinator own its verdict or duplicate its procedure inline.
 11. Use shared Loom state/tools instead of inventing a parallel workflow protocol in prose.
-12. Add or adapt realistic behavioral evals for changed **decisions and outcomes**, not required phrases. When moving an old rule to a new production home, name the decision/outcome regression the eval must still catch—for example known-incomplete completion, authority crossing, or coordinator method prescription. Include ordinary work as well as traps so the learned strategy is professional judgment, not universal refusal/escalation.
-13. Do not weaken a realistic eval merely because the current model fails it.
-14. Search for contradictory old wording, validate deterministic CI, and run the smallest relevant live eval set before merge.
+12. When an agent change affects decisions, authority, routing, evidence, completion, or other model behavior, load `agent-eval` and add or adapt the smallest appropriate behavioral coverage. Keep eval-design mechanics in that skill rather than duplicating them here.
+13. Search for contradictory old wording, validate deterministic CI, and run the smallest relevant live eval set selected by the behavioral claim before merge.
 
 A useful test: **would these instructions help an experienced human professional exercise judgment, or are they micromanaging the profession?**
 

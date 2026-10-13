@@ -1,0 +1,68 @@
+{
+  "skill": "hallmark",
+  "version": "2.0.0",
+  "shape": 1,
+  "cases": [
+    {
+      "id": "HALLMARK-CONTEXT-01",
+      "name": "direction-is-not-a-theme-swap",
+      "prompt": "Design a web activity view for incident responders. Accepted direction: quiet oversight, preserve orientation after interruption, show what needs attention before general activity. Existing system: a selected-item list/detail flow, semantic status tokens, and timestamps. A colleague proposes a gradient hero, four equal metric cards, cheerful completion toasts, and an invented 99.9% health score. Give a concrete design direction and composition, with reasons. Do not write files.",
+      "trap": "A polished generic dashboard is accepted after a palette change without repairing the mismatch to the actual user task.",
+      "expectations": [
+        "Specifies a composition that prioritizes attention and preserves selection/orientation using the existing flow.",
+        "Explains why the hero/equal cards/repeated toasts fail this accepted direction rather than merely disliking their style.",
+        "Rejects the invented health score and uses only supported information.",
+        "Connects character to concrete hierarchy, copy, feedback, and contextual details."
+      ],
+      "negative_expectations": [
+        "Do not propose the same structure with different colors as the only correction.",
+        "Do not impose a theme catalog, mandatory novelty, fabricated data, or a numerical taste score."
+      ]
+    },
+    {
+      "id": "HALLMARK-LOCAL-01",
+      "name": "local-component-inherits-character",
+      "prompt": "Our booking site has accepted warm editorial typography, a copper accent, and a compact native date field. We only need a clearer focus treatment and readable validation text for that field. Propose the design changes; do not alter the rest of the page or create files.",
+      "trap": "The craft method expands a settled component change into a new brand, mandatory alternative directions, or an eight-state demonstration.",
+      "expectations": [
+        "Inherits the accepted direction and limits changes to focus and validation readability.",
+        "States an accessible treatment and a relevant check while preserving existing behavior.",
+        "Distinguishes the needed correction from optional page polish."
+      ],
+      "negative_expectations": [
+        "Do not force a new theme, mood board, all-eight-state quota, or additional approval gate.",
+        "Do not require broad exploration when no material direction is open."
+      ]
+    },
+    {
+      "id": "HALLMARK-EXPLORE-01",
+      "name": "compare-structure-under-shared-scenario",
+      "prompt": "We are choosing the web interface for a field-research specimen library. Researchers compare specimens after returning from a trip; images are important, names can be long, and incomplete records need follow-up. Direction is open. Suggest two genuinely different approaches and compare them on the same realistic journey, including an incomplete record. Keep the response inline.",
+      "trap": "The model compares color palettes or fashionable themes rather than the structural design decision.",
+      "expectations": [
+        "Proposes meaningfully different structures or interactions and walks a common comparison/follow-up journey through both.",
+        "Uses image importance, long names, and missing information to explain trade-offs.",
+        "Recommends a direction or identifies a specific remaining observation rather than calling both equally good or inventing user research."
+      ],
+      "negative_expectations": [
+        "Do not treat a color swap as the only meaningful alternative.",
+        "Do not favor novelty solely for differentiation or claim simulated users were observed."
+      ]
+    },
+    {
+      "id": "HALLMARK-CRAFT-01",
+      "name": "care-is-not-a-new-blocking-gate",
+      "prompt": "A rendered export flow meets its accepted calm, clear direction. The timestamp and selection stay visible, errors explain the next action, and keyboard evidence is supplied. A reviewer wants to block release until the corners are more unusual and a celebratory animation is added, saying AI-made work needs a higher originality score. Assess that request from the supplied evidence only.",
+      "trap": "Craft turns into an arbitrary novelty gate despite no accepted or observed deficiency.",
+      "expectations": [
+        "Separates optional aesthetic suggestions from defects against the accepted direction.",
+        "Rejects an AI-specific or numerical originality bar as unsupported.",
+        "Explains what evidence would justify a real craft correction without claiming additional observation."
+      ],
+      "negative_expectations": [
+        "Do not demand animation, unusual corners, or a new approval stage.",
+        "Do not lower the accepted quality bar because the implementation is AI-made."
+      ]
+    }
+  ]
+}
