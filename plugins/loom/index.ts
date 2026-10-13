@@ -9438,7 +9438,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
           const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
           if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
-          if (!workflow.steps.some((step) => step.id === "product-acceptance")) {
+          if (!nativeAcceptanceGate(workflow)) {
             return { content: renderToolOutput({ error: "Workflow does not require Product Acceptance." }) }
           }
 
@@ -9450,6 +9450,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 throw new Error("Workflow belongs to another project.")
               }
 
+              const gate = nativeAcceptanceGate(currentWorkflow)
+              if (!gate || gate.status === "passed" || gate.status === "failed") {
+                throw new Error("Product Acceptance plan requires the current, uncompleted native gate.")
+              }
               const existing = (await ctx.storage.get(acceptanceKey(value.workflowId))) as AcceptancePlan | undefined
               if (existing?.scenarios.some((scenario) => scenario.outcome !== "pending")) {
                 throw new Error("Product Acceptance plan cannot change after results exist; reopen/reset first.")
@@ -9459,6 +9463,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 workflowId: value.workflowId,
                 createdBy: tool.agent,
                 scenarios: value.scenarios,
+                stepId: gate.id,
+                stepAttempt: gate.attempt ?? 0,
                 now: new Date().toISOString(),
               })
               await ctx.storage.set(acceptanceKey(value.workflowId), next)
@@ -9500,7 +9506,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "pa_result",
         description:
-          "Record one immutable Product Acceptance scenario result for the current attempt. PASS requires product-acceptance evidence claims from the Product Acceptance step.",
+          "Record one immutable Product Acceptance scenario result for the current attempt. PASS requires product-acceptance evidence claims from the attached native Acceptance gate.",
         input: {
           type: "object",
           properties: {
@@ -9526,11 +9532,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             evidenceClaimIds: string[]
             note: string
           }
-          if (!(await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession))) {
+          const bound = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
+          if (!bound) {
             return { content: renderToolOutput({ error: "Workflow not found or current session is not bound to it." }) }
           }
-          if (!(await exactStepBinding(ctx, tool.sessionID, value.workflowId, "product-acceptance"))) {
-            return { content: renderToolOutput({ error: "Product Acceptance results require the exact product-acceptance attachment." }) }
+          const gate = nativeAcceptanceGate(bound)
+          if (!gate || !(await exactStepAttemptBinding(ctx, tool.sessionID, value.workflowId, gate.id))) {
+            return { content: renderToolOutput({ error: "Product Acceptance results require the exact current native-gate attachment." }) }
           }
 
           try {
@@ -9549,11 +9557,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 throw new Error("Product Acceptance evidence claims must be produced by acceptance.")
               }
               const current = await readWorkflow(ctx, value.workflowId)
-              if (!current || !(await exactStepBinding(ctx, tool.sessionID, value.workflowId, "product-acceptance"))) {
+              const currentGate = current && nativeAcceptanceGate(current)
+              if (!current || !currentGate || currentGate.status !== "pending" ||
+                  !(await exactStepAttemptBinding(ctx, tool.sessionID, value.workflowId, currentGate.id))) {
                 throw new Error("Product Acceptance attachment changed before result commit.")
               }
               assertWorkflowNotCancelled(current)
-              const attempt = current.steps.find((step) => step.id === "product-acceptance")?.attempt ?? 0
+              const attempt = currentGate.attempt ?? 0
+              if (plan.workflowId !== value.workflowId || plan.stepId !== currentGate.id ||
+                  plan.stepAttempt !== attempt) {
+                throw new Error("Product Acceptance scenarios are bound to an old native gate or attempt.")
+              }
               if (value.outcome === "passed" && claims.some((claim) => (claim.attempt ?? 0) !== attempt)) {
                 throw new Error("Product Acceptance claims must belong to the current step attempt.")
               }
@@ -9561,6 +9575,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               const scenario = recordAcceptanceResult({
                 plan,
                 scenarioId: value.scenarioId,
+                stepId: currentGate.id,
                 outcome: value.outcome,
                 claims,
                 byAgent: tool.agent,
