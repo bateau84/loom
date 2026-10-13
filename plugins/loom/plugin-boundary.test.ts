@@ -12559,7 +12559,8 @@ test("native Product Acceptance owns persistent Task completion and blocks stale
       const routed = await h.call("route", {
         humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
         diagnostic: false, productOutcome: true, implementationRequested,
-        executionDepth: "objective", workLevel: "wave",
+        executionDepth: "objective",
+        ...(implementationRequested ? { workLevel: "wave" as const } : {}),
       }, "general", parent)
       expect(routed.error).toBeUndefined()
       await complete(workflowId, "critic-solution", "critic", "pass")
@@ -12584,7 +12585,7 @@ test("native Product Acceptance owns persistent Task completion and blocks stale
       ],
     }])
     definition.acceptanceCoverage = Array.from({ length: 6 }, (_, i) => ({
-      id: `SC-00${i + 1}`, title: `Scenario ${i + 1}`,
+      id: `sc-00${i + 1}`, title: `Scenario ${i + 1}`,
       criterion: `Product scenario SC-00${i + 1} runs against real integration`,
       taskIds: ["acceptance"],
     }))
@@ -12625,7 +12626,7 @@ test("native Product Acceptance owns persistent Task completion and blocks stale
     await complete(source.workflowId, "task-review:implementation", "reviewer", "pass")
     const acceptanceSession = await attach(source.workflowId, "task:acceptance", "acceptance")
     const scenarios = definition.acceptanceCoverage.map((coverage) => ({
-      id: coverage.id, title: coverage.title, criteria: [coverage.criterion],
+      id: coverage.id.toUpperCase(), title: coverage.title, criteria: [coverage.criterion],
     }))
     expect((await h.call("pa_plan", {
       workflowId: source.workflowId, scenarios,
