@@ -2861,6 +2861,14 @@ async function assertCurrentAcceptanceDependencies(
         assertCompletedWaveForTasks(work, result.workflowId, generation,
           completion.taskIds, completion.bindingFingerprint)
         await assertCurrentAcceptanceProof(ctx, source, step)
+        const originalClaimIds = (await stepClaims(ctx, source.id, step.id))
+          .filter((claim) => claim.byAgent === "acceptance" &&
+            (claim.attempt ?? 0) === (step.attempt ?? 0))
+          .map((claim) => claim.id).sort()
+        if (JSON.stringify(originalClaimIds) !==
+            JSON.stringify([...result.evidenceClaimIds].sort())) {
+          throw new Error(`Cutover blocked: Acceptance Task ${taskId} has an incomplete or altered claim-set receipt.`)
+        }
         // A later product change cannot inherit the old observed acceptance.
         const head = await cleanRepositoryHead(ctx.location.directory)
         if (!head || !result.cleanRepositoryHead || head !== result.cleanRepositoryHead) {
