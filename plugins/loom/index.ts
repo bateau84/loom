@@ -3970,7 +3970,16 @@ async function notifyBackgroundChildCoordinator(
           }
         }
 
-        await ctx.session.synthetic({
+        const eventRevision = event.kind === "step-terminal"
+          ? String(currentWorkflow.steps.find((step) => step.id === event.stepId)?.attempt ?? 0)
+          : event.kind === "oq-answered"
+            ? JSON.stringify((await ctx.storage.get(oqKey(workflow.id, event.questionId!)) as OpenQuestion).answer)
+            : event.requestId!
+        const noticeId = "msg_loom_" + createHash("sha256")
+          .update(JSON.stringify([runtime.projectId, workflow.id, childSessionID, agent, event, eventRevision]))
+          .digest("hex").slice(0, 24)
+        const notice = {
+          id: noticeId,
           sessionID: generalSessionID,
           text: coordinator.source === "oq-resume"
             ? `Loom OQ-resumed child ${agent} completed its current step for workflow ${workflow.id}. Re-read authoritative Loom state and continue the next authorized work without another user prompt. Do not redispatch the completed attempt.`
@@ -3993,7 +4002,15 @@ async function notifyBackgroundChildCoordinator(
           },
           delivery: "queue",
           resume: true,
-        })
+        }
+        // Synthetic inbox admission may have succeeded even when the caller
+        // observed an error. Reuse one stable ID and identical payload so the
+        // bounded second attempt cannot create a second host input.
+        try {
+          await ctx.session.synthetic(notice)
+        } catch {
+          await ctx.session.synthetic(notice)
+        }
         return true
       },
     )
