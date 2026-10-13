@@ -15084,6 +15084,242 @@ test("background completion stays committed when the General return wake fails",
   }
 })
 
+test("answered OQ resumes a foreground consumer and its completion wakes General", async () => {
+  const generalSession = "oq-return-general"
+  const childSession = "oq-return-worker"
+  const h = await harness(
+    undefined,
+    (sessionID, projectID) =>
+      sessionID === childSession
+        ? { id: sessionID, projectID, parentID: generalSession }
+        : { id: sessionID, projectID },
+    undefined,
+    undefined,
+    undefined,
+    subagentDispatchContext(generalSession, false),
+  )
+  try {
+    const started = await h.call(
+      "start",
+      { request: "Finish a bounded task after resolving a genuine question." },
+      "general",
+      generalSession,
+    )
+    const workflowId = String(started.workflowId)
+    expect((await h.call(
+      "route",
+      {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: false,
+        implementationRequested: true,
+        executionDepth: "task",
+      },
+      "general",
+      generalSession,
+    )).error).toBeUndefined()
+
+    const grant = await h.call(
+      "dispatch_grant",
+      { workflowId, stepId: "worker" },
+      "general",
+      generalSession,
+    )
+    await admitTestSubagentDispatch(h, generalSession, "worker")
+    expect((await h.call(
+      "attach",
+      { grantId: grant.grantId, workflowId, stepId: "worker" },
+      "worker",
+      childSession,
+    )).attached).toBe(true)
+
+    const raised = await h.call(
+      "oq_raise",
+      {
+        workflowId,
+        stepId: "worker",
+        question: "Which existing task behavior should this change preserve, and why does the answer unblock this step?",
+        responder: "general",
+        blocking: true,
+        consumerStepIds: ["worker"],
+      },
+      "worker",
+      childSession,
+    )
+    expect(raised.error).toBeUndefined()
+    const questionId = String(raised.question.id)
+
+    const answered = await h.call(
+      "oq_answer",
+      {
+        workflowId,
+        questionId,
+        answer: "Preserve the already-accepted behavior; proceed with the bounded change.",
+        source: "agent",
+      },
+      "general",
+      generalSession,
+    )
+    expect(answered.error).toBeUndefined()
+    expect(answered.notifications).toEqual({
+      notified: ["worker"],
+      failed: [],
+    })
+    expect(h.syntheticMessages.at(-1)).toMatchObject({
+      sessionID: childSession,
+      delivery: "steer",
+      resume: true,
+      metadata: { kind: "oq-answered", questionId, stepId: "worker" },
+    })
+
+    const binding = await h.durableStorage.get(
+      `background-child/${encodeURIComponent(childSession)}`,
+    ) as any
+    expect(binding.active).toBe(false)
+    expect(binding.oqResume).toMatchObject({
+      stepId: "worker",
+      attempt: 0,
+      questionId,
+    })
+
+    const reconciled = await h.call(
+      "oq_reconcile",
+      {
+        workflowId,
+        questionId,
+        stepId: "worker",
+        disposition: "incorporated",
+        summary: "The accepted answer was applied to the task.",
+      },
+      "worker",
+      childSession,
+    )
+    expect(reconciled.error).toBeUndefined()
+
+    const completed = await h.call(
+      "complete",
+      {
+        workflowId,
+        stepId: "worker",
+        summary: "Task complete after its OQ was reconciled.",
+      },
+      "worker",
+      childSession,
+    )
+    expect(completed.error).toBeUndefined()
+    expect(completed.coordinatorNotification).toEqual({
+      notified: ["general"],
+      failed: [],
+    })
+    expect(h.syntheticMessages.at(-1)).toMatchObject({
+      sessionID: generalSession,
+      description: "Loom OQ consumer returned",
+      delivery: "queue",
+      resume: true,
+      metadata: {
+        kind: "background-child-return",
+        returnSource: "oq-resume",
+        workflowId,
+        childSessionID: childSession,
+        returnKind: "step-terminal",
+        stepId: "worker",
+      },
+    })
+    expect((await h.durableStorage.get(`workflow/${workflowId}`) as any)
+      .steps.find((step: any) => step.id === "worker")?.status).toBe("complete")
+  } finally {
+    h.restore()
+  }
+})
+
+test("General return wake retries an ambiguous admission with the same inbox identity", async () => {
+  const generalSession = "return-retry-general"
+  const childSession = "return-retry-worker"
+  let failures = 0
+  const h = await harness(
+    undefined,
+    (sessionID, projectID) =>
+      sessionID === childSession
+        ? { id: sessionID, projectID, parentID: generalSession }
+        : { id: sessionID, projectID },
+    undefined,
+    (input) => {
+      if (input.metadata?.kind === "background-child-return" && failures++ === 0) {
+        throw new Error("ambiguous wake admission")
+      }
+    },
+    undefined,
+    subagentDispatchContext(generalSession, true),
+  )
+  try {
+    const started = await h.call(
+      "start",
+      { request: "Complete background work with one ambiguous wake result." },
+      "general",
+      generalSession,
+    )
+    const workflowId = String(started.workflowId)
+    expect((await h.call(
+      "route",
+      {
+        humanFacing: false,
+        behavioral: false,
+        structural: false,
+        externalUnknown: false,
+        diagnostic: false,
+        productOutcome: false,
+        implementationRequested: true,
+        executionDepth: "task",
+      },
+      "general",
+      generalSession,
+    )).error).toBeUndefined()
+
+    const grant = await h.call(
+      "dispatch_grant",
+      { workflowId, stepId: "worker" },
+      "general",
+      generalSession,
+    )
+    await admitTestSubagentDispatch(h, generalSession, "worker")
+    expect((await h.call(
+      "attach",
+      { grantId: grant.grantId, workflowId, stepId: "worker" },
+      "worker",
+      childSession,
+    )).attached).toBe(true)
+
+    const completed = await h.call(
+      "complete",
+      {
+        workflowId,
+        stepId: "worker",
+        summary: "Committed work before the return wake.",
+      },
+      "worker",
+      childSession,
+    )
+    expect(completed.error).toBeUndefined()
+    expect(completed.coordinatorNotification).toEqual({
+      notified: ["general"],
+      failed: [],
+    })
+    const wakes = h.syntheticMessages.filter(
+      (message) => message.metadata?.kind === "background-child-return",
+    )
+    expect(wakes).toHaveLength(2)
+    expect(wakes[0].id).toMatch(/^msg_loom_[a-f0-9]{24}$/)
+    expect(wakes[0]).toEqual(wakes[1])
+    expect((await h.durableStorage.get(`workflow/${workflowId}`) as any)
+      .steps.find((step: any) => step.id === "worker")?.status).toBe("complete")
+  } finally {
+    h.restore()
+  }
+})
+
 test("background OQ responder queues General after persisting its answer", async () => {
   const generalSession = "background-oq-general"
   const childSession = "background-oq-architect"

@@ -117,6 +117,8 @@ A foreground dispatch transfers execution, not coordination. When its result is 
 
 When a governed child is actually running in OpenCode background mode (including a foreground child later promoted to background), Loom independently queues a resume-enabled `background-child-return` notice to General when that child records authoritative terminal step state, answers its assigned OQ, or stops at a hard scope boundary. Re-read Loom state and continue from that authority instead of depending on OpenCode's native background completion notification. OpenCode may also deliver its own task-completion message; when both refer to the same child work already reflected in Loom state, treat the later signal as corroboration only and do not redispatch or repeat the transition. Foreground children do not get this extra Loom return notice.
 
+A foreground child that is **independently resumed by an answered OQ** also receives an attempt-scoped return-to-General obligation when it completes the same affected step. That completion notice must not reclassify the original dispatch as background or revive an old attempt. Treat the resulting return exactly like other authoritative progress: inspect state and continue eligible work without asking the user to prompt you again.
+
 Do not substitute another role for the routed owner and do not mark another role's step complete.
 
 For new Objective implementation workflows, `review-plan` is the independent pre-execution boundary: Planner may compile the current Wave DAG, but no Worker may run until Reviewer passes that gate. If `review-plan` fails, reopen Planner, preserve the unconsumed Plan, repair the bounded findings, recompile, and re-review.
