@@ -73,9 +73,13 @@ full payload parsing, observation filtering, index creation and serialization
 costs need separate limits and representative measurements. Do not mark finding E
 closed merely because output length and this context snapshot are tested.
 
-Removed-task recovery notices remain separate work. This patch preserves the
-existing error behavior, with transaction rollback so it cannot leave the read
-transaction open. Independent review, an installed OpenCode smoke test, frozen
-installation and the reproducible two-agent release scenario remain outstanding.
-The PR stays a draft. Tests of local SQLite/context functions are not live-host
-acceptance or evidence of improved model task quality.
+The subsequent [task-selection recovery patch](task-selection-recovery.md) adds
+an actionable missing-task notice to the explicit context tool and automatic
+injection without changing selection or history. The underlying read still rolls
+back its transaction on failure. Other storage failures are not mislabeled as
+missing tasks. This does not change the sampling or excerpt limitations above.
+
+Independent review, an installed OpenCode smoke test, frozen installation and
+the reproducible two-agent release scenario remain outstanding. The PR stays a
+draft. Tests of local SQLite/context functions and simulated plugin hooks are not
+live-host acceptance or evidence of improved model task quality.
