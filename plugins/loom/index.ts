@@ -7555,6 +7555,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 resolvedOutcome === "pass" &&
                 taskIds.length > 0
               ) {
+                // A reviewed Plan cannot claim a dependent Wave on the
+                // strength of a stale or fabricated upstream Acceptance PASS.
+                await assertCurrentAcceptanceDependencies(ctx, workflow, work, taskIds)
                 // Fresh Plan review is still mandatory. Unchanged completed
                 // Tasks may reuse their receipts; only pending/invalidated Tasks
                 // need execution authority again.
