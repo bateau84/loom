@@ -12530,6 +12530,210 @@ test("planning-only Objective reviews a durable Plan without execution and later
   }
 })
 
+test("native Product Acceptance owns persistent Task completion and blocks stale evidence before cutover", async () => {
+  const h = await harness()
+  try {
+    const parent = "native-acceptance-coordinator"
+    let serial = 0
+    const attach = async (workflowId: string, stepId: string, agent: string) => {
+      const session = `acceptance-${++serial}-${agent}`
+      const grant = await h.call("dispatch_grant", { workflowId, stepId }, "general", parent)
+      expect(grant.error).toBeUndefined()
+      const bound = await h.call("attach", { workflowId, stepId, grantId: grant.grantId }, agent, session)
+      expect(bound.error).toBeUndefined()
+      return session
+    }
+    const complete = async (workflowId: string, stepId: string, agent: string, outcome?: "pass" | "fail") => {
+      const session = await attach(workflowId, stepId, agent)
+      const result = await h.call("complete", {
+        workflowId, stepId, ...(outcome ? { outcome } : {}),
+        summary: "Native Acceptance lifecycle fixture; no live product changes",
+      }, agent, session)
+      expect(result.error).toBeUndefined()
+      return result
+    }
+    const start = async (implementationRequested: boolean) => {
+      const launched = await h.call("start", { anchor: "docs/anchors/test/anchor.md" }, "general", parent)
+      expect(launched.error).toBeUndefined()
+      const workflowId = String(launched.workflowId)
+      const routed = await h.call("route", {
+        humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+        diagnostic: false, productOutcome: true, implementationRequested,
+        executionDepth: "objective", workLevel: "wave",
+      }, "general", parent)
+      expect(routed.error).toBeUndefined()
+      await complete(workflowId, "critic-solution", "critic", "pass")
+      const planner = await attach(workflowId, "plan", "planner")
+      return { workflowId, planner }
+    }
+    const implementation = richPlanTask("implementation", "Implementation", "Test database integration")
+    const acceptance: WorkPlanTask = {
+      ...richPlanTask("acceptance", "Product Acceptance", "Prove SC-001–006", ["implementation"]),
+      role: "acceptance", responsibility: "review",
+    }
+    const policies: WorkPlanTask[] = Array.from({ length: 4 }, (_, i) => ({
+      ...richPlanTask(`user-policy-${i + 1}`, `Policy ${i + 1}`, "Require separate user authorization", ["acceptance"]),
+      role: "user", responsibility: "obtain-user-decision",
+    }))
+    const cutover = richPlanTask("cutover", "Cutover", "Deploy only after release authorization",
+      ["acceptance", ...policies.map((item) => item.id)])
+    const definition = richPlanDefinition([{
+      id: "delivery", title: "Delivery", waves: [
+        { id: "implementation", title: "Reviewed implementation", tasks: [implementation, acceptance] },
+        { id: "cutover", title: "Separately authorized cutover", tasks: [...policies, cutover] },
+      ],
+    }])
+    definition.acceptanceCoverage = Array.from({ length: 6 }, (_, i) => ({
+      id: `SC-00${i + 1}`, title: `Scenario ${i + 1}`,
+      criterion: `Product scenario SC-00${i + 1} runs against real integration`,
+      taskIds: ["acceptance"],
+    }))
+    definition.obligations = Array.from({ length: 11 }, (_, i) => ({
+      id: `obligation-${i + 1}`, sourceRef: "docs/anchors/test/anchor.md",
+      statement: `Delivery and acceptance obligation ${i + 1}`,
+      disposition: "implement" as const,
+      taskIds: [i < 4 ? "implementation" : i < 8 ? "acceptance" : "cutover"],
+      verification: ["Must retain independent verification and separate release authorization"],
+    }))
+
+    const planning = await start(false)
+    expect((await h.call("work_plan", { workflowId: planning.workflowId, ...definition },
+      "planner", planning.planner)).error).toBeUndefined()
+    expect((await h.call("complete", {
+      workflowId: planning.workflowId, stepId: "plan", summary: "Persistent Plan recorded without implementation",
+    }, "planner", planning.planner)).error).toBeUndefined()
+    await complete(planning.workflowId, "review-plan", "reviewer", "pass")
+    const admitted = await h.durableStorage.get(`workflow/${planning.workflowId}`) as any
+    expect(admitted.work.reviewedPlanRevision).toBe(1)
+    expect(admitted.steps.every((step: any) => step.status === "passed" || step.status === "complete")).toBe(true)
+
+    const source = await start(true)
+    const sourceTasks = [
+      { ...implementation, write: ["src/**"], skills: [] },
+      { ...acceptance, write: [], skills: [] },
+    ]
+    expect((await h.call("task_plan", { workflowId: source.workflowId, tasks: sourceTasks },
+      "planner", source.planner)).error).toBeUndefined()
+    expect((await h.call("complete", {
+      workflowId: source.workflowId, stepId: "plan", summary: "Executable first Wave compiled",
+    }, "planner", source.planner)).error).toBeUndefined()
+    await complete(source.workflowId, "review-plan", "reviewer", "pass")
+    await complete(source.workflowId, "task:implementation", "worker")
+    expect((await h.call("dispatch_grant", {
+      workflowId: source.workflowId, stepId: "task:acceptance",
+    }, "general", parent)).error).toContain("not currently runnable")
+    await complete(source.workflowId, "task-review:implementation", "reviewer", "pass")
+    const acceptanceSession = await attach(source.workflowId, "task:acceptance", "acceptance")
+    const scenarios = definition.acceptanceCoverage.map((coverage) => ({
+      id: coverage.id, title: coverage.title, criteria: [coverage.criterion],
+    }))
+    expect((await h.call("pa_plan", {
+      workflowId: source.workflowId, scenarios,
+    }, "acceptance", acceptanceSession)).error).toBeUndefined()
+    expect((await h.call("complete", {
+      workflowId: source.workflowId, stepId: "task:acceptance",
+      outcome: "pass", summary: "Attempt to skip SC-001–006",
+    }, "acceptance", acceptanceSession)).error).toContain("pending")
+
+    for (const scenario of scenarios) {
+      const command = `bun test acceptance-${scenario.id}`
+      const observation = {
+        tool: "shell", callID: crypto.randomUUID(), sessionID: acceptanceSession,
+        agent: "acceptance", input: { command },
+      }
+      await h.toolHooks.get("execute.before")!(observation)
+      await h.toolHooks.get("execute.after")!({ ...observation, status: "completed", result: "fixture passed" })
+      const available = await h.call("evidence_observations", { detail: true }, "acceptance", acceptanceSession)
+      const observed = available.observations.find((item: any) => item.command === command)
+      expect(observed).toBeDefined()
+      const claim = await h.call("evidence_claim", {
+        workflowId: source.workflowId, stepId: "task:acceptance",
+        kind: "product-acceptance", statement: `${scenario.id} controlled lifecycle fixture (not live product proof)`,
+        observationIds: [observed.id],
+      }, "acceptance", acceptanceSession)
+      expect(claim.error).toBeUndefined()
+      expect((await h.call("pa_result", {
+        workflowId: source.workflowId, scenarioId: scenario.id,
+        outcome: "passed", evidenceClaimIds: [claim.claim.id], note: "Controlled fixture only",
+      }, "acceptance", acceptanceSession)).error).toBeUndefined()
+    }
+    expect((await h.call("complete", {
+      workflowId: source.workflowId, stepId: "task:acceptance",
+      outcome: "pass", summary: "All six native Acceptance scenario receipts validated",
+    }, "acceptance", acceptanceSession)).error).toBeUndefined()
+    const afterAccept = await h.durableStorage.get(`workflow/${source.workflowId}`) as any
+    const workKey = `work/${encodeURIComponent(afterAccept.work.objectiveId)}`
+    let persistent = await h.durableStorage.get(workKey) as any
+    expect(persistent.nodes.find((node: any) => node.logicalId === "acceptance").result)
+      .toMatchObject({ workflowId: source.workflowId, nativeKind: "acceptance", stepId: "task:acceptance" })
+    expect(persistent.nodes.find((node: any) => node.logicalId === "cutover").status).toBe("pending")
+    await complete(source.workflowId, "review-implementation", "reviewer", "pass")
+    persistent = await h.durableStorage.get(workKey) as any
+    expect(persistent.nodes.find((node: any) => node.type === "wave" && node.logicalId === "implementation").completion).toBeDefined()
+
+    const knowledge = await attach(source.workflowId, "knowledge-sync", "documenter")
+    const discovery = { tool: "okf-mcp_list_docs", callID: crypto.randomUUID(),
+      sessionID: knowledge, agent: "documenter", input: {} }
+    await h.toolHooks.get("execute.before")!(discovery)
+    await h.toolHooks.get("execute.after")!({ ...discovery, status: "completed", result: [] })
+    const observations = await h.call("evidence_observations", { detail: true }, "documenter", knowledge)
+    expect((await h.call("knowledge_record", {
+      workflowId: source.workflowId, changedDocs: [], unchangedReason: "Fixture leaves documentation deferred",
+      okfObservationIds: observations.observations.map((observation: any) => observation.id),
+    }, "documenter", knowledge)).error).toBeUndefined()
+    expect((await h.call("complete", {
+      workflowId: source.workflowId, stepId: "knowledge-sync", summary: "Deferred documentation preserved",
+    }, "documenter", knowledge)).error).toBeUndefined()
+
+    const target = await start(true)
+    const targetIds = new Set([...policies, cutover].map((task) => task.id))
+    const targetTasks = [...policies, cutover].map((task) => ({
+      ...task, dependsOn: task.dependsOn.filter((id) => targetIds.has(id)),
+      write: task.role === "user" ? [] : ["src/**"], skills: [],
+    }))
+    const compileCutover = () => h.call("task_plan", {
+      workflowId: target.workflowId, tasks: targetTasks,
+    }, "planner", target.planner)
+    const originalPlan = structuredClone(await h.durableStorage.get(`acceptance/${source.workflowId}`)) as any
+    const assertDenied = async (changed: any) => {
+      await h.durableStorage.set(`acceptance/${source.workflowId}`, changed)
+      const refused = await compileCutover()
+      expect(refused.error).toMatch(/Acceptance|accepted product/)
+    }
+    const failed = structuredClone(originalPlan)
+    failed.scenarios[0].outcome = "failed"
+    await assertDenied(failed)
+    const unproven = structuredClone(originalPlan)
+    unproven.scenarios[0].outcome = "unproven"
+    await assertDenied(unproven)
+    const missing = structuredClone(originalPlan)
+    missing.scenarios[0].evidenceClaimIds = ["missing-claim"]
+    await assertDenied(missing)
+    await h.durableStorage.set(`acceptance/${source.workflowId}`, undefined)
+    expect((await compileCutover()).error).toMatch(/Acceptance|accepted product/)
+    await h.durableStorage.set(`acceptance/${source.workflowId}`, originalPlan)
+    await writeFile(join(h.root, "src", "unaccepted-change.txt"), "product behavior changed")
+    await git(h.root, ["add", "src/unaccepted-change.txt"])
+    await git(h.root, ["commit", "-q", "-m", "test: unaccepted product change"])
+    expect((await compileCutover()).error).toContain("revision changed")
+    await git(h.root, ["reset", "--hard", "HEAD~1"])
+    expect((await compileCutover()).error).toBeUndefined()
+    expect((await h.call("complete", {
+      workflowId: target.workflowId, stepId: "plan", summary: "Cutover Wave compiled but not authorized",
+    }, "planner", target.planner)).error).toBeUndefined()
+    await complete(target.workflowId, "review-plan", "reviewer", "pass")
+    const targetWorkflow = await h.durableStorage.get(`workflow/${target.workflowId}`) as any
+    for (const task of policies) {
+      expect(targetWorkflow.steps.find((step: any) => step.id === `task:${task.id}`).kind).toBe("wait")
+    }
+    expect((await h.call("dispatch_grant", {
+      workflowId: target.workflowId, stepId: "task:cutover",
+    }, "general", parent)).error).toContain("not currently runnable")
+  } finally {
+    h.restore()
+  }
+})
+
 test("planning-only review refuses an unavailable specialist path in a later Wave", async () => {
   const h = await harness()
   try {
