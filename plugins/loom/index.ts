@@ -4000,7 +4000,7 @@ async function notifyBackgroundChildCoordinator(
             ...(event.requestId ? { requestId: event.requestId } : {}),
             ...(event.outcome ? { outcome: event.outcome } : {}),
           },
-          delivery: "queue",
+          delivery: "queue" as const,
           resume: true,
         }
         // Synthetic inbox admission may have succeeded even when the caller
