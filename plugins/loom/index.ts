@@ -2764,6 +2764,29 @@ async function assertCurrentAcceptanceProof(
       (step.task && (plan.stepId !== step.id || plan.stepAttempt !== (step.attempt ?? 0)))) {
     throw new Error("Product Acceptance plan is missing, unproven, or bound to a stale native gate attempt.")
   }
+  if (!Array.isArray(plan.scenarios) || plan.scenarios.length === 0 ||
+      plan.scenarios.some((scenario) => !scenario.id?.trim() ||
+        !Array.isArray(scenario.criteria) || !scenario.criteria.length ||
+        scenario.criteria.some((criterion) => !criterion?.trim())) ||
+      new Set(plan.scenarios.map((scenario) => scenario.id.toLowerCase())).size !== plan.scenarios.length) {
+    throw new Error("Native Product Acceptance requires a nonempty, unique, criteria-bound scenario set.")
+  }
+  if (step.task && workflow.work) {
+    const work = await readWork(ctx, workflow.work.objectiveId)
+    const snapshot = work?.plans?.find((candidate) => candidate.generation === workflow.work!.generation)
+    if (!snapshot || snapshot.invalidated) {
+      throw new Error("Native Product Acceptance is stale against the current persistent Plan.")
+    }
+    // When the Plan assigns named SC-### coverage to this Task, it is
+    // mandatory. A subset of scenarios cannot authorize the whole Task.
+    const required = snapshot.acceptanceCoverage
+      .filter((coverage) => coverage.taskIds.includes(step.task!.id) && /^sc-\\d+$/i.test(coverage.id))
+      .map((coverage) => coverage.id.toLowerCase())
+    const actual = new Set(plan.scenarios.map((scenario) => scenario.id.toLowerCase()))
+    if (required.some((id) => !actual.has(id))) {
+      throw new Error("Native Product Acceptance omits required Plan scenario coverage.")
+    }
+  }
   const indexed = new Map((await stepClaims(ctx, workflow.id, step.id)).map((claim) => [claim.id, claim]))
   for (const scenario of plan.scenarios) {
     if (scenario.outcome !== "passed" || !scenario.evidenceClaimIds.length ||
@@ -7445,6 +7468,16 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             finishStep(workflow, stepId, tool.agent, resolvedOutcome, summary)
             if (resolvedOutcome === "pass" && nativeAcceptanceGate(workflow)?.id === stepId) {
               await assertCurrentAcceptanceProof(ctx, workflow, currentStep)
+            }
+            if (resolvedOutcome === "pass" && stepId === "review-implementation") {
+              for (const gate of plannedTaskSteps(workflow).filter((candidate) =>
+                nativeTaskPath(candidate.task!)?.nativeKind === "acceptance")) {
+                await assertCurrentAcceptanceProof(ctx, workflow, gate)
+              }
+            }
+            if (resolvedOutcome === "pass" && stepId === "review-product") {
+              const gate = nativeAcceptanceGate(workflow)
+              if (gate) await assertCurrentAcceptanceProof(ctx, workflow, gate)
             }
             if (
               stepId === "review-plan" &&
