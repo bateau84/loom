@@ -3745,6 +3745,9 @@ type BackgroundChildBinding = {
   childSessionID: string
   active: boolean
   observedAt: string
+  // A foreground child resumed by an OQ answer has a separate, attempt-scoped
+  // return obligation. Do not rewrite the actual launch mode to background.
+  oqResume?: { stepId: string; attempt: number; questionId: string }
 }
 
 type AdmittedSubagentDispatchMode = {
@@ -3842,6 +3845,7 @@ async function backgroundCoordinatorSessionForChild(
   runtime: LoomRuntimeIdentity,
   workflow: Workflow,
   childSessionID: string,
+  event: BackgroundCoordinatorReturn,
 ) {
   const persisted = (await ctx.storage.get(
     backgroundChildBindingKey(childSessionID),
@@ -3852,16 +3856,30 @@ async function backgroundCoordinatorSessionForChild(
     persisted.projectId !== runtime.projectId ||
     persisted.workflowId !== workflow.id ||
     persisted.parentSessionID !== workflow.createdBySession ||
-    persisted.childSessionID !== childSessionID ||
-    !persisted.active
+    persisted.childSessionID !== childSessionID
   ) {
     return undefined
   }
 
+  const currentStep = event.kind === "step-terminal"
+    ? workflow.steps.find((step) => step.id === event.stepId)
+    : undefined
+  const oqResumedStep = !persisted.active &&
+    event.kind === "step-terminal" &&
+    persisted.oqResume?.stepId === event.stepId &&
+    persisted.oqResume?.attempt === (currentStep?.attempt ?? -1) &&
+    Boolean(currentStep) &&
+    await exactStepAttemptBinding(ctx, childSessionID, workflow.id, event.stepId!)
+  if (!persisted.active && !oqResumedStep) return undefined
+
   try {
     const child = await ctx.session.get({ sessionID: childSessionID })
     return child?.parentID === persisted.parentSessionID
-      ? persisted.parentSessionID
+      ? {
+          sessionID: persisted.parentSessionID,
+          source: persisted.active ? "background" as const : "oq-resume" as const,
+          ...(oqResumedStep ? { resumeAttempt: persisted.oqResume!.attempt } : {}),
+        }
       : undefined
   } catch {
     return undefined
@@ -3888,13 +3906,15 @@ async function notifyBackgroundChildCoordinator(
   const failed: Array<{ target: "general"; error: string }> = []
   if (agent === "general") return { notified, failed }
 
-  const generalSessionID = await backgroundCoordinatorSessionForChild(
+  const coordinator = await backgroundCoordinatorSessionForChild(
     ctx,
     runtime,
     workflow,
     childSessionID,
+    event,
   )
-  if (!generalSessionID) return { notified, failed }
+  if (!coordinator) return { notified, failed }
+  const generalSessionID = coordinator.sessionID
 
   try {
     const delivered = await withRuntimeAdvisoryLocks(
@@ -3925,6 +3945,10 @@ async function notifyBackgroundChildCoordinator(
             event.outcome === "fail" ? "failed" :
             "complete"
           if (!step || step.agent !== agent || step.status !== expectedStatus) return false
+          // Reopening the step after OQ resume must never wake General from an
+          // obsolete attempt, even if the old completion notification was slow.
+          if (coordinator.source === "oq-resume" &&
+              (step.attempt ?? 0) !== coordinator.resumeAttempt) return false
         } else if (event.kind === "oq-answered") {
           const question = event.questionId
             ? await ctx.storage.get(oqKey(workflow.id, event.questionId)) as OpenQuestion | undefined
@@ -3948,12 +3972,16 @@ async function notifyBackgroundChildCoordinator(
 
         await ctx.session.synthetic({
           sessionID: generalSessionID,
-          text:
-            `Loom background child ${agent} produced authoritative workflow progress (${event.kind}) for workflow ${workflow.id}. Re-read Loom state before continuing. OpenCode may also deliver its native background task result; if that result refers to the same child work already reflected in Loom state, treat it as corroborating information rather than starting duplicate work.`,
-          description: "Loom background child returned",
+          text: coordinator.source === "oq-resume"
+            ? `Loom OQ-resumed child ${agent} completed its current step for workflow ${workflow.id}. Re-read authoritative Loom state and continue the next authorized work without another user prompt. Do not redispatch the completed attempt.`
+            : `Loom background child ${agent} produced authoritative workflow progress (${event.kind}) for workflow ${workflow.id}. Re-read Loom state and continue authorized work without another user prompt unless there is a genuine wait. OpenCode may also deliver its native background task result; if that result refers to the same child work already reflected in Loom state, treat it as corroborating information rather than starting duplicate work.`,
+          description: coordinator.source === "oq-resume"
+            ? "Loom OQ consumer returned"
+            : "Loom background child returned",
           metadata: {
             source: "loom",
             kind: "background-child-return",
+            returnSource: coordinator.source,
             workflowId: workflow.id,
             childSessionID,
             agent,
@@ -4128,6 +4156,32 @@ async function notifyAnsweredQuestionConsumers(
           }
           if (await ctx.storage.get(`session-deletion-fence/${binding.sessionID}`) !== undefined) {
             return false
+          }
+
+          // A previously foreground Task may now proceed independently after
+          // this steering signal. Persist its return obligation before sending
+          // so an accepted (or ambiguously failed) steer cannot lose the parent
+          // wake when the child later completes. New attachments replace this
+          // record and therefore fence an older attempt.
+          const childBinding = (await ctx.storage.get(
+            backgroundChildBindingKey(binding.sessionID),
+          )) as BackgroundChildBinding | undefined
+          if (
+            childBinding &&
+            childBinding.schemaVersion === 1 &&
+            childBinding.projectId === runtime.projectId &&
+            childBinding.workflowId === question.workflowId &&
+            childBinding.childSessionID === binding.sessionID &&
+            childBinding.parentSessionID === workflow.createdBySession &&
+            !childBinding.active
+          ) {
+            await ctx.storage.set(
+              backgroundChildBindingKey(binding.sessionID),
+              {
+                ...childBinding,
+                oqResume: { stepId, attempt, questionId: question.id },
+              } satisfies BackgroundChildBinding,
+            )
           }
 
           await ctx.session.synthetic({
