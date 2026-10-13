@@ -3867,7 +3867,7 @@ async function backgroundCoordinatorSessionForChild(
   const oqResumedStep = !persisted.active &&
     event.kind === "step-terminal" &&
     persisted.oqResume?.stepId === event.stepId &&
-    persisted.oqResume?.attempt === (currentStep?.attempt ?? -1) &&
+    persisted.oqResume?.attempt === (currentStep ? (currentStep.attempt ?? 0) : -1) &&
     Boolean(currentStep) &&
     await exactStepAttemptBinding(ctx, childSessionID, workflow.id, event.stepId!)
   if (!persisted.active && !oqResumedStep) return undefined
