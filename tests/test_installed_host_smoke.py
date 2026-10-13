@@ -14,6 +14,14 @@ spec.loader.exec_module(smoke)
 
 
 class BootHarnessTest(unittest.TestCase):
+    def test_private_server_option_belongs_to_api_subcommand(self):
+        from urllib.parse import parse_qs, urlsplit
+        args = smoke.api_get_args("/api/agent", Path("/tmp/a space"))
+        self.assertEqual(args[:3], ["api", "--standalone", "GET"])
+        self.assertEqual(parse_qs(urlsplit(args[3]).query), {"location[directory]": ["/tmp/a space"]})
+        with self.assertRaises(RuntimeError):
+            smoke.api_get_args("/api/session", Path("/tmp/project"))
+
     def test_environment_does_not_inherit_credentials_or_remote_server(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {
             "OPENAI_API_KEY": "do-not-copy", "ANTHROPIC_API_KEY": "do-not-copy",

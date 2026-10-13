@@ -14,6 +14,7 @@ import sqlite3
 import subprocess
 import tempfile
 import time
+from urllib.parse import urlencode
 
 EXPECTED_TABLES = {"actions", "plans", "focus", "ledger"}
 
@@ -36,6 +37,11 @@ def isolated_environment(root: Path) -> dict[str, str]:
         path.mkdir(parents=True, exist_ok=True, mode=0o700)
         env[key] = str(path)
     return env
+
+
+def api_get_args(path: str, project: Path) -> list[str]:
+    require(path in {"/api/agent", "/api/plugin"}, "Boot probe only permits read-only roster endpoints")
+    return ["api", "--standalone", "GET", path + "?" + urlencode({"location[directory]": str(project)})]
 
 
 def ledger_inventory(state: Path) -> list[dict]:
@@ -75,7 +81,7 @@ def run_probe(executable: str, repo: Path, output: Path, expected: str) -> dict:
     require(os.name == "posix", "This isolated process-group probe currently supports POSIX only")
     output.mkdir(parents=True, exist_ok=True)
     report = {"status": "running", "kind": "installed-host-boot-only", "expected_version": expected,
-              "inference_requests": 0, "independent_review": False,
+              "model_prompts_sent_by_probe": 0, "independent_review": False,
               "two_agent_acceptance": "not exercised", "checks": [], **source_inventory(repo)}
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")
     try:
@@ -119,8 +125,9 @@ def run_probe(executable: str, repo: Path, output: Path, expected: str) -> dict:
             require(re.search(r"(?<![\d.])" + re.escape(expected) + r"(?![\d.])", version) is not None,
                     f"Wrong OpenCode version: {version!r}")
             report["observed_version"] = version
-            baseline = json.loads(run("native-agents-before", "--standalone", "debug", "agents"))
+            baseline = json.loads(run("native-agents-before", *api_get_args("/api/agent", project)))
             require(isinstance(baseline, list) and len(baseline) > 0, "Native agent list must be non-empty")
+            baseline.sort(key=lambda a: a["id"])
             native_id = baseline[0]["id"]
             state = Path(env["XDG_STATE_HOME"])
             require(not ledger_inventory(state), "Baseline unexpectedly loaded Loom")
@@ -128,21 +135,24 @@ def run_probe(executable: str, repo: Path, output: Path, expected: str) -> dict:
             loom_config = Path(env["OPENCODE_CONFIG_DIR"]) / ".loom.yaml"
             # JSON is a YAML subset; the plugin still decodes this with its real YAML loader.
             loom_config.write_text(json.dumps({"version": 1, "agents": {native_id: {"roles": ["implementation"]}}}) + "\n")
-            listing = run("plugin-list", "--standalone", "plugin", "list")
-            require(any(re.match(r"^loom\s+", line) for line in listing.splitlines()),
+            listing = json.loads(run("plugin-list", *api_get_args("/api/plugin", project)))
+            require(isinstance(listing, list) and any(p.get("id") == "loom" for p in listing),
                     "Real host did not report loaded plugin ID loom")
-            after = json.loads(run("native-agents-with-loom", "--standalone", "debug", "agents"))
+            after = json.loads(run("native-agents-with-loom", *api_get_args("/api/agent", project)))
+            after.sort(key=lambda a: a["id"])
             require(after == baseline, "Loom changed native agent definitions")
             first = ledger_inventory(state)
             require(len(first) == 1, "Expected exactly one project Loom Action database")
             require(all(n == 0 for n in first[0]["counts"].values()), "Boot invented work or ledger records")
-            run("plugin-list-after-restart", "--standalone", "plugin", "list")
+            restarted = json.loads(run("plugin-list-after-restart", *api_get_args("/api/plugin", project)))
+            require(any(p.get("id") == "loom" for p in restarted), "Loom did not load after private-server restart")
             require(ledger_inventory(state) == first, "Boot restart changed the existing empty ledger")
             # Removing Loom's config entry tests rollback of loading, not historical data migration.
             config.write_text('{"plugins": []}\n')
-            rollback = run("plugin-list-after-removal", "--standalone", "plugin", "list")
-            require(not any(re.match(r"^loom\s+", line) for line in rollback.splitlines()), "Loom still loads after config removal")
-            require(json.loads(run("native-agents-after-removal", "--standalone", "debug", "agents")) == baseline,
+            rollback = json.loads(run("plugin-list-after-removal", *api_get_args("/api/plugin", project)))
+            require(isinstance(rollback, list) and not any(p.get("id") == "loom" for p in rollback), "Loom still loads after config removal")
+            restored = json.loads(run("native-agents-after-removal", *api_get_args("/api/agent", project)))
+            require(sorted(restored, key=lambda a: a["id"]) == baseline,
                     "Native agents changed after plugin removal")
             require(ledger_inventory(state) == first, "Removing the plugin modified its saved database")
             report["ledger"] = first
