@@ -1,0 +1,36 @@
+name: Installed OpenCode boot smoke
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  installed-host:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bun install
+      - name: Install exact external host, without changing plugin dependencies
+        run: npm install --prefix "$RUNNER_TEMP/loom-opencode-host" --no-audit --no-fund @opencode/cli@2.0.18
+      - name: Real CLI boot, restart and removal; no model requests
+        run: >-
+          python3 tests/installed_host_smoke.py
+          --opencode "$RUNNER_TEMP/loom-opencode-host/node_modules/.bin/opencode"
+          --expect-version 2.0.18
+          --report-directory "$RUNNER_TEMP/loom-host-report"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installed-host-boot-${{ github.sha }}
+          path: ${{ runner.temp }}/loom-host-report/
+          if-no-files-found: warn
+          retention-days: 7
