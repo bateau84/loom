@@ -17,6 +17,26 @@ import time
 from urllib.parse import urlencode
 
 EXPECTED_TABLES = {"actions", "plans", "focus", "ledger"}
+PROBE_AGENTS = {
+    "probe-research": {"description": "External research fixture", "mode": "subagent", "system": "Read the supplied sources."},
+    "probe-worker": {"description": "External worker fixture", "mode": "subagent", "system": "Implement only the assigned task."},
+}
+
+
+def host_config(plugin: Path | None = None) -> dict:
+    # Preserve built-in plugin enablement; the fixtures are external native config.
+    return {"plugins": ["*", *([str(plugin)] if plugin else [])], "agents": PROBE_AGENTS,
+            "update": "disable", "share": "disabled"}
+
+
+def roster_response(text: str, project: Path) -> list[dict]:
+    response = json.loads(text)
+    require(isinstance(response, dict) and isinstance(response.get("location"), dict),
+            "Expected the pinned host's location/data envelope")
+    require(response["location"].get("directory") == str(project), "Host responded for a different location")
+    data = response.get("data")
+    require(isinstance(data, list) and all(isinstance(item, dict) for item in data), "Host roster data must be a list of objects")
+    return data
 
 
 def require(condition: bool, message: str) -> None:
@@ -92,7 +112,7 @@ def run_probe(executable: str, repo: Path, output: Path, expected: str) -> dict:
             project.mkdir()
             subprocess.run(["git", "init", "-q", str(project)], env=env, check=True, timeout=10)
             config = Path(env["OPENCODE_CONFIG_DIR"]) / "opencode.json"
-            config.write_text('{"plugins": []}\n')
+            config.write_text(json.dumps(host_config()) + "\n")
 
             def run(label: str, *args: str) -> str:
                 started = time.monotonic()
@@ -125,33 +145,37 @@ def run_probe(executable: str, repo: Path, output: Path, expected: str) -> dict:
             require(re.search(r"(?<![\d.])" + re.escape(expected) + r"(?![\d.])", version) is not None,
                     f"Wrong OpenCode version: {version!r}")
             report["observed_version"] = version
-            baseline = json.loads(run("native-agents-before", *api_get_args("/api/agent", project)))
+            baseline = roster_response(run("native-agents-before", *api_get_args("/api/agent", project)), project)
             require(isinstance(baseline, list) and len(baseline) > 0, "Native agent list must be non-empty")
             baseline.sort(key=lambda a: a["id"])
-            native_id = baseline[0]["id"]
+            for name, definition in PROBE_AGENTS.items():
+                actual = next((a for a in baseline if a.get("id") == name), None)
+                require(actual is not None and actual.get("description") == definition["description"],
+                        f"Real host did not load external native agent {name}")
+            native_id = "probe-worker"
             state = Path(env["XDG_STATE_HOME"])
             require(not ledger_inventory(state), "Baseline unexpectedly loaded Loom")
-            config.write_text(json.dumps({"plugins": [str(repo)]}) + "\n")
+            config.write_text(json.dumps(host_config(repo)) + "\n")
             loom_config = Path(env["OPENCODE_CONFIG_DIR"]) / ".loom.yaml"
             # JSON is a YAML subset; the plugin still decodes this with its real YAML loader.
             loom_config.write_text(json.dumps({"version": 1, "agents": {native_id: {"roles": ["implementation"]}}}) + "\n")
-            listing = json.loads(run("plugin-list", *api_get_args("/api/plugin", project)))
+            listing = roster_response(run("plugin-list", *api_get_args("/api/plugin", project)), project)
             require(isinstance(listing, list) and any(p.get("id") == "loom" for p in listing),
                     "Real host did not report loaded plugin ID loom")
-            after = json.loads(run("native-agents-with-loom", *api_get_args("/api/agent", project)))
+            after = roster_response(run("native-agents-with-loom", *api_get_args("/api/agent", project)), project)
             after.sort(key=lambda a: a["id"])
             require(after == baseline, "Loom changed native agent definitions")
             first = ledger_inventory(state)
             require(len(first) == 1, "Expected exactly one project Loom Action database")
             require(all(n == 0 for n in first[0]["counts"].values()), "Boot invented work or ledger records")
-            restarted = json.loads(run("plugin-list-after-restart", *api_get_args("/api/plugin", project)))
+            restarted = roster_response(run("plugin-list-after-restart", *api_get_args("/api/plugin", project)), project)
             require(any(p.get("id") == "loom" for p in restarted), "Loom did not load after private-server restart")
             require(ledger_inventory(state) == first, "Boot restart changed the existing empty ledger")
             # Removing Loom's config entry tests rollback of loading, not historical data migration.
-            config.write_text('{"plugins": []}\n')
-            rollback = json.loads(run("plugin-list-after-removal", *api_get_args("/api/plugin", project)))
+            config.write_text(json.dumps(host_config()) + "\n")
+            rollback = roster_response(run("plugin-list-after-removal", *api_get_args("/api/plugin", project)), project)
             require(isinstance(rollback, list) and not any(p.get("id") == "loom" for p in rollback), "Loom still loads after config removal")
-            restored = json.loads(run("native-agents-after-removal", *api_get_args("/api/agent", project)))
+            restored = roster_response(run("native-agents-after-removal", *api_get_args("/api/agent", project)), project)
             require(sorted(restored, key=lambda a: a["id"]) == baseline,
                     "Native agents changed after plugin removal")
             require(ledger_inventory(state) == first, "Removing the plugin modified its saved database")

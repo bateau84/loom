@@ -14,6 +14,23 @@ spec.loader.exec_module(smoke)
 
 
 class BootHarnessTest(unittest.TestCase):
+    def test_roster_envelope_requires_the_requested_location(self):
+        project = Path("/tmp/project")
+        source = {"location": {"directory": str(project)}, "data": [{"id": "a"}]}
+        self.assertEqual(smoke.roster_response(json.dumps(source), project), [{"id": "a"}])
+        for invalid in [[], {"data": []}, {"location": {"directory": "/other"}, "data": []},
+                        {"location": {"directory": str(project)}, "data": {}}]:
+            with self.assertRaises(RuntimeError):
+                smoke.roster_response(json.dumps(invalid), project)
+
+    def test_baseline_and_plugin_config_preserve_external_agents(self):
+        before = smoke.host_config()
+        enabled = smoke.host_config(Path("/tmp/plugin"))
+        self.assertEqual(before["agents"], enabled["agents"])
+        self.assertEqual(before["plugins"], ["*"])
+        self.assertEqual(enabled["plugins"], ["*", "/tmp/plugin"])
+        self.assertEqual(set(before["agents"]), {"probe-research", "probe-worker"})
+
     def test_private_server_option_belongs_to_api_subcommand(self):
         from urllib.parse import parse_qs, urlsplit
         args = smoke.api_get_args("/api/agent", Path("/tmp/a space"))
