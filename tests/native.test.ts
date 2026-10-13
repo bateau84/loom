@@ -205,6 +205,7 @@ test("removed-task recovery is injected, repeatable, non-mutating and cleared by
     expect(event.system).toEqual([nativePart])
     event.agent = "external"
     // Restart the plugin/database; do not infer a replacement or replay a completion.
+    if (!cleanup) throw new Error("Plugin setup did not return cleanup")
     await cleanup(); cleanup = undefined
     cleanup = await (plugin as any).setup(ctx)
     await hooks.get("context")(event)
