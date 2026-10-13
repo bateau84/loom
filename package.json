@@ -1,26 +1,17 @@
 {
-  "name": "loom-aos",
+  "name": "loom-plugin",
+  "version": "2.0.0-alpha.1",
   "private": true,
   "type": "module",
+  "exports": { ".": "./src/plugin.ts" },
+  "files": ["src", "README.md", "docs", "examples"],
+  "engines": { "bun": ">=1.3.0" },
   "scripts": {
-    "test": "python3 -m unittest discover -s scripts -p 'test_ci_*.py' && python3 scripts/run-unit-tests.py",
     "typecheck": "tsc --noEmit",
-    "eval:validate": "bun scripts/validate-evals.ts",
-    "eval:list": "python3 scripts/run-evals.py --list",
-    "eval:live": "python3 scripts/run-evals.py",
-    "eval:system": "python3 scripts/run-evals.py --all",
-    "eval:stress": "python3 scripts/run-evals.py --all --iterations 3 --parallel 4",
-    "skills:validate": "python3 scripts/validate-skills.py",
-    "eval:harness-test": "python3 scripts/test_eval_actions.py && python3 scripts/test_eval_fixtures.py && python3 scripts/test_eval_tool_results.py",
-    "dashboard": "bun dashboard/server.ts",
-    "integration:opencode": "bun scripts/opencode-host-integration.ts && python3 scripts/verify_conversation_profile.py"
+    "test:core": "tsc -p tsconfig.core.json && node --test tests/*.test.mjs",
+    "test:native": "bun test tests/native.test.ts",
+    "test": "bun run test:core && bun run test:native"
   },
-  "devDependencies": {
-    "@opencode/plugin": "2.0.18",
-    "@types/bun": "1.4.2",
-    "typescript": "7.0.2",
-    "@opentui/core": "^0.5.12",
-    "@opentui/solid": "^0.5.12",
-    "solid-js": "^1.9.15"
-  }
+  "dependencies": { "@opencode/plugin": "2.0.18" },
+  "devDependencies": { "@types/bun": "1.4.2", "@types/node": "^22.0.0", "typescript": "7.0.2" }
 }

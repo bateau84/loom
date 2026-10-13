@@ -1,0 +1,4 @@
+{
+  "compilerOptions": { "target": "ES2022", "module": "NodeNext", "moduleResolution": "NodeNext", "strict": true, "skipLibCheck": true, "types": ["node"], "outDir": ".test-build", "rootDir": "src" },
+  "include": ["src/config.ts", "src/agents.ts", "src/model.ts", "src/store.ts", "src/context.ts"]
+}
