@@ -216,7 +216,7 @@ export type WorkTaskResult = {
   dependencyResultDigests?: Record<string, string>
   /** Clean Git HEAD at completion. Missing values cannot prove code continuity. */
   cleanRepositoryHead?: string
-  nativeKind?: "advisory" | "producer"
+  nativeKind?: "advisory" | "producer" | "acceptance"
   generation?: number
   taskId?: string
   stepId?: string
@@ -743,6 +743,13 @@ export function validatePlanRoleFeasibility(plan: WorkPlanDefinition) {
       continue
     }
     if (responsibility === "review") {
+      if (role === "acceptance" && path?.nativeKind === "acceptance") {
+        if (task.dependsOn.length === 0) fail("Product Acceptance must depend on reviewed product work")
+        if (wave.tasks.filter((candidate) => nativeTaskPath(candidate)?.nativeKind === "acceptance").length !== 1) {
+          fail("only one native Product Acceptance gate can be scheduled in a Wave")
+        }
+        continue
+      }
       if (role !== "reviewer") fail(`review responsibility is not owned by ${role}`)
       if (task.dependsOn.length === 0) fail("independent review Task must name the work it reviews as dependencies")
       continue

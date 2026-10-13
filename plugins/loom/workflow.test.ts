@@ -122,6 +122,87 @@ describe("Loom routing DAG", () => {
     ])
   })
 
+  test("non-final Wave dispatches native Acceptance only after independent producer review", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+      diagnostic: false, productOutcome: true, workLevel: "wave",
+    }))
+    finishStep(w, "critic-solution", "critic", "pass", "solution reviewed")
+    applyTaskPlan(w, [{
+      id: "database", title: "Database", objective: "Verify persistence",
+      dependsOn: [], write: ["src/**"], skills: [], verify: ["bun test"],
+      role: "worker", responsibility: "execute",
+    }, {
+      id: "accept", title: "Product Acceptance", objective: "Prove end-to-end behavior",
+      dependsOn: ["database"], write: [], skills: [], verify: ["SC-001–006"],
+      role: "acceptance", responsibility: "review",
+    }])
+    const native = w.steps.find((step) => step.id === "task:accept")!
+    expect(native).toMatchObject({ agent: "acceptance", kind: "gate", status: "pending" })
+    expect(native.dependsOn).toContain("task-review:database")
+    expect(w.steps.find((step) => step.id === "review-implementation")!.dependsOn).toContain("task:accept")
+    finishStep(w, "plan", "planner", "complete", "planned")
+    finishStep(w, "review-plan", "reviewer", "pass", "independently approved")
+    finishStep(w, "task:database", "worker", "complete", "implemented")
+    expect(runnable(w).map((step) => step.id)).toEqual(["task-review:database"])
+    finishStep(w, "task-review:database", "reviewer", "pass", "verified")
+    expect(runnable(w).map((step) => step.id)).toEqual(["task:accept"])
+    finishStep(w, "task:accept", "acceptance", "pass", "SC-001–006 verified")
+    expect(runnable(w).map((step) => step.id)).toEqual(["review-implementation"])
+  })
+
+  test("standalone Acceptance Wave accepts external Plan prerequisites without local Task edges", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+      diagnostic: false, productOutcome: true, workLevel: "wave",
+    }))
+    finishStep(w, "critic-solution", "critic", "pass", "independent solution review")
+    // The semantic Plan lists upstream implementation/database Task ids.
+    // TaskSpec.dependsOn is Wave-local by contract, so this list is empty.
+    applyTaskPlan(w, [{
+      id: "accept", title: "Native Acceptance", objective: "Prove reviewed integrated product",
+      dependsOn: [], write: [], skills: [], verify: ["SC-001", "SC-002"],
+      role: "acceptance", responsibility: "review",
+    }])
+    expect(w.steps.find((step) => step.id === "task:accept")).toMatchObject({
+      kind: "gate", agent: "acceptance", dependsOn: ["review-plan"],
+    })
+    finishStep(w, "plan", "planner", "complete", "Plan compiled")
+    finishStep(w, "review-plan", "reviewer", "pass", "Plan approved")
+    expect(runnable(w).map((step) => step.id)).toEqual(["task:accept"])
+    finishStep(w, "task:accept", "acceptance", "pass", "Product proof passed")
+    expect(runnable(w).map((step) => step.id)).toEqual(["review-implementation"])
+  })
+
+  test("Objective closure reuses planned native Acceptance without a second gate or ordering cycle", () => {
+    const w = workflow(buildSteps({
+      humanFacing: false, behavioral: false, structural: false, externalUnknown: false,
+      diagnostic: false, productOutcome: true, workLevel: "objective",
+    }))
+    finishStep(w, "critic-solution", "critic", "pass", "solution reviewed")
+    applyTaskPlan(w, [{
+      id: "backend", title: "Backend", objective: "Implement product",
+      dependsOn: [], write: ["src/**"], skills: [], verify: ["test"],
+      role: "worker", responsibility: "execute",
+    }, {
+      id: "accept", title: "Acceptance", objective: "Prove the product",
+      dependsOn: ["backend"], write: [], skills: [], verify: ["SC-001–006"],
+      role: "acceptance", responsibility: "review",
+    }])
+    expect(w.steps.some((step) => step.id === "product-acceptance")).toBe(false)
+    expect(w.steps.filter((step) => step.agent === "acceptance")).toHaveLength(1)
+    expect(w.steps.find((step) => step.id === "review-product")!.dependsOn).toContain("task:accept")
+    expect(w.steps.find((step) => step.id === "review-implementation")!.dependsOn).toContain("task:accept")
+    expect(w.steps.find((step) => step.id === "task:accept")!.dependsOn).not.toContain("review-implementation")
+    finishStep(w, "plan", "planner", "complete", "planned")
+    finishStep(w, "review-plan", "reviewer", "pass", "approved")
+    finishStep(w, "task:backend", "worker", "complete", "implemented")
+    finishStep(w, "task-review:backend", "reviewer", "pass", "reviewed")
+    finishStep(w, "task:accept", "acceptance", "pass", "accepted")
+    finishStep(w, "review-implementation", "reviewer", "pass", "independent review")
+    expect(runnable(w).map((step) => step.id)).toEqual(["knowledge-sync"])
+  })
+
   test("planned Workers stay blocked until independent Plan review passes", () => {
     const w = workflow(buildSteps({
       humanFacing: false,

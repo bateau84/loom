@@ -21,6 +21,29 @@ function claim(id: string, kind: EvidenceClaim["kind"] = "product-acceptance"): 
 }
 
 describe("Loom Product Acceptance", () => {
+  test("native Task-bound scenarios use the actual gate id and invalidate on reopen", () => {
+    const plan = createAcceptancePlan({
+      workflowId: "workflow-1", stepId: "task:accept", stepAttempt: 2,
+      createdBy: "acceptance", now: "now",
+      scenarios: [{ id: "SC-001", title: "Product route", criteria: ["Integrated product route works"] }],
+    })
+    const evidence = { ...claim("claim-1"), stepId: "task:accept", attempt: 2 }
+    expect(() => recordAcceptanceResult({
+      plan, scenarioId: "SC-001", stepId: "product-acceptance",
+      outcome: "passed", claims: [evidence], byAgent: "acceptance", note: "tested", now: "later",
+    })).toThrow("product-acceptance step")
+    recordAcceptanceResult({
+      plan, scenarioId: "SC-001", stepId: "task:accept",
+      outcome: "passed", claims: [evidence], byAgent: "acceptance", note: "tested", now: "later",
+    })
+    expect(acceptanceReadiness(plan)).toBe("passed")
+    resetAcceptance(plan, 3)
+    expect(plan.stepId).toBe("task:accept")
+    expect(plan.stepAttempt).toBe(3)
+    expect(acceptanceReadiness(plan)).toBe("pending")
+    expect(plan.scenarios[0]?.evidenceClaimIds).toEqual([])
+  })
+
   test("requires scenarios mapped to accepted criteria", () => {
     expect(() =>
       createAcceptancePlan({

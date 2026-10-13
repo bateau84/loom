@@ -23,6 +23,10 @@ export function nativeTaskPath(task: { role?: string; responsibility?: string })
   if (role === "reviewer" && responsibility === "review") {
     return { nativeKind: "review", stepKind: "gate", agent: role, result: "verdict", write: "scoped", requiredReview: "independent" } as const
   }
+  if (role === "acceptance" && responsibility === "review") {
+    // This is the real Product Acceptance gate, not a renamed producer/reviewer.
+    return { nativeKind: "acceptance", stepKind: "gate", agent: role, result: "product-acceptance", write: "scoped", requiredReview: "independent" } as const
+  }
   if (role === "user" && responsibility === "obtain-user-decision") {
     return { nativeKind: "user-decision", stepKind: "wait", agent: role, result: "user-answer", write: "none", requiredReview: "scoped-independent" } as const
   }

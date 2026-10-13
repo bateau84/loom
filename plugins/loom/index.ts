@@ -267,6 +267,10 @@ async function assertStepHostAvailability(ctx: any, workflow: Workflow, work: Wo
   if (requiresReviewedPlannedDispatchBinding(workflow, step)) await assertAdviceHostPaths(ctx, work, workflow.work?.generation)
   else if (step.id === "review-plan") await assertAdviceHostPaths(ctx, work, workflow.work?.generation, true)
   if (step.task && work && nativeTaskPath(step.task)?.nativeKind === "producer") await assertAdviceInputEvidence(ctx, workflow, work, step.task.id)
+  if (work && workflow.work && requiresReviewedPlannedDispatchBinding(workflow, step)) {
+    await assertCurrentAcceptanceDependencies(ctx, workflow, work,
+      plannedTaskSteps(workflow).map((candidate) => candidate.task!.id))
+  }
 }
 
 async function assertAdviceInputEvidence(ctx: any, workflow: Workflow, work: WorkHierarchy, taskId: string) {
@@ -2733,6 +2737,148 @@ function heuristicKey(id: string) {
 
 function acceptanceKey(workflowId: string) {
   return `acceptance/${workflowId}`
+}
+
+/** One workflow/attempt owns one canonical Product Acceptance gate, including
+ * Acceptance Tasks compiled into a non-final delivery Wave. */
+function nativeAcceptanceGate(workflow: Workflow) {
+  const gates = workflow.steps.filter((step) =>
+    step.agent === "acceptance" && step.kind === "gate" &&
+    (step.id === "product-acceptance" || (step.task && nativeTaskPath(step.task)?.nativeKind === "acceptance")))
+  if (gates.length > 1) throw new Error("Workflow has ambiguous native Product Acceptance gates.")
+  return gates[0]
+}
+
+/** Check the original current-attempt claims AND their observed origins.
+ * A scenario label, persisted PASS flag, or task summary is never proof. */
+async function assertCurrentAcceptanceProof(
+  ctx: any, workflow: Workflow, step: Workflow["steps"][number],
+) {
+  if (step.status !== "passed" || step.agent !== "acceptance" || step.kind !== "gate") {
+    throw new Error("Native Product Acceptance gate has not passed.")
+  }
+  const plan = await ctx.storage.get(acceptanceKey(workflow.id)) as AcceptancePlan | undefined
+  if (!plan || plan.workflowId !== workflow.id || acceptanceReadiness(plan) !== "passed" ||
+      (plan.stepId !== undefined && plan.stepId !== step.id) ||
+      (plan.stepAttempt !== undefined && plan.stepAttempt !== (step.attempt ?? 0)) ||
+      (step.task && (plan.stepId !== step.id || plan.stepAttempt !== (step.attempt ?? 0)))) {
+    throw new Error("Product Acceptance plan is missing, unproven, or bound to a stale native gate attempt.")
+  }
+  if (!Array.isArray(plan.scenarios) || plan.scenarios.length === 0 ||
+      plan.scenarios.some((scenario) => !scenario.id?.trim() ||
+        !Array.isArray(scenario.criteria) || !scenario.criteria.length ||
+        scenario.criteria.some((criterion) => !criterion?.trim())) ||
+      new Set(plan.scenarios.map((scenario) => scenario.id.toLowerCase())).size !== plan.scenarios.length) {
+    throw new Error("Native Product Acceptance requires a nonempty, unique, criteria-bound scenario set.")
+  }
+  if (step.task && workflow.work) {
+    const work = await readWork(ctx, workflow.work.objectiveId)
+    const snapshot = work?.plans?.find((candidate) => candidate.generation === workflow.work!.generation)
+    if (!snapshot || snapshot.invalidated) {
+      throw new Error("Native Product Acceptance is stale against the current persistent Plan.")
+    }
+    // When the Plan assigns named SC-### coverage to this Task, it is
+    // mandatory. A subset of scenarios cannot authorize the whole Task.
+    const required = snapshot.acceptanceCoverage
+      .filter((coverage) => coverage.taskIds.includes(step.task!.id) && /^sc-\d+$/i.test(coverage.id))
+      .map((coverage) => coverage.id.toLowerCase())
+    const actual = new Set(plan.scenarios.map((scenario) => scenario.id.toLowerCase()))
+    if (required.some((id) => !actual.has(id))) {
+      throw new Error("Native Product Acceptance omits required Plan scenario coverage.")
+    }
+  }
+  const indexed = new Map((await stepClaims(ctx, workflow.id, step.id)).map((claim) => [claim.id, claim]))
+  for (const scenario of plan.scenarios) {
+    if (scenario.outcome !== "passed" || !scenario.evidenceClaimIds.length ||
+        new Set(scenario.evidenceClaimIds).size !== scenario.evidenceClaimIds.length) {
+      throw new Error(`Product Acceptance scenario ${scenario.id} has no valid PASS evidence set.`)
+    }
+    for (const id of scenario.evidenceClaimIds) {
+      const claim = indexed.get(id)
+      const canonical = await ctx.storage.get(claimIdKey(id)) as EvidenceClaim | undefined
+      if (!claim || !canonical || JSON.stringify(claim) !== JSON.stringify(canonical) ||
+          claim.workflowId !== workflow.id || claim.stepId !== step.id ||
+          claim.byAgent !== "acceptance" || claim.kind !== "product-acceptance" ||
+          (claim.attempt ?? 0) !== (step.attempt ?? 0) || !claim.observationIds.length) {
+        throw new Error(`Product Acceptance scenario ${scenario.id} has missing or stale original claims.`)
+      }
+      const observations = await Promise.all(claim.observationIds.map((obsId) =>
+        ctx.storage.get(evidenceKey(obsId)) as Promise<EvidenceObservation | undefined>))
+      if (observations.some((observation) =>
+            !observation || (step.task && !observation.admission) ||
+            !observationMatchesStep(observation, workflow, step.id)) ||
+          !observationsSupportKind("product-acceptance", observations.filter(
+            (observation): observation is EvidenceObservation => Boolean(observation)))) {
+        throw new Error(`Product Acceptance scenario ${scenario.id} has missing, failed, or stale host observations.`)
+      }
+    }
+  }
+}
+
+/** Fail closed on upstream Acceptance proofs at BOTH Wave compilation and
+ * downstream dispatch. Review receipts remain owned by the source Workflow. */
+async function assertCurrentAcceptanceDependencies(
+  ctx: any, workflow: Workflow, work: WorkHierarchy, taskIds: string[],
+) {
+  if (!workflow.work || !taskIds.length) return
+  const generation = workflow.work.generation
+  const snapshot = work.plans?.find((plan) => plan.generation === generation)
+  if (!snapshot || snapshot.invalidated || work.generation !== generation) {
+    throw new Error("Product Acceptance dependencies require the current valid Plan.")
+  }
+  const contracts = new Map(snapshot.phases.flatMap((phase) =>
+    phase.waves.flatMap((wave) => wave.tasks.map((task) => [task.id, task] as const))))
+  const nodes = new Map(work.nodes.filter((node) => node.type === "task" &&
+    node.generation === generation && node.status !== "superseded").map((node) => [node.logicalId, node]))
+  const selectedWaves = new Set(taskIds.map((id) => nodes.get(id)?.parentId))
+  if (selectedWaves.size !== 1 || selectedWaves.has(undefined)) {
+    throw new Error("Product Acceptance dependency admission requires exactly one current Wave.")
+  }
+  const checked = new Set<string>()
+  const visit = async (taskId: string): Promise<void> => {
+    if (checked.has(taskId)) return
+    checked.add(taskId)
+    const contract = contracts.get(taskId)
+    if (!contract) throw new Error(`Missing Plan dependency ${taskId}.`)
+    if (nativeTaskPath(contract)?.nativeKind === "acceptance") {
+      const node = nodes.get(taskId)
+      if (!node) throw new Error(`Missing persistent Acceptance Task ${taskId}.`)
+      if (!selectedWaves.has(node.parentId)) {
+        const result = node.result
+        const source = result ? await readWorkflow(ctx, result.workflowId) : undefined
+        const step = source?.steps.find((candidate) => candidate.id === taskStepId(taskId))
+        const wave = work.nodes.find((candidate) => candidate.id === node.parentId)
+        const completion = wave?.completion
+        if (!result || !source || !step || step.task?.id !== taskId ||
+            node.status !== "complete" || result.nativeKind !== "acceptance" ||
+            result.producerAgent !== "acceptance" || result.stepId !== step.id ||
+            result.generation !== generation || result.taskId !== taskId ||
+            result.completedAttempt !== (step.attempt ?? 0) || !completion ||
+            !result.semanticClosureFingerprint ||
+            result.semanticClosureFingerprint !== taskSemanticClosureFingerprintAtRevision(work, taskId, generation)) {
+          throw new Error(`Cutover blocked: Acceptance Task ${taskId} lacks a current persistent gate receipt.`)
+        }
+        assertCompletedWaveForTasks(work, result.workflowId, generation,
+          completion.taskIds, completion.bindingFingerprint)
+        await assertCurrentAcceptanceProof(ctx, source, step)
+        const originalClaimIds = (await stepClaims(ctx, source.id, step.id))
+          .filter((claim) => claim.byAgent === "acceptance" &&
+            (claim.attempt ?? 0) === (step.attempt ?? 0))
+          .map((claim) => claim.id).sort()
+        if (JSON.stringify(originalClaimIds) !==
+            JSON.stringify([...result.evidenceClaimIds].sort())) {
+          throw new Error(`Cutover blocked: Acceptance Task ${taskId} has an incomplete or altered claim-set receipt.`)
+        }
+        // A later product change cannot inherit the old observed acceptance.
+        const head = await cleanRepositoryHead(ctx.location.directory)
+        if (!head || !result.cleanRepositoryHead || head !== result.cleanRepositoryHead) {
+          throw new Error(`Cutover blocked: accepted product repository revision changed after Acceptance Task ${taskId}.`)
+        }
+      }
+    }
+    for (const parent of contract.dependsOn) await visit(parent)
+  }
+  for (const id of taskIds) await visit(id)
 }
 
 function knowledgeKey(workflowId: string) {
@@ -7174,7 +7320,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             }
           }
 
-          if (stepId === "product-acceptance") {
+          if (nativeAcceptanceGate(workflow)?.id === stepId) {
             const plan = (await ctx.storage.get(acceptanceKey(workflowId))) as AcceptancePlan | undefined
             if (!plan) {
               return { content: renderToolOutput({ error: "Product Acceptance plan is missing." }) }
@@ -7328,6 +7474,19 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             if (!currentStep) throw new Error("Step not found.")
             await validateAdviceResolutions(ctx, workflow, adviceWork, currentStep, summary, adviceResolutions)
             finishStep(workflow, stepId, tool.agent, resolvedOutcome, summary)
+            if (resolvedOutcome === "pass" && nativeAcceptanceGate(workflow)?.id === stepId) {
+              await assertCurrentAcceptanceProof(ctx, workflow, currentStep)
+            }
+            if (resolvedOutcome === "pass" && stepId === "review-implementation") {
+              for (const gate of plannedTaskSteps(workflow).filter((candidate) =>
+                nativeTaskPath(candidate.task!)?.nativeKind === "acceptance")) {
+                await assertCurrentAcceptanceProof(ctx, workflow, gate)
+              }
+            }
+            if (resolvedOutcome === "pass" && stepId === "review-product") {
+              const gate = nativeAcceptanceGate(workflow)
+              if (gate) await assertCurrentAcceptanceProof(ctx, workflow, gate)
+            }
             if (
               stepId === "review-plan" &&
               resolvedOutcome === "pass" &&
@@ -7404,6 +7563,9 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 resolvedOutcome === "pass" &&
                 taskIds.length > 0
               ) {
+                // A reviewed Plan cannot claim a dependent Wave on the
+                // strength of a stale or fabricated upstream Acceptance PASS.
+                await assertCurrentAcceptanceDependencies(ctx, workflow, work, taskIds)
                 // Fresh Plan review is still mandatory. Unchanged completed
                 // Tasks may reuse their receipts; only pending/invalidated Tasks
                 // need execution authority again.
@@ -7462,7 +7624,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                             completedAt: now,
                             completedAttempt: taskStep.attempt ?? 0,
                             producerAgent: taskStep.agent,
-                            ...(nativePath?.stepKind === "work" ? {
+                            ...(nativePath?.stepKind === "work" || nativePath?.nativeKind === "acceptance" ? {
                               nativeKind: nativePath.nativeKind,
                               generation: workflow.work!.generation,
                               taskId: taskStep.task!.id,
@@ -8131,10 +8293,11 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 delete workflow.work.reviewedPlanFingerprint
               }
 
-              if (reset.includes("product-acceptance")) {
+              const acceptanceGate = nativeAcceptanceGate(workflow)
+              if (acceptanceGate && reset.includes(acceptanceGate.id)) {
                 const acceptance = (await ctx.storage.get(acceptanceKey(workflowId))) as AcceptancePlan | undefined
                 if (acceptance) {
-                  resetAcceptance(acceptance)
+                  resetAcceptance(acceptance, acceptanceGate.attempt ?? 0)
                   await ctx.storage.set(acceptanceKey(workflowId), acceptance)
                 }
               }
@@ -9319,7 +9482,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
           }
           const workflow = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
           if (!workflow) return { content: renderToolOutput({ error: "Workflow not found." }) }
-          if (!workflow.steps.some((step) => step.id === "product-acceptance")) {
+          if (!nativeAcceptanceGate(workflow)) {
             return { content: renderToolOutput({ error: "Workflow does not require Product Acceptance." }) }
           }
 
@@ -9331,6 +9494,10 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 throw new Error("Workflow belongs to another project.")
               }
 
+              const gate = nativeAcceptanceGate(currentWorkflow)
+              if (!gate || gate.status === "passed" || gate.status === "failed") {
+                throw new Error("Product Acceptance plan requires the current, uncompleted native gate.")
+              }
               const existing = (await ctx.storage.get(acceptanceKey(value.workflowId))) as AcceptancePlan | undefined
               if (existing?.scenarios.some((scenario) => scenario.outcome !== "pending")) {
                 throw new Error("Product Acceptance plan cannot change after results exist; reopen/reset first.")
@@ -9340,6 +9507,8 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 workflowId: value.workflowId,
                 createdBy: tool.agent,
                 scenarios: value.scenarios,
+                stepId: gate.id,
+                stepAttempt: gate.attempt ?? 0,
                 now: new Date().toISOString(),
               })
               await ctx.storage.set(acceptanceKey(value.workflowId), next)
@@ -9381,7 +9550,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
       addLoomTool({
         name: "pa_result",
         description:
-          "Record one immutable Product Acceptance scenario result for the current attempt. PASS requires product-acceptance evidence claims from the Product Acceptance step.",
+          "Record one immutable Product Acceptance scenario result for the current attempt. PASS requires product-acceptance evidence claims from the attached native Acceptance gate.",
         input: {
           type: "object",
           properties: {
@@ -9407,11 +9576,13 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
             evidenceClaimIds: string[]
             note: string
           }
-          if (!(await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession))) {
+          const bound = await readBoundWorkflow(ctx, tool.sessionID, value.workflowId, ensureLegacySession)
+          if (!bound) {
             return { content: renderToolOutput({ error: "Workflow not found or current session is not bound to it." }) }
           }
-          if (!(await exactStepBinding(ctx, tool.sessionID, value.workflowId, "product-acceptance"))) {
-            return { content: renderToolOutput({ error: "Product Acceptance results require the exact product-acceptance attachment." }) }
+          const gate = nativeAcceptanceGate(bound)
+          if (!gate || !(await exactStepAttemptBinding(ctx, tool.sessionID, value.workflowId, gate.id))) {
+            return { content: renderToolOutput({ error: "Product Acceptance results require the exact current native-gate attachment." }) }
           }
 
           try {
@@ -9430,11 +9601,17 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                 throw new Error("Product Acceptance evidence claims must be produced by acceptance.")
               }
               const current = await readWorkflow(ctx, value.workflowId)
-              if (!current || !(await exactStepBinding(ctx, tool.sessionID, value.workflowId, "product-acceptance"))) {
+              const currentGate = current && nativeAcceptanceGate(current)
+              if (!current || !currentGate || currentGate.status !== "pending" ||
+                  !(await exactStepAttemptBinding(ctx, tool.sessionID, value.workflowId, currentGate.id))) {
                 throw new Error("Product Acceptance attachment changed before result commit.")
               }
               assertWorkflowNotCancelled(current)
-              const attempt = current.steps.find((step) => step.id === "product-acceptance")?.attempt ?? 0
+              const attempt = currentGate.attempt ?? 0
+              if (plan.workflowId !== value.workflowId || plan.stepId !== currentGate.id ||
+                  plan.stepAttempt !== attempt) {
+                throw new Error("Product Acceptance scenarios are bound to an old native gate or attempt.")
+              }
               if (value.outcome === "passed" && claims.some((claim) => (claim.attempt ?? 0) !== attempt)) {
                 throw new Error("Product Acceptance claims must belong to the current step attempt.")
               }
@@ -9442,6 +9619,7 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
               const scenario = recordAcceptanceResult({
                 plan,
                 scenarioId: value.scenarioId,
+                stepId: currentGate.id,
                 outcome: value.outcome,
                 claims,
                 byAgent: tool.agent,
@@ -11557,6 +11735,25 @@ const loomPlugin: Parameters<typeof OpenCodePlugin.Plugin.define>[0] = {
                       }
                       return completedWave
                     })()
+
+                await assertCurrentAcceptanceDependencies(ctx, workflow, work, compiledTaskIds)
+
+                // Specifier/Reviewer may have prepared scenarios against the
+                // default Objective gate before Planner compiled this Wave.
+                // Rebind only untouched definitions; never migrate a verdict.
+                const plannedAcceptance = steps.find((step) =>
+                  nativeTaskPath(step.task!)?.nativeKind === "acceptance")
+                if (plannedAcceptance) {
+                  const prepared = await ctx.storage.get(acceptanceKey(workflow.id)) as AcceptancePlan | undefined
+                  if (prepared?.stepId === "product-acceptance") {
+                    if (prepared.scenarios.some((scenario) => scenario.outcome !== "pending")) {
+                      throw new Error("Previously executed Product Acceptance cannot be rebound to a planned Task.")
+                    }
+                    prepared.stepId = plannedAcceptance.id
+                    prepared.stepAttempt = plannedAcceptance.attempt ?? 0
+                    await ctx.storage.set(acceptanceKey(workflow.id), prepared)
+                  }
+                }
 
                 for (const step of steps) {
                   const scope: TaskScope = {

@@ -15,6 +15,9 @@ export type AcceptanceScenario = {
 
 export type AcceptancePlan = {
   workflowId: string
+  /** Exact native gate/attempt that owns these scenarios and their evidence. */
+  stepId?: string
+  stepAttempt?: number
   createdBy: string
   createdAt: string
   scenarios: AcceptanceScenario[]
@@ -25,6 +28,8 @@ export function createAcceptancePlan(input: {
   createdBy: string
   scenarios: Array<{ id: string; title: string; criteria: string[] }>
   now: string
+  stepId?: string
+  stepAttempt?: number
 }): AcceptancePlan {
   if (input.scenarios.length === 0) {
     throw new Error("Product Acceptance requires at least one scenario.")
@@ -55,6 +60,8 @@ export function createAcceptancePlan(input: {
 
   return {
     workflowId: input.workflowId,
+    ...(input.stepId !== undefined ? { stepId: input.stepId } : {}),
+    ...(input.stepAttempt !== undefined ? { stepAttempt: input.stepAttempt } : {}),
     createdBy: input.createdBy,
     createdAt: input.now,
     scenarios,
@@ -71,6 +78,7 @@ export function acceptanceReadiness(plan: AcceptancePlan) {
 export function recordAcceptanceResult(input: {
   plan: AcceptancePlan
   scenarioId: string
+  stepId?: string
   outcome: Exclude<AcceptanceOutcome, "pending">
   claims: EvidenceClaim[]
   byAgent: string
@@ -94,7 +102,7 @@ export function recordAcceptanceResult(input: {
     if (input.claims.some((claim) => claim.workflowId !== input.plan.workflowId)) {
       throw new Error("Product Acceptance evidence must belong to the same workflow.")
     }
-    if (input.claims.some((claim) => claim.stepId !== "product-acceptance")) {
+    if (input.claims.some((claim) => claim.stepId !== (input.stepId ?? "product-acceptance"))) {
       throw new Error("Product Acceptance evidence must be produced by the product-acceptance step.")
     }
   }
@@ -107,7 +115,8 @@ export function recordAcceptanceResult(input: {
   return scenario
 }
 
-export function resetAcceptance(plan: AcceptancePlan) {
+export function resetAcceptance(plan: AcceptancePlan, nextAttempt?: number) {
+  if (nextAttempt !== undefined) plan.stepAttempt = nextAttempt
   for (const scenario of plan.scenarios) {
     scenario.outcome = "pending"
     scenario.evidenceClaimIds = []
