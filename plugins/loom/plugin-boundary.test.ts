@@ -16508,7 +16508,7 @@ describe("re-review proof-history attacks", () => {
     try {
       await h.finish("task:one", "worker")
       await h.finish("review-implementation", "reviewer", "pass")
-      const child = await h.attach("product-acceptance", "acceptance")
+      let child = await h.attach("product-acceptance", "acceptance")
       expect((await h.call("pa_plan", { workflowId: h.workflowId, scenarios: [
         { id: "scenario", title: "Controlled lifecycle check", criteria: ["preserve proof origin"] },
       ] }, "acceptance", child)).error).toBeUndefined()
@@ -16527,6 +16527,7 @@ describe("re-review proof-history attacks", () => {
       expect((await h.call("pa_result", input, "acceptance", child)).error).toBeUndefined()
       expect((await h.call("reopen", reopenRequest(h.workflowId, "product-acceptance"), "general", "parent")).error).toBeUndefined()
       expect((await h.call("pa_result", input, "acceptance", child)).error).toBeDefined()
+      child = await h.attach("product-acceptance", "acceptance", "acceptance-reopened-child")
       const freshClaim = await claim("second-attempt")
       expect((await h.call("pa_result", { ...input, evidenceClaimIds: [freshClaim.id] }, "acceptance", child)).scenario.outcome).toBe("passed")
     } finally { h.restore() }
