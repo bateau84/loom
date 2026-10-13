@@ -923,7 +923,10 @@ export function applyTaskPlan(
     if (!path) {
       throw new Error(`Task ${task.id} role ${role} has no supported Task execution slot.`)
     }
-    if ((reviewerTask || acceptanceTask) && task.dependsOn.length === 0) throw new Error(`Task ${task.id} review Task must name reviewed work as dependencies.`)
+    // Executable TaskSpecs list only dependencies inside this Wave. A native
+    // Acceptance gate may review completed upstream Waves with no local deps;
+    // validateWorkflowWave enforces its full persistent Plan dependency set.
+    if (reviewerTask && task.dependsOn.length === 0) throw new Error(`Task ${task.id} review Task must name reviewed work as dependencies.`)
     if (!decisionTask && role === "user") throw new Error(`Task ${task.id} user ownership requires user-decision responsibility.`)
     const deps = task.dependsOn.map((dependency) => {
       const source = taskById.get(dependency)
