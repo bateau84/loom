@@ -71,8 +71,11 @@ verification. No test here claims to measure actual model quality or task succes
 
 ## Remaining redesign work — not implemented
 
-- Finish external config migration: choose the external repository, port agent
-  prompts away from removed Loom procedures, and retain skill content independently.
+- The skills snapshot has moved to [bateau84/skills](https://github.com/bateau84/skills).
+  Complete the external agent/config relocation and port old agent prompts away
+  from removed Loom procedures. Audit copied skills for outdated control-plane
+  assumptions; native OpenCode discovery must continue to support optional
+  `SKILL.md` / `ASSESSMENT.md` / `QA.md` companions.
 - Native delegation integration that selects and injects the exact assigned Task
   without a child context-selection call, including concurrent and resumed agents.
 - Scheduling/parallel coordination and real pause/cancel/resume, not just state

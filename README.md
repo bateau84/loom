@@ -25,8 +25,12 @@ not execution grants. Replanning does not erase earlier evidence or results.
 ## Before using this branch
 
 **Do not replace or pull this branch into your active OpenCode config root.**
-The old repository bundled agents, skills, launchers and themes. Export those
-first and keep them outside the plugin checkout. The migration is deliberately
+The original skills are now preserved separately at
+[github.com/bateau84/skills](https://github.com/bateau84/skills) (its `skills/`
+Git tree matches the former Loom `skills/` tree). Native OpenCode still owns
+skill installation and discovery; Loom does not load skills from GitHub.
+Export agent definitions, launchers, themes, profiles and any private settings
+separately before replacing a config-root checkout. The migration is deliberately
 not automatic: existing agent prompts still reference removed Loom tools.
 See [Migration](docs/migration.md), including the separate agent/skill cleanup.
 

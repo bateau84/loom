@@ -3,10 +3,18 @@
 This is a breaking, draft change. `main` and its history remain unchanged until
 an explicit merge. Do not run the new checkout as your OpenCode config root.
 
-The removed agent and skill content is **not yet relocated to another GitHub
-repository**. No destination was selected. It remains recoverable from the PR's
-parent commit. The helper below provides a lossless, separate export; it does not
-change your OpenCode setup or create a repository on your behalf.
+The skills have already been moved into an independent repository:
+**[bateau84/skills](https://github.com/bateau84/skills)**. Its `skills/`
+directory has the same Git tree SHA as the original Loom `skills/` directory on
+`main` (`14b6ce8c73e338ba2c03def4f5a23a9f7459c81a`), confirming the
+snapshot is identical, including `SKILL.md`, `ASSESSMENT.md` and `QA.md` files.
+This confirms the copy, **not** that all old Loom workflow references have been
+ported or that skills are installed and discovered on the local OpenCode host.
+
+**Agent definitions, personal configuration, launchers and themes still need a
+separate destination and migration.** The helper below makes a lossless legacy
+snapshot for that work and optional skill backup. It does not install skills,
+change OpenCode settings or create another repository.
 
 ## Preserve the configuration first
 
@@ -30,12 +38,20 @@ untracked profiles, local YAML, secrets or machine-specific OpenCode settings.
 Preserve those separately before moving your active configuration. Exporting an
 existing destination fails rather than merging or overwriting it.
 
-Keep this export in your chosen independent configuration repository/location.
+Keep exported agent definitions and other OpenCode configuration in your chosen
+independent config repository/location. Use [bateau84/skills](https://github.com/bateau84/skills)
+as the canonical skills source instead of copying skills back into Loom.
+Install/discover those skills using native OpenCode conventions; for example,
+the checkout's `skills/` directory is the content source for supported local
+skill installation. The Loom plugin must not require a fixed skills checkout path.
+
 Agent prompts in the old bundle still reference removed Loom tools such as
 attachment, approval and completion operations. Port those prompts to professional
 role guidance without the old machinery before using them with this plugin.
-Do not mechanically delete all paragraphs mentioning Loom; that could remove
-useful review/QA reasoning. The external skills' domain material should be retained.
+Also audit the copied skills for references to old control-plane state, workflow
+gates and required agent names (the copied `skills/README.md` still describes
+these). Preserve portable methodology and Assessment/QA companions; do not
+mechanically remove all Loom references or assume the copy itself is a port.
 
 ## Install the plugin separately
 
@@ -57,8 +73,9 @@ Switching plugin versions does not migrate active agent conversations.
 
 ## Before the PR is ready to merge
 
-Verify external agents/skills independently; verify plugin installation on the
-actual host; exercise a task, replan, cross-session context read, Assessment and QA;
+Verify the external skills are installed and compatible with the new Action
+model, and finish migrating agent definitions; verify plugin installation on
+the actual host; exercise a task, replan, cross-session context read, Assessment and QA;
 confirm that the features still listed as outstanding in `docs/design.md` are
 not needed for the release being tested. No existing open PR is superseded or
 closed by this draft automatically.
