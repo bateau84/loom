@@ -1,4 +1,6 @@
-import { readFile, stat } from "node:fs/promises"
+import { open } from "node:fs/promises"
+import { constants, type BigIntStats } from "node:fs"
+import { TextDecoder } from "node:util"
 import { homedir } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
 
@@ -105,20 +107,68 @@ export function configPaths(project: string, env: Record<string, string | undefi
   return [...new Set([join(global, ".loom.yaml"), join(resolve(project), ".loom.yaml"), join(resolve(project), ".loom.local.yaml")])]
 }
 
-/** Re-read only these three small files. No directory scanning or persistent watcher. */
-export async function loadConfig(paths: string[], decode: Decoder): Promise<ConfigSnapshot> {
+// Source-byte and read-operation limits, not a native YAML allocator quota.
+export const CONFIG_READ_LIMITS = Object.freeze({ fileBytes: 65536, layers: 3, readCalls: 64 })
+type FileInfo = Pick<BigIntStats, "size" | "mtimeNs" | "ctimeNs" | "isFile">
+/** Narrow I/O seam for deterministic short-read and concurrent-file tests. */
+export interface ConfigFile {
+  stat(options: { bigint: true }): Promise<FileInfo>
+  read(buffer: Buffer, offset: number, length: number, position: number): Promise<{ bytesRead: number }>
+  close(): Promise<void>
+}
+export type ConfigOpener = (path: string, flags: number) => Promise<ConfigFile>
+
+/**
+ * One descriptor, one fixed buffer, and a sentinel byte to detect growth/overflow.
+ * Only a missing open is optional. Read/stat/close/decoder errors are not absence.
+ */
+export async function readConfigSource(path: string, openFile: ConfigOpener = open): Promise<string | undefined> {
+  let file: ConfigFile
+  try {
+    // Nonblocking open avoids waiting for a FIFO writer before the regular-file check.
+    // This is not an I/O deadline; supported symlinks are checked through their target.
+    file = await openFile(path, constants.O_RDONLY | constants.O_NONBLOCK)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return undefined
+    throw error
+  }
+  try {
+    const before = await file.stat({ bigint: true })
+    if (!before.isFile()) throw new Error("Configuration must be a regular file")
+    if (before.size > BigInt(CONFIG_READ_LIMITS.fileBytes)) throw new Error("Configuration exceeds 64 KiB")
+    const buffer = Buffer.alloc(CONFIG_READ_LIMITS.fileBytes + 1)
+    let total = 0, eof = false
+    for (let calls = 0; calls < CONFIG_READ_LIMITS.readCalls; calls++) {
+      const available = buffer.length - total
+      const { bytesRead } = await file.read(buffer, total, available, total)
+      if (!Number.isSafeInteger(bytesRead) || bytesRead < 0 || bytesRead > available) throw new Error("Invalid configuration read result")
+      total += bytesRead
+      if (total > CONFIG_READ_LIMITS.fileBytes) throw new Error("Configuration exceeds 64 KiB")
+      if (bytesRead === 0) { eof = true; break }
+    }
+    if (!eof) throw new Error("Configuration read-operation limit exceeded; retry with a stable local file")
+    const after = await file.stat({ bigint: true })
+    if (before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs || BigInt(total) !== after.size) {
+      throw new Error("Configuration changed while being read; retry after the edit completes")
+    }
+    // No replacement characters that could silently change an agent ID or instruction.
+    try { return new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, total)) }
+    catch { throw new Error("Configuration must contain valid UTF-8") }
+  } finally { await file.close() }
+}
+
+/** Read at most the three configuration layers; decode only complete admitted text. */
+export async function loadConfig(paths: string[], decode: Decoder, openFile: ConfigOpener = open): Promise<ConfigSnapshot> {
   let config = defaults()
   const sources: string[] = [], errors: string[] = []
-  for (const path of paths) {
+  if (paths.length > CONFIG_READ_LIMITS.layers) errors.push("At most three configuration layers may be read")
+  else for (const path of paths) {
     try {
-      const info = await stat(path)
-      if (info.size > 65536) throw new Error("Configuration exceeds 64 KiB")
-      const source = await readFile(path, "utf8")
-      if (Buffer.byteLength(source) > 65536) throw new Error("Configuration exceeds 64 KiB")
+      const source = await readConfigSource(path, openFile)
+      if (source === undefined) continue
       sources.push(path)
       config = mergeConfig(config, decode(source))
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue
       errors.push(`${path}: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
