@@ -165,7 +165,7 @@ test('context uses one Action/Plan/ledger read snapshot across a competing write
         all: (...p) => stmt.all(...p), run: (...p) => stmt.run(...p),
         get: (...p) => {
           const row = stmt.get(...p)
-          if (interleave && !fired && sql.includes('SELECT data FROM actions')) {
+          if (interleave && !fired && sql.includes('FROM actions WHERE')) {
             fired = true
             writer.update(action.id, 1, { goal: 'New goal' })
             writer.savePlan(action.id, 1, [task('work', { outcome: 'New outcome' })])
@@ -216,7 +216,7 @@ test('one plan read serves all record contract comparisons in the same context',
   const db = new DatabaseSync(':memory:'); t.after(() => db.close())
   let planReads = 0
   const s = new Store({ exec: sql => db.exec(sql), prepare: sql => {
-    if (sql.includes('SELECT data FROM plans')) planReads++
+    if (sql.includes('FROM plans WHERE')) planReads++
     return db.prepare(sql)
   } })
   const a = s.create('A', 'Goal', actor), f = { action_id: a.id, node_id: 'work' }

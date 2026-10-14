@@ -9,6 +9,13 @@ const parse = <T>(row: unknown, maxChars: number = PROCESSING_LIMITS.recordChars
   if (typeof text !== "string" || text.length > maxChars) throw new ProcessingLimitError(`stored JSON exceeds ${maxChars} characters; history is unchanged`)
   return JSON.parse(text) as T
 }
+// SQL guards prevent oversized TEXT from crossing the driver boundary. The 3x
+// byte allowance preserves the existing UTF-16 character limits even for CJK.
+// octet_length(column) reads size metadata; length(TEXT) would read the body.
+const guardedData = (maxChars: number = PROCESSING_LIMITS.recordChars) =>
+  `CASE WHEN typeof(data)='text' AND octet_length(data)<=${maxChars * 3} THEN data END AS data`
+export const RETRIEVAL_LIMITS = Object.freeze({ recordSetBytes: 4194304, contextNodes: 300 })
+type LedgerCandidate = { seq: number; data_bytes: number }
 const encode = (value: unknown, maxChars: number = PROCESSING_LIMITS.recordChars) => canonical(value, new ProcessingBudget(maxChars))
 const now = () => new Date().toISOString()
 const nonempty = (s: unknown, label: string, max = 16000): string => {
@@ -33,6 +40,10 @@ export class Store {
         WHERE kind<>'observation';
       CREATE INDEX IF NOT EXISTS ledger_context_scope ON ledger(action_id, json_extract(data,'$.node_id'), kind, seq)
         WHERE kind<>'observation';
+      CREATE INDEX IF NOT EXISTS ledger_action_node ON ledger(action_id, json_extract(data,'$.node_id'), seq);
+      CREATE INDEX IF NOT EXISTS ledger_session_node ON ledger(session_id, json_extract(data,'$.node_id'), seq);
+      CREATE INDEX IF NOT EXISTS ledger_observation_action ON ledger(action_id, seq) WHERE kind='observation';
+      CREATE INDEX IF NOT EXISTS ledger_observation_scope ON ledger(action_id, json_extract(data,'$.node_id'), seq) WHERE kind='observation';
       PRAGMA user_version=1;`)
   }
   /** Stable within a host lifetime, even when a replacement opens a new connection. */
@@ -46,13 +57,13 @@ export class Store {
     try { const result = fn(); this.db.exec("COMMIT"); return result } catch (e) { this.db.exec("ROLLBACK"); throw e }
   }
   action(id: string): Action {
-    const row = this.db.prepare("SELECT data FROM actions WHERE id=?").get(uid(id))
+    const row = this.db.prepare(`SELECT ${guardedData()} FROM actions WHERE id=?`).get(uid(id))
     if (!row) throw new Error(`Unknown Action: ${id}`)
     return parse<Action>(row)
   }
   list(offset = 0) {
     if (!Number.isSafeInteger(offset) || offset < 0) throw new Error("Invalid offset")
-    const rows = this.db.prepare("SELECT data FROM actions ORDER BY rowid LIMIT 51 OFFSET ?").all(offset)
+    const rows = this.db.prepare(`SELECT ${guardedData()} FROM actions ORDER BY rowid LIMIT 51 OFFSET ?`).all(offset)
     return { items: rows.slice(0, 50).map(r => parse<Action>(r)), next_offset: rows.length > 50 ? offset + 50 : null }
   }
   create(title: string, goal: string, actor: Actor): Action {
@@ -80,8 +91,8 @@ export class Store {
   plan(id: string, revision?: number): Plan {
     this.action(id)
     const row = revision === undefined
-      ? this.db.prepare("SELECT data FROM plans WHERE action_id=? ORDER BY revision DESC LIMIT 1").get(id)
-      : this.db.prepare("SELECT data FROM plans WHERE action_id=? AND revision=?").get(id, revision)
+      ? this.db.prepare(`SELECT ${guardedData(PROCESSING_LIMITS.storedPlanChars)} FROM plans WHERE action_id=? ORDER BY revision DESC LIMIT 1`).get(id)
+      : this.db.prepare(`SELECT ${guardedData(PROCESSING_LIMITS.storedPlanChars)} FROM plans WHERE action_id=? AND revision=?`).get(id, revision)
     if (!row && revision !== undefined && revision !== 0) throw new Error("Unknown plan revision")
     return row ? parse<Plan>(row, PROCESSING_LIMITS.storedPlanChars) : { revision: 0, nodes: [] }
   }
@@ -100,10 +111,10 @@ export class Store {
     })
   }
   selected(session: string): Focus | undefined {
-    const row = this.db.prepare("SELECT data FROM focus WHERE session_id=?").get(session)
+    const row = this.db.prepare(`SELECT ${guardedData()} FROM focus WHERE session_id=?`).get(session)
     return row ? parse<Focus | null>(row) ?? undefined : undefined
   }
-  hasSelection(session: string): boolean { return !!this.db.prepare("SELECT data FROM focus WHERE session_id=?").get(session) }
+  hasSelection(session: string): boolean { return !!this.db.prepare("SELECT 1 FROM focus WHERE session_id=?").get(session) }
   /** Validate and save the reference atomically; later plan edits may invalidate it. */
   select(session: string, focus?: Focus) {
     return this.transaction(() => {
@@ -140,7 +151,7 @@ export class Store {
     })
   }
   private observationBoundary(key: string, phase: string, limit: number): LedgerRecord[] {
-    return this.db.prepare(`SELECT data FROM ledger WHERE kind='observation'
+    return this.db.prepare(`SELECT ${guardedData()} FROM ledger WHERE kind='observation'
       AND json_extract(data,'$.data.correlation_key')=?
       AND json_extract(data,'$.data.phase')=? ORDER BY seq LIMIT ?`)
       .all(key, phase, limit).map(row => parse<LedgerRecord>(row))
@@ -197,7 +208,7 @@ export class Store {
     return this.transaction(() => {
       const fingerprint = subject(this.action(focus.action_id), this.plan(focus.action_id), focus.node_id)
       for (const id of ids) {
-        const row = this.db.prepare("SELECT data FROM ledger WHERE id=?").get(id)
+        const row = this.db.prepare(`SELECT ${guardedData()} FROM ledger WHERE id=?`).get(id)
         const r = row ? parse<LedgerRecord>(row) : undefined
         if (!r || r.kind !== "observation" || r.action_id !== focus.action_id) throw new Error(`Evidence must reference an existing observation in this Action: ${id}`)
       }
@@ -214,16 +225,40 @@ export class Store {
     const params: unknown[] = [query.action_id ?? query.session_id, after]
     if (query.node_id) { where += " AND json_extract(data,'$.node_id')=?"; params.push(uid(query.node_id)) }
     if (query.record_id) { where += " AND id=?"; params.push(uid(query.record_id)) }
-    const rows = this.db.prepare(`SELECT seq,data FROM ledger WHERE ${where} ORDER BY seq LIMIT ?`).all(...params, limit + 1) as { seq: number; data: string }[]
+    // Freeze page membership in small metadata, not a potentially huge array of bodies.
+    const rows = this.db.prepare(`SELECT seq,octet_length(data) AS data_bytes FROM ledger WHERE ${where} ORDER BY seq LIMIT ?`).all(...params, limit + 1) as LedgerCandidate[]
     const page = rows.slice(0, limit)
-    return { items: page.map(row => ({ sequence: row.seq, ...parse<LedgerRecord>(row) })), next_after: rows.length > limit ? page.at(-1)!.seq : null }
+    return { items: this.hydrateLedger(page), next_after: rows.length > limit ? page.at(-1)!.seq : null }
   }
+  /** Read only already-selected immutable records, after reserving their byte sizes. */
+  private hydrateLedger(candidates: LedgerCandidate[]) {
+    if (candidates.length > 56) throw new ProcessingLimitError("record set exceeds 56 rows")
+    let bytes = 0
+    for (const row of candidates) {
+      if (!Number.isSafeInteger(row.seq) || !Number.isSafeInteger(row.data_bytes) || row.data_bytes < 0 || row.data_bytes > PROCESSING_LIMITS.recordChars * 3) {
+        throw new ProcessingLimitError(`stored ledger row exceeds its byte allowance; history is unchanged (sequence ${row.seq})`)
+      }
+      bytes += row.data_bytes
+      if (bytes > RETRIEVAL_LIMITS.recordSetBytes) throw new ProcessingLimitError(`record set exceeds ${RETRIEVAL_LIMITS.recordSetBytes} stored bytes; use loom_record with a smaller limit or exact record_id; history is unchanged`)
+    }
+    if (!candidates.length) return []
+    // Recheck each reservation in SQL. Even a same-user external writer growing
+    // a body between queries cannot make the driver materialize unreserved text.
+    const rows = this.db.prepare(`WITH wanted(seq,max_bytes) AS (VALUES ${candidates.map(() => "(?,?)").join(",")})
+      SELECT ledger.seq, CASE WHEN typeof(ledger.data)='text' AND octet_length(ledger.data)<=wanted.max_bytes THEN ledger.data END AS data
+      FROM wanted JOIN ledger ON ledger.seq=wanted.seq`)
+      .all(...candidates.flatMap(row => [row.seq, row.data_bytes])) as { seq: number; data: string }[]
+    if (rows.length !== candidates.length) throw new Error("Selected ledger records disappeared during retrieval")
+    const bySeq = new Map(rows.map(row => [row.seq, row]))
+    return candidates.map(candidate => ({ sequence: candidate.seq, ...parse<LedgerRecord>(bySeq.get(candidate.seq)) }))
+  }
+
   /** One read-only snapshot; the callback must stay synchronous and never write. */
   contextSnapshot<T>(actionID: string, read: (action: Action, plan: Plan) => T): T {
     this.db.exec("BEGIN")
     try {
       const action = this.action(actionID)
-      const row = this.db.prepare("SELECT data FROM plans WHERE action_id=? ORDER BY revision DESC LIMIT 1").get(actionID)
+      const row = this.db.prepare(`SELECT ${guardedData(PROCESSING_LIMITS.storedPlanChars)} FROM plans WHERE action_id=? ORDER BY revision DESC LIMIT 1`).get(actionID)
       const plan = row ? parse<Plan>(row, PROCESSING_LIMITS.storedPlanChars) : { revision: 0, nodes: [] }
       const result = read(action, plan)
       this.db.exec("COMMIT"); return result
@@ -236,23 +271,23 @@ export class Store {
    */
   contextRecords(actionID: string, nodeIDs?: string[]) {
     uid(actionID)
+    if (nodeIDs && (!Array.isArray(nodeIDs) || nodeIDs.length > RETRIEVAL_LIMITS.contextNodes)) throw new ProcessingLimitError("context scope list exceeds 300 nodes")
+    if (nodeIDs) for (const id of nodeIDs) uid(id, "node id")
     const kinds = ["result", "qa", "assessment", "claim"] as const
     const allScopes = nodeIDs?.length ? [...new Set([nodeIDs[0], null, ...nodeIDs.slice(1)])] : [undefined]
     const scopes = allScopes.slice(0, 16)
-    type Row = { seq: number; data: string }
-    const decode = (row: Row) => ({ sequence: row.seq, ...parse<LedgerRecord>(row) })
     let hasMore = allScopes.length > scopes.length
     const groups = scopes.map(scope => kinds.map(kind => {
       const params: unknown[] = [actionID, kind]
       const scoped = scope !== undefined
       if (scoped) params.push(scope)
-      const rows = this.db.prepare(`SELECT seq,data FROM ledger WHERE action_id=?
+      const rows = this.db.prepare(`SELECT seq,octet_length(data) AS data_bytes FROM ledger WHERE action_id=?
         AND kind<>'observation' AND kind=?${scoped ? " AND json_extract(data,'$.node_id') IS ?" : ""}
-        ORDER BY seq DESC LIMIT 3`).all(...params) as Row[]
+        ORDER BY seq DESC LIMIT 3`).all(...params) as LedgerCandidate[]
       if (rows.length > 2) hasMore = true
-      return rows.slice(0, 2).map(decode)
+      return rows.slice(0, 2)
     }))
-    const conclusions: Array<ReturnType<typeof decode>> = []
+    const conclusions: LedgerCandidate[] = []
     // First give each scope a recent result of each kind, then older context.
     for (let depth = 0; depth < 2; depth++) for (let kind = 0; kind < kinds.length; kind++) {
       for (const group of groups) {
@@ -261,15 +296,19 @@ export class Store {
       }
     }
     if (conclusions.length > 48) hasMore = true
-    let filter = "action_id=? AND kind='observation'"
-    const params: unknown[] = [actionID]
-    if (nodeIDs?.length) {
-      filter += ` AND (json_extract(data,'$.node_id') IS NULL OR json_extract(data,'$.node_id') IN (${nodeIDs.map(() => "?").join(",")}))`
-      params.push(...nodeIDs)
-    }
-    const observations = this.db.prepare(`SELECT seq,data FROM ledger WHERE ${filter} ORDER BY seq DESC LIMIT 9`).all(...params) as Row[]
+    // Each scope has an ordered observation-only index. Merge bounded heads,
+    // rather than scanning recent unrelated history until eight matches appear.
+    const observations = allScopes.flatMap(scope => {
+      const scoped = scope !== undefined
+      const params: unknown[] = [actionID]
+      if (scoped) params.push(scope)
+      return this.db.prepare(`SELECT seq,octet_length(data) AS data_bytes FROM ledger WHERE action_id=? AND kind='observation'${scoped ? " AND json_extract(data,'$.node_id') IS ?" : ""}
+        ORDER BY seq DESC LIMIT 9`).all(...params) as LedgerCandidate[]
+    }).sort((a, b) => b.seq - a.seq).slice(0, 9)
+    const selected = conclusions.slice(0, 48)
+    const records = this.hydrateLedger([...selected, ...observations.slice(0, 8)])
     return {
-      conclusions: conclusions.slice(0, 48), observations: observations.slice(0, 8).map(decode),
+      conclusions: records.slice(0, selected.length), observations: records.slice(selected.length),
       has_more: hasMore || observations.length > 8, scopes_omitted: allScopes.length - scopes.length,
     }
   }
