@@ -34,11 +34,17 @@ separately before replacing a config-root checkout. The migration is deliberatel
 not automatic: existing agent prompts still reference removed Loom tools.
 See [Migration](docs/migration.md), including the separate agent/skill cleanup.
 
-This first implementation is not the whole redesign. Native automatic delegation
-handoffs, execution cancellation, dashboard, legacy ledger import, independent
-review orchestration and real model-driven acceptance tests are still outstanding.
-The Action `paused`, `cancelled` and `completed` labels record intent/progress;
-they do not interrupt a running OpenCode session or certify successful delivery.
+The alpha milestone is useful Research → Worker handoff and fresh-session
+resumption with trustworthy history, clear tool guidance, and one tested manual
+backup/restore procedure. Independent review and that real-host scenario remain
+outstanding. A successful context read must also survive a failed selection save;
+that correction is not yet implemented. See the [narrow alpha operating policy](docs/operating-policy.md).
+
+Advanced storage recovery, maintenance/capacity modes, strict WAL-growth quotas,
+scheduling, dashboards and legacy import are deferred, not alpha prerequisites.
+No history-size or whole-process resource guarantee is advertised. The Action
+`paused`, `cancelled` and `completed` labels record intent/progress; they do not
+interrupt an OpenCode session or certify successful delivery.
 
 ## Loading the plugin
 
@@ -70,11 +76,12 @@ not two-agent behavior, meaningful-record persistence, or graceful teardown.
 The capture-gap repair also requires a **full OpenCode host restart on first
 installation**; hot-upgrading cannot recover uncertainty discarded by the old
 implementation. See [Evidence pairing](docs/evidence-reliability.md).
-This compatibility correction leaves dependency versions and installation behavior
-unchanged. A frozen dependency graph and backup/restore remain separate work.
+Main plugin CI now uses the committed lockfile with frozen installation and a
+lock-stability check. The separately installed host's dependency graph and the
+manual state-backup/restore procedure remain separate release work.
 
-In a separate plugin checkout, run `bun install`. Add that checkout to your
-existing OpenCode configuration, without replacing your other entries:
+In a separate plugin checkout, run `bun install --frozen-lockfile`. Add that checkout
+to your existing OpenCode configuration, without replacing your other entries:
 
 ```json
 {
@@ -112,6 +119,12 @@ there is no fabricated tokenizer-independent `max_tokens` guarantee. The schema
 is a first implementation, not an implementation of every earlier sketch.
 
 ## Agent experience
+
+Start with the [five-tool guide and Research → Worker example](docs/tools.md).
+It covers operation inputs, side effects, exact dependency-record retrieval,
+replanning, review records and fresh-session resumption. It describes intended
+usage, not a completed live-host acceptance test. The document is not automatically
+injected; actual tool descriptions and role-injected help still need agent trials.
 
 For concrete work, create an Action. For complex work, save an optional plan.
 Pass the Action and Task IDs in the native delegation message. The receiving
@@ -159,14 +172,15 @@ Use the Bun version in `.bun-version` (currently **1.4.2**).
 
 ```sh
 bun --version
-bun install
+bun install --frozen-lockfile
 bun run typecheck
 bun run test:core       # Node 22.16+; core tests use actual SQLite
-bun run test:native     # Bun YAML/SQLite + registered plugin-hook contract tests
+bun run test:native     # Bun/SQLite + registered plugin-hook and parser tests
 ```
 
 Tests isolate config and state in temporary directories. No paid inference is
 required by CI. The native contract test uses a fake host API with real Bun
 primitives; it does **not** replace a live OpenCode installation smoke test.
 
-See [Design and remaining work](docs/design.md).
+See [Design and remaining work](docs/design.md) for broader redesign ideas;
+[the alpha operating policy](docs/operating-policy.md) defines the narrower release scope.
