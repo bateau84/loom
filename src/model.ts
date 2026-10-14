@@ -11,17 +11,93 @@ export const uid = (value: unknown, label = "id"): string => {
   if (typeof value !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}$/.test(value)) throw new Error(`${label} must be a simple identifier of 1-120 characters`)
   return value
 }
-export function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`
-  if (value && typeof value === "object") {
-    const entries = Object.entries(value).filter(([,v]) => v !== undefined).sort(([a],[b]) => a.localeCompare(b))
-    return "{" + entries.map(([k,v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(",") + "}"
-  }
-  return JSON.stringify(value) ?? "null"
+// Limits count UTF-16 code units in serialized JSON, not model tokens or elapsed time.
+export const PROCESSING_LIMITS = Object.freeze({
+  planChars: 262144, storedPlanChars: 524288, recordChars: 131072,
+  valueChars: 1048576, values: 32768, depth: 48,
+  contextHashChars: 1048576, contextHashValues: 131072,
+})
+export class ProcessingLimitError extends Error {
+  readonly code = "LOOM_PROCESSING_LIMIT"
+  constructor(message: string) { super(`Loom processing limit: ${message}`) }
 }
-export const digest = (value: unknown) => createHash("sha256").update(canonical(value)).digest("hex")
+/** A monotonic operation budget. Exhaustion never restarts the allowance. */
+export class ProcessingBudget {
+  chars = 0
+  values = 0
+  private exhausted = false
+  constructor(readonly maxChars: number = PROCESSING_LIMITS.valueChars, readonly maxValues: number = PROCESSING_LIMITS.values) {
+    if (!Number.isSafeInteger(maxChars) || maxChars < 1 || !Number.isSafeInteger(maxValues) || maxValues < 1) throw new Error("Invalid processing budget")
+  }
+  fail(reason: string): never { this.exhausted = true; throw new ProcessingLimitError(reason) }
+  take(chars: number, values = 0) {
+    if (this.exhausted || chars > this.maxChars - this.chars || values > this.maxValues - this.values) this.fail(`serialization exceeds ${this.maxChars} characters or ${this.maxValues} values; reduce the payload`)
+    this.chars += chars; this.values += values
+  }
+}
+/** Canonical bytes for plain data stay unchanged; no partial digest is returned. */
+export function canonical(value: unknown, budget = new ProcessingBudget()): string {
+  const chunks: string[] = [], active = new Set<object>()
+  const emit = (text: string) => { budget.take(text.length); chunks.push(text) }
+  function quote(text: string) {
+    // Reject before allocating the escaped form of a huge scalar. Escape expansion
+    // of an admitted scalar is at most sixfold and is charged before it is retained.
+    if (text.length + 2 > budget.maxChars - budget.chars) budget.fail("string exceeds remaining serialization allowance")
+    emit(JSON.stringify(text))
+  }
+  function walk(v: unknown, depth: number) {
+    budget.take(0, 1)
+    if (depth > PROCESSING_LIMITS.depth) budget.fail(`nesting exceeds ${PROCESSING_LIMITS.depth}`)
+    if (typeof v === "string") { quote(v); return }
+    if (v === null || v === undefined) { emit("null"); return }
+    if (typeof v === "number" || typeof v === "boolean") { emit(JSON.stringify(v)); return }
+    if (typeof v !== "object") budget.fail("only plain data can be serialized")
+    const object = v as object
+    if (active.has(object)) budget.fail("cyclic data cannot be serialized")
+    active.add(object)
+    try {
+      if (Array.isArray(v)) {
+        if (v.length > budget.maxValues - budget.values) budget.fail("array exceeds remaining value allowance")
+        emit("[")
+        for (let i = 0; i < v.length; i++) {
+          if (i) emit(",")
+          const item = Object.getOwnPropertyDescriptor(v, String(i))
+          if (item && !("value" in item)) budget.fail("accessors cannot be serialized")
+          walk(item?.value, depth + 1)
+        }
+        emit("]"); return
+      }
+      const prototype = Object.getPrototypeOf(v)
+      if (prototype !== Object.prototype && prototype !== null) budget.fail("only plain mappings can be serialized")
+      const keys = Object.keys(v)
+      if (keys.length > budget.maxValues - budget.values) budget.fail("mapping exceeds remaining value allowance")
+      // Bound key material before sorting. Engine-level key enumeration and proxies
+      // are not a sandbox boundary; these limits govern ordinary host data.
+      let keyChars = 0
+      for (const key of keys) {
+        keyChars += key.length
+        if (keyChars > budget.maxChars - budget.chars) budget.fail("keys exceed remaining serialization allowance")
+      }
+      emit("{")
+      let first = true
+      for (const key of keys.sort((a, b) => a.localeCompare(b))) {
+        const item = Object.getOwnPropertyDescriptor(v, key)!
+        if (!("value" in item)) budget.fail("accessors cannot be serialized")
+        if (item.value === undefined) continue
+        if (!first) emit(",")
+        first = false; quote(key); emit(":"); walk(item.value, depth + 1)
+      }
+      emit("}")
+    } finally { active.delete(object) }
+  }
+  walk(value, 0)
+  return chunks.join("")
+}
+export const digest = (value: unknown, budget?: ProcessingBudget) => createHash("sha256").update(canonical(value, budget)).digest("hex")
 export function validatePlan(input: unknown): PlanNode[] {
   if (!Array.isArray(input) || input.length > 300) throw new Error("Plan nodes must be an array of at most 300 nodes")
+  // Aggregate admission precedes cloning and graph traversal. Per-field limits remain.
+  canonical(input, new ProcessingBudget(PROCESSING_LIMITS.planChars))
   const order: Record<NodeKind, number> = { phase: 0, wave: 1, task: 2, subtask: 3 }
   const nodes: PlanNode[] = [], map = new Map<string, PlanNode>()
   for (const raw of input) {
@@ -60,9 +136,10 @@ export function validatePlan(input: unknown): PlanNode[] {
   return nodes
 }
 /** Unrelated plan edits do not change a task's subject fingerprint. */
-export function subject(action: Action, plan: Plan, nodeID?: string): string {
+export function subject(action: Action, plan: Plan, nodeID?: string, budget?: ProcessingBudget): string {
+  if (!Array.isArray(plan.nodes) || plan.nodes.length > 300) throw new ProcessingLimitError("subject plan exceeds 300 nodes")
   const goal = { title: action.title, goal: action.goal }
-  if (!nodeID) return digest({ goal, nodes: plan.nodes })
+  if (!nodeID) return digest({ goal, nodes: plan.nodes }, budget)
   const map = new Map(plan.nodes.map(n => [n.id, n])), selected = new Map<string, PlanNode>()
   function add(id: string) {
     if (selected.has(id)) return
@@ -73,5 +150,5 @@ export function subject(action: Action, plan: Plan, nodeID?: string): string {
     for (const dep of n.depends_on ?? []) add(dep)
   }
   add(nodeID)
-  return digest({ goal, nodes: [...selected.values()].sort((a,b) => a.id.localeCompare(b.id)) })
+  return digest({ goal, nodes: [...selected.values()].sort((a,b) => a.id.localeCompare(b.id)) }, budget)
 }
