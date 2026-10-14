@@ -27,10 +27,12 @@ focus; failed creation rolls back both Action and initial selection. There are
 no retries, permission gates or long-lived execution locks added here.
 
 `Store.contractMatch()` had no production caller or declared package entrypoint;
-its only direct callers in this checkout were three assertions in the core tests.
-It has been removed rather than given another transaction. Those assertions now
-read `contract_match` through `taskContext()`, the same snapshot-based path used
-in production. This preserves the changed/unchanged/removed-contract checks.
+Its tracked callers were test assertions in the core, observer-reliability and
+selection-recovery suites. It has been removed rather than given another
+transaction. All seven former assertions now read `contract_match` through
+`taskContext()`, the same snapshot-based path used in production. This preserves
+the changed/unchanged/removed-contract checks. The first full CI run caught four
+missed test callers; the follow-up migrates them without dropping assertions.
 
 ## Audited operations and their actual guarantees
 

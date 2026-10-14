@@ -5,7 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Store } from '../.test-build/store.js'
-import { Observer } from '../.test-build/context.js'
+import { Observer, taskContext } from '../.test-build/context.js'
 import { digest } from '../.test-build/model.js'
 
 const actor = { session_id: 'session-a', agent: 'engineer' }
@@ -78,7 +78,8 @@ test('single start preserves original Action and Task after replan and Session s
   assert.equal(finish.node_id, 't')
   assert.equal(finish.fingerprint, start.fingerprint)
   assert.equal(finish.data.start_id, start.id)
-  assert.equal(store.contractMatch(finish), false)
+  const current = taskContext(store, { action_id: action.id })
+  assert.equal(current.records.find(r => r.id === finish.id)?.contract_match, false)
 })
 
 test('a failed completion insert can retry against its original saved start', t => {

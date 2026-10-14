@@ -9,6 +9,8 @@ import * as context from '../.test-build/context.js'
 
 // The fallback permits the same probes to demonstrate the failure on c43b18c.
 const read = context.taskContextOrRecovery ?? context.taskContext
+// Read historical contract status through the same snapshot path used in production.
+const contextMatch = (store, record) => context.taskContext(store, { action_id: record.action_id }).records.find(r => r.id === record.id)?.contract_match
 const actor = { session_id: 'worker-session', agent: 'external-worker' }
 const node = (id, kind = 'task') => ({ id, kind, title: `Work ${id}` })
 function setup(t) {
@@ -64,7 +66,7 @@ test('recovery does not retag history, change selection, or restore the missing 
   assert.deepEqual(store.selected(actor.session_id), focus)
   assert.equal(store.plan(action.id).nodes.some(n => n.id === 'old'), false)
   assert.equal(store.records({ action_id: action.id, record_id: result.id }).items[0].node_id, 'old')
-  assert.equal(store.contractMatch(result), false)
+  assert.equal(contextMatch(store, result), false)
 })
 
 test('action-only and valid task reads keep their full existing behavior', t => {
@@ -118,7 +120,7 @@ test('explicit reselection returns to normal context while old records stay hist
   store.select(actor.session_id, next)
   assert.equal(read(store, next).task.id, 'next')
   assert.equal('recovery' in read(store, next), false)
-  assert.equal(store.contractMatch(result), false)
+  assert.equal(contextMatch(store, result), false)
 })
 
 test('repeated notices are stable and a reappearing node uses its current contract', t => {
@@ -126,7 +128,7 @@ test('repeated notices are stable and a reappearing node uses its current contra
   assert.deepEqual(notice(store, focus), notice(store, focus))
   store.savePlan(action.id, 2, [{ ...node('old'), outcome: 'Changed meaning' }])
   assert.equal(read(store, focus).task.outcome, 'Changed meaning')
-  assert.equal(store.contractMatch(result), false)
+  assert.equal(contextMatch(store, result), false)
 })
 
 test('notice stays within 2000 characters with maximum-length IDs and large metadata', t => {
