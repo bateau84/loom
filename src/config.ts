@@ -1,4 +1,5 @@
 import { open } from "node:fs/promises"
+import { admitConfigLoad, checkConfigCancellation } from "./config-admission.js"
 import { constants, type BigIntStats } from "node:fs"
 import { TextDecoder } from "node:util"
 import { homedir } from "node:os"
@@ -122,7 +123,8 @@ export type ConfigOpener = (path: string, flags: number) => Promise<ConfigFile>
  * One descriptor, one fixed buffer, and a sentinel byte to detect growth/overflow.
  * Only a missing open is optional. Read/stat/close/decoder errors are not absence.
  */
-export async function readConfigSource(path: string, openFile: ConfigOpener = open): Promise<string | undefined> {
+export async function readConfigSource(path: string, openFile: ConfigOpener = open, signal?: AbortSignal): Promise<string | undefined> {
+  checkConfigCancellation(signal)
   let file: ConfigFile
   try {
     // Nonblocking open avoids waiting for a FIFO writer before the regular-file check.
@@ -133,14 +135,18 @@ export async function readConfigSource(path: string, openFile: ConfigOpener = op
     throw error
   }
   try {
+    checkConfigCancellation(signal)
     const before = await file.stat({ bigint: true })
+    checkConfigCancellation(signal)
     if (!before.isFile()) throw new Error("Configuration must be a regular file")
     if (before.size > BigInt(CONFIG_READ_LIMITS.fileBytes)) throw new Error("Configuration exceeds 64 KiB")
     const buffer = Buffer.alloc(CONFIG_READ_LIMITS.fileBytes + 1)
     let total = 0, eof = false
     for (let calls = 0; calls < CONFIG_READ_LIMITS.readCalls; calls++) {
+      checkConfigCancellation(signal)
       const available = buffer.length - total
       const { bytesRead } = await file.read(buffer, total, available, total)
+      checkConfigCancellation(signal)
       if (!Number.isSafeInteger(bytesRead) || bytesRead < 0 || bytesRead > available) throw new Error("Invalid configuration read result")
       total += bytesRead
       if (total > CONFIG_READ_LIMITS.fileBytes) throw new Error("Configuration exceeds 64 KiB")
@@ -148,6 +154,7 @@ export async function readConfigSource(path: string, openFile: ConfigOpener = op
     }
     if (!eof) throw new Error("Configuration read-operation limit exceeded; retry with a stable local file")
     const after = await file.stat({ bigint: true })
+    checkConfigCancellation(signal)
     if (before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs || BigInt(total) !== after.size) {
       throw new Error("Configuration changed while being read; retry after the edit completes")
     }
@@ -157,14 +164,16 @@ export async function readConfigSource(path: string, openFile: ConfigOpener = op
   } finally { await file.close() }
 }
 
-/** Read at most the three configuration layers; decode only complete admitted text. */
-export async function loadConfig(paths: string[], decode: Decoder, openFile: ConfigOpener = open): Promise<ConfigSnapshot> {
+/** Internal admitted operation. Its slot includes all layers and descriptor cleanup. */
+async function loadConfigNow(paths: string[], decode: Decoder, openFile: ConfigOpener, signal?: AbortSignal): Promise<ConfigSnapshot> {
   let config = defaults()
   const sources: string[] = [], errors: string[] = []
   if (paths.length > CONFIG_READ_LIMITS.layers) errors.push("At most three configuration layers may be read")
   else for (const path of paths) {
+    checkConfigCancellation(signal)
     try {
-      const source = await readConfigSource(path, openFile)
+      const source = await readConfigSource(path, openFile, signal)
+      checkConfigCancellation(signal)
       if (source === undefined) continue
       sources.push(path)
       config = mergeConfig(config, decode(source))
@@ -172,9 +181,21 @@ export async function loadConfig(paths: string[], decode: Decoder, openFile: Con
       errors.push(`${path}: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
+  checkConfigCancellation(signal)
   // Never use a partially loaded or stale role mapping. Native execution remains available.
   if (errors.length) {
     config = defaults(); config.instructions.enabled = false; config.ledger.capture = "off"
   }
   return { config, sources, errors }
+}
+
+/** No cached/shared result: each admitted caller reads its own current layers. */
+export async function loadConfig(paths: string[], decode: Decoder, openFile: ConfigOpener = open, signal?: AbortSignal): Promise<ConfigSnapshot> {
+  try {
+    return await admitConfigLoad(() => loadConfigNow(paths, decode, openFile, signal), signal)
+  } catch (error) {
+    const config = defaults()
+    config.instructions.enabled = false; config.ledger.capture = "off"
+    return { config, sources: [], errors: [error instanceof Error ? error.message : String(error)] }
+  }
 }

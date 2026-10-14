@@ -28,6 +28,6 @@ test('published example has identical bounded and native configuration results',
 })
 test('production plugin selects the bounded decoder without a native fallback', async () => {
   const source = await readFile(new URL('../src/plugin.ts', import.meta.url), 'utf8')
-  expect(source).toContain('loadConfig(configuredPaths, decodeConfigYaml)')
+  expect(source).toContain('loadConfig(configuredPaths, decodeConfigYaml, undefined,')
   expect(source).not.toContain('YAML.parse')
 })

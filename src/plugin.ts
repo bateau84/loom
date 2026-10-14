@@ -5,6 +5,7 @@ import { mkdir, open, realpath } from "node:fs/promises"
 import { homedir } from "node:os"
 import { isAbsolute, join } from "node:path"
 import { configPaths, loadConfig } from "./config.js"
+import { configLoadStatus } from "./config-admission.js"
 import { injectInstructions, registry, type NativeAgent } from "./agents.js"
 import { taskContextOrRecovery, Observer } from "./context.js"
 import { digest, type Actor, type Focus } from "./model.js"
@@ -41,7 +42,9 @@ export default Plugin.define({
   async setup(ctx) {
     const directory = await realpath(ctx.location.directory)
     const configuredPaths = configPaths(directory)
-    const getConfig = () => loadConfig(configuredPaths, decodeConfigYaml)
+    const lifetime = new AbortController()
+    const getConfig = (signal?: AbortSignal) => loadConfig(configuredPaths, decodeConfigYaml, undefined,
+      signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal)
     const xdg = process.env.XDG_STATE_HOME
     const stateHome = xdg && isAbsolute(xdg) ? xdg : join(homedir(), ".local", "state")
     const state = join(stateHome, "loom", "actions-v1", digest({ project: ctx.location.project.id, canonical: ctx.location.project.canonical }))
@@ -78,13 +81,15 @@ export default Plugin.define({
           execute: async (raw, toolContext) => {
             if (!await owns(toolContext.sessionID)) throw new Error("This Loom instance does not own the Session location")
             const input = payload(raw), actor: Actor = { session_id: toolContext.sessionID, agent: toolContext.agent }
-            const snapshot = await getConfig()
+            const snapshot = await getConfig(toolContext.signal)
+            lifetime.signal.throwIfAborted()
+            toolContext.signal.throwIfAborted()
             const focus = focusFor(input, actor.session_id)
             let result: unknown
             switch (spec.name) {
               case "agents": {
                 const entries = registry(snapshot.config, agents(await ctx.agent.list()))
-                result = { agents: entries, evidence: { capture: snapshot.config.ledger.capture, ...observer.status() }, config_sources: snapshot.sources, errors: snapshot.errors, warnings: entries.filter(a => a.configured && !a.available).map(a => `Configured agent is unavailable: ${a.id}`) }; break
+                result = { agents: entries, config_loads: configLoadStatus(), evidence: { capture: snapshot.config.ledger.capture, ...observer.status() }, config_sources: snapshot.sources, errors: snapshot.errors, warnings: entries.filter(a => a.configured && !a.available).map(a => `Configured agent is unavailable: ${a.id}`) }; break
               }
               case "action":
                 if (input.operation === "list") result = store.list(input.offset as number | undefined)
@@ -132,6 +137,7 @@ export default Plugin.define({
             const part = event.system[i]
             if (part?.type === "text" && part.text.startsWith("<!-- loom:context:v2 -->\n")) event.system.splice(i, 1)
           }
+          if (lifetime.signal.aborted) return
           const configured = snapshot.config.agents[event.agent]
           const focus = store.selected(event.sessionID)
           if (snapshot.config.instructions.enabled && configured?.enabled && focus) {
@@ -144,7 +150,9 @@ export default Plugin.define({
         if (/^loom[_.]/.test(event.tool)) return
         try {
           if (!await owns(event.sessionID)) return
-          if ((await getConfig()).config.ledger.capture === "automatic") observer.before(event)
+          const snapshot = await getConfig()
+          if (lifetime.signal.aborted) { observer.captureGap(); return }
+          if (snapshot.config.ledger.capture === "automatic") observer.before(event)
           else observer.skip(event)
         } catch (error) { observer.captureGap(); warn(error) }
       }))
@@ -153,6 +161,7 @@ export default Plugin.define({
         try {
           if (!await owns(event.sessionID)) return
           const captureEnabled = (await getConfig()).config.ledger.capture === "automatic"
+          if (lifetime.signal.aborted) return
           if (captureEnabled || observer.has(event)) {
             const record = observer.after(event, captureEnabled)
             if (record && record.data.attribution !== "captured-at-start") warn(`Evidence is unpaired (${record.data.attribution}). Inspect loom_record with operation=query, session_only=true.`)
@@ -160,8 +169,9 @@ export default Plugin.define({
         } catch (error) { warn(error) }
       }))
     } catch (error) {
+      lifetime.abort()
       await Promise.allSettled(disposers.map(d => d.dispose())); db.close(); throw error
     }
-    return async () => { await Promise.allSettled(disposers.map(d => d.dispose())); db.close() }
+    return async () => { lifetime.abort(); await Promise.allSettled(disposers.map(d => d.dispose())); db.close() }
   },
 })
