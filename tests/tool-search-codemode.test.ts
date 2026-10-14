@@ -8,11 +8,14 @@ import { registeredLoom } from "./helpers/registered-loom.js"
 // Isolated exact upstream test dependency; not a new Loom runtime dependency.
 const root = process.env.LOOM_CODEMODE_ROOT
 if (!root) throw new Error("Set LOOM_CODEMODE_ROOT to an isolated npm prefix containing @opencode/codemode@2.0.18; see docs/tool-discovery.md")
-const req = createRequire(join(root, "package.json"))
-const metadata = JSON.parse(await readFile(join(root, "node_modules/@opencode/codemode/package.json"), "utf8"))
+const packageRoot = join(root, "node_modules/@opencode/codemode")
+const metadata = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"))
 if (metadata.version !== "2.0.18") throw new Error(`Expected Code Mode 2.0.18, found ${metadata.version}`)
-const { CodeMode, Namespace, Tool } = await import(pathToFileURL(req.resolve("@opencode/codemode")).href)
-const effectReq = createRequire(req.resolve("@opencode/codemode"))
+// Test the published compiled implementation, not the source-manifest export.
+// The pinned build emits src/index.ts to dist/index.js; a missing build is fatal.
+const entry = join(packageRoot, "dist/index.js")
+const { CodeMode, Namespace, Tool } = await import(pathToFileURL(entry).href)
+const effectReq = createRequire(entry)
 const { Effect } = await import(pathToFileURL(effectReq.resolve("effect")).href)
 
 async function withSearch(run: (search: (input: unknown) => Promise<any>, f: Awaited<ReturnType<typeof registeredLoom>>) => Promise<void>) {
