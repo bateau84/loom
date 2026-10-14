@@ -21,6 +21,11 @@ jobs:
       - run: bun run typecheck
       - run: bun run test:core
       - run: bun run test:native
+      - name: Install pinned search implementation outside plugin dependencies
+        run: npm install --prefix "$RUNNER_TEMP/loom-tool-search" --ignore-scripts --no-audit --no-fund @opencode/codemode@2.0.18
+      - name: Verify real Code Mode search returns registered Loom help; no model requests
+        run: LOOM_CODEMODE_ROOT="$RUNNER_TEMP/loom-tool-search" bun test tests/tool-search-codemode.test.ts
+      - run: git diff --exit-code -- package.json bun.lock
       - run: python3 -m unittest discover -s tests -p 'test_*.py'
       - name: Characterize bounded YAML decoding examples
         run: bun tools/probe-config-decoding.ts

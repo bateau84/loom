@@ -10,6 +10,7 @@ import { injectInstructions, registry, type NativeAgent } from "./agents.js"
 import { taskContextOrRecovery, Observer } from "./context.js"
 import { digest, type Actor, type Focus } from "./model.js"
 import { Store } from "./store.js"
+import { TOOL_HELP, LOOM_NAMESPACE_HELP } from "./tool-help.js"
 
 function payload(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected an object")
@@ -30,11 +31,11 @@ const num = { type: "integer", minimum: 0 } as const
 const obj = (properties: Record<string, unknown>, required: string[] = []) => ({ type: "object", properties, required, additionalProperties: false })
 const choice = (...values: string[]) => ({ type: "string", enum: values })
 const specs = [
-  { name: "agents", description: "List native agents, configured Loom roles and configuration errors. Unavailable agents are identified, never invented.", input: obj({}) },
-  { name: "action", description: "Create, list or update an Action. create selects it for this Session. Plans and reviews are optional. State is a progress label, not a process kill or proof of success.", input: obj({ operation: choice("list", "create", "update"), action_id: str, title: str, goal: str, state: choice("active", "paused", "completed", "cancelled"), expected_revision: num, offset: num }, ["operation"]) },
-  { name: "plan", description: "Read or save an optional Action plan. Use stable node IDs and expected_revision. Missing hierarchy levels are allowed. Reading can target one historical revision. Saving does not erase results or evidence.", input: obj({ operation: choice("read", "save"), action_id: str, revision: num, expected_revision: num, nodes: { type: "array", maxItems: 300, items: obj({ id: str, kind: choice("phase", "wave", "task", "subtask"), title: str, parent: str, depends_on: list, outcome: str, context: str, criteria: list, skills: list, roles: list, agent: str }, ["id", "kind", "title"]) } }, ["operation", "action_id"]) },
-  { name: "context", description: "Read context for the selected work. Supplying action_id (and optional node_id) selects work for this Session and returns its task, dependencies and records. clear stops attributing later observations to it. Pass IDs to delegated agents so they can select their own task. An absent task returns recovery options without changing selection.", input: obj({ action_id: str, node_id: str, clear: { type: "boolean" } }) },
-  { name: "record", description: "Append a result, claim, assessment or QA finding; or query the paged ledger. Evidence IDs must be existing observations in the same Action. Use record_id for an exact record, node_id for Task history. Cannot create observations or certify independence. Without action_id, use this Session's selected Action or its unassigned ledger. Use session_only=true to inspect this Session including unpaired evidence, without changing selection.", input: obj({ operation: choice("add", "query"), action_id: str, node_id: str, kind: choice("claim", "result", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
+  { name: "agents", description: TOOL_HELP.agents, input: obj({}) },
+  { name: "action", description: TOOL_HELP.action, input: obj({ operation: choice("list", "create", "update"), action_id: str, title: str, goal: str, state: choice("active", "paused", "completed", "cancelled"), expected_revision: num, offset: num }, ["operation"]) },
+  { name: "plan", description: TOOL_HELP.plan, input: obj({ operation: choice("read", "save"), action_id: str, revision: num, expected_revision: num, nodes: { type: "array", maxItems: 300, items: obj({ id: str, kind: choice("phase", "wave", "task", "subtask"), title: str, parent: str, depends_on: list, outcome: str, context: str, criteria: list, skills: list, roles: list, agent: str }, ["id", "kind", "title"]) } }, ["operation", "action_id"]) },
+  { name: "context", description: TOOL_HELP.context, input: obj({ action_id: str, node_id: str, clear: { type: "boolean" } }) },
+  { name: "record", description: TOOL_HELP.record, input: obj({ operation: choice("add", "query"), action_id: str, node_id: str, kind: choice("claim", "result", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
 ] as const
 
 export default Plugin.define({
@@ -74,7 +75,7 @@ export default Plugin.define({
     }
     try {
       disposers.push(await ctx.tool.transform(editor => {
-        editor.namespace({ name: "loom", description: "Actions, plans, context and an evidence/claims ledger; no mandatory lifecycle." })
+        editor.namespace({ name: "loom", description: LOOM_NAMESPACE_HELP })
         for (const spec of specs) editor.add({
           name: spec.name, description: spec.description, input: spec.input as Parameters<typeof editor.add>[0]["input"],
           options: { namespace: "loom", codemode: true },
