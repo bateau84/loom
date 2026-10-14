@@ -1,6 +1,6 @@
 import { Plugin } from "@opencode/plugin"
 import { Database } from "bun:sqlite"
-import { YAML } from "bun"
+import { decodeConfigYaml } from "./config-parser.js"
 import { mkdir, open, realpath } from "node:fs/promises"
 import { homedir } from "node:os"
 import { isAbsolute, join } from "node:path"
@@ -41,7 +41,7 @@ export default Plugin.define({
   async setup(ctx) {
     const directory = await realpath(ctx.location.directory)
     const configuredPaths = configPaths(directory)
-    const getConfig = () => loadConfig(configuredPaths, source => YAML.parse(source))
+    const getConfig = () => loadConfig(configuredPaths, decodeConfigYaml)
     const xdg = process.env.XDG_STATE_HOME
     const stateHome = xdg && isAbsolute(xdg) ? xdg : join(homedir(), ".local", "state")
     const state = join(stateHome, "loom", "actions-v1", digest({ project: ctx.location.project.id, canonical: ctx.location.project.canonical }))
