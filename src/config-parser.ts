@@ -15,7 +15,7 @@ const version = (require("js-yaml/package.json") as { version: string }).version
 
 export const CONFIG_PARSE_LIMITS = Object.freeze({
   sourceBytes: 65536, nodeAttempts: 8192, depth: 32,
-  arrayItems: 16384, arrayKeyChars: 65536,
+  arrayItems: 16384, arrayKeyChars: 65536, arrayConversionChars: 1048576,
 })
 export class ConfigParseLimitError extends Error {
   readonly code = "LOOM_CONFIG_PARSE_LIMIT"
@@ -35,10 +35,10 @@ export function decodeConfigYaml(source: string): unknown {
     throw new ConfigParseLimitError("source-byte", 0, 0)
   }
   if (version !== "4.3.2") throw new Error("Loom requires js-yaml 4.3.2; restore the locked dependencies")
-  let attempts = 0, arrayItems = 0
+  let attempts = 0, arrayItems = 0, conversionChars = 0
   // YAML may use an aliased flat array as a mapping key. Check before the loader
   // converts it to a string, which could otherwise multiply a long scalar alias.
-  const checkedArrays = new WeakMap<unknown[], number>()
+  const checkedArrays = new WeakMap<unknown[], { length: number; chars: number }>()
   try {
     return yaml.load(source, {
       schema: yaml.CORE_SCHEMA, json: true,
@@ -52,16 +52,21 @@ export function decodeConfigYaml(source: string): unknown {
           return
         }
         const value = state.result
-        if (!Array.isArray(value) || checkedArrays.get(value) === value.length) return
-        let chars = Math.max(0, value.length - 1)
-        for (const item of value) {
+        if (!Array.isArray(value)) return
+        const previous = checkedArrays.get(value)
+        let chars = previous?.length === value.length ? previous.chars : Math.max(0, value.length - 1)
+        if (previous?.length !== value.length) for (const item of value) {
           if (++arrayItems > CONFIG_PARSE_LIMITS.arrayItems) throw new ConfigParseLimitError("array-inspection", state.position, attempts)
           // Nested array keys are rejected by this pinned loader before String().
           // Objects use its fixed '[object Object]' representation, not a method.
           chars += typeof item === "string" ? item.length : item == null ? 0 : Array.isArray(item) ? 0 : 32
           if (chars > CONFIG_PARSE_LIMITS.arrayKeyChars) throw new ConfigParseLimitError("array-key-text", state.position, attempts)
         }
-        checkedArrays.set(value, value.length)
+        checkedArrays.set(value, { length: value.length, chars })
+        // Charge every possible conversion, including aliases of a checked array.
+        // Identity reuse avoids rewalking children, not repeated String(array) work.
+        conversionChars += chars
+        if (conversionChars > CONFIG_PARSE_LIMITS.arrayConversionChars) throw new ConfigParseLimitError("array-conversion-text", state.position, attempts)
       },
     })
   } catch (error) {

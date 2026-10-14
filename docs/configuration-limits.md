@@ -1,9 +1,10 @@
 # Configuration input: bounded reads, explicit decoder boundary
 
-Follow-up to `3a8fc97` and finding E. This change closes the configuration-file
-read gap. It does **not** claim that native YAML parsing has a heap quota or that
-E is completely closed. No YAML dialect, role schema, native permission, tool or
-orchestration behavior is replaced.
+The file-read contract below was introduced in `3881ece` after `3a8fc97` and
+remains in force. **Production decoding now uses the construction-bounded parser
+in [Configuration decoding](configuration-parser.md).** The Bun allocation audit
+below describes the replaced decoder, not the current production callback.
+Neither change claims an exact heap quota or closes all of finding E.
 
 ## What the file reader enforces
 
@@ -63,11 +64,11 @@ file operations and controls interleaving only. It also checks that the decoder
 is not called and that the descriptor closes. This is a byte-transfer result,
 not a peak-RSS or wall-clock measurement.
 
-## YAML allocation boundary: what was established
+## Historical YAML allocation audit at `3881ece`
 
-The production callback remains `YAML.parse(source)` from Bun. The pinned
-**Bun 1.4.2** implementation was inspected, rather than inferred from a few RSS
-samples:
+The production callback at that revision was `YAML.parse(source)` from Bun.
+The pinned **Bun 1.4.2** implementation was inspected, rather than inferred from
+a few RSS samples:
 
 - Its parse entry calls the native parser with an arena, source and cyclic-alias
   policy. The exposed call path has **no caller-supplied heap, node or elapsed-time
@@ -84,19 +85,19 @@ Sources: [pinned parse entry and conversion](https://github.com/oven-sh/bun/blob
 [public YAML API](https://bun.com/docs/runtime/yaml), and
 [Node file-handle reads](https://nodejs.org/download/release/v22.16.0/docs/api/fs.html#filehandlereadbuffer-offset-length-position).
 
-The source-byte limit controls what enters that call. It does **not** bound the
-native arena, scalar conversions, temporary buffers, resulting graph, cumulative
-allocations or parsing time. Post-decoding shape checks cannot undo those earlier
-allocations. The existing five-fixture characterization remains evidence about
-those examples, not a proof for every admitted input. Tests added here exercise
-the actual Bun reader/decoder combination, but do not invent a heap-bound test.
+The source-byte limit alone does not bound that native arena, scalar conversions,
+temporary buffers, resulting graph, cumulative allocations or parsing time.
+Post-decoding shape checks cannot undo those earlier allocations. The existing
+five-fixture Bun characterization remains evidence about those examples, not a
+proof for every admitted input. Tests that intentionally pass Bun's decoder to
+the generic reader remain compatibility/reference tests, not tests of production
+parser limits.
 
-A decoder-level admission policy or separately constrained parsing boundary is
-still needed before claiming this part of E closed. That choice must preserve
-normal role configuration, quotes, multiline instructions and documented aliases,
-or explicitly declare any incompatible syntax change. A heuristic ban on `&`,
-`*` or brackets would also reject ordinary quoted instructions and is not added.
-This patch neither changes dependencies nor moves parsing into a subprocess.
+The replacement [decoder-level policy](configuration-parser.md) applies explicit
+limits during construction while retaining tested alias, quote and multiline
+semantics. It does not impose a heuristic syntax ban or move parsing to another
+process. Its dependency and structural limits are documented separately from
+this unchanged file-reader contract.
 
 ## Verification and remaining operating policy
 
@@ -104,17 +105,17 @@ This patch neither changes dependencies nor moves parsing into a subprocess.
 truncation, observed same-size edits, short reads, operation exhaustion, byte vs
 character size, invalid UTF-8, BOM, empty/missing files, symlinks, pathname
 replacement, directories, a FIFO without a writer, failures/cleanup, error
-classification, layer limits and ordinary precedence/reload behavior. The local
-run used Node 22.16.0 and strict TypeScript 5.8.3 compilation of the configuration
-module. Growth and short-read probes forward real filesystem operations; separate
-fault probes deliberately inject failures or changed timestamp metadata.
+classification, layer limits and ordinary precedence/reload behavior. The original
+local run used Node 22.16.0 and strict TypeScript 5.8.3 compilation of the
+configuration module. Growth and short-read probes forward real filesystem
+operations; separate fault probes inject failures or changed timestamp metadata.
 
-`tests/config-source-native.test.ts` adds real Bun filesystem/YAML checks for
+`tests/config-source-native.test.ts` retains real Bun filesystem/YAML checks for
 aliases and multiline text, exact byte admission, growth, invalid UTF-8, cyclic
-schema rejection and a corrected-file reload. Its deep-input check explicitly
-confirms parsing occurs **before** schema rejection, not that allocation was
-prevented. The package test command includes this suite; use `bun run test`, not
-bare `bun test`, so Node-only suites keep their compilation/runtime prerequisites.
+schema rejection and a corrected-file reload. Its deep-input check deliberately
+shows that the old Bun callback decodes before schema rejection. Current parser
+construction and differential tests live in the `config-parser` suites. Use
+`bun run test`, not bare `bun test`, so Node-only suites keep their prerequisites.
 
 Full committed-head CI results must be recorded separately from local checks.
 No formal independent review or installed two-agent acceptance is supplied by
@@ -123,6 +124,6 @@ these tests. The existing host smoke test remains boot/empty-ledger evidence.
 Startup/index-build cost and on-disk retention still require an explicit operating
 policy. No automatic deletion or pruning is introduced. Preserved oversized
 records may remain unreadable through normal tools; tested backup/export/restore
-is separate release work, not solved by limiting configuration reads. Frozen CI
-installs, meaningful-record Research-to-Worker resumption and combined independent
-review remain open. The committed lockfile is left unchanged.
+is separate release work. Main plugin CI now checks a frozen lockfile; separate
+host installation reproducibility, meaningful-record Research-to-Worker resumption
+and combined independent review remain open.

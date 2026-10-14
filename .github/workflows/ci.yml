@@ -16,27 +16,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: mkdir -p .parser-audit && cp bun.lock .parser-audit/baseline.lock
-      - run: bun install
+      - run: bun install --frozen-lockfile
+      - run: git diff --exit-code -- bun.lock
       - run: bun run typecheck
       - run: bun run test:core
       - run: bun run test:native
       - run: python3 -m unittest discover -s tests -p 'test_*.py'
       - name: Characterize bounded YAML decoding examples
         run: bun tools/probe-config-decoding.ts
-      - name: Retain parser dependency and test inputs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: config-parser-audit
-          retention-days: 3
-          include-hidden-files: true
-          path: |
-            bun.lock
-            package.json
-            .parser-audit/baseline.lock
-            .test-build/config*.js
-            node_modules/js-yaml/
-            src/config*.ts
-            tests/config-parser*.mjs
-            tests/config-parser*.ts
