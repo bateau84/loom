@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test"
 import { YAML } from "bun"
 import { Database } from "bun:sqlite"
-import { mkdtemp, writeFile, rm } from "node:fs/promises"
+import { mkdtemp, writeFile, rm, readdir } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import plugin from "../src/plugin.js"
@@ -114,8 +114,13 @@ test("plugin integration: configured roles, five tools, reload, scoping, capture
     await hooks.get("execute.before")(gap)
     await writeFile(path, "ledger:\n  capture: off\ninstructions:\n  enabled: false\n")
     await hooks.get("execute.before")({ ...gap })
+    const beforeDisabledFinish = (await invoke("record", { operation: "query", session_only: true })).items
     await hooks.get("execute.after")({ ...gap, status: "completed", result: {} })
     expect((await invoke("agents", {})).evidence.pairing).toBe("degraded")
+    expect((await invoke("record", { operation: "query", session_only: true })).items).toEqual(beforeDisabledFinish)
+    // The gap may be diagnosed when capture is enabled again, never while off.
+    await writeFile(path, "ledger:\n  capture: automatic\ninstructions:\n  enabled: false\n")
+    await hooks.get("execute.after")({ ...gap, status: "completed", result: {} })
     const gapFinish = (await invoke("record", { operation: "query", session_only: true })).items.at(-1)
     expect(gapFinish.data.attribution).toContain("capture-gap")
     expect(gapFinish.data.start_id).toBeUndefined()
@@ -231,6 +236,110 @@ test("removed-task recovery is injected, repeatable, non-mutating and cleared by
     expect((await invoke("record", { operation: "query", action_id: action.id, record_id: record.id })).items[0].node_id).toBe("old")
     expect(tools.size).toBe(5)
   } finally {
+    await cleanup?.()
+    if (oldState === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = oldState
+    if (oldConfig === undefined) delete process.env.OPENCODE_CONFIG_DIR; else process.env.OPENCODE_CONFIG_DIR = oldConfig
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+for (const gapKind of ["off", "write-failure"] as const) test(`registered plugin replacement retains ${gapKind} gap and respects capture-off`, async () => {
+  const dir = await mkdtemp(join(tmpdir(), "loom-hot-gap-"))
+  const oldState = process.env.XDG_STATE_HOME, oldConfig = process.env.OPENCODE_CONFIG_DIR
+  process.env.XDG_STATE_HOME = join(dir, "state")
+  process.env.OPENCODE_CONFIG_DIR = join(dir, "config")
+  const path = join(dir, ".loom.yaml")
+  const tools = new Map<string, any>(), hooks = new Map<string, any>()
+  const hook = async (name: string, fn: any) => {
+    hooks.set(name, fn)
+    return { dispose: async () => { if (hooks.get(name) === fn) hooks.delete(name) } }
+  }
+  const ctx = {
+    location: { directory: dir, project: { id: "hot-gap", directory: dir, canonical: dir } },
+    agent: { list: async () => [{ id: "external" }], transform: () => { throw new Error("No agent rewriting") } },
+    permission: { hook: () => { throw new Error("No permission gates") } },
+    tool: {
+      transform: async (fn: any) => {
+        const added = new Map<string, any>()
+        fn({ namespace: () => {}, add: (tool: any) => { tools.set(tool.name, tool); added.set(tool.name, tool) } })
+        return { dispose: async () => { for (const [name, tool] of added) if (tools.get(name) === tool) tools.delete(name) } }
+      },
+      hook,
+    },
+    session: {
+      get: async ({ sessionID }: { sessionID: string }) => ({ id: sessionID, projectID: "hot-gap", location: { directory: dir } }),
+      hook,
+    },
+  }
+  let cleanup: (() => Promise<void>) | undefined
+  let inspection: Database | undefined
+  const invoke = async (name: string, input: unknown) => {
+    const output = await tools.get(name).execute(input, { sessionID: "s", agent: "external", messageID: "m", id: "call", signal: new AbortController().signal })
+    return JSON.parse(output.content).result
+  }
+  const records = () => invoke("record", { operation: "query", session_only: true })
+  const configure = (capture: string) => writeFile(path, `ledger:\n  capture: ${capture}\nagents:\n  external:\n    roles: [implementation]\n`)
+  const call = { sessionID: "s", agent: "external", messageID: "m", id: "identical", tool: "read", input: { path: "same" } }
+  try {
+    await configure("automatic")
+    cleanup = await (plugin as any).setup(ctx)
+    const action = await invoke("action", { operation: "create", title: "A", goal: "Goal" })
+    await invoke("plan", { operation: "save", action_id: action.id, expected_revision: 0,
+      nodes: [{ id: "old", kind: "task", title: "Research" }, { id: "new", kind: "task", title: "Worker" }] })
+    await invoke("context", { action_id: action.id, node_id: "old" })
+    // Settle a distinct captured key, then show that capture-off does not reuse it.
+    const settled = { ...call, id: "settled" }
+    await hooks.get("execute.before")(settled)
+    await hooks.get("execute.after")({ ...settled, status: "completed", result: { content: "captured" } })
+    const baseline = (await records()).items
+    if (gapKind === "off") {
+      await configure("off")
+      await hooks.get("execute.before")({ ...settled })
+      await hooks.get("execute.after")({ ...settled, status: "completed", result: { content: "disabled" } })
+      expect((await records()).items).toEqual(baseline)
+    }
+
+    // For the failure variant, force an actual SQLite insert failure in the plugin.
+    if (gapKind === "write-failure") {
+      await configure("automatic")
+      const root = join(dir, "state", "loom", "actions-v1")
+      const names = await readdir(root)
+      expect(names).toHaveLength(1)
+      inspection = new Database(join(root, names[0], "ledger.sqlite"))
+      inspection.exec("CREATE TRIGGER fail_capture BEFORE INSERT ON ledger BEGIN SELECT RAISE(ABORT, 'injected start failure'); END;")
+    }
+    await hooks.get("execute.before")(call)
+    expect((await records()).items).toEqual(baseline)
+    if (inspection) { inspection.exec("DROP TRIGGER fail_capture"); inspection.close(); inspection = undefined }
+    // Dispose all registrations and storage, then use only the replacement hooks.
+    if (!cleanup) throw new Error("Plugin setup did not return cleanup")
+    await cleanup(); cleanup = undefined
+    expect(hooks.size).toBe(0)
+    await configure("automatic")
+    cleanup = await (plugin as any).setup(ctx)
+    expect(tools.size).toBe(5)
+    await invoke("context", { action_id: action.id, node_id: "new" })
+    await hooks.get("execute.before")({ ...call, input: { path: "same" } })
+    await hooks.get("execute.after")({ ...call, status: "completed", result: { content: "older finishes first" } })
+    await hooks.get("execute.after")({ ...call, status: "completed", result: { content: "newer finishes second" } })
+    const ends = (await records()).items.filter((r: any) => r.data.call_id === "identical" && r.data.phase === "finished")
+    expect(ends).toHaveLength(2)
+    for (const end of ends) {
+      expect(end.data.attribution).not.toBe("captured-at-start")
+      expect(end.data.start_id).toBeUndefined()
+      expect(end.action_id).toBeUndefined()
+      expect(end.node_id).toBeUndefined()
+    }
+    expect((await invoke("agents", {})).evidence.pairing).toBe("degraded")
+    expect((await invoke("context", {})).task.id).toBe("new")
+    // Native execution callbacks remain usable; capture-off appends no diagnostics.
+    await configure("off")
+    const saved = (await records()).items
+    await hooks.get("execute.before")({ ...call })
+    await hooks.get("execute.after")({ ...call, status: "completed", result: { content: "off again" } })
+    expect((await records()).items).toEqual(saved)
+  } finally {
+    inspection?.close()
     await cleanup?.()
     if (oldState === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = oldState
     if (oldConfig === undefined) delete process.env.OPENCODE_CONFIG_DIR; else process.env.OPENCODE_CONFIG_DIR = oldConfig

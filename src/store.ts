@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto"
+import { realpathSync } from "node:fs"
 import { type Action, type Actor, type Focus, type LedgerRecord, type Plan, type PlanNode, type RecordKind, subject, uid, validatePlan } from "./model.js"
 
 export interface SQL { exec(sql: string): unknown; prepare(sql: string): { get(...params: any[]): unknown; all(...params: any[]): unknown[]; run(...params: any[]): unknown } }
@@ -27,6 +28,12 @@ export class Store {
       CREATE INDEX IF NOT EXISTS ledger_context_scope ON ledger(action_id, json_extract(data,'$.node_id'), kind, seq)
         WHERE kind<>'observation';
       PRAGMA user_version=1;`)
+  }
+  /** Stable within a host lifetime, even when a replacement opens a new connection. */
+  captureScope(): string | object {
+    const row = this.db.prepare("PRAGMA database_list").all().find(row => (row as { name: string }).name === "main") as { file: string } | undefined
+    if (!row || typeof row.file !== "string") throw new Error("Cannot identify the observation database")
+    return row.file ? realpathSync(row.file) : this.db
   }
   private transaction<T>(fn: () => T): T {
     this.db.exec("BEGIN IMMEDIATE")
@@ -114,13 +121,17 @@ export class Store {
       AND json_extract(data,'$.data.phase')=? ORDER BY seq LIMIT ?`)
       .all(key, phase, limit).map(row => parse<LedgerRecord>(row))
   }
-  hasObservationStart(key: string): boolean { return this.observationBoundary(key, "started", 1).length > 0 }
+  /** Eligibility only, not proof of pairing; finishObservation rechecks atomically. */
+  hasUnfinishedObservationStart(key: string): boolean {
+    return this.observationBoundary(key, "started", 2).length === 1
+      && this.observationBoundary(key, "finished", 1).length === 0
+  }
   /**
    * At most two starts and one finish are read through an index. Counts/order,
    * equal inputs, and elapsed time never disambiguate a reused host call key.
    * The transaction also prevents two writers from claiming the same start.
    */
-  finishObservation(actor: Actor, data: Record<string, unknown>, allowPairing: boolean): LedgerRecord {
+  finishObservation(actor: Actor, data: Record<string, unknown>, allowPairing: boolean, recordUnpaired = true): LedgerRecord | undefined {
     return this.transaction(() => {
       const key = String(data.correlation_key)
       const starts = this.observationBoundary(key, "started", 2)
@@ -136,6 +147,9 @@ export class Store {
         : start.data.input_digest !== data.input_digest ? "input-mismatch"
         : undefined
       const matched = reason === undefined ? start : undefined
+      // Capture-off permits only an unambiguous finish of previously captured work.
+      // Do not record a disabled/uncertain call just to diagnose why it cannot pair.
+      if (!recordUnpaired && !matched) return undefined
       const focus = matched?.action_id ? { action_id: matched.action_id, ...(matched.node_id ? { node_id: matched.node_id } : {}) } : undefined
       return this.observe(matched ? { session_id: matched.session_id, agent: matched.agent } : actor, focus,
         { ...data, ...(matched ? { start_id: matched.id } : {}),
@@ -234,17 +248,6 @@ export class Store {
       conclusions: conclusions.slice(0, 48), observations: observations.slice(0, 8).map(decode),
       has_more: hasMore || observations.length > 8, scopes_omitted: allScopes.length - scopes.length,
     }
-  }
-  recent(actionID: string, nodeIDs?: string[]) {
-    this.action(actionID)
-    let filter = "action_id=?"
-    const params: unknown[] = [actionID]
-    if (nodeIDs?.length) {
-      filter += ` AND (json_extract(data,'$.node_id') IS NULL OR json_extract(data,'$.node_id') IN (${nodeIDs.map(() => "?").join(",")}))`
-      params.push(...nodeIDs)
-    }
-    const rows = this.db.prepare(`SELECT seq,data FROM ledger WHERE ${filter} ORDER BY seq DESC LIMIT 51`).all(...params) as { seq: number; data: string }[]
-    return { items: rows.slice(0,50).reverse().map(r => ({ sequence: r.seq, ...parse<LedgerRecord>(r) })), has_more: rows.length > 50 }
   }
   /** A matching contract is not a claim that the code or evidence is still current. */
   contractMatch(record: LedgerRecord): boolean | null {

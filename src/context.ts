@@ -130,7 +130,9 @@ export function taskContext(store: Store, focus: Focus, maxChars = 16000) {
       summary.records.push(brief)
       if (typeof record.data.statement === "string") {
         putText(data, "statement", record.data.statement, Math.min(600, Math.floor(maxChars / 20)), Math.min(maxChars, before + Math.floor(maxChars / 5)))
-        if (typeof data.statement !== "string" || data.statement.length < Math.min(60, record.data.statement.length)) {
+        // Admission uses the same serialized-space rule as putText. A raw-character
+        // minimum would unfairly reject prefixes that JSON expands (for example \u0001).
+        if (typeof data.statement !== "string" || data.statement.length === 0) {
           summary.records.pop(); return
         }
       }
@@ -155,6 +157,25 @@ export function taskContext(store: Store, focus: Focus, maxChars = 16000) {
 }
 export type CaptureEvent = { sessionID: string; agent: string; messageID: string; id: string; tool: string; input: unknown }
 export type EndEvent = CaptureEvent & { status: "completed" | "error"; result?: unknown; error?: unknown }
+// OpenCode's pinned local-source loader reloads modules inside the same host.
+// Keep negative knowledge outside the module graph: neither hot reload nor a
+// failed SQLite write may erase a known gap. No per-call data is kept here.
+const CONTINUITY = Symbol.for("loom.observer.continuity.v1")
+type Continuity = { pairingDegraded: boolean; startsAfterGap: boolean }
+type ContinuityRegistry = { files: Map<string, Continuity>; memory: WeakMap<object, Continuity> }
+function continuityFor(store: Store): Continuity {
+  const host = globalThis as typeof globalThis & { [CONTINUITY]?: ContinuityRegistry }
+  const registry = host[CONTINUITY] ??= { files: new Map(), memory: new WeakMap() }
+  const scope = store.captureScope()
+  let state = typeof scope === "string" ? registry.files.get(scope) : registry.memory.get(scope)
+  if (!state) {
+    state = { pairingDegraded: false, startsAfterGap: false }
+    if (typeof scope === "string") registry.files.set(scope, state)
+    else registry.memory.set(scope, state)
+  }
+  // Do not evict on plugin disposal: an old native invocation may still finish.
+  return state
+}
 /**
  * Host IDs identify a group, not necessarily one invocation (notably Code Mode).
  * Saved starts are the correlation source. There is no pending-call heap to fill
@@ -162,17 +183,16 @@ export type EndEvent = CaptureEvent & { status: "completed" | "error"; result?: 
  */
 export class Observer {
   private readonly epoch = randomUUID()
-  private pairingDegraded = false
-  private startsAfterGap = false
-  constructor(private store: Store) {}
+  private readonly continuity: Continuity
+  constructor(private store: Store) { this.continuity = continuityFor(store) }
   private key(e: CaptureEvent) { return digest([e.sessionID, e.messageID, e.id, e.tool]) }
-  has(e: CaptureEvent) { return this.store.hasObservationStart(this.key(e)) }
+  has(e: CaptureEvent) { return this.store.hasUnfinishedObservationStart(this.key(e)) }
   /** A lost before hook means even identical inputs cannot establish pairing. */
-  captureGap() { this.pairingDegraded = true }
-  status() { return { pairing: this.pairingDegraded || this.startsAfterGap ? "degraded" : "available", restart_continuity: "not-assumed" } }
+  captureGap() { this.continuity.pairingDegraded = true }
+  status() { return { pairing: this.continuity.pairingDegraded || this.continuity.startsAfterGap ? "degraded" : "available", restart_continuity: "not-assumed", gap_scope: "host-process/database" } }
   /** An uncaptured sibling must not consume a previously captured start. */
   skip(e: CaptureEvent) {
-    this.startsAfterGap = true
+    this.continuity.startsAfterGap = true
     if (this.has(e)) this.captureGap()
   }
   before(e: CaptureEvent) {
@@ -180,17 +200,19 @@ export class Observer {
       return this.store.startObservation({ session_id: e.sessionID, agent: e.agent }, {
         phase: "started", tool: e.tool, message_id: e.messageID, call_id: e.id,
         correlation_key: this.key(e), observer_epoch: this.epoch, input_digest: digest(e.input),
-        capture_gap: this.pairingDegraded || this.startsAfterGap,
+        capture_gap: this.continuity.pairingDegraded || this.continuity.startsAfterGap,
       })
     } catch (error) { this.captureGap(); throw error }
   }
-  after(e: EndEvent) {
+  after(e: EndEvent, captureEnabled = true) {
+    // Avoid hashing disabled calls merely because their key once appeared in history.
+    if (!captureEnabled && !this.has(e)) return undefined
     // Compute first. A digest/insert failure leaves all saved starts intact.
     return this.store.finishObservation({ session_id: e.sessionID, agent: e.agent }, {
       phase: "finished", tool: e.tool, message_id: e.messageID, call_id: e.id,
       correlation_key: this.key(e), observer_epoch: this.epoch,
       input_digest: digest(e.input), result_digest: digest(e.status === "completed" ? e.result : e.error),
       status: e.status,
-    }, !this.pairingDegraded)
+    }, !this.continuity.pairingDegraded, captureEnabled)
   }
 }

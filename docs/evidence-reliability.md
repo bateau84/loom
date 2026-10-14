@@ -21,7 +21,8 @@ check, never a way to choose between overlapping invocations.
 A group with multiple starts remains ambiguous, even when calls were sequential
 or all but one finish arrived. FIFO, elapsed time and matching inputs do not
 establish which invocation a late completion belongs to. Ambiguous finishes keep
-their host IDs, input/result digests and status, but have no `start_id`, Action,
+their host IDs, input/result digests and status when capture is enabled, but have
+no `start_id`, Action,
 Task or contract fingerprint. Their starts retain their known original scopes.
 This deliberately prefers incomplete attribution over fabricated evidence.
 
@@ -38,20 +39,55 @@ ceiling. Interrupted starts remain historical records without success status;
 memory-capacity failure, **not** the need for future on-disk retention policy.
 
 A failed before hook, or a skipped same-key before hook while capture is off,
-marks that observer's pairing as degraded. Subsequent finishes stay unpaired:
+marks that host/database capture scope as degraded. Subsequent finishes stay unpaired:
 otherwise an unrecorded sibling could consume an earlier start. Any skipped start
 also marks later starts as following a capture gap, even after capture is enabled
 again. This prevents an older uncaptured invocation from borrowing a new start.
 Previously captured, different-key starts can still finish with their original
 attribution when no matching start was missed. Native execution is not blocked;
 new starts can still be recorded after storage recovers. This conservative gap
-status lasts for the observer instance and is exposed by `loom_agents`.
+status outlives plugin instances and module reloads in the same host process.
+`loom_agents` exposes the pairing state and `gap_scope: host-process/database`.
 
-A new plugin instance has a new observer generation. It can read interrupted
-history, but late finishes from the old instance are not treated as proven
-continuous capture. New, distinct calls can pair normally. Reused old keys stay
-ambiguous; a restart does not erase that history. There is no automatic retry of
-native work, no inference of completion, and no new user-facing lifecycle gate.
+The pinned Bun source loader reloads modules in the same JavaScript host. A
+`Symbol.for` registry on `globalThis`, keyed by the canonical SQLite path, keeps
+two monotonic gap flags outside that module graph. Closing/reopening a connection,
+replacing a Store or Observer, loading a new module graph, and failed storage
+writes do not reset those flags. No call identifiers, inputs, outputs or digests
+are kept in the registry. In-memory test databases use weak connection keys.
+File-scope entries are retained until host exit, not evicted while a late call
+might remain. This is not a total memory/processing bound or a security boundary.
+
+A replacement still gets a distinct observer epoch, but the receiving epoch is
+not evidence of where an uncaptured invocation began. Known gap state is shared
+by old and new observers; a late failure reported by the old observer also
+invalidates pairing in its replacement. Reused captured keys remain ambiguous.
+A complete host-process restart permits new distinct calls; a plugin reload does
+not clear a known gap. Cross-process event forwarding is not supported by this
+in-process guard and must not be inferred from it.
+
+**Install this repair with a full OpenCode host restart.** The pre-repair code
+did not retain its gap flags outside the old instance. A hot upgrade cannot
+reconstruct that already-lost knowledge. Do not move active state between paths
+or replace the host's global registry while native calls are running.
+
+There is no automatic retry of native work, replay of missing completions,
+inference of completion, or new user-facing lifecycle gate.
+
+### Capture-off contract
+
+`ledger.capture: off` skips new starts. The after hook reads the effective setting
+rather than bypassing it because a historical start exists. It may finish only a
+previously captured, uniquely attributable in-flight call. Eligibility requires
+one saved start and no saved finish, and the transaction rechecks all pairing
+conditions. Settled/reused keys and ambiguous, gap-affected, missing-start or
+cross-generation completions produce no new observation while capture is off.
+Previously saved starts remain; suppression is not proof of completion.
+
+Skipped hooks retain only the negative gap flags in process memory. This is not
+capture of their status, identifiers or digests into the ledger. When capture is
+re-enabled, uncertain finishes may again be recorded as unpaired diagnostics.
+Explicit user/agent ledger writes are separate from automatic capture opt-out.
 
 This assumes the host delivers the observed before/after hooks as documented.
 It cannot detect every hook that the host never delivers, establish continuity
@@ -88,8 +124,19 @@ The registered-plugin native test also covers shared Code Mode IDs, reverse
 completion order, session-only inspection, unchanged selection, and disabled
 capture during overlap. It uses a fake host and real Bun/SQLite, not a live CLI.
 
-Still outstanding from the review: useful-context ranking and truncation,
-consistent and bounded context reads, removed-task recovery notices, other
-configuration/operation gaps, a frozen dependency install, live two-agent
-handoff/resumption and an independent implementation review. Dashboards,
-scheduling and legacy import remain outside this reliability change.
+The follow-up `tests/reload-capture-review.test.mjs` covers skipped/failed capture,
+module-graph and file-connection replacement, identical inputs, changed selection,
+reversed finishes, old-observer late failure, scope isolation, settled-key opt-out,
+in-flight completion, and escaped-prefix context. The registered-plugin tests
+include SQLite-triggered start failure and replacement of the active hook set.
+Run the complete native/SDK suites and installed-host sequence separately; source
+and simulated-hook probes do not establish installed-host hot-reload acceptance.
+
+Context sampling, snapshot reads and missing-task recovery now have their own
+regression tests; their limits remain documented in the accompanying guides.
+Total processing limits (E), broader consistency (F), operation diagnostics,
+frozen dependencies, backup/restore, live two-agent resumption and independent
+review remain open. Dashboards, scheduling and legacy import remain out of scope.
+
+Pinned reload source: https://github.com/anomalyco/opencode/blob/v2.0.18/packages/plugin/src/source.bun.ts
+SQLite database identity: https://www.sqlite.org/pragma.html#pragma_database_list

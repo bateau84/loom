@@ -49,9 +49,8 @@ export default Plugin.define({
     const filename = join(state, "ledger.sqlite")
     const handle = await open(filename, "a", 0o600); await handle.close()
     const db = new Database(filename)
-    let store: Store
-    try { store = new Store(db) } catch (error) { db.close(); throw error }
-    const observer = new Observer(store)
+    let store: Store, observer: Observer
+    try { store = new Store(db); observer = new Observer(store) } catch (error) { db.close(); throw error }
     const disposers: Array<{ dispose(): Promise<void> }> = []
     let lastWarning = ""
     const warn = (error: unknown) => {
@@ -152,9 +151,11 @@ export default Plugin.define({
       disposers.push(await ctx.tool.hook("execute.after", async event => {
         if (/^loom[_.]/.test(event.tool)) return
         try {
-          if (observer.has(event) || (await owns(event.sessionID) && (await getConfig()).config.ledger.capture === "automatic")) {
-            const record = observer.after(event)
-            if (record.data.attribution !== "captured-at-start") warn(`Evidence is unpaired (${record.data.attribution}). Inspect loom_record with operation=query, session_only=true.`)
+          if (!await owns(event.sessionID)) return
+          const captureEnabled = (await getConfig()).config.ledger.capture === "automatic"
+          if (captureEnabled || observer.has(event)) {
+            const record = observer.after(event, captureEnabled)
+            if (record && record.data.attribution !== "captured-at-start") warn(`Evidence is unpaired (${record.data.attribution}). Inspect loom_record with operation=query, session_only=true.`)
           }
         } catch (error) { warn(error) }
       }))

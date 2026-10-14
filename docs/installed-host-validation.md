@@ -35,12 +35,19 @@ startup boundary reliably.
 5. Read the host-created Loom SQLite database in read-only mode. Require its
    schema, integrity and empty Action/Plan/selection/ledger tables. The test does
    not create or repair the tables it expects to find.
-6. Stop the host, start another, and verify plugin loading and the same empty
-   database. Remove the plugin config entry, start again, and verify native
-   definitions and the existing database are unchanged while Loom is absent.
+6. Stop the host, start another, and verify plugin loading and an equivalent
+   intact empty ledger at the expected path. Remove the plugin config entry,
+   start again, and verify the native definitions and equivalent ledger checks
+   while Loom is absent. These checks compare path, integrity, schema presence,
+   version and empty table counts, not database identity or byte-for-byte contents.
+
+Recreating an equivalent empty database could satisfy these assertions. The
+probe does not prove persistence of meaningful records or database immutability.
 
 The probe closes stdin to stop its private server, with bounded forced cleanup
-when necessary, and removes temporary state. The report includes the checked
+when necessary, and removes temporary state. Forced termination is currently
+allowed without a separate graceful-teardown verdict; successful checks do not
+establish graceful shutdown. The report includes the checked
 commit, runtime hashes, completed stages, attempt counts and elapsed times.
 Server logs and latest API responses are retained as CI artifacts for seven days.
 Failed assertions or unavailable installation are not PASS. Python harness tests
@@ -77,12 +84,15 @@ acceptance. Model-driven runs need their own explicit execution setup.
 ## Review independence and the unused method
 
 This authoring session does not supply an independent Reviewer gate by renaming
-its own checks. That gate stays open. The report includes a direct source-call
-scan for `Store.recent()`; it is evidence for review, not proof about intended or
-external consumers. This patch leaves the method unchanged.
+its own checks. That gate stays open. The supplied review of `6c8abb3` found no
+tracked direct callers of `Store.recent()` and no declared package entrypoint
+exposing it. The corrective patch removes that unused method; this bounded
+cleanup is not completion of the combined independent review.
 
 A/B/C/D remain implemented and regression-tested. E and broader F coverage remain
 open. Excerpts can omit qualifications; consequential decisions require full-source
 reads. Keep PR #180 draft until independent review and the remaining real-host
-acceptance work are complete. This patch changes tests and documentation, not
-runtime code, tools, gates, orchestration, dependency locks or backup semantics.
+acceptance work are complete. The subsequent capture-gap/opt-out correction
+requires its own verification; the passing boot run of `6c8abb3` does not certify
+later source changes. Tools, gates, orchestration, dependency locks and backup
+semantics are not expanded by the correction.
