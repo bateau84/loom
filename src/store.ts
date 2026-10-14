@@ -53,7 +53,7 @@ export class Store {
     const a: Action = { id: randomUUID(), title: nonempty(title, "title", 500), goal: nonempty(goal, "goal"), state: "active", revision: 1, created_at: now() }
     return this.transaction(() => {
       this.db.prepare("INSERT INTO actions(id,data) VALUES(?,?)").run(a.id, JSON.stringify(a))
-      this.select(actor.session_id, { action_id: a.id }); return a
+      this.writeSelection(actor.session_id, { action_id: a.id }); return a
     })
   }
   update(id: string, revision: number, patch: { title?: string; goal?: string; state?: Action["state"] }): Action {
@@ -94,8 +94,22 @@ export class Store {
     return row ? parse<Focus | null>(row) ?? undefined : undefined
   }
   hasSelection(session: string): boolean { return !!this.db.prepare("SELECT data FROM focus WHERE session_id=?").get(session) }
+  /** Validate and save the reference atomically; later plan edits may invalidate it. */
   select(session: string, focus?: Focus) {
-    if (focus) subject(this.action(focus.action_id), this.plan(focus.action_id), focus.node_id)
+    return this.transaction(() => {
+      if (focus) {
+        if (focus.node_id === undefined) this.action(focus.action_id)
+        else {
+          uid(focus.node_id, "node id")
+          const plan = this.plan(focus.action_id)
+          if (!plan.nodes.some(node => node.id === focus.node_id)) throw new Error(`Unknown or removed node: ${focus.node_id}`)
+        }
+      }
+      this.writeSelection(session, focus)
+    })
+  }
+  /** Callers own the transaction and have established reference existence. */
+  private writeSelection(session: string, focus?: Focus) {
     this.db.prepare("INSERT INTO focus(session_id,data) VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET data=excluded.data").run(session, JSON.stringify(focus ?? null))
   }
   /** Internal capture only. Agents cannot insert observation records through the tool API. */
@@ -248,10 +262,5 @@ export class Store {
       conclusions: conclusions.slice(0, 48), observations: observations.slice(0, 8).map(decode),
       has_more: hasMore || observations.length > 8, scopes_omitted: allScopes.length - scopes.length,
     }
-  }
-  /** A matching contract is not a claim that the code or evidence is still current. */
-  contractMatch(record: LedgerRecord): boolean | null {
-    if (!record.action_id || !record.fingerprint) return null
-    try { return subject(this.action(record.action_id), this.plan(record.action_id), record.node_id) === record.fingerprint } catch { return false }
   }
 }

@@ -13,6 +13,8 @@ const actor = { session_id: 'session-a', agent: 'custom-engineer' }
 function fixture(t) { const db = new DatabaseSync(':memory:'); t.after(() => db.close()); return new Store(db) }
 const task = (id, more = {}) => ({ id, kind: 'task', title: id, ...more })
 const config = () => mergeConfig(defaults(), { agents: { custom: { roles: ['planning', 'qa'] } } })
+// Exercise contract status through the production snapshot-based context reader.
+const contextMatch = (store, record) => taskContext(store, { action_id: record.action_id }).records.find(r => r.id === record.id)?.contract_match
 
 test('defaults do not assume any agents', () => assert.deepEqual(defaults().agents, {}))
 test('layered roles replace lists without losing other metadata', () => {
@@ -88,8 +90,8 @@ test('plan history survives edits, and stale writers cannot overwrite it', t => 
 })
 test('unchanged tasks retain their contract match across unrelated plan changes', t => {
  const s=fixture(t),a=s.create('Fix','Goal',actor); s.savePlan(a.id,0,[task('a'),task('b')]); const f={action_id:a.id,node_id:'a'}
- const r=s.record(actor,f,{kind:'result',statement:'Implemented a'}); s.savePlan(a.id,1,[task('a'),task('b',{outcome:'changed'})]); assert.equal(s.contractMatch(r),true)
- s.savePlan(a.id,2,[task('a',{outcome:'different'}),task('b')]); assert.equal(s.contractMatch(r),false); assert.equal(s.records({action_id:a.id}).items[0].id,r.id)
+ const r=s.record(actor,f,{kind:'result',statement:'Implemented a'}); s.savePlan(a.id,1,[task('a'),task('b',{outcome:'changed'})]); assert.equal(contextMatch(s,r),true)
+ s.savePlan(a.id,2,[task('a',{outcome:'different'}),task('b')]); assert.equal(contextMatch(s,r),false); assert.equal(s.records({action_id:a.id}).items[0].id,r.id)
 })
 test('dependency and parent changes affect consumer contract matching', t => {
  const s=fixture(t),a=s.create('Fix','Goal',actor),base=[task('a'),task('b',{depends_on:['a']})]; s.savePlan(a.id,0,base)
@@ -97,7 +99,7 @@ test('dependency and parent changes affect consumer contract matching', t => {
 })
 test('removed task history remains accessible without being reassigned', t => {
  const s=fixture(t),a=s.create('Fix','Goal',actor); s.savePlan(a.id,0,[task('a')]); s.select(actor.session_id,{action_id:a.id,node_id:'a'}); const r=s.record(actor,s.selected(actor.session_id),{kind:'claim',statement:'Historical claim'}); s.savePlan(a.id,1,[])
- assert.equal(s.contractMatch(r),false); assert.throws(()=>taskContext(s,s.selected(actor.session_id))); assert.equal(s.records({action_id:a.id}).items.length,1)
+ assert.equal(contextMatch(s,r),false); assert.throws(()=>taskContext(s,s.selected(actor.session_id))); assert.equal(s.records({action_id:a.id}).items.length,1)
 })
 test('claims cannot invent observations or refer to another Action', t => {
  const s=fixture(t),a=s.create('A','Goal',actor),b=s.create('B','Goal',actor),obs=s.observe(actor,{action_id:b.id},{phase:'finished'})
