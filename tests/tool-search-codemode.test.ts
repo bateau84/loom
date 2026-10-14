@@ -74,3 +74,21 @@ test("task-language discovery finds record and recovery help, including the depe
     expect(recovery.items.some((item: any) => item.path === "tools.loom.context" && item.description.includes("task-not-in-current-plan"))).toBe(true)
   })
 })
+
+test("Plan search carries the field guide and complete three-task example, not just a signature", async () => {
+  await withSearch(async (search, f) => {
+    const result = await search({ query: "tools.loom.plan" })
+    expect(result.items).toHaveLength(1)
+    const help = result.items[0].description
+    expect(help).toBe(f.tools.get("plan").description)
+    for (const text of ["Plan is not a scheduler", "Nodes are a flat list", "criteria: list of observable completion conditions", "siblings do not automatically depend on each other", "Action and Plan revisions are separate", "whole current list, not a patch", "ledger remembers what was found or done"]) expect(help).toContain(text)
+    const examples = help.split("\n").filter((s: string) => s.startsWith("{")).map((s: string) => JSON.parse(s))
+    const save = examples.find((e: any) => e.operation === "save")
+    expect(save.expected_revision).toBe(0)
+    expect(save.nodes).toHaveLength(3)
+    expect(save.nodes[1].depends_on).toEqual([save.nodes[0].id])
+    expect(save.nodes[2].depends_on).toEqual([save.nodes[1].id])
+    const discovery = await search({ namespace: "loom", query: "acceptance criteria intended work", limit: 5 })
+    expect(discovery.items.some((item: any) => item.path === "tools.loom.plan" && item.description === help)).toBe(true)
+  })
+})
