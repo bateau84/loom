@@ -5,7 +5,7 @@
   "type": "module",
   "exports": { ".": "./server.ts", "./server": "./server.ts" },
   "files": ["server.ts", "src", "README.md", "docs", "examples"],
-  "engines": { "bun": ">=1.3.0" },
+  "engines": { "bun": ">=1.4.2 <2.0.0" },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test:core": "tsc -p tsconfig.core.json && node --test tests/*.test.mjs",

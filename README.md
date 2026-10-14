@@ -44,8 +44,34 @@ they do not interrupt a running OpenCode session or certify successful delivery.
 
 Target: OpenCode V2. The SDK dependency remains pinned to `@opencode/plugin`
 `2.0.18`, as on the original `main`; this PR does not upgrade your CLI or model.
-Bun 1.3+ supplies YAML parsing and SQLite. Test the installed package on your
-actual OpenCode version before switching normal work to it.
+**Bun support: `>=1.4.2 <2.0.0`. Use Bun 1.4.2 to reproduce validation.**
+The exact tested baseline is recorded in `.bun-version` and used by both CI jobs.
+This is a supported minimum based on that tested baseline, not a claim that
+1.4.2 was the first release to fix the issue or that every newer release was tested.
+
+**Bun 1.3.14 is not supported with the pinned SDK.** The local review found that
+its missing-module value is not an `Error` instance. OpenCode's resolver then
+fails while probing absent optional `tui`/`rpc` entrypoints even though `server.ts`
+resolves. The correction is to stop advertising that runtime, not add dummy TUI
+or RPC files, patch the SDK, or ignore resolver failures.
+
+Before testing, check `bun --version` and `bun --revision`, select the baseline
+with your normal Bun installation method, and run `bun run test:native` in the
+separate plugin checkout. The resolver test checks real server loading and absent
+optional entrypoints; an unsupported test runtime fails with a version message.
+`.bun-version` and `engines.bun` declare the boundary; they do not install or
+upgrade Bun, replace OpenCode's embedded runtime, or enforce plugin loading.
+Changing the Bun executable on PATH does not establish the runtime used inside a
+packaged OpenCode executable. Test that installed host separately using
+[the boot probe](docs/installed-host-validation.md) before switching normal work.
+The boot probe still proves only loading and equivalent intact empty-ledger checks,
+not two-agent behavior, meaningful-record persistence, or graceful teardown.
+
+The capture-gap repair also requires a **full OpenCode host restart on first
+installation**; hot-upgrading cannot recover uncertainty discarded by the old
+implementation. See [Evidence pairing](docs/evidence-reliability.md).
+This compatibility correction leaves dependency versions and installation behavior
+unchanged. A frozen dependency graph and backup/restore remain separate work.
 
 In a separate plugin checkout, run `bun install`. Add that checkout to your
 existing OpenCode configuration, without replacing your other entries:
@@ -129,7 +155,10 @@ never put credentials or other secrets in a result, claim or artifact reference.
 
 ## Development
 
+Use the Bun version in `.bun-version` (currently **1.4.2**).
+
 ```sh
+bun --version
 bun install
 bun run typecheck
 bun run test:core       # Node 22.16+; core tests use actual SQLite
