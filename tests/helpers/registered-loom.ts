@@ -39,7 +39,7 @@ export async function registeredLoom() {
     await writeFile(join(directory, ".loom.yaml"), "agents: {}\ninstructions: {enabled: false}\nledger: {capture: off}\n")
     dispose = await (plugin as any).setup(ctx)
     return {
-      tools, namespaces, close, directory,
+      tools, namespaces, close, directory, hooks,
       context: async (sessionID: string, agent: string) => {
         const event = { sessionID, agent, system: [] as Array<{ type: string; text: string }>, messages: [], tools: {}, options: {} }
         await hooks.get("context")(event)

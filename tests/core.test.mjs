@@ -93,7 +93,7 @@ test('unchanged tasks retain their contract match across unrelated plan changes'
  const r=s.record(actor,f,{kind:'result',statement:'Implemented a'}); s.savePlan(a.id,1,[task('a'),task('b',{outcome:'changed'})]); assert.equal(contextMatch(s,r),true)
  s.savePlan(a.id,2,[task('a',{outcome:'different'}),task('b')]); assert.equal(contextMatch(s,r),false); assert.equal(s.records({action_id:a.id}).items[0].id,r.id)
 })
-test('dependency and parent changes affect consumer contract matching', t => {
+test('dependency changes affect consumer contract matching', t => {
  const s=fixture(t),a=s.create('Fix','Goal',actor),base=[task('a'),task('b',{depends_on:['a']})]; s.savePlan(a.id,0,base)
  const before=subject(a,s.plan(a.id),'b'); s.savePlan(a.id,1,[task('a',{outcome:'new'}),base[1]]); assert.notEqual(subject(a,s.plan(a.id),'b'),before)
 })

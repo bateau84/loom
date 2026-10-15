@@ -87,10 +87,6 @@ export default Plugin.define({
             const snapshot = await getConfig(toolContext.signal)
             lifetime.signal.throwIfAborted()
             toolContext.signal.throwIfAborted()
-            // Identity-bearing requests must not borrow (or need to read) a Session's
-            // unrelated selection. The referenced work/question supplies its scope.
-            const identityScoped = spec.name === "record" && (input.operation === "complete" || input.operation === "answer" || (input.operation === "query" && input.view === "thread"))
-            const focus = identityScoped ? undefined : focusFor(input, actor.session_id)
             let result: unknown
             switch (spec.name) {
               case "agents": {
@@ -109,14 +105,20 @@ export default Plugin.define({
                 else throw new Error("Unknown plan operation")
                 break
               case "context": {
-                if (input.clear) { if (input.action_id || input.node_id) throw new Error("clear cannot be combined with work IDs"); store.select(actor.session_id); result = { selected: null }; break }
+                if (input.clear) { if (input.action_id !== undefined || input.node_id !== undefined) throw new Error("clear cannot be combined with work IDs"); store.select(actor.session_id); result = { selected: null }; break }
+                // Clearing is navigation, not a read of the possibly damaged selection.
+                const focus = focusFor(input, actor.session_id)
                 if (!focus) { result = { selected: null, note: "No Action selected. Ordinary conversation needs no Action." }; break }
                 const context = taskContextOrRecovery(store, focus, snapshot.config.context.max_chars, actor.agent)
                 if (input.action_id && !("recovery" in context)) store.select(actor.session_id, focus)
                 result = context
                 break
               }
-              case "record":
+              case "record": {
+                // Only selection-scoped operations need the saved reference. Explicit
+                // work/thread identity and Session-only recovery must not depend on it.
+                const identityScoped = input.operation === "complete" || input.operation === "answer" || (input.operation === "query" && input.view === "thread")
+                const focus = identityScoped || input.session_only ? undefined : focusFor(input, actor.session_id)
                 if (["complete", "reopen", "ask", "answer"].includes(String(input.operation)) || (input.operation === "query" && input.view !== undefined && input.view !== "ledger")) {
                   result = store.collaboration.execute(actor, input, focus)
                   break
@@ -127,6 +129,8 @@ export default Plugin.define({
                   if (!focus) throw new Error("Provide action_id or select work before recording an Action result")
                   result = store.record(actor, focus, { kind: input.kind as Parameters<Store["record"]>[2]["kind"], statement: input.statement as string, evidence_ids: input.evidence_ids as string[] | undefined, artifact_refs: input.artifact_refs as string[] | undefined, verdict: input.verdict as string | undefined })
                 } else throw new Error("Unknown record operation")
+                break
+              }
             }
             if (spec.name === "record" && input.operation === "query" && (!input.view || input.view === "ledger") && !input.record_id) {
               const page = result as ReturnType<Store["records"]>
@@ -173,7 +177,13 @@ export default Plugin.define({
           const captureEnabled = (await getConfig()).config.ledger.capture === "automatic"
           if (lifetime.signal.aborted) return
           if (captureEnabled || observer.has(event)) {
-            const record = observer.after(event, captureEnabled)
+            // SDK Tool.Error is a class, and may contain arbitrary causes/metadata.
+            // Hash a complete, versioned diagnostic projection, not the class graph.
+            // Keep the bounded plain-data serializer strict; never truncate messages.
+            const observed = event.status === "error"
+              ? { ...event, error: { format: "loom-tool-error/v1", message: event.error.message } }
+              : event
+            const record = observer.after(observed, captureEnabled)
             if (record && record.data.attribution !== "captured-at-start") warn(`Evidence is unpaired (${record.data.attribution}). Inspect loom_record with operation=query, session_only=true.`)
           }
         } catch (error) { warn(error) }

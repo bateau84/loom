@@ -29,3 +29,12 @@ jobs:
       - run: python3 -m unittest discover -s tests -p 'test_*.py'
       - name: Characterize bounded YAML decoding examples
         run: bun tools/probe-config-decoding.ts
+      - name: Check three review mutants and two reverse-fix controls; no inference
+        run: python3 tools/check-review-regressions.py --report-directory "$RUNNER_TEMP/loom-review-regressions"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: review-regression-counterchecks-${{ github.sha }}
+          path: ${{ runner.temp }}/loom-review-regressions/
+          if-no-files-found: warn
+          retention-days: 7
