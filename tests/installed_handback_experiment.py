@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """Real installed host + local scripted provider. Experimental bridge, not production acceptance."""
 from __future__ import annotations
-import argparse, base64, json, os, secrets, shutil, sqlite3, subprocess, tempfile, time
+import argparse, base64, json, secrets, shutil, sqlite3, subprocess, tempfile, time
 from contextlib import closing
 from pathlib import Path
-from urllib.parse import urlencode
 from urllib.request import Request
-from installed_host_smoke import PrivateHost, isolated_environment, require, roster_response
+from installed_host_smoke import PrivateHost, isolated_environment, require
 
 
 def request(host, method, path, body=None):
@@ -67,6 +66,7 @@ def run_case(executable,repo,output,mode):
         host=None;result={'mode':mode,'status':'FAIL'}
         try:
             host=PrivateHost(executable,project,env,case_output,'initial')
+            require(json.loads(host.get('/api/info','info')).get('version')=='2.0.29','Wrong server version')
             host.wait_roster('/api/plugin','plugins',lambda xs: all(any(x.get('id')==p and x.get('state',{}).get('status')=='active' for x in xs) for p in ['loom','loom.handback.experiment']))
             response=request(host,'POST','/api/session',{'agent':'bridge-primary','title':'Handback experiment',
                             'model':{'providerID':'handback-fixture','id':'primary'},'location':{'directory':str(project)}})
@@ -81,6 +81,7 @@ def run_case(executable,repo,output,mode):
             if mode=='restart':
                 host.close();host=None
                 host=PrivateHost(executable,project,env,case_output,'restarted')
+                require(json.loads(host.get('/api/info','info')).get('version')=='2.0.29','Wrong restarted server version')
                 host.wait_roster('/api/plugin','plugins',lambda xs:any(x.get('id')=='loom.handback.experiment' and x.get('state',{}).get('status')=='active' for x in xs))
                 await_idle(host,[primary]);result['host_restarted']=True
             (root/'control.json').write_text(json.dumps({'releaseAnswer':True}))
@@ -128,8 +129,9 @@ def main():
     p=argparse.ArgumentParser();p.add_argument('--opencode',required=True);p.add_argument('--report-directory',type=Path,required=True)
     args=p.parse_args();output=args.report_directory.resolve();output.mkdir(parents=True,exist_ok=False)
     repo=Path(__file__).resolve().parents[1]
-    version=subprocess.check_output([args.opencode,'--version'],text=True).strip()
-    require(version=='2.0.29',f'Expected exact OpenCode 2.0.29, got {version}')
+    version=subprocess.check_output([args.opencode,'--version'],text=True,timeout=15).strip()
+    (output/'version.stdout.txt').write_text(version+'\n')
+    require(version in ['2.0.29','opencode v2.0.29'],f'Expected exact OpenCode 2.0.29, got {version}')
     results=[]
     for mode in ['baseline','bridge','native-covered','cancelled','lost-receipt','restart']:
         r=run_case(args.opencode,repo,output,mode);results.append(r);print(mode,r['status'],r.get('error',''),flush=True)
