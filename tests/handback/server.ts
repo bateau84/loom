@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto"
 import { HandbackExperiment } from "./bridge.mjs"
 
 const provider = "handback-fixture"
+const providerPackage = "aisdk:" + new URL("./provider.mjs", import.meta.url).href
 const usage = { inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } }
 const value = (result: any) => JSON.parse(typeof result.content === "string" ? result.content : result.content.filter((x: any) => x.type === "text").map((x: any) => x.text).join("\n")).result
 
@@ -87,8 +88,8 @@ export default Plugin.define({
     try {
       regs.push(await ctx.provider.transform(editor => {
         for (const p of editor.list()) editor.remove(p.provider.id)
-        editor.add({ info: { id: provider, name: "Local scripted fixture", activation: "enabled", package: "aisdk:loom-handback-scripted" } as any,
-          models: ["primary", "worker", "research"].map(id => ({ id, modelID: id, providerID: provider, name: id, package: "aisdk:loom-handback-scripted",
+        editor.add({ info: { id: provider, name: "Local scripted fixture", activation: "enabled", package: providerPackage } as any,
+          models: ["primary", "worker", "research"].map(id => ({ id, modelID: id, providerID: provider, name: id, package: providerPackage,
             capabilities: { tools: true, input: ["text"], output: ["text"] }, variants: [], time: { released: 0 }, cost: [], status: "active", enabled: true, limit: { context: 200000, output: 1000 } })) as any })
       }))
       regs.push(await ctx.aisdk.hook("sdk", event => {
