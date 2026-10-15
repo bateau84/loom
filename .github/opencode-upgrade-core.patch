@@ -1,4 +1,5 @@
 diff --git a/README.md b/README.md
+index 1254d65..8906bd5 100644
 --- a/README.md
 +++ b/README.md
 @@ -48,8 +48,9 @@ interrupt an OpenCode session or certify successful delivery.
@@ -26,8 +27,8 @@ diff --git a/README.md b/README.md
  
  In a separate plugin checkout, run `bun install --frozen-lockfile`. Add that checkout
  to your existing OpenCode configuration, without replacing your other entries:
-
 diff --git a/src/tool-help.ts b/src/tool-help.ts
+index 22af046..1e7bd77 100644
 --- a/src/tool-help.ts
 +++ b/src/tool-help.ts
 @@ -69,6 +69,7 @@ export const TOOL_HELP = Object.fromEntries(Object.entries(entries).map(([name,
@@ -38,8 +39,8 @@ diff --git a/src/tool-help.ts b/src/tool-help.ts
  ].join('\n')])) as Record<LoomToolName, string>
  
  export const LOOM_NAMESPACE_HELP = "Loom remembers Actions, plans, context and evidence. Search namespace loom for each tool's usage, examples and side effects. Execution and delegation stay native."
-
 diff --git a/tests/installed_host_smoke.py b/tests/installed_host_smoke.py
+index c4065ae..cac04ef 100644
 --- a/tests/installed_host_smoke.py
 +++ b/tests/installed_host_smoke.py
 @@ -250,7 +250,7 @@ if __name__ == "__main__":
@@ -51,8 +52,8 @@ diff --git a/tests/installed_host_smoke.py b/tests/installed_host_smoke.py
      args = parser.parse_args()
      try:
          print(json.dumps(run_probe(str(args.opencode.absolute()), args.repository.resolve(), args.report_directory.resolve(), args.expect_version), indent=2))
-
 diff --git a/tests/test_installed_host_smoke.py b/tests/test_installed_host_smoke.py
+index 89c0c0f..94d2d76 100644
 --- a/tests/test_installed_host_smoke.py
 +++ b/tests/test_installed_host_smoke.py
 @@ -116,7 +116,7 @@ class BootHarnessTest(unittest.TestCase):

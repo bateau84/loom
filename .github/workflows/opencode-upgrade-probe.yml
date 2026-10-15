@@ -1,7 +1,7 @@
 name: OpenCode 2.0.29 upgrade probe
 on:
   pull_request:
-    paths: ['.github/workflows/opencode-upgrade-probe.yml']
+    paths: ['.github/workflows/opencode-upgrade-probe.yml', '.github/opencode-upgrade-*']
 permissions:
   contents: read
 jobs:
@@ -36,8 +36,8 @@ jobs:
           p = Path('.github/workflows/installed-host.yml')
           p.write_text(p.read_text().replace('- run: bun install\n', '- run: bun install --frozen-lockfile\n      - run: git diff --exit-code -- bun.lock\n'))
           PY
-          git apply --recount --check .github/opencode-upgrade-core.patch
-          git apply --recount .github/opencode-upgrade-core.patch
+          git apply --check .github/opencode-upgrade-core.patch
+          git apply .github/opencode-upgrade-core.patch
           python3 .github/opencode-upgrade-details.py
           bun install --ignore-scripts
           cp bun.lock "$RUNNER_TEMP/upgrade-report/bun.lock"
