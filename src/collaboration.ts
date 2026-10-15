@@ -17,8 +17,12 @@ function references(input?: string[]) {
   return input ?? []
 }
 
+// Creation and verification admit the same normalized definition. Read callers
+// pass one shared budget through all comparisons; do not reset it per reference.
+const workReferenceBudget = () => new ProcessingBudget(PROCESSING_LIMITS.contextHashChars, PROCESSING_LIMITS.contextHashValues)
+
 /** Descendants count for the selected group and dependency groups, NOT its ancestors. */
-export function workReference(action: Action, plan: Plan, nodeID: string, budget?: ProcessingBudget): WorkRef {
+export function workReference(action: Action, plan: Plan, nodeID: string, budget = workReferenceBudget()): WorkRef {
   uid(nodeID, "node id")
   if (!Array.isArray(plan.nodes) || plan.nodes.length > 300) throw new ProcessingLimitError("work reference exceeds 300 nodes")
   const nodes = new Map(plan.nodes.map(n => [n.id, n])), children = new Map<string, string[]>()
@@ -179,7 +183,7 @@ export class Collaboration {
     return this.store.contextSnapshot(actionID, (action, plan) => {
       const allowance = { bytes: 0 }
       const ids = nodeID === undefined ? plan.nodes.map(n => n.id) : [nodeID]
-      const budget = new ProcessingBudget(PROCESSING_LIMITS.contextHashChars, PROCESSING_LIMITS.contextHashValues)
+      const budget = workReferenceBudget()
       return { items: ids.slice(offset, offset + limit).map(id => this.progressAt(action, plan, id, budget, allowance)),
         next_offset: ids.length > offset + limit ? offset + limit : null, plan_revision: plan.revision, note: semantics }
     })
@@ -275,7 +279,7 @@ export class Collaboration {
   /** Caller owns the existing Action/Plan/ledger snapshot. Never writes on a context read. */
   context(action: Action, plan: Plan, focus: Focus, relevant: string[], agent?: string) {
     const allowance = { bytes: 0 }
-    const budget = new ProcessingBudget(PROCESSING_LIMITS.contextHashChars, PROCESSING_LIMITS.contextHashValues)
+    const budget = workReferenceBudget()
     let work_ref: WorkRef | null = null, work_ref_reason: string | undefined
     if (focus.node_id && !plan.nodes.some(n => n.id === focus.node_id)) work_ref_reason = "node-not-in-current-plan"
     else if (focus.node_id) try { work_ref = workReference(action, plan, focus.node_id, budget) }
