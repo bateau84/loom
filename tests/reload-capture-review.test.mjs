@@ -82,7 +82,7 @@ for (const failure of ['disabled', 'failed']) test(`${failure} capture survives 
   else { fault.setFailure(true); assert.throws(() => old.before(e), /injected/); fault.setFailure(false) }
   db.close()
   writeFileSync(join(dir, 'package.json'), '{"type":"module"}')
-  for (const name of ['context', 'store', 'model']) copyFileSync(new URL(`../.test-build/${name}.js`, import.meta.url), join(dir, name + '.js'))
+  for (const name of ['context', 'store', 'model', 'collaboration']) copyFileSync(new URL(`../.test-build/${name}.js`, import.meta.url), join(dir, name + '.js'))
   const { Observer: ReloadedObserver } = await import(pathToFileURL(join(dir, 'context.js')).href)
   const { Store: ReloadedStore } = await import(pathToFileURL(join(dir, 'store.js')).href)
   db = new DatabaseSync(path)

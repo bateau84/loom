@@ -9,7 +9,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test:core": "tsc -p tsconfig.core.json && node --test tests/*.test.mjs",
-    "test:native": "bun test tests/native.test.ts tests/package-entry.test.ts tests/config-source-native.test.ts tests/config-parser-native.test.ts tests/config-admission-native.test.ts tests/tool-help-native.test.ts",
+    "test:native": "bun test tests/native.test.ts tests/package-entry.test.ts tests/config-source-native.test.ts tests/config-parser-native.test.ts tests/config-admission-native.test.ts tests/tool-help-native.test.ts tests/collaboration-native.test.ts",
     "test": "bun run test:core && bun run test:native"
   },
   "dependencies": { "@opencode/plugin": "2.0.18", "js-yaml": "4.3.2" },

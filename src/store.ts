@@ -1,3 +1,4 @@
+import { Collaboration } from "./collaboration.js"
 import { randomUUID } from "node:crypto"
 import { realpathSync } from "node:fs"
 import { type Action, type Actor, type Focus, type LedgerRecord, type Plan, type PlanNode, type RecordKind, subject, uid, validatePlan, canonical, ProcessingBudget, ProcessingLimitError, PROCESSING_LIMITS } from "./model.js"
@@ -23,6 +24,7 @@ const nonempty = (s: unknown, label: string, max = 16000): string => {
   return s.trim()
 }
 export class Store {
+  readonly collaboration: Collaboration
   constructor(private db: SQL) {
     const version = db.prepare("PRAGMA user_version").get() as { user_version: number }
     if (![0, 1].includes(version.user_version)) throw new Error("Unsupported Loom Action database version; existing data was not modified")
@@ -45,6 +47,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS ledger_observation_action ON ledger(action_id, seq) WHERE kind='observation';
       CREATE INDEX IF NOT EXISTS ledger_observation_scope ON ledger(action_id, json_extract(data,'$.node_id'), seq) WHERE kind='observation';
       PRAGMA user_version=1;`)
+    this.collaboration = new Collaboration(this, db)
   }
   /** Stable within a host lifetime, even when a replacement opens a new connection. */
   captureScope(): string | object {
@@ -77,6 +80,7 @@ export class Store {
     return this.transaction(() => {
       const a = this.action(id)
       if (revision !== a.revision) throw new Error(`Action changed; read revision ${a.revision} before editing`)
+      this.collaboration.preserveAction(a)
       if (patch.title !== undefined) a.title = nonempty(patch.title, "title", 500)
       if (patch.goal !== undefined) a.goal = nonempty(patch.goal, "goal")
       if (patch.state !== undefined) {
@@ -191,7 +195,8 @@ export class Store {
           attribution: matched ? "captured-at-start" : `${reason}; not assigned to current work` }, matched?.fingerprint)
     })
   }
-  private append(input: Omit<LedgerRecord, "id" | "created_at">): LedgerRecord {
+  /** Internal append; collaboration callers own their transaction. Not a host tool. */
+  append(input: Omit<LedgerRecord, "id" | "created_at">): LedgerRecord {
     const r: LedgerRecord = { ...input, id: randomUUID(), created_at: now() }
     this.db.prepare("INSERT INTO ledger(id,action_id,session_id,kind,data) VALUES(?,?,?,?,?)").run(r.id, r.action_id ?? null, r.session_id, r.kind, encode(r))
     return r
@@ -231,7 +236,7 @@ export class Store {
     return { items: this.hydrateLedger(page), next_after: rows.length > limit ? page.at(-1)!.seq : null }
   }
   /** Read only already-selected immutable records, after reserving their byte sizes. */
-  private hydrateLedger(candidates: LedgerCandidate[]) {
+  hydrateLedger(candidates: LedgerCandidate[]) {
     if (candidates.length > 56) throw new ProcessingLimitError("record set exceeds 56 rows")
     let bytes = 0
     for (const row of candidates) {

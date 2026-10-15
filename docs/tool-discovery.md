@@ -20,7 +20,8 @@ can return more tools than intended; use its returned path/signature and paging.
 The initial compact catalog uses only the first description line, limited by the
 host to 120 characters. Each Loom summary fits that boundary. Detailed help is
 therefore available at discovery without putting all five manuals into every
-role's initial instructions. Each full description is at most 3,600 characters;
+role's initial instructions. Descriptions are at most 3,600 characters, except
+`loom_record` (6,000) which also teaches completion and question operations;
 this is a tested metadata size convention, not a tokenizer-independent limit or
 control over the host's output budget.
 
@@ -29,8 +30,9 @@ replacement, explicit context-selection side effects, full dependency-record
 retrieval with Action ID (without inheriting the Worker's task filter), ledger
 paging, Assessment/QA verdicts and evidence limits. It documents the currently
 unfixed selection-save failure rather than promising the proposed partial-result
-behavior. This change does not implement that fix or change tool schemas,
-execution, native permissions, role injection, evidence capture or storage.
+behavior. Discovery alone does not implement that fix. The subsequent
+[completion and question extension](collaboration.md) adds operations to the
+existing record tool and views to context, not a sixth tool or execution engine.
 
 ## Tests and reproduction
 

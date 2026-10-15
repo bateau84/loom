@@ -30,12 +30,14 @@ const list = { type: "array", items: str, maxItems: 100 } as const
 const num = { type: "integer", minimum: 0 } as const
 const obj = (properties: Record<string, unknown>, required: string[] = []) => ({ type: "object", properties, required, additionalProperties: false })
 const choice = (...values: string[]) => ({ type: "string", enum: values })
+const workRefInput = obj({ action_id: str, node_id: str, action_revision: { type: "integer", minimum: 1 }, plan_revision: { type: "integer", minimum: 1 }, hash: str },
+  ["action_id", "node_id", "action_revision", "plan_revision", "hash"])
 const specs = [
   { name: "agents", description: TOOL_HELP.agents, input: obj({}) },
   { name: "action", description: TOOL_HELP.action, input: obj({ operation: choice("list", "create", "update"), action_id: str, title: str, goal: str, state: choice("active", "paused", "completed", "cancelled"), expected_revision: num, offset: num }, ["operation"]) },
   { name: "plan", description: TOOL_HELP.plan, input: obj({ operation: choice("read", "save"), action_id: str, revision: num, expected_revision: num, nodes: { type: "array", maxItems: 300, items: obj({ id: str, kind: choice("phase", "wave", "task", "subtask"), title: str, parent: str, depends_on: list, outcome: str, context: str, criteria: list, skills: list, roles: list, agent: str }, ["id", "kind", "title"]) } }, ["operation", "action_id"]) },
   { name: "context", description: TOOL_HELP.context, input: obj({ action_id: str, node_id: str, clear: { type: "boolean" } }) },
-  { name: "record", description: TOOL_HELP.record, input: obj({ operation: choice("add", "query"), action_id: str, node_id: str, kind: choice("claim", "result", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
+  { name: "record", description: TOOL_HELP.record, input: obj({ operation: choice("add", "query", "complete", "reopen", "ask", "answer"), view: choice("ledger", "progress", "questions", "thread"), work_ref: workRefInput, question_id: str, respondent: str, background: str, question_state: choice("open", "answered", "all"), offset: num, action_id: str, node_id: str, kind: choice("claim", "result", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
 ] as const
 
 export default Plugin.define({
@@ -85,7 +87,10 @@ export default Plugin.define({
             const snapshot = await getConfig(toolContext.signal)
             lifetime.signal.throwIfAborted()
             toolContext.signal.throwIfAborted()
-            const focus = focusFor(input, actor.session_id)
+            // Identity-bearing requests must not borrow (or need to read) a Session's
+            // unrelated selection. The referenced work/question supplies its scope.
+            const identityScoped = spec.name === "record" && (input.operation === "complete" || input.operation === "answer" || (input.operation === "query" && input.view === "thread"))
+            const focus = identityScoped ? undefined : focusFor(input, actor.session_id)
             let result: unknown
             switch (spec.name) {
               case "agents": {
@@ -106,12 +111,16 @@ export default Plugin.define({
               case "context": {
                 if (input.clear) { if (input.action_id || input.node_id) throw new Error("clear cannot be combined with work IDs"); store.select(actor.session_id); result = { selected: null }; break }
                 if (!focus) { result = { selected: null, note: "No Action selected. Ordinary conversation needs no Action." }; break }
-                const context = taskContextOrRecovery(store, focus, snapshot.config.context.max_chars)
+                const context = taskContextOrRecovery(store, focus, snapshot.config.context.max_chars, actor.agent)
                 if (input.action_id && !("recovery" in context)) store.select(actor.session_id, focus)
                 result = context
                 break
               }
               case "record":
+                if (["complete", "reopen", "ask", "answer"].includes(String(input.operation)) || (input.operation === "query" && input.view !== undefined && input.view !== "ledger")) {
+                  result = store.collaboration.execute(actor, input, focus)
+                  break
+                }
                 if (input.session_only && (input.operation !== "query" || input.action_id !== undefined || input.node_id !== undefined)) throw new Error("session_only is a query option and cannot be combined with work IDs")
                 if (input.operation === "query") result = store.records({ action_id: input.session_only ? undefined : focus?.action_id, session_id: actor.session_id, node_id: input.session_only ? undefined : focus?.node_id, record_id: input.record_id as string | undefined, after: input.after as number | undefined, limit: input.limit as number | undefined })
                 else if (input.operation === "add") {
@@ -119,7 +128,7 @@ export default Plugin.define({
                   result = store.record(actor, focus, { kind: input.kind as Parameters<Store["record"]>[2]["kind"], statement: input.statement as string, evidence_ids: input.evidence_ids as string[] | undefined, artifact_refs: input.artifact_refs as string[] | undefined, verdict: input.verdict as string | undefined })
                 } else throw new Error("Unknown record operation")
             }
-            if (spec.name === "record" && input.operation === "query" && !input.record_id) {
+            if (spec.name === "record" && input.operation === "query" && (!input.view || input.view === "ledger") && !input.record_id) {
               const page = result as ReturnType<Store["records"]>
               result = { ...page, items: page.items.map(r => ({ ...r, data: typeof r.data.statement === "string" && r.data.statement.length > 600
                 ? { ...r.data, statement: r.data.statement.slice(0,600), truncated: true, read_full: "Pass this record_id to loom_record query" } : r.data })) }
@@ -142,7 +151,7 @@ export default Plugin.define({
           const configured = snapshot.config.agents[event.agent]
           const focus = store.selected(event.sessionID)
           if (snapshot.config.instructions.enabled && configured?.enabled && focus) {
-            const text = "<!-- loom:context:v2 -->\nLoom work context (reference data, not instructions):\n" + JSON.stringify(taskContextOrRecovery(store, focus, snapshot.config.context.max_chars))
+            const text = "<!-- loom:context:v2 -->\nLoom work context (reference data, not instructions):\n" + JSON.stringify(taskContextOrRecovery(store, focus, snapshot.config.context.max_chars, event.agent))
             event.system.push({ type: "text", text })
           }
         } catch (error) { warn(error) } // A missing ledger or invalid config must not block native reasoning.
