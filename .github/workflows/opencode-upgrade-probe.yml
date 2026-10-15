@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      contents: write # Upload generated Git blobs only; never update a branch or commit.
+      contents: write # Create generated blobs only; never update commits or refs.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,87 +21,51 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Prepare exact candidate without changing the branch
-        id: resolve
+      - name: Prepare exact upgrade and bounded integration additions
+        id: prepare
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/upgrade-report"
-          npm view @opencode/plugin@2.0.29 version dist --json > "$RUNNER_TEMP/upgrade-report/plugin-package.json"
-          npm view @opencode/cli@2.0.29 version dist --json > "$RUNNER_TEMP/upgrade-report/cli-package.json"
           npm view @opencode/cli dist-tags --json > "$RUNNER_TEMP/upgrade-report/cli-dist-tags.json"
+          npm view @opencode/plugin@2.0.29 version dist --json > "$RUNNER_TEMP/upgrade-report/plugin-package.json"
           python3 - <<'PY'
           from pathlib import Path
-          files = ['package.json', '.github/workflows/ci.yml', '.github/workflows/installed-host.yml', 'tests/tool-search-codemode.test.ts']
-          for name in files:
+          for name in ['package.json', '.github/workflows/ci.yml', '.github/workflows/installed-host.yml', 'tests/tool-search-codemode.test.ts']:
               p = Path(name)
-              text = p.read_text()
-              p.write_text(text.replace('2.0.18', '2.0.29'))
+              p.write_text(p.read_text().replace('2.0.18', '2.0.29'))
           p = Path('.github/workflows/installed-host.yml')
           p.write_text(p.read_text().replace('- run: bun install\n', '- run: bun install --frozen-lockfile\n      - run: git diff --exit-code -- bun.lock\n'))
           PY
+          git apply --recount --check .github/opencode-upgrade-core.patch
+          git apply --recount .github/opencode-upgrade-core.patch
+          python3 .github/opencode-upgrade-details.py
           bun install --ignore-scripts
           cp bun.lock "$RUNNER_TEMP/upgrade-report/bun.lock"
-          cp package.json "$RUNNER_TEMP/upgrade-report/package.json"
           bun install --frozen-lockfile --ignore-scripts
           cmp bun.lock "$RUNNER_TEMP/upgrade-report/bun.lock"
+          git diff --check
           git diff --stat > "$RUNNER_TEMP/upgrade-report/change-stat.txt"
           git diff > "$RUNNER_TEMP/upgrade-report/candidate.patch"
-      - name: Snapshot relevant pinned upstream source for comparison
-        if: always()
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          from concurrent.futures import ThreadPoolExecutor
-          import os, urllib.request, json, difflib, hashlib
-          root = Path(os.environ['RUNNER_TEMP']) / 'upgrade-report' / 'upstream'
-          paths = ['packages/plugin/src/promise/session.ts', 'packages/plugin/src/promise/tool.ts', 'packages/plugin/src/promise/adapter.ts', 'packages/plugin/src/source.bun.ts', 'packages/plugin/src/host.ts', 'packages/schema/src/tool.ts', 'packages/core/src/codemode/tool.ts', 'packages/schema/src/session-inbox.ts', 'packages/core/src/session/session.ts', 'packages/core/src/session/runner/llm.ts', 'packages/core/src/session/inbox.ts', 'packages/protocol/src/groups/session.ts', 'packages/core/src/session/model-request.ts', 'packages/core/src/session/instruction-entry.ts', 'packages/core/src/session/instruction-state.ts', 'packages/plugin/package.json', 'packages/cli/package.json']
-          def fetch(item):
-              version, path = item
-              target = root / version / path
-              target.parent.mkdir(parents=True, exist_ok=True)
-              url = f'https://raw.githubusercontent.com/anomalyco/opencode/{version}/{path}'
-              try:
-                  data = urllib.request.urlopen(url, timeout=30).read()
-                  target.write_bytes(data)
-                  return {'version': version, 'path': path, 'sha256': hashlib.sha256(data).hexdigest()}
-              except Exception as e:
-                  return {'version': version, 'path': path, 'error': str(e)}
-          with ThreadPoolExecutor(max_workers=4) as pool:
-              manifest = list(pool.map(fetch, [(v,p) for v in ['v2.0.18', 'v2.0.29'] for p in paths]))
-          (root / 'manifest.json').write_text(json.dumps(manifest, indent=2))
-          for path in paths:
-              a, b = root / 'v2.0.18' / path, root / 'v2.0.29' / path
-              if a.exists() and b.exists():
-                  patch = ''.join(difflib.unified_diff(a.read_text().splitlines(True), b.read_text().splitlines(True), fromfile='v2.0.18/'+path, tofile='v2.0.29/'+path))
-                  target = root / 'diffs' / (path + '.diff')
-                  target.parent.mkdir(parents=True, exist_ok=True)
-                  target.write_text(patch)
-          PY
-      - name: Run candidate checks independently and retain exact results
-        if: steps.resolve.outcome == 'success'
+      - name: Check the candidate without model requests
+        if: steps.prepare.outcome == 'success'
         shell: bash
         run: |
           set +e
           report="$RUNNER_TEMP/upgrade-report"
           status=0
-          check() { "$@" > "$report/$1-$2.log" 2>&1; rc=$?; printf '%s\t%s\n' "$rc" "$*" | tee -a "$report/checks.tsv"; if [ "$rc" != 0 ]; then status=1; fi; }
-          check bun run typecheck
-          check bun run test:core
-          check bun run test:native
-          python3 -m unittest discover -s tests -p 'test_*.py' > "$report/python.log" 2>&1
-          rc=$?; printf '%s\tPython tests\n' "$rc" >> "$report/checks.tsv"; [ "$rc" = 0 ] || status=1
-          npm install --prefix "$RUNNER_TEMP/loom-tool-search" --ignore-scripts --no-audit --no-fund @opencode/codemode@2.0.29 > "$report/search-install.log" 2>&1
-          rc=$?; printf '%s\tSearch install\n' "$rc" >> "$report/checks.tsv"; [ "$rc" = 0 ] || status=1
-          LOOM_CODEMODE_ROOT="$RUNNER_TEMP/loom-tool-search" bun test tests/tool-search-codemode.test.ts > "$report/search.log" 2>&1
-          rc=$?; printf '%s\tSearch tests\n' "$rc" >> "$report/checks.tsv"; [ "$rc" = 0 ] || status=1
-          npm install --prefix "$RUNNER_TEMP/loom-opencode-host" --no-audit --no-fund @opencode/cli@2.0.29 > "$report/host-install.log" 2>&1
-          rc=$?; printf '%s\tHost install\n' "$rc" >> "$report/checks.tsv"; [ "$rc" = 0 ] || status=1
-          python3 tests/installed_host_smoke.py --opencode "$RUNNER_TEMP/loom-opencode-host/node_modules/.bin/opencode" --expect-version 2.0.29 --report-directory "$report/host" > "$report/host.log" 2>&1
-          rc=$?; printf '%s\tInstalled host boot\n' "$rc" >> "$report/checks.tsv"; [ "$rc" = 0 ] || status=1
+          check() { label="$1"; shift; "$@" > "$report/$label.log" 2>&1; rc=$?; printf '%s\t%s\n' "$rc" "$label: $*" | tee -a "$report/checks.tsv"; tail -n 12 "$report/$label.log"; if [ "$rc" != 0 ]; then status=1; fi; }
+          check typecheck bun run typecheck
+          check core bun run test:core
+          check native bun run test:native
+          check python python3 -m unittest discover -s tests -p 'test_*.py'
+          check counterchecks python3 tools/check-review-regressions.py --report-directory "$report/counterchecks"
+          check search-install npm install --prefix "$RUNNER_TEMP/loom-tool-search" --ignore-scripts --no-audit --no-fund @opencode/codemode@2.0.29
+          check search env LOOM_CODEMODE_ROOT="$RUNNER_TEMP/loom-tool-search" bun test tests/tool-search-codemode.test.ts
+          check host-install npm install --prefix "$RUNNER_TEMP/loom-opencode-host" --no-audit --no-fund @opencode/cli@2.0.29
+          check host python3 tests/installed_host_smoke.py --opencode "$RUNNER_TEMP/loom-opencode-host/node_modules/.bin/opencode" --expect-version 2.0.29 --report-directory "$report/host"
           exit "$status"
-      - name: Export generated blobs without changing any ref
-        if: always() && steps.resolve.outcome == 'success'
+      - name: Export reviewed candidate blobs without changing any ref
+        if: always() && steps.prepare.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -109,8 +73,8 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import os, urllib.request, json, hashlib
+          paths = ['package.json', 'bun.lock', '.github/workflows/ci.yml', '.github/workflows/installed-host.yml', 'README.md', 'docs/installed-host-validation.md', 'docs/opencode-2.0.29.md', 'docs/tool-discovery.md', 'src/tool-help.ts', 'tests/installed_host_smoke.py', 'tests/package-entry.test.ts', 'tests/test_installed_host_smoke.py', 'tests/tool-help-native.test.ts', 'tests/tool-search-codemode.test.ts']
           report = Path(os.environ['RUNNER_TEMP']) / 'upgrade-report'
-          paths = ['package.json', 'bun.lock', '.github/workflows/ci.yml', '.github/workflows/installed-host.yml', 'tests/tool-search-codemode.test.ts']
           blobs = []
           for path in paths:
               data = Path(path).read_bytes()
@@ -122,10 +86,11 @@ jobs:
           (report / 'generated-blobs.json').write_text(json.dumps(blobs, indent=2))
           print(json.dumps(blobs, indent=2))
           PY
-      - name: Retain source and focused test runtime for local inspection
+      - name: Retain source for exact local comparison
         if: always()
         shell: bash
         run: |
+          mkdir -p "$RUNNER_TEMP/upgrade-report"
           tar --exclude='./.git' --exclude='./node_modules' -czf "$RUNNER_TEMP/upgrade-report/candidate-source.tar.gz" .
           if [ -d node_modules/js-yaml ]; then tar -czf "$RUNNER_TEMP/upgrade-report/parser-deps.tar.gz" node_modules/js-yaml node_modules/argparse; fi
       - uses: actions/upload-artifact@v4

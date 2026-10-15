@@ -1,0 +1,66 @@
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -48,8 +48,9 @@ interrupt an OpenCode session or certify successful delivery.
+ 
+ ## Loading the plugin
+ 
+-Target: OpenCode V2. The SDK dependency remains pinned to `@opencode/plugin`
+-`2.0.18`, as on the original `main`; this PR does not upgrade your CLI or model.
++Target: **OpenCode 2.0.29**. The SDK, isolated Code Mode search fixture and installed
++CLI boot test use that exact version. This checkout does not upgrade your local
++OpenCode executable or change your model. See [the upgrade notes](docs/opencode-2.0.29.md).
+ **Bun support: `>=1.4.2 <2.0.0`. Use Bun 1.4.2 to reproduce validation.**
+ The exact tested baseline is recorded in `.bun-version` and used by both CI jobs.
+ This is a supported minimum based on that tested baseline, not a claim that
+@@ -76,9 +77,9 @@ not two-agent behavior, meaningful-record persistence, or graceful teardown.
+ The capture-gap repair also requires a **full OpenCode host restart on first
+ installation**; hot-upgrading cannot recover uncertainty discarded by the old
+ implementation. See [Evidence pairing](docs/evidence-reliability.md).
+-Main plugin CI now uses the committed lockfile with frozen installation and a
+-lock-stability check. The separately installed host's dependency graph and the
+-manual state-backup/restore procedure remain separate release work.
++Both CI jobs install Loom dependencies from the committed lockfile with frozen
++installation and a lock-stability check. The separately installed host's dependency
++graph and the manual state-backup/restore procedure remain separate release work.
+ 
+ In a separate plugin checkout, run `bun install --frozen-lockfile`. Add that checkout
+ to your existing OpenCode configuration, without replacing your other entries:
+
+diff --git a/src/tool-help.ts b/src/tool-help.ts
+--- a/src/tool-help.ts
++++ b/src/tool-help.ts
+@@ -69,6 +69,7 @@ export const TOOL_HELP = Object.fromEntries(Object.entries(entries).map(([name,
+   'Examples (JSON inputs, not shell commands; replace ACTION_ID/RECORD_ID/QUESTION_ID; copy work_ref from worked-against context):',
+   ...TOOL_EXAMPLES[name as LoomToolName].map(input => JSON.stringify(input)),
+   'The tool returns JSON text with a result field and optional config_errors. In Code Mode, parse that text once with JSON.parse; use the exact callable path returned by search.',
++  'Await writes before using IDs or ending Code Mode. For independent calls use Promise.allSettled and inspect every outcome; sequence dependent calls.',
+ ].join('\n')])) as Record<LoomToolName, string>
+ 
+ export const LOOM_NAMESPACE_HELP = "Loom remembers Actions, plans, context and evidence. Search namespace loom for each tool's usage, examples and side effects. Execution and delegation stay native."
+
+diff --git a/tests/installed_host_smoke.py b/tests/installed_host_smoke.py
+--- a/tests/installed_host_smoke.py
++++ b/tests/installed_host_smoke.py
+@@ -250,7 +250,7 @@ if __name__ == "__main__":
+     parser.add_argument("--opencode", required=True, type=Path, help="Already installed CLI; nothing is installed by this script")
+     parser.add_argument("--repository", type=Path, default=Path(__file__).resolve().parents[1])
+     parser.add_argument("--report-directory", required=True, type=Path)
+-    parser.add_argument("--expect-version", default="2.0.18")
++    parser.add_argument("--expect-version", default="2.0.29")
+     args = parser.parse_args()
+     try:
+         print(json.dumps(run_probe(str(args.opencode.absolute()), args.repository.resolve(), args.report_directory.resolve(), args.expect_version), indent=2))
+
+diff --git a/tests/test_installed_host_smoke.py b/tests/test_installed_host_smoke.py
+--- a/tests/test_installed_host_smoke.py
++++ b/tests/test_installed_host_smoke.py
+@@ -116,7 +116,7 @@ class BootHarnessTest(unittest.TestCase):
+             output = root / "report"
+             with patch.object(smoke, "source_inventory", return_value={}):
+                 with self.assertRaises(FileNotFoundError):
+-                    smoke.run_probe(str(root / "missing-opencode"), root, output, "2.0.18")
++                    smoke.run_probe(str(root / "missing-opencode"), root, output, "2.0.29")
+             report = json.loads((output / "report.json").read_text())
+             self.assertEqual(report["status"], "failed")
+             self.assertEqual(report["two_agent_acceptance"], "not exercised")
