@@ -7,14 +7,14 @@ import { registeredLoom } from "./helpers/registered-loom.js"
 
 // Isolated exact upstream test dependency; not a new Loom runtime dependency.
 const root = process.env.LOOM_CODEMODE_ROOT
-if (!root) throw new Error("Set LOOM_CODEMODE_ROOT to an isolated npm prefix containing @opencode/codemode@2.0.18; see docs/tool-discovery.md")
+if (!root) throw new Error("Set LOOM_CODEMODE_ROOT to an isolated npm prefix containing @opencode/codemode@2.0.29; see docs/tool-discovery.md")
 const packageRoot = join(root, "node_modules/@opencode/codemode")
 const metadata = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"))
-if (metadata.version !== "2.0.18") throw new Error(`Expected Code Mode 2.0.18, found ${metadata.version}`)
+if (metadata.version !== "2.0.29") throw new Error(`Expected Code Mode 2.0.29, found ${metadata.version}`)
 // Test the published compiled implementation, not the source-manifest export.
 // The pinned build emits src/index.ts to dist/index.js; a missing build is fatal.
 const entry = join(packageRoot, "dist/index.js")
-const { CodeMode, Namespace, Tool } = await import(pathToFileURL(entry).href)
+const { CodeMode, Namespace, Tool, toolError } = await import(pathToFileURL(entry).href)
 const effectReq = createRequire(entry)
 const { Effect } = await import(pathToFileURL(effectReq.resolve("effect")).href)
 
@@ -91,4 +91,38 @@ test("Plan search carries the field guide and complete three-task example, not j
     const discovery = await search({ namespace: "loom", query: "acceptance criteria intended work", limit: 5 })
     expect(discovery.items.some((item: any) => item.path === "tools.loom.plan" && item.description === help)).toBe(true)
   })
+})
+
+
+test("actual Code Mode allSettled preserves an independent write and exposes the failed write", async () => {
+  const f = await registeredLoom()
+  try {
+    const action = (await f.invoke("action", { operation: "create", title: "Independent calls", goal: "Keep successful work visible" })).result
+    const tools = Object.fromEntries([...f.tools].map(([name, tool]) => [name, Tool.make({
+      description: tool.description, input: tool.input, output: { type: "string" },
+      execute: (input: unknown) => Effect.tryPromise({
+        try: async () => JSON.stringify(await f.invoke(name, input)),
+        catch: (error: unknown) => toolError(error instanceof Error ? error.message : String(error)),
+      }),
+    })]))
+    const runtime = CodeMode.make({ tools: { loom: Namespace.make({ description: f.namespaces.get("loom").description, tools }) } })
+    const bad = { operation: "add", action_id: "missing-action", kind: "result", statement: "This must not be saved" }
+    const good = { operation: "add", action_id: action.id, kind: "result", statement: "Successful independent work remains available" }
+    const result = await Effect.runPromise(runtime.execute(`
+      const outcomes = await Promise.allSettled([
+        tools.loom.record(${JSON.stringify(bad)}),
+        tools.loom.record(${JSON.stringify(good)})
+      ]);
+      return outcomes.map(outcome => outcome.status === "fulfilled"
+        ? {status: outcome.status, record_id: JSON.parse(outcome.value).result.id}
+        : {status: outcome.status});
+    `))
+    expect(result.ok).toBe(true)
+    expect(result.value[0].status).toBe("rejected")
+    expect(result.value[1].status).toBe("fulfilled")
+    const saved = (await f.invoke("record", { operation: "query", action_id: action.id })).result.items
+    expect(saved).toHaveLength(1)
+    expect(saved[0].id).toBe(result.value[1].record_id)
+    expect(saved[0].data.statement).toBe(good.statement)
+  } finally { await f.close() }
 })

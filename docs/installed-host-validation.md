@@ -4,8 +4,9 @@ The existing Bun native suite uses a simulated host API. It proves callback
 behavior under that contract, not that the published OpenCode CLI can load Loom.
 `tests/installed_host_smoke.py` is a separate, no-inference boot probe using an
 already installed, exact OpenCode CLI version. CI installs
-`@opencode/cli@2.0.18` outside the plugin dependency tree, matching the reviewed
-SDK target. It does not upgrade the user's CLI or patch upstream source.
+`@opencode/cli@2.0.29` outside the plugin dependency tree, matching the reviewed
+SDK target. Loom dependencies use frozen installation in this job too. The external
+CLI has an exact top-level version, not a fully locked dependency graph. It does not upgrade the user's CLI or patch upstream source.
 
 ## What this probe actually checks
 
@@ -57,7 +58,7 @@ they are not substitutes for the installed-host run.
 ```sh
 python3 tests/installed_host_smoke.py \
   --opencode /absolute/path/to/opencode \
-  --expect-version 2.0.18 \
+  --expect-version 2.0.29 \
   --report-directory /absolute/path/to/new-report-directory
 ```
 

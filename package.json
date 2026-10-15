@@ -12,6 +12,6 @@
     "test:native": "bun test tests/native.test.ts tests/package-entry.test.ts tests/config-source-native.test.ts tests/config-parser-native.test.ts tests/config-admission-native.test.ts tests/tool-help-native.test.ts tests/collaboration-native.test.ts tests/review-findings-native.test.ts",
     "test": "bun run test:core && bun run test:native"
   },
-  "dependencies": { "@opencode/plugin": "2.0.18", "js-yaml": "4.3.2" },
+  "dependencies": { "@opencode/plugin": "2.0.29", "js-yaml": "4.3.2" },
   "devDependencies": { "@types/bun": "1.4.2", "@types/node": "^22.0.0", "typescript": "7.0.2" }
 }

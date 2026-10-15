@@ -1,4 +1,6 @@
 import { test, expect } from "bun:test"
+import { writeFile } from "node:fs/promises"
+import { join } from "node:path"
 import { TOOL_HELP, TOOL_EXAMPLES, LOOM_NAMESPACE_HELP, type LoomToolName } from "../src/tool-help.js"
 import { registeredLoom } from "./helpers/registered-loom.js"
 
@@ -140,5 +142,36 @@ test("Plan rejects missing required and invented lifecycle fields without writin
       await expect(f.invoke("plan", { operation: "save", action_id: action.id, expected_revision: 0, nodes: [incomplete] })).rejects.toThrow()
     }
     expect((await f.invoke("plan", { operation: "read", action_id: action.id })).result).toEqual({ revision: 0, nodes: [] })
+  } finally { await f.close() }
+})
+
+
+test("search-visible help explains awaited writes and independent-call failure handling", async () => {
+  const f = await registeredLoom()
+  try {
+    expect(f.tools.size).toBe(5)
+    for (const tool of f.tools.values()) {
+      expect(tool.description).toContain("Await writes before using IDs or ending Code Mode")
+      expect(tool.description).toContain("Promise.allSettled and inspect every outcome")
+      expect(tool.description).toContain("sequence dependent calls")
+    }
+  } finally { await f.close() }
+})
+
+test("Loom context injection preserves host generation options and native tool definitions", async () => {
+  const f = await registeredLoom()
+  try {
+    await writeFile(join(f.directory, ".loom.yaml"), "agents: {author: {roles: [implementation]}}\n")
+    const action = (await f.invoke("action", { operation: "create", title: "Host defaults", goal: "Keep native generation settings" })).result
+    const options = { maxTokens: 4096, temperature: 0.2 }
+    const nativeTools = { native: { description: "Native tool", input: { type: "object" } } }
+    const native = { type: "text", text: "Existing system instructions" }
+    const event = { sessionID: "s", agent: "author", system: [native], messages: [], options, tools: nativeTools }
+    await f.hooks.get("context")(event)
+    expect(event.options).toBe(options)
+    expect(event.options).toEqual({ maxTokens: 4096, temperature: 0.2 })
+    expect(event.tools).toBe(nativeTools)
+    expect(event.system[0]).toBe(native)
+    expect(event.system.some(part => part.text.includes(action.id))).toBe(true)
   } finally { await f.close() }
 })

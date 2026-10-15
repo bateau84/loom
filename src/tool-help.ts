@@ -69,6 +69,7 @@ export const TOOL_HELP = Object.fromEntries(Object.entries(entries).map(([name, 
   'Examples (JSON inputs, not shell commands; replace ACTION_ID/RECORD_ID/QUESTION_ID; copy work_ref from worked-against context):',
   ...TOOL_EXAMPLES[name as LoomToolName].map(input => JSON.stringify(input)),
   'The tool returns JSON text with a result field and optional config_errors. In Code Mode, parse that text once with JSON.parse; use the exact callable path returned by search.',
+  'Await writes before using IDs or ending Code Mode. For independent calls use Promise.allSettled and inspect every outcome; sequence dependent calls.',
 ].join('\n')])) as Record<LoomToolName, string>
 
 export const LOOM_NAMESPACE_HELP = "Loom remembers Actions, plans, context and evidence. Search namespace loom for each tool's usage, examples and side effects. Execution and delegation stay native."

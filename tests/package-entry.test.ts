@@ -41,3 +41,26 @@ test("pinned host loads the server with optional TUI and RPC entrypoints absent"
   expect(pkg.files).toContain("server.ts")
   expect(pkg.exports["./server"]).toBe("./server.ts")
 })
+
+
+test("SDK, installed host, search fixture and boot default share the exact OpenCode pin", async () => {
+  const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"))
+  const version = pkg.dependencies["@opencode/plugin"]
+  expect(version).toBe("2.0.29")
+  const installed = JSON.parse(await readFile(new URL("../node_modules/@opencode/plugin/package.json", import.meta.url), "utf8"))
+  expect(installed.version).toBe(version)
+  const ci = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8")
+  const host = await readFile(new URL("../.github/workflows/installed-host.yml", import.meta.url), "utf8")
+  const search = await readFile(new URL("./tool-search-codemode.test.ts", import.meta.url), "utf8")
+  const smoke = await readFile(new URL("./installed_host_smoke.py", import.meta.url), "utf8")
+  expect(ci).toContain(`@opencode/codemode@${version}`)
+  expect(host).toContain(`@opencode/cli@${version}`)
+  expect(host).toContain(`--expect-version ${version}`)
+  expect(search).toContain(`metadata.version !== "${version}"`)
+  expect(smoke).toContain(`"--expect-version", default="${version}"`)
+  for (const workflow of [ci, host]) {
+    expect(workflow).toContain("bun install --frozen-lockfile")
+    expect(workflow).toContain("git diff --exit-code -- bun.lock")
+    expect(workflow).not.toMatch(/run: bun install\s*$/m)
+  }
+})

@@ -7,7 +7,7 @@ as actual tool metadata, not a link requiring another file read. `docs/tools.md`
 remains an optional human-readable walkthrough; agents need not open it to learn
 how to call a discovered tool.
 
-The pinned OpenCode 2.0.18 Code Mode search returns the full description alongside
+The pinned OpenCode 2.0.29 Code Mode search returns the full description alongside
 the exact callable path and generated signature. For example, inside Code Mode:
 
 ```js
@@ -34,6 +34,15 @@ behavior. Discovery alone does not implement that fix. The subsequent
 [completion and question extension](collaboration.md) adds operations to the
 existing record tool and views to context, not a sixth tool or execution engine.
 
+## Await work whose result matters
+
+Search-visible help also explains Code Mode call lifetime. Await each write before
+using its saved record ID or leaving the script. For independent operations,
+`Promise.allSettled` lets each settle even when another rejects; inspect every
+returned status and report any failure. It is not an atomic multi-write transaction.
+Dependent calls remain sequential: a question must be saved before using its ID
+in an answer, and a Plan must be saved before selecting one of its nodes.
+
 ## Tests and reproduction
 
 `bun run test:native` checks the actual registered descriptions with role
@@ -42,19 +51,22 @@ examples against the real plugin callbacks and temporary SQLite state, replacing
 placeholder IDs and findings. Its registration host is simulated, not a live
 OpenCode Session or a model-driven Research-to-Worker acceptance run.
 
-Main CI also installs the exact upstream `@opencode/codemode@2.0.18` package into
+Main CI also installs the exact upstream `@opencode/codemode@2.0.29` package into
 an isolated temporary prefix and runs its real `search` implementation against
 those registrations. Tests require unchanged full descriptions, all parameter
 names in generated signatures, exact-path and namespace discovery, and useful
 natural-language matches. Tool execution is disabled for these search probes;
-search must not create Actions, load a guide or change selection.
+search must not create Actions, load a guide or change selection. A separate Code
+Mode execution regression uses the same pinned runtime with real Loom callbacks
+and temporary SQLite to check independent success/failure outcomes; it is not a
+model-driven or installed-host handoff.
 
 To reproduce that separate upstream search check:
 
 ```sh
 # From the Loom checkout, after bun install --frozen-lockfile:
 fixture=$(mktemp -d)
-npm install --prefix "$fixture" --ignore-scripts --no-audit --no-fund @opencode/codemode@2.0.18 &&
+npm install --prefix "$fixture" --ignore-scripts --no-audit --no-fund @opencode/codemode@2.0.29 &&
 LOOM_CODEMODE_ROOT="$fixture" bun test tests/tool-search-codemode.test.ts
 # Remove the temporary fixture directory after inspecting the result.
 ```
@@ -68,6 +80,6 @@ existing, separate meanings. Tests of search behavior are not evidence of model
 quality or successful end-to-end delegation.
 
 Pinned sources:
-- [Tool-to-Code-Mode registration](https://github.com/anomalyco/opencode/blob/v2.0.18/packages/core/src/codemode/tool.ts)
-- [Search results and ranking](https://github.com/anomalyco/opencode/blob/v2.0.18/packages/codemode/src/tool-runtime.ts)
-- [Compact catalog summaries](https://github.com/anomalyco/opencode/blob/v2.0.18/packages/core/src/codemode/catalog.ts)
+- [Tool-to-Code-Mode registration](https://github.com/anomalyco/opencode/blob/v2.0.29/packages/core/src/codemode/tool.ts)
+- [Search results and ranking](https://github.com/anomalyco/opencode/blob/v2.0.29/packages/codemode/src/tool-runtime.ts)
+- [Compact catalog summaries](https://github.com/anomalyco/opencode/blob/v2.0.29/packages/core/src/codemode/catalog.ts)

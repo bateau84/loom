@@ -250,7 +250,7 @@ if __name__ == "__main__":
     parser.add_argument("--opencode", required=True, type=Path, help="Already installed CLI; nothing is installed by this script")
     parser.add_argument("--repository", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--report-directory", required=True, type=Path)
-    parser.add_argument("--expect-version", default="2.0.18")
+    parser.add_argument("--expect-version", default="2.0.29")
     args = parser.parse_args()
     try:
         print(json.dumps(run_probe(str(args.opencode.absolute()), args.repository.resolve(), args.report_directory.resolve(), args.expect_version), indent=2))

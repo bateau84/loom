@@ -116,7 +116,7 @@ class BootHarnessTest(unittest.TestCase):
             output = root / "report"
             with patch.object(smoke, "source_inventory", return_value={}):
                 with self.assertRaises(FileNotFoundError):
-                    smoke.run_probe(str(root / "missing-opencode"), root, output, "2.0.18")
+                    smoke.run_probe(str(root / "missing-opencode"), root, output, "2.0.29")
             report = json.loads((output / "report.json").read_text())
             self.assertEqual(report["status"], "failed")
             self.assertEqual(report["two_agent_acceptance"], "not exercised")

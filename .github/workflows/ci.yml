@@ -22,7 +22,7 @@ jobs:
       - run: bun run test:core
       - run: bun run test:native
       - name: Install pinned search implementation outside plugin dependencies
-        run: npm install --prefix "$RUNNER_TEMP/loom-tool-search" --ignore-scripts --no-audit --no-fund @opencode/codemode@2.0.18
+        run: npm install --prefix "$RUNNER_TEMP/loom-tool-search" --ignore-scripts --no-audit --no-fund @opencode/codemode@2.0.29
       - name: Verify real Code Mode search returns registered Loom help; no model requests
         run: LOOM_CODEMODE_ROOT="$RUNNER_TEMP/loom-tool-search" bun test tests/tool-search-codemode.test.ts
       - run: git diff --exit-code -- package.json bun.lock

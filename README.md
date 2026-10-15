@@ -48,8 +48,9 @@ interrupt an OpenCode session or certify successful delivery.
 
 ## Loading the plugin
 
-Target: OpenCode V2. The SDK dependency remains pinned to `@opencode/plugin`
-`2.0.18`, as on the original `main`; this PR does not upgrade your CLI or model.
+Target: **OpenCode 2.0.29**. The SDK, isolated Code Mode search fixture and installed
+CLI boot test use that exact version. This checkout does not upgrade your local
+OpenCode executable or change your model. See [the upgrade notes](docs/opencode-2.0.29.md).
 **Bun support: `>=1.4.2 <2.0.0`. Use Bun 1.4.2 to reproduce validation.**
 The exact tested baseline is recorded in `.bun-version` and used by both CI jobs.
 This is a supported minimum based on that tested baseline, not a claim that
@@ -76,9 +77,9 @@ not two-agent behavior, meaningful-record persistence, or graceful teardown.
 The capture-gap repair also requires a **full OpenCode host restart on first
 installation**; hot-upgrading cannot recover uncertainty discarded by the old
 implementation. See [Evidence pairing](docs/evidence-reliability.md).
-Main plugin CI now uses the committed lockfile with frozen installation and a
-lock-stability check. The separately installed host's dependency graph and the
-manual state-backup/restore procedure remain separate release work.
+Both CI jobs install Loom dependencies from the committed lockfile with frozen
+installation and a lock-stability check. The separately installed host's dependency
+graph and the manual state-backup/restore procedure remain separate release work.
 
 In a separate plugin checkout, run `bun install --frozen-lockfile`. Add that checkout
 to your existing OpenCode configuration, without replacing your other entries:
