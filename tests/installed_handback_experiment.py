@@ -6,6 +6,7 @@ from contextlib import closing
 from pathlib import Path
 from urllib.request import Request
 from installed_host_smoke import PrivateHost, isolated_environment, require
+from handback_managed_host import ManagedExperimentHost
 
 
 def request(host, method, path, body=None):
@@ -65,7 +66,9 @@ def run_case(executable,repo,output,mode):
         (project/'.loom.yaml').write_text('agents:\n  bridge-primary: {roles: [coordination]}\n  bridge-worker: {roles: [implementation]}\n  bridge-research: {roles: [research]}\n')
         host=None;result={'mode':mode,'status':'FAIL'}
         try:
-            host=PrivateHost(executable,project,env,case_output,'initial')
+            host_type=ManagedExperimentHost if mode=='restart' else PrivateHost
+            result['host_mode']='managed' if mode=='restart' else 'private-stdio'
+            host=host_type(executable,project,env,case_output,'initial')
             require(json.loads(host.get('/api/info','info')).get('version')=='2.0.29','Wrong server version')
             host.wait_roster('/api/plugin','plugins',lambda xs: all(any(x.get('id')==p and x.get('state',{}).get('status')=='active' for x in xs) for p in ['loom','loom.handback.experiment']))
             response=request(host,'POST','/api/session',{'agent':'bridge-primary','title':'Handback experiment',
@@ -80,7 +83,7 @@ def run_case(executable,repo,output,mode):
             result['precondition']={'original_delegation_returned':True,'primary_idle_before_answer':True,'research_running':True,'user_prompts':1}
             if mode=='restart':
                 host.close();host=None
-                host=PrivateHost(executable,project,env,case_output,'restarted')
+                host=ManagedExperimentHost(executable,project,env,case_output,'restarted')
                 require(json.loads(host.get('/api/info','info')).get('version')=='2.0.29','Wrong restarted server version')
                 host.wait_roster('/api/plugin','plugins',lambda xs:any(x.get('id')=='loom.handback.experiment' and x.get('state',{}).get('status')=='active' for x in xs))
                 await_idle(host,[primary]);result['host_restarted']=True
