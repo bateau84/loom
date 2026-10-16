@@ -173,16 +173,21 @@ start/finish records may be absent or unpaired; neither situation is proof that
 native work failed or succeeded. No raw tool output is stored by the observer.
 Use the recorded Session/message/call references to investigate the original work.
 
-## Known recovery limit and the real-host acceptance test
+## Selection outcomes and bounded real-host evidence
 
-**At this runtime, a selection-save failure can still discard a successfully
-read context response by throwing.** Do not assume selection changed after an
-error. `{}` reads the saved selection, where storage permits. Explicit Plan and
-ledger queries provide another route to history without saving selection. Fixing
-the combined operation is required alpha work, not solved by this workaround or
-by this guide. A failed clear must not be interpreted as successful clearing.
+**A successful context read survives failed selection saving.** Inspect the
+separate `selection.status: "save-failed"` outcome and diagnostics. `persisted`
+names the actual saved reference, null if absent, or "unknown" if readback fails.
+Automatic context follows persisted selection, not the unsaved request. `{}` reads
+the saved selection where storage permits. Explicit Plan and ledger queries offer
+history without saving selection. Unreadable context still fails, and a failed
+clear must not be interpreted as successful clearing.
 
-The acceptance run must use installed OpenCode, actual native Research and Worker
+The bounded run recorded in [operating policy](operating-policy.md) passed native
+research/coder/follow-up, completion/replan/removal and independently checked fresh
+recovery, with no automatic continuation authorized or sent. It did not include
+restart, source-freshness, transport or save-failure probes. It is not whole-alpha
+acceptance. Any broader acceptance run must use installed OpenCode, actual native Research and Worker
 execution, and meaningful records. Give Research a distinctive finding that is
 not copied into the Worker prompt; verify the Worker actually retrieves it and
 retains its qualifications. Then remove its task, exercise explicit recovery,
@@ -191,5 +196,6 @@ Record commit/runtime versions, tool results, record IDs, errors and any user
 intervention. A written sequence, manual hook calls or an empty database boot
 cannot establish this result. This guide does not authorize paid model spending.
 
-The separate [alpha policy](operating-policy.md) keeps one tested manual
-backup/restore procedure required, while deferring advanced storage automation.
+The [manual stopped-writers backup/restore procedure](manual-backup-restore.md)
+now has meaningful-record isolated proof; it does not restore native Sessions or
+replay work. The alpha policy still defers advanced storage automation.

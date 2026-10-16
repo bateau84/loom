@@ -92,5 +92,7 @@ new task attribution. This is not an installed OpenCode smoke test.
 
 Independent review and the live-host parallel-call / capture-toggle / interruption /
 restart / fresh-session exercise are still required before acceptance. Keep the
-PR draft. `Store.recent()` remains a cleanup candidate for that independent review;
-it was deliberately not removed in this recovery patch.
+PR draft. The unused broad recent-record reader was subsequently removed; context
+uses the scoped snapshot reader. See [current evidence boundaries](operating-policy.md)
+for the later bounded native removal/fresh-Session trial; it does not prove all
+parallel-call, capture-toggle, interruption or restart cases listed above.

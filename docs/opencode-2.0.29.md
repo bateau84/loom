@@ -63,8 +63,10 @@ solution by [primary-first native re-delegation](coordination.md). The reviewed
 `c2db6e7` experiment intentionally requests continuation of the original primary,
 which retrieves the answer and re-delegates to the same Worker through OpenCode.
 That path sends no direct Worker synthetic resume or Loom completion nudge.
-Production durable delivery and recovery remain unimplemented; this is not a new
-behavior enabled by the SDK upgrade.
+Production bounded delivery and positive-only admission recovery were subsequently
+implemented with prospective exact-primary authorization, default off; see
+[assignment delivery](assignment-delivery.md). This was not behavior enabled by
+the SDK upgrade, and native admission still does not prove processing.
 
 ### Passive notices retain their narrower contract
 

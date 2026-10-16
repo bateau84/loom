@@ -269,10 +269,16 @@ delegation, explicit completion retrieval and an actual coordinating operation.
 Request entry is counted before provider guards; actual native inputs and writes
 are checked separately. The older comparison controls remain test-only.
 
-These are author qualification tests, not independent acceptance, live-model
-usefulness, arbitrary burst-answer scheduling or production coordination readiness.
-The successful-context/failed-selection correction, manual backup/restore and
-overall alpha readiness remain separate. Keep PR #180 draft and unmerged.
+These scripts are author qualification tests, not by themselves independent
+acceptance, live-model usefulness, arbitrary burst-answer scheduling or production
+coordination readiness. The default-off sender separately has accepted bounded
+evidence. Reviewed context/selection and tested manual backup/restore corrections,
+plus the real native trial/fresh-Session evidence, are summarized in
+[operating policy](operating-policy.md). That trial authorized/sent no automatic
+continuation and is not sender-transport proof or whole-alpha acceptance.
+See [migration](migration.md#state-and-rollback) for the supported empty predecessor
+sender-table upgrade and explicit rejection of unsupported/nonempty shapes.
+Keep PR #180 draft and unmerged.
 
 The new operations are documented directly in registered tool-search help. The
 record manual's metadata ceiling is now 10,000 characters; other manuals retain

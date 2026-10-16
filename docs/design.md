@@ -8,7 +8,8 @@ Subtasks, skipping levels that are not useful. An Action can span Sessions, and 
 Session can contribute to different Actions. Ordinary conversation creates no
 Action automatically. A Plan describes intent and relationships, not a schedule.
 
-Agents and skills are external. `.loom.yaml` maps native agent IDs to roles and
+Agents and general engineering skills are external; the bundled `loom` skill is
+the plugin usage guide. `.loom.yaml` maps native agent IDs to roles and
 optional coordination descriptions. Role guidance is injected into transient
 model context, not written into agent files. Roles guide selection and tool use;
 they are not authority classes or permission grants. The plugin has no fixed
@@ -23,10 +24,10 @@ pipeline. Native OpenCode tools and permissions remain unchanged.
 
 | Owner | Responsibility |
 | --- | --- |
-| User / external config | Agent prompts, skills, models, native permissions and explicit choice of any future automatic continuation |
+| User / external config | Agent prompts, engineering skills, models, native permissions and explicit opt-in continuation choice |
 | Agent | Professional judgment, decomposition, native delegation, useful results and completion reports |
-| Loom today | Action/Plan data, context, observations, records, reported progress and question threads |
-| Loom coordination candidate | Durable assignment association and answer-to-primary delivery with honest status/recovery |
+| Loom today | Action/Plan data, context, observations, records, reported progress, question threads and bundled usage guide |
+| Loom bounded coordination | Durable assignment association and default-off opt-in answer-to-primary delivery with honest status/recovery |
 | OpenCode | Sessions, execution, permissions, native delegation and its return |
 
 Native execution ownership is compatible with Loom requesting native continuation.
@@ -98,20 +99,25 @@ strong adversarial evidence collection is outside this plugin's current scope.
 | Tool discovery | Usage help is registered directly in tool descriptions, not only Markdown |
 | Installed-host boot | Existing loader/equivalent-empty-ledger check; not whole collaboration acceptance |
 | Direct bridge and primary-first comparison | Test-only feasibility; user reports independent acceptance at `925a79f` and `c2db6e7` respectively |
-| Bounded primary-first delivery | Explicit prospective opt-in, one-call fence, positive admission recovery and irreversible withdrawal; see `assignment-delivery.md`. Default off; not independent sender acceptance |
+| Bounded primary-first delivery | Explicit prospective opt-in, one-call fence, positive admission recovery and irreversible withdrawal; accepted within bounded scope, default off; see `assignment-delivery.md` |
+| Context selection and offline restoration | Reviewed successful-read/failed-save correction and tested stopped-writers manual procedure; see `operating-policy.md` |
+| Real native trial | Handoff/completion/replan/removal and independent fresh-Session recovery passed bounded scope, no automatic continuation; not whole-alpha acceptance |
 | Practical live-model improvement, production readiness | Not established by scripted-provider tests |
 
 ## Next bounded work
 
-Review the bounded sender in [Coordination](coordination.md) and its production-path
+Consult the bounded sender in [Coordination](coordination.md) and its production-path
 [qualification](sender-qualification.md), separately from enabling default
 coordination. Preserve the measured whole-chain endpoint and duplicate counterchecks.
 Do not assume untested background/replay paths work because the foreground
 comparison passed. This document does not authorize paid inference.
 
-The small context-read/selection-save correction, one tested manual backup/restore
-procedure, and external agent/config migration remain separate alpha work. Agents
-and skills live outside the plugin; migrated prompts must not depend on removed
+The context-read/selection-save correction and one tested manual backup/restore
+procedure now have bounded evidence; see [operating policy](operating-policy.md).
+Current native agent mappings use migrated definitions, not a migration guarantee
+for other hosts. Agents and general engineering skills live outside the plugin;
+the bundled `loom` skill is its usage guide. Do not restore removed external Loom
+skills. Migrated prompts must not depend on removed
 workflow tools. Preserve optional external `SKILL.md` / `ASSESSMENT.md` / `QA.md`
 companions and native loading. The skills repository is
 [bateau84/skills](https://github.com/bateau84/skills).

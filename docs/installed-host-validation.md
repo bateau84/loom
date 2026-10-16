@@ -82,13 +82,21 @@ Use isolated state and record host version, real tool results, ledger snapshots
 and limits. Do not replace host execution with manual hook calls and call it live
 acceptance. Model-driven runs need their own explicit execution setup.
 
-## Review independence and the unused method
+## Review independence and subsequent evidence
 
 This authoring session does not supply an independent Reviewer gate by renaming
 its own checks. That gate stays open. The supplied review of `6c8abb3` found no
-tracked direct callers of `Store.recent()` and no declared package entrypoint
+tracked direct callers of the former broad recent-record reader and no package entrypoint
 exposing it. The corrective patch removes that unused method; this bounded
 cleanup is not completion of the combined independent review.
+
+Subsequent operator startup and historical Action/Plan retrieval succeeded after
+the narrowly supported empty predecessor sender-table upgrade. Separately, the
+real native trial passed handoff/completion/replan/removal and independent fresh
+recovery without authorizing/sending automatic continuation. See
+[operating policy](operating-policy.md) and [migration](migration.md#state-and-rollback).
+These later observations do not expand this older empty-ledger boot probe into
+restart, sender transport or whole-alpha acceptance proof.
 
 A/B/C/D remain implemented and regression-tested. E and broader F coverage remain
 open. Excerpts can omit qualifications; consequential decisions require full-source

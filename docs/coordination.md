@@ -6,8 +6,9 @@ The storage-only assignment contract is implemented at `3f08da9`; see
 [assignment association and stored delivery intent](assignment-delivery.md).
 The user accepted the storage slice independently. The current sender adds only
 prospective exact-primary authorization, fenced sending, positive admission
-reconciliation and irreversible explicit withdrawal. It is not default enablement,
-independent sender acceptance or overall production coordination readiness. See
+reconciliation and irreversible explicit withdrawal. The default-off sender has
+accepted bounded evidence; it is not default enablement or overall production
+coordination readiness. See
 [the implemented operations and uncertainty limits](assignment-delivery.md).
 
 ## Decision and evidence
@@ -232,8 +233,9 @@ the notice. Request ENTRY is observed before script guards, alongside actual
 native inputs, Worker operations, completion reads and coordinating writes.
 See the [test commands](sender-qualification.md) and retained run evidence.
 
-Independent review is still required; default coordination is not enabled by
-passing these checks. Explicit withdrawal is qualified, not automatic native Stop
+Independent sender review/acceptance is recorded within its bounded scope; default
+coordination is not enabled by passing these checks. Explicit withdrawal is
+qualified, not automatic native Stop
 propagation, arbitrary overlapping/burst-answer scheduling or live-model usefulness.
 
 The pass endpoint remains: after original delegation returns and Primary is idle,
@@ -249,7 +251,11 @@ when evaluating practical usefulness. Retain its negative controls and all six
 original scenarios; do not turn their expected failures into successful recovery.
 Broader background/replay cases remain unproven until separately exercised.
 
-This work does not close E, the context-read/selection-save defect, manual
-backup/restore, migration or overall alpha readiness. Scheduling, dashboards,
+The separate context-read/selection-save correction and stopped-writers manual
+backup/restore are now reviewed/tested. The real native trial and independent
+fresh-Session recovery also passed their bounded scope without authorizing or
+sending automatic continuation; see [current evidence and limits](operating-policy.md).
+Neither that trial nor sender acceptance closes E, universal migration or overall
+alpha readiness. Scheduling, dashboards,
 universal grants/gates, automatic parent completion and a second agent runner
 remain outside this scope. Keep PR #180 draft and unmerged.

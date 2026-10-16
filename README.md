@@ -34,17 +34,21 @@ Git tree matches the former Loom `skills/` tree). Native OpenCode still owns
 skill installation and discovery; Loom does not load skills from GitHub.
 Export agent definitions, launchers, themes, profiles and any private settings
 separately before replacing a config-root checkout. The migration is deliberately
-not automatic: existing agent prompts still reference removed Loom tools.
-See [Migration](docs/migration.md), including the separate agent/skill cleanup.
+not automatic: legacy exported prompts may reference removed Loom tools.
+Current native agent mappings use the migrated definitions; do not reinstall
+removed external Loom skills. The bundled `loom` skill is the usage guide.
+See [Migration](docs/migration.md) for other installations and legacy exports.
 
 The alpha milestone is useful Research → Worker handoff and fresh-session
 resumption with trustworthy history, clear tool guidance, and one tested manual
-backup/restore procedure. The test-only comparison at `c2db6e7` now has independent
-feasibility acceptance, as reported by the user. It proves its scripted-host scope,
-not production delivery or live-model usefulness. See the
-[coordination direction](docs/coordination.md) and [reviewed comparison](docs/handback-comparison.md).
-A successful context read must also survive a failed selection save; that correction
-is not yet implemented. See the [narrow alpha operating policy](docs/operating-policy.md).
+backup/restore procedure. The default-off sender is accepted within its bounded
+scope, not as general production coordination readiness. A real native handoff,
+completion/replan/removal and independently checked fresh-Session recovery trial
+also passed its declared scope; it sent no automatic continuation. Successful
+context reads now survive selection-save failures with a separate truthful outcome.
+See the [alpha policy and evidence limits](docs/operating-policy.md),
+[coordination direction](docs/coordination.md) and
+[manual stopped-writers backup/restore](docs/manual-backup-restore.md).
 
 Advanced storage recovery, maintenance/capacity modes, strict WAL-growth quotas,
 scheduling, dashboards and legacy import are deferred, not alpha prerequisites.
@@ -85,7 +89,8 @@ installation**; hot-upgrading cannot recover uncertainty discarded by the old
 implementation. See [Evidence pairing](docs/evidence-reliability.md).
 The CI jobs install Loom dependencies from the committed lockfile with frozen
 installation and a lock-stability check. The separately installed host's dependency
-graph and the manual state-backup/restore procedure remain separate release work.
+graph remains a separate concern. The manual state procedure has isolated
+meaningful-record restore evidence, not native Session continuity proof.
 
 In a separate plugin checkout, run `bun install --frozen-lockfile`. Add that checkout
 to your existing OpenCode configuration, without replacing your other entries:
@@ -150,7 +155,10 @@ The skill transform preserves an existing skill with the same ID, including its
 visibility settings. Rename or remove an old custom `loom` skill to use the
 bundled one. Reload replays registration without duplicating the entry, and
 unloading removes this plugin's contribution, not other skills. Update the guide
-alongside changes to Loom's tools; it explicitly describes the current
+alongside changes to Loom's tools. The guide body is read during plugin setup;
+an already loaded host needs plugin re-registration and a fresh native skill
+load to use an updated body, not just a YAML reread. This documentation change
+does not reload or restart the host. The guide explicitly describes the current
 default stored-only behavior and explicitly opt-in answer-to-primary sender,
 separate from the older test-only continuation path. See
 [sender operations and uncertainty](docs/assignment-delivery.md) and
@@ -166,7 +174,7 @@ directly in tool descriptions and returned by tool search; agents do not need to
 fetch this Markdown first. See [tool discovery](docs/tool-discovery.md). Live-model
 usefulness of the guidance remains separate from scripted-host feasibility.
 
-For concrete work, create an Action. For complex work, save an optional plan.
+For work worth retaining, optionally create an Action and save a Plan if useful.
 Pass the Action and Task IDs in the native delegation message. The receiving
 agent calls `loom_context` once with those IDs to select work and get its context.
 Future model turns receive that context automatically for configured agents.
@@ -178,13 +186,14 @@ execution is never gated by it. The current implementation intentionally does no
 infer a child's task from its parent's *current* selection, which might have
 changed after dispatch. Fully automatic native handoff remains future work.
 
-The selected coordination candidate sends answer references to the exact primary,
+The implemented opt-in sender sends answer references to the exact primary,
 which retrieves the thread and natively re-delegates to the same Worker Session.
 Native delegation owns the completion return: no competing Loom completion nudge
-or direct Worker synthetic resume is planned for that path. It is currently
-**test-only**. Durable assignment routing, answer delivery, uncertain admission
-recovery and cancellation are not enabled in the production plugin. Passive
-notices remain a separate candidate, not equivalent automatic continuation.
+or direct Worker synthetic resume is sent on that path. Assignment routing,
+positive-only admission recovery and irreversible explicit withdrawal are
+implemented. Default sends none: only future intents after exact-primary
+authorization are eligible. Native Stop is not withdrawal; admission is not
+processing or acceptance. Passive notices are not equivalent continuation.
 
 Use `loom_record` to record useful results, claims, Assessment or QA findings.
 Load external skills and their `ASSESSMENT.md`/`QA.md` companions with native tools.
@@ -214,6 +223,12 @@ Do not sync this private database into source control. It is local history, not 
 security boundary against other programs running as your user. Capture can be
 disabled with `ledger.capture: off`. Explicitly recorded text is not redacted;
 never put credentials or other secrets in a result, claim or artifact reference.
+
+Before an upgrade, preserve state using the [offline procedure](docs/manual-backup-restore.md).
+Only the observed empty predecessor sender-table shape has a supported in-place
+compatibility upgrade; unsupported/nonempty predecessor shapes fail explicitly,
+without resetting history. This is not legacy workflow-ledger import. See
+[state and rollback](docs/migration.md#state-and-rollback).
 
 ## Development
 

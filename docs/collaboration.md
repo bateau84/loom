@@ -3,16 +3,18 @@
 The Plan describes intent. The ledger stores completion reports, reopen events,
 questions and answers. The five tool names remain unchanged. The current production
 implementation has no scheduler, blocking-question state, approval grant, automatic
-parent completion or agent wakeup.
+parent completion or default agent wakeup. The separately implemented sender
+requires explicit prospective authorization.
 
-## Coordination candidate, not current tool behavior
+## Implemented bounded coordination, not default continuation
 
 The independently reviewed comparison at `c2db6e7` favors answer -> original primary
 -> native re-delegation to the same Worker Session, retaining its original
 `work_ref`. The native call owns completion return; Loom must not also send a
 completion nudge or directly resume Worker for that continuation. See
 [Coordination](coordination.md) for assignment/routing, delivery, uncertain-admission
-recovery and cancellation requirements. Those capabilities remain unimplemented.
+recovery and explicit withdrawal. The bounded sender is implemented and accepted
+within its declared scope, default off. Native Stop is not assignment withdrawal.
 Passive notices are a separate candidate, not a way to resume an idle primary.
 
 The operations below document shipped code in this draft, not proposed fields or
@@ -132,13 +134,14 @@ Core tests exercise the agreed flow through real SQLite, including a reopened
 connection and new Session. Registered-plugin tests exercise real callbacks and
 context hooks using a simulated host. Existing pinned Code Mode tests verify that
 search returns complete registered help and signatures, now including these operations.
-The record manual has a 6,000-character metadata ceiling; other tools retain 3,600.
+The record manual has a 10,000-character metadata ceiling; other tools retain 3,600.
 
 The separate [host comparison](handback-comparison.md) now exercises actual Loom
 callbacks through installed native delegation with a scripted provider. The user
 reports independent acceptance of that comparison's narrow scope at `c2db6e7`.
-That does not turn the test-only delivery code into production behavior or establish
-live-model usefulness, task-removal/fresh-Session acceptance, or overall readiness.
-The pre-existing successful-read/failed-selection limitation, tested manual
-backup/restore and wider E operating limits remain separate work. Keep PR #180
+That comparison alone does not establish live-model usefulness or overall readiness.
+Subsequent production sender acceptance, reviewed context/selection correction,
+tested manual backup/restore and the bounded real native task-removal/fresh-Session
+trial are summarized in [operating policy](operating-policy.md). No automatic
+continuation was authorized/sent in that trial. Wider E limits remain. Keep PR #180
 draft; this status update does not authorize paid inference, dashboards or scheduling.

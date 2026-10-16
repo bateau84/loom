@@ -192,9 +192,13 @@ and retained history. Explicitly select a current task, select Action-only conte
 or call `loom_context` with `{"clear":true}`. Do not infer a replacement task from
 a similar title. `loom_context` with `{}` reads this Session's existing selection.
 
-A context read can still throw if saving the selection fails. Do not assume the
-selection changed after an error, or that a failed clear succeeded. Explicit Plan
-and ledger queries are alternative reads that do not save selection.
+Successful context reads survive a selection-save failure: inspect the separate
+`selection.status:"save-failed"` outcome. `persisted` is the saved reference,
+null if absent, or "unknown" if readback failed; it is not the unsaved request.
+Later automatic context follows persisted selection. Do not assume the
+selection changed after an error, or that a failed clear succeeded: clear still
+fails on a write error. Unreadable context still fails, not a missing-task notice.
+Explicit Plan and ledger queries are alternative reads that do not save selection.
 Role/context injection is optional `.loom.yaml` behavior; tools and this skill
 remain usable without it. Respect native permission denials rather than bypassing
 them. End handoffs with actual results, record IDs, remaining work and honest

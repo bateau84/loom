@@ -8,25 +8,27 @@ merely to turn every limitation into a closed finding.
 
 ## Required for the alpha
 
-| Requirement | Acceptance evidence still needed |
+| Requirement | Current bounded evidence |
 | --- | --- |
 | Do not delete or silently replace history | Existing regressions remain; failures must not create an apparently successful empty replacement |
-| Keep successfully retrieved context when saving selection fails | Return the read and a separate failed selection outcome; test a fresh Session and an existing selection |
+| Keep successfully retrieved context when saving selection fails | Implemented and independently reviewed; fresh and existing selection regressions |
 | Explain failures truthfully | Distinguish unreadable context, failed selection/clear, failed capture and invalid configuration; never report a skipped write as successful |
-| One straightforward manual backup/restore procedure | Test restoration of meaningful records to a separate location without overwriting the source or claiming live invocation continuity |
+| One straightforward manual backup/restore procedure | Tested separate-location restoration of meaningful records and relationships; originals retained, no native continuity claim |
 
-**The context/selection failure fix is not implemented by this document.** At the
-reviewed runtime, `loom_context` can still throw after a successful read if its
-selection save fails. That small correction remains required. On a failed save,
-report whether the actual saved reference could be read; do not invent it when
-storage is unavailable. A failed clear must not claim that selection was cleared.
+**The context/selection correction is implemented.** A successful `loom_context`
+read is returned even if saving explicit selection fails, alongside
+`selection.status: "save-failed"`, diagnostics and `persisted`: the actual saved
+reference, null if absent, or "unknown" if readback fails. Diagnostics may be
+excerpted to fit the context budget. A failed clear still fails; it does not
+claim that selection was cleared.
 Subsequent automatic context follows persisted selection, not the requested but
 unsaved reference. Keep invalid input, missing tasks and storage errors distinct.
 No second persistence store, automatic reassignment or endless retry is needed.
 
-**Manual backup/restore is also still unimplemented and untested.** Its alpha
-scope is one operator-initiated procedure with stopped writers, explicit source
-and destination, preserved originals and verification of restored Action IDs,
+**The [manual backup/restore procedure](manual-backup-restore.md) is tested.** Its
+scope is one operator-initiated procedure with ALL writers and SQLite connections
+closed, explicit source and separate destination, preserved originals/sidecars
+and verification of restored Action IDs,
 Plan revisions, results, claims/reviews and interrupted/ambiguous observations.
 It need not include scheduling, an archive service, online restoration, rotation
 or automatic corruption repair. Restoring data does not replay missing events or
@@ -80,18 +82,36 @@ preemption, I/O deadline or hostile same-process containment. On the first upgra
 from code without admission tracking, drain old loads or restart the host;
 replacement cannot retrospectively count work that was never registered.
 
-## Next work and proof
+## Bounded evidence and remaining acceptance
 
-1. Use the [five-tool guide](tools.md) to improve the actual tool descriptions and
-   role-injected help where a real agent encounters uncertainty. This document
-   does not change that injected help.
-2. Fix the successful-read/failed-selection outcome and test the manual backup/
-   restore procedure. Keep both independent of capacity-management features.
-3. Run the installed Research -> Worker -> task removal -> explicit recovery ->
-   fresh-session scenario with real persisted records and independent review.
+The default-off sender has accepted bounded evidence; this does not enable
+continuation by default. Historical false/missing consent never authorizes I/O.
+The context correction (`3c474c2`) and manual procedure (`51dc355`) have independent
+review. The supplied composition evidence at `245f74a` reports 254 native tests,
+370 core tests (five hard-coded external-scratch concurrency cases excluded),
+typecheck and a private restore -> empty-legacy upgrade -> selection-failure seam.
+The producer additionally reported 16 Python passes; these were not independently
+rerun. These counts describe those runs, not a claim of a full unexcluded suite.
 
-The existing boot test proves loading and equivalent intact empty-ledger checks,
-not that scenario. A written example or simulated hooks are not live acceptance.
+The real native trial Action `814363bc-7939-4995-a86d-deb16f74357c` is completed.
+Its research result `d5207f13-1979-46d7-bcc3-df2ee3bc848c`, full thread
+`04a2c707-f476-4de1-9bdd-5fa4c9176d32`, answer
+`e4e0bef5-7077-4121-bea0-cd4b87b9f7a1`, coder result
+`6af38b01-94f6-48e7-91e3-49462927ca12`, explicit completion
+`091bad9d-6595-4aee-9e44-445ffb387dd6` and independent fresh-recovery PASS
+`d398a7e4-ee81-40f6-ae0b-17e283161ab3` identify the retained evidence.
+Native research/coder/follow-up, Plan 2 retaining completion, Plan 3 removing the
+coder task, historical retrieval and fresh-Session recovery passed that bounded
+scope. No automatic continuation was authorized or sent. Source freshness,
+transport, restart and save-failure probes were outside this trial, not claims
+that separate tests lack such evidence. Completion of this Action is not whole-alpha
+acceptance, a universal usefulness claim or permission to merge/release.
+
+The [five-tool guide](tools.md), registered search help and bundled `loom` skill
+remain the usage references. Native agent mappings use current definitions;
+removed external Loom skills stay removed. Actions and Plans remain optional.
+The older boot test proves only its loading/empty-ledger scope; it is neither
+the trial above nor proof of every later source revision.
 **E stays partial** for unimplemented startup/storage guarantees; independent
 review of the implemented bounds remains separate. Do not reopen a large storage
 program merely to call E fully closed. Keep PR #180 draft pending narrow alpha

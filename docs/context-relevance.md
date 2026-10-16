@@ -79,7 +79,17 @@ injection without changing selection or history. The underlying read still rolls
 back its transaction on failure. Other storage failures are not mislabeled as
 missing tasks. This does not change the sampling or excerpt limitations above.
 
-Independent review, an installed OpenCode smoke test, frozen installation and
-the reproducible two-agent release scenario remain outstanding. The PR stays a
-draft. Tests of local SQLite/context functions and simulated plugin hooks are not
-live-host acceptance or evidence of improved model task quality.
+These original local SQLite/context tests and simulated hooks are not live-host
+acceptance or evidence of improved model task quality. Subsequent bounded native
+trial and independent fresh-Session recovery evidence is summarized in
+[operating policy](operating-policy.md); it is not whole-alpha acceptance. The PR
+stays a draft.
+
+Explicit context now reads before saving selection. If the read succeeds and the
+save fails, the response retains retrieved context plus `selection.status:
+"save-failed"`, diagnostics and `persisted` (actual saved reference, null if absent,
+or "unknown" on failed readback). Diagnostics may be excerpted within the output
+budget. Subsequent automatic context follows persisted selection, not the unsaved
+request. A failed clear still fails; unreadable context and invalid input still
+fail rather than becoming missing-task recovery notices. Separate Plan/ledger
+queries remain selection-independent alternatives when explicit IDs are supplied.

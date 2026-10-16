@@ -5,6 +5,13 @@ legacy configuration exporter. It preserves the original files and restores to a
 **separate, previously nonexistent directory**. It does not install the restored
 state into a running host, migrate schemas, or repair damaged data.
 
+This is the manual procedure referenced by the [alpha operating policy](operating-policy.md)
+and [README](../README.md). Keep it separate from the configuration exporter and
+the narrow empty-sender-table startup compatibility upgrade described in
+[migration and rollback](migration.md#state-and-rollback). A successful restore
+comparison is not authorization to start a sender or evidence of general legacy
+schema compatibility.
+
 ## Prerequisites and boundaries
 
 - Stop **every writer and SQLite connection** to this project Store, including

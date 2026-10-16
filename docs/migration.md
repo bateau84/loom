@@ -11,8 +11,11 @@ snapshot is identical, including `SKILL.md`, `ASSESSMENT.md` and `QA.md` files.
 This confirms the copy, **not** that all old Loom workflow references have been
 ported or that skills are installed and discovered on the local OpenCode host.
 
-**Agent definitions, personal configuration, launchers and themes still need a
-separate destination and migration.** The helper below makes a lossless legacy
+**Keep agent definitions, personal configuration, launchers and themes outside
+the plugin.** The verified active installation now uses current native agent
+definitions/mappings; that is not automatic migration for other hosts. Removed
+external Loom skills must stay removed; use the plugin's bundled `loom` guide.
+The helper below makes a lossless legacy
 snapshot for that work and optional skill backup. It does not install skills,
 change OpenCode settings or create another repository.
 
@@ -63,19 +66,44 @@ actually exist in your native agent definitions. Keep personal YAML untracked.
 
 ## State and rollback
 
-The new runtime uses a separate `actions-v1` database path. It does not mutate,
-upgrade, delete or automatically import the old workflow ledger. Keep old state
-for inspection with the old plugin until a provenance-preserving importer exists.
+The Action runtime uses a separate `actions-v1` database path. It does not mutate,
+upgrade, delete or automatically import the old workflow ledger. Keep old workflow
+state for inspection with the old plugin until a provenance-preserving importer exists.
 
-To roll back, restore the previous plugin entry/configuration and old bundle;
-the old database has not been changed. The new Action data remains separate.
-Switching plugin versions does not migrate active agent conversations.
+Upgrading an existing **Action Store** is a different boundary. Close all writers
+and SQLite connections and preserve its original files/sidecars using the
+[manual stopped-writers backup/restore procedure](manual-backup-restore.md).
+The current startup compatibility path recognizes only the observed empty
+`primary_deliveries` predecessor definition lacking `assignment_id`, with its
+recognized indexes and no unrecognized triggers. It adds the required column and
+current indexes transactionally; it does not infer assignment IDs, rewrite ledger
+records or turn historical false/missing continuation consent into authorization.
+Unrecognized definitions, incompatible indexes, unexpected legacy indexes/triggers
+and nonempty predecessor projections fail explicitly. Initialization rolls back;
+the diagnostic says to close Loom and preserve a backup, **not reset/delete state**.
+Do not treat `user_version=1` alone as a compatibility guarantee.
+
+The captured observed-empty upgrade retained all 1,675 ledger records, 2 Actions,
+4 Plans and 7 focus values byte-for-byte. Its private derivative exposed five
+tools with zero Session/authorization/delivery I/O; actual operator startup then
+succeeded and historical Actions/Plans were accessible normally. This is evidence
+for that observed predecessor, not universal legacy migration or populated sender
+table support. See the [alpha evidence boundaries](operating-policy.md).
+
+For rollback to the old workflow runtime, restore its previous plugin entry/
+configuration and old bundle; that workflow database remains separate. This is
+not permission to run an older Action writer against an upgraded Action Store.
+Preserve version provenance and originals; restore/inspect only at a separate
+location with the appropriate revision, following the manual procedure. Switching
+plugin versions does not migrate active native agent conversations or replay work.
 
 ## Before the PR is ready to merge
 
-Verify the external skills are installed and compatible with the new Action
-model, and finish migrating agent definitions; verify plugin installation on
-the actual host; exercise a task, replan, cross-session context read, Assessment and QA;
+For each installation verify its native agent mappings and any applicable external
+engineering skills; do not restore removed workflow-specific skills. Use the
+built-in guide and current registered help. The active host has bounded native
+trial and fresh-Session evidence, summarized in [operating policy](operating-policy.md),
+not whole-alpha acceptance. For a new host verify installation and its own work path;
 confirm that the features still listed as outstanding in `docs/design.md` are
 not needed for the release being tested. No existing open PR is superseded or
 closed by this draft automatically.
