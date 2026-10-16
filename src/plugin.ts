@@ -53,12 +53,28 @@ export default Plugin.define({
     const stateHome = xdg && isAbsolute(xdg) ? xdg : join(homedir(), ".local", "state")
     const projectScope = digest({ project: ctx.location.project.id, canonical: ctx.location.project.canonical })
     const state = join(stateHome, "loom", "actions-v1", projectScope)
-    await mkdir(state, { recursive: true, mode: 0o700 })
-    const filename = join(state, "ledger.sqlite")
-    const handle = await open(filename, "a", 0o600); await handle.close()
-    const db = new Database(filename)
+    let filename = join(state, "ledger.sqlite")
+    let stage = "state-directory"
+    let db: Database | undefined
     let store: Store, observer: Observer
-    try { store = new Store(db, projectScope); observer = new Observer(store) } catch (error) { db.close(); throw error }
+    try {
+      await mkdir(state, { recursive: true, mode: 0o700 })
+      stage = "database-file"
+      const handle = await open(filename, "a", 0o600); await handle.close()
+      stage = "database-path"
+      filename = await realpath(filename)
+      stage = "database-open"
+      db = new Database(filename)
+      stage = "store-initialization"
+      store = new Store(db, projectScope)
+      stage = "observer-initialization"
+      observer = new Observer(store)
+    } catch (error) {
+      // Cleanup must not replace the initialization cause. No recovery or retry here.
+      try { db?.close() } catch { /* Preserve the primary failure. */ }
+      throw new Error(`Loom startup failed (stage=${stage}, database=${JSON.stringify(filename)}): ${error instanceof Error ? error.message : String(error)}`, { cause: error })
+    }
+    const database = db
     const disposers: Array<{ dispose(): Promise<void> }> = []
     let lastWarning = ""
     const warn = (error: unknown) => {
@@ -231,8 +247,8 @@ export default Plugin.define({
       }))
     } catch (error) {
       lifetime.abort()
-      await Promise.allSettled([...disposers.map(d => d.dispose()),admissions,recovery,sender.settled()]); db.close(); throw error
+      await Promise.allSettled([...disposers.map(d => d.dispose()),admissions,recovery,sender.settled()]); database.close(); throw error
     }
-    return async () => { lifetime.abort(); await Promise.allSettled([...disposers.map(d => d.dispose()),admissions,recovery,sender.settled()]); db.close() }
+    return async () => { lifetime.abort(); await Promise.allSettled([...disposers.map(d => d.dispose()),admissions,recovery,sender.settled()]); database.close() }
   },
 })

@@ -1,12 +1,111 @@
-import { test, expect } from "bun:test"
+import { test, expect, spyOn } from "bun:test"
 import { YAML } from "bun"
 import { Database } from "bun:sqlite"
-import { mkdtemp, writeFile, rm, readdir } from "node:fs/promises"
+import { mkdir, mkdtemp, writeFile, rm, readdir, realpath, symlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import plugin from "../src/plugin.js"
+import entrypoint from "../server.js"
 import { loadConfig } from "../src/config.js"
 import { Store } from "../src/store.js"
+import { digest } from "../src/model.js"
+
+for (const scenario of ["missing-column", "unsupported-version", "healthy"] as const) test(scenario === "healthy"
+  ? "healthy startup still registers five tools and closes its private database on disposal"
+  : `startup ${scenario} identifies the resolved database and known stage, preserves cause and closes before tools`, async () => {
+  const healthy = scenario === "healthy"
+  await mkdir(new URL("../.test-build/", import.meta.url), { recursive: true })
+  const dir = await mkdtemp(join(import.meta.dir, "../.test-build/startup-"))
+  const previous = { state: process.env.XDG_STATE_HOME, config: process.env.OPENCODE_CONFIG_DIR }
+  const stateHome = join(dir, "actual-state"), alias = join(dir, "state-alias")
+  await mkdir(stateHome); await symlink(stateHome, alias)
+  const project = { id: "startup-test", canonical: dir, directory: dir }
+  const state = join(stateHome, "loom", "actions-v1", digest({ project: project.id, canonical: project.canonical }))
+  await mkdir(state, { recursive: true })
+  const filename = join(state, "ledger.sqlite"), db = new Database(filename)
+  const store = new Store(db)
+  const actor = { session_id: "private-session", agent: "author" }
+  const action = store.create("Private action", "Not diagnostic output", actor)
+  store.record(actor, { action_id: action.id }, { kind: "claim", statement: "PRIVATE-RECORD-CONTENT" })
+  // Old-shaped delivery table: the assignment index must really fail in DeliveryState.
+  if (scenario === "missing-column") db.exec("DROP TABLE primary_deliveries; CREATE TABLE primary_deliveries (intent_id TEXT PRIMARY KEY, intent_seq INTEGER, bucket TEXT)")
+  if (scenario === "unsupported-version") db.exec("PRAGMA user_version=42")
+  const history = db.query("SELECT data FROM ledger ORDER BY seq").all()
+  db.close()
+  const registrations: string[] = [], tools: string[] = [], closed: Database[] = []
+  let skillDisposals = 0
+  const originalClose = Database.prototype.close
+  const close = spyOn(Database.prototype, "close").mockImplementation(function(this: Database, ...args: Parameters<Database["close"]>) {
+    closed.push(this); return originalClose.apply(this, args)
+  })
+  const ctx = {
+    location: { directory: dir, project },
+    skill: { transform: async (fn: any) => {
+      registrations.push("skill")
+      fn({ get: () => undefined, add: () => {} })
+      return { dispose: async () => { skillDisposals++ } }
+    } },
+    tool: {
+      transform: async (fn: any) => {
+        registrations.push("tool")
+        fn({ namespace: () => {}, add: (tool: { name: string }) => tools.push(tool.name) })
+        return { dispose: async () => {} }
+      },
+      hook: async () => ({ dispose: async () => {} }),
+    },
+    session: { hook: async () => ({ dispose: async () => {} }) },
+    event: { subscribe: async function* () { registrations.push("event") } },
+  }
+  let cleanup: (() => void | Promise<void>) | undefined
+  try {
+    process.env.XDG_STATE_HOME = alias
+    process.env.OPENCODE_CONFIG_DIR = join(dir, "config")
+    let failure: unknown
+    try { cleanup = await entrypoint.setup(ctx as unknown as Parameters<typeof entrypoint.setup>[0]) || undefined }
+    catch (error) { failure = error }
+    if (healthy) {
+      expect(failure).toBeUndefined()
+      expect(tools.sort()).toEqual(["action", "agents", "context", "plan", "record"])
+      expect(registrations.sort()).toEqual(["event", "skill", "tool"])
+      expect(closed).toHaveLength(0)
+      if (!cleanup) throw new Error("Healthy startup must return cleanup")
+      await cleanup(); cleanup = undefined
+    } else {
+      expect(failure).toBeInstanceOf(Error)
+      if (!(failure instanceof Error)) throw new Error("Expected initialization failure")
+      expect(failure.message).toContain(await realpath(filename))
+      expect(failure.message).not.toContain(alias)
+      expect(failure.message).toContain("stage=store-initialization")
+      expect(failure.cause).toBeInstanceOf(Error)
+      if (!(failure.cause instanceof Error)) throw new Error("Expected original SQLite cause")
+      expect(failure.message).toContain(failure.cause.message)
+      if (scenario === "missing-column") {
+        expect(failure.cause.message).toContain("no such column: assignment_id")
+        expect(failure.cause.stack).toContain("primary-sender.ts")
+        expect(failure.cause).toHaveProperty("code", "SQLITE_ERROR")
+      } else expect(failure.cause.message).toContain("Unsupported Loom Action database version")
+      expect(`${failure.message}\n${failure.stack}\n${failure.cause.stack}`).not.toContain("PRIVATE-RECORD-CONTENT")
+      expect(registrations).toEqual(["skill"])
+      expect(tools).toEqual([])
+    }
+    expect(closed).toHaveLength(1)
+    expect(skillDisposals).toBe(1)
+    expect(() => closed[0].query("SELECT 1")).toThrow()
+    close.mockRestore()
+    const after = new Database(filename)
+    try {
+      expect(after.query("SELECT data FROM ledger ORDER BY seq").all()).toEqual(history)
+      expect(after.query("PRAGMA table_info(primary_deliveries)").all().some((column: any) => column.name === "assignment_id")).toBe(scenario !== "missing-column")
+      expect(after.query("PRAGMA user_version").get()).toEqual({ user_version: scenario === "unsupported-version" ? 42 : 1 })
+    } finally { after.close() }
+  } finally {
+    await cleanup?.()
+    close.mockRestore()
+    if (previous.state === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = previous.state
+    if (previous.config === undefined) delete process.env.OPENCODE_CONFIG_DIR; else process.env.OPENCODE_CONFIG_DIR = previous.config
+    await rm(dir, { recursive: true, force: true })
+  }
+})
 
 test("real Bun YAML decoder and SQLite adapter", async () => {
   const dir = await mkdtemp(join(tmpdir(), "loom-native-"))
