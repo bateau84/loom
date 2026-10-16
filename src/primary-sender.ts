@@ -29,7 +29,7 @@ const deliveryColumns = `intent_id TEXT PRIMARY KEY REFERENCES ledger(id), inten
 // Do not derive assignment IDs from old rows or reconstruct a queue from history.
 const emptyLegacyColumns = `intent_id TEXT PRIMARY KEY REFERENCES ledger(id), intent_seq INTEGER NOT NULL, bucket TEXT NOT NULL,
   version INTEGER NOT NULL DEFAULT 0, phase TEXT NOT NULL DEFAULT 'pending', attempt_id TEXT,
-  binding_record_id TEXT, latest_event_id TEXT, receipt_id TEXT, native_cancel_event_id TEXT, started INTEGER NOT NULL DEFAULT 0`
+  binding_record_id TEXT, latest_event_id TEXT, receipt_id TEXT, started INTEGER NOT NULL DEFAULT 0, native_cancel_event_id TEXT`
 const schemaText = (sql:string) => {
   // Recognize only the known DDL tokens. Preserve token boundaries and literal
   // case: versionINTEGER and DEFAULT 'PENDING' are not the supported definition.

@@ -2,12 +2,12 @@ import { Database } from "bun:sqlite"
 import { Store } from "../../src/store.js"
 import { workReference } from "../../src/collaboration.js"
 
-// Synthetic diagnostic shape, not a claim about any historical producer/version.
+// Exact table/index DDL from the independent capture evidence. History below is
+// synthetic; no captured records or private identities belong in this fixture.
 export const legacyDeliveryDDL = `CREATE TABLE primary_deliveries (
-  intent_id TEXT PRIMARY KEY REFERENCES ledger(id), intent_seq INTEGER NOT NULL, bucket TEXT NOT NULL,
-  version INTEGER NOT NULL DEFAULT 0, phase TEXT NOT NULL DEFAULT 'pending', attempt_id TEXT,
-  binding_record_id TEXT, latest_event_id TEXT, receipt_id TEXT, native_cancel_event_id TEXT,
-  started INTEGER NOT NULL DEFAULT 0);
+      intent_id TEXT PRIMARY KEY REFERENCES ledger(id), intent_seq INTEGER NOT NULL, bucket TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 0, phase TEXT NOT NULL DEFAULT 'pending', attempt_id TEXT,
+      binding_record_id TEXT, latest_event_id TEXT, receipt_id TEXT, started INTEGER NOT NULL DEFAULT 0, native_cancel_event_id TEXT);
   CREATE INDEX primary_delivery_bucket ON primary_deliveries(bucket,intent_seq);`
 
 export function legacyFixture(db: Database) {
@@ -41,9 +41,14 @@ export function legacyFixture(db: Database) {
   return { store, actor, action, other, ref, question, meaning }
 }
 
-/** Compare raw JSON bytes as well as every scalar, key, sequence and reference. */
+/** Rowid-ordered storage types and bytes of every column, not just row counts. */
 export function savedRows(db: Database) {
-  return Object.fromEntries(["actions", "plans", "focus", "ledger", "action_versions", "primary_deliveries", "sqlite_sequence"].map(table => [
-    table, db.query(`SELECT *, ${table === "primary_deliveries" || table === "sqlite_sequence" ? "NULL" : "hex(data)"} AS json_bytes FROM ${table} ORDER BY rowid`).all(),
-  ]))
+  return Object.fromEntries(["actions", "plans", "focus", "ledger", "action_versions", "primary_deliveries", "sqlite_sequence"].map(table => {
+    const columns = db.query(`PRAGMA table_info(${table})`).all() as { name: string }[]
+    const bytes = columns.map(({ name }) => {
+      const column = `"${name.replaceAll('"', '""')}"`
+      return `typeof(${column}),hex(CAST(${column} AS BLOB))`
+    }).join(",")
+    return [table, db.query(`SELECT rowid,${bytes} FROM ${table} ORDER BY rowid`).values()]
+  }))
 }

@@ -6,16 +6,20 @@ import { PrimarySender, DeliveryState } from "../src/primary-sender.js"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { execFileSync } from "node:child_process"
 import { join } from "node:path"
+import { tmpdir } from "node:os"
 import { registeredLoom } from "./helpers/registered-loom.js"
 import { digest } from "../src/model.js"
 import { legacyDeliveryDDL, legacyFixture, savedRows } from "./helpers/legacy-delivery.js"
 
 test("observed empty legacy delivery projection initializes and repeatedly reopens without changing history or creating work", async () => {
-  const dir = mkdtempSync("/tmp/opencode/ALP08-legacy-"), filename = join(dir, "synthetic.sqlite")
+  const dir = mkdtempSync(join(tmpdir(), "ALP08-legacy-")), filename = join(dir, "synthetic.sqlite")
   let db = new Database(filename)
   try {
     const f = legacyFixture(db), before = savedRows(db), meaning = f.meaning(f.store)
-    expect(db.query("PRAGMA table_info(primary_deliveries)").all()).toHaveLength(11)
+    expect(db.query("PRAGMA table_info(primary_deliveries)").all().map((c: any) => c.name)).toEqual([
+      "intent_id", "intent_seq", "bucket", "version", "phase", "attempt_id",
+      "binding_record_id", "latest_event_id", "receipt_id", "started", "native_cancel_event_id",
+    ])
     expect(db.query("SELECT count(*) AS n FROM ledger WHERE kind IN ('assignment','continuation-authorization','continuation-withdrawal','answer','delivery-intent','delivery-event')").get()).toEqual({ n: 0 })
     expect(before.actions).toHaveLength(2); expect(before.plans).toHaveLength(4)
     expect(before.action_versions).toHaveLength(1); expect(before.ledger.length).toBeGreaterThan(5)
@@ -35,6 +39,10 @@ test("observed empty legacy delivery projection initializes and repeatedly reope
       await b.sender(store.delivery).startup()
       expect(b.calls).toEqual([])
       expect(savedRows(db)).toEqual(before)
+      for (const row of db.query("SELECT seq,octet_length(data) AS data_bytes,data FROM ledger ORDER BY seq").all() as { seq: number; data_bytes: number; data: string }[]) {
+        expect(store.hydrateLedger([row])).toEqual([{ sequence: row.seq, ...JSON.parse(row.data) }])
+      }
+      expect(store.action(f.other.id)).toEqual(f.other)
       expect(f.meaning(store)).toEqual(meaning)
       expect(db.query("PRAGMA foreign_key_check").all()).toEqual([])
       expect(db.query("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" })
@@ -45,7 +53,7 @@ test("observed empty legacy delivery projection initializes and repeatedly reope
   } finally { db.close(); rmSync(dir, { recursive: true, force: true }) }
 })
 
-for (const scenario of ["nonempty-legacy", "masked-legacy-index", "masked-missing-column", "extra-column", "changed-default", "token-boundary", "literal-case", "legacy-trigger", "legacy-unique-index", "current-wrong-index"]) {
+for (const scenario of ["nonempty-legacy", "masked-legacy-index", "masked-missing-column", "extra-column", "changed-default", "changed-nullability", "missing-reference", "unobserved-column-order", "token-boundary", "literal-case", "legacy-trigger", "legacy-unique-index", "current-wrong-index"]) {
   test(`incompatible delivery schema ${scenario} rejects explicitly without changing any rows or schema`, () => {
     const db = new Database(":memory:")
     try {
@@ -55,6 +63,9 @@ for (const scenario of ["nonempty-legacy", "masked-legacy-index", "masked-missin
       if (scenario.startsWith("masked-")) db.exec("CREATE INDEX primary_delivery_assignment ON primary_deliveries(bucket,intent_seq)")
       if (scenario === "extra-column") db.exec("ALTER TABLE primary_deliveries ADD COLUMN unknown TEXT")
       if (scenario === "changed-default") db.exec("DROP TABLE primary_deliveries;" + legacyDeliveryDDL.replace("DEFAULT 'pending'", "DEFAULT 'done'"))
+      if (scenario === "changed-nullability") db.exec("DROP TABLE primary_deliveries;" + legacyDeliveryDDL.replace("started INTEGER NOT NULL", "started INTEGER"))
+      if (scenario === "missing-reference") db.exec("DROP TABLE primary_deliveries;" + legacyDeliveryDDL.replace(" REFERENCES ledger(id)", ""))
+      if (scenario === "unobserved-column-order") db.exec("DROP TABLE primary_deliveries;" + legacyDeliveryDDL.replace("started INTEGER NOT NULL DEFAULT 0, native_cancel_event_id TEXT", "native_cancel_event_id TEXT, started INTEGER NOT NULL DEFAULT 0"))
       if (scenario === "token-boundary") db.exec("DROP TABLE primary_deliveries;" + legacyDeliveryDDL.replace("version INTEGER NOT NULL DEFAULT 0", "versionINTEGER NOTNULLDEFAULT0"))
       if (scenario === "literal-case") db.exec("DROP TABLE primary_deliveries;" + legacyDeliveryDDL.replace("'pending'", "'PENDING'"))
       if (scenario === "legacy-trigger") db.exec("CREATE TRIGGER unknown_delivery AFTER INSERT ON primary_deliveries BEGIN UPDATE primary_deliveries SET started=1; END")
@@ -100,20 +111,30 @@ test("an injected later driver failure rolls back the empty legacy upgrade as we
   } finally { db.close() }
 })
 
-test("empty legacy upgrade never turns historical false or missing authorization into startup consent", async () => {
+test("empty legacy upgrade never turns historical flags without authorization into startup consent", async () => {
   const f = fixture(), b = boundary()
   try {
-    const falseID = f.answer().delivery.intent_id!, missingID = f.answer().delivery.intent_id!
+    const falseID = f.answer().delivery.intent_id!, missingID = f.answer().delivery.intent_id!, trueID = f.answer().delivery.intent_id!
     f.db.prepare("UPDATE ledger SET data=json_remove(data,'$.data.automatic_continuation') WHERE id=?").run(missingID)
+    f.db.prepare("UPDATE ledger SET data=json_set(data,'$.data.automatic_continuation',json('true'),'$.data.sender_policy','loom-primary-native-sender/v1') WHERE id=?").run(trueID)
     f.db.exec("DROP TABLE primary_deliveries;" + legacyDeliveryDDL)
-    const before = savedRows(f.db), store = new Store(f.db, "scope")
-    for (const id of [falseID, missingID]) expect(store.delivery.status(id)).toMatchObject({ eligibility: "stored-only", reason: "automatic-continuation-not-authorized", transport: "not-attempted" })
-    expect(store.delivery.startup()).toEqual([])
-    await b.sender(store.delivery).startup()
-    expect(b.calls).toEqual([])
-    expect(savedRows(f.db)).toEqual(before)
+    const before = savedRows(f.db)
+    const hostIO: string[] = []
+    b.host.get = async () => { hostIO.push("get"); throw new Error("No historical Session lookup") }
+    b.host.context = async () => { hostIO.push("context"); throw new Error("No historical Session context") }
+    for (let reopen = 0; reopen < 3; reopen++) {
+      const store = new Store(f.db, "scope")
+      for (const id of [falseID, missingID]) expect(store.delivery.status(id)).toMatchObject({ eligibility: "stored-only", reason: "automatic-continuation-not-authorized", transport: "not-attempted" })
+      expect(store.delivery.status(trueID)).toMatchObject({ eligibility: "invalid", transport: "not-attempted" })
+      expect(store.delivery.startup()).toEqual([])
+      await b.sender(store.delivery).startup()
+      expect(b.calls).toEqual([]); expect(hostIO).toEqual([])
+      expect(savedRows(f.db)).toEqual(before)
+    }
     expect(f.db.query("SELECT count(*) AS n FROM ledger WHERE kind='continuation-authorization'").get()).toEqual({ n: 0 })
     // Only a new explicit authorization and subsequent answer may enter the queue.
+    b.host.get = async ({ sessionID }: { sessionID: string }) => ({ id: sessionID })
+    const store = new Store(f.db, "scope")
     f.authorize()
     const newID = f.answer().delivery.intent_id!
     expect(store.delivery.startup()).toEqual([newID])
@@ -125,6 +146,7 @@ test("empty legacy upgrade never turns historical false or missing authorization
     expect(b.calls).toHaveLength(1)
     expect(savedRows(f.db)).toEqual(populated)
     for (const id of [falseID, missingID]) expect(reloaded.delivery.status(id).eligibility).toBe("stored-only")
+    expect(reloaded.delivery.status(trueID).eligibility).toBe("invalid")
   } finally { f.db.close() }
 })
 
@@ -283,7 +305,7 @@ test("authorization is prospective, exact-primary and idempotent; historical int
 })
 
 test("database actually produced by accepted 3f08da9 reopens without historical consent or byte changes",async()=>{
-  const root=mkdtempSync("/tmp/opencode/loom-legacy-"),filename=join(root,"ledger.sqlite"),b=boundary()
+  const root=mkdtempSync(join(tmpdir(),"loom-legacy-")),filename=join(root,"ledger.sqlite"),b=boundary()
   let db:Database|undefined
   try {
     for(const name of ["store","collaboration","model"])writeFileSync(join(root,name+".ts"),execFileSync("git",["show",`3f08da9:src/${name}.ts`]))
@@ -472,7 +494,7 @@ test("preflight failure is retryable without another answer; exact destination c
 })
 
 test("two real connections compete during preflight; superseded PREPARING owner cannot call",async()=>{
-  const root=mkdtempSync("/tmp/opencode/loom-sender-"),f=fixture(join(root,"ledger.sqlite")),db2=new Database(join(root,"ledger.sqlite")),other=new Store(db2,"scope"),b=boundary()
+  const root=mkdtempSync(join(tmpdir(),"loom-sender-")),f=fixture(join(root,"ledger.sqlite")),db2=new Database(join(root,"ledger.sqlite")),other=new Store(db2,"scope"),b=boundary()
   try {
     const id=fresh(f),release=Promise.withResolvers<void>(),entered=Promise.withResolvers<void>()
     b.host.get=async({sessionID}:any)=>{entered.resolve();await release.promise;return {id:sessionID}}
@@ -494,7 +516,7 @@ test("two real connections compete during preflight; superseded PREPARING owner 
 })
 
 test("two plugin owners at actual send boundary make only one native call",async()=>{
-  const root=mkdtempSync("/tmp/opencode/loom-sender-"),f=fixture(join(root,"ledger.sqlite")),db2=new Database(join(root,"ledger.sqlite")),other=new Store(db2,"scope"),b=boundary()
+  const root=mkdtempSync(join(tmpdir(),"loom-sender-")),f=fixture(join(root,"ledger.sqlite")),db2=new Database(join(root,"ledger.sqlite")),other=new Store(db2,"scope"),b=boundary()
   try {
     const id=fresh(f),release=Promise.withResolvers<void>(),entered=Promise.withResolvers<void>()
     b.host.synthetic=async(r:any)=>{b.calls.push(r);entered.resolve();await release.promise;return ack(r)}
@@ -507,7 +529,7 @@ test("two plugin owners at actual send boundary make only one native call",async
 })
 
 for(const stage of ["before-claim","preparing","send-started"])test(`reopen after ${stage} preserves binding and conservative uncertainty`,async()=>{
-  const root=mkdtempSync("/tmp/opencode/loom-sender-"),filename=join(root,"ledger.sqlite"),f=fixture(filename),b=boundary()
+  const root=mkdtempSync(join(tmpdir(),"loom-sender-")),filename=join(root,"ledger.sqlite"),f=fixture(filename),b=boundary()
   let reopened:Database|undefined
   try {
     const id=fresh(f),claim=stage==="before-claim"?undefined:f.store.delivery.claim(id)
