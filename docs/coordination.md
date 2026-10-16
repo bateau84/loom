@@ -2,9 +2,11 @@
 
 Status: **selected next implementation candidate after review of `c2db6e7`**.
 The experiment has independent feasibility acceptance, as reported by the user.
-Production routing, durable delivery and recovery are not implemented by this
-decision. This document sets their boundaries; it is not a callable API or a
-claim that normal Loom now continues agents.
+The storage-only assignment contract is implemented at `3f08da9`; see
+[assignment association and stored delivery intent](assignment-delivery.md).
+Independent review of that storage slice remains pending. Sending, recovery and
+cancellation are not implemented; normal Loom does not yet continue agents.
+The end-to-end sequence below remains the target, not current runtime behavior.
 
 ## Decision and evidence
 
@@ -89,10 +91,29 @@ Only an explicitly registered coordinator is a fallback; label that delivery as
 fallback, not proof the original primary or respondent received it. Reassignment
 or rerouting must be explicit and preserve prior delivery identities and attempts.
 
-Assignment capture and the supported way to set/change routing still require an
-API design and tests. No new tool operation or `.loom.yaml` key is introduced
-here. Prefer a minimal association through existing tools/native delegation, not
-a compulsory planning, attachment or permission ceremony for ordinary work.
+The implemented [storage-only contract](assignment-delivery.md) defines
+`loom_record operation=assign`: the calling primary registers a project-unique
+`assignment_id`, its checked native child Worker and the original `work_ref`.
+Identical registrations reuse the original record; conflicting bindings fail
+without retargeting. Two assignments sharing both Worker and `work_ref` remain
+distinct by `assignment_id`. Worker supplies that handle explicitly on assigned
+`ask` and `complete` operations; no association is inferred from selection.
+
+At initial registration, optional `question_id` can link a matching unanswered,
+unbound question without rewriting it. First-time attachment after an answer is
+rejected; identical saved registrations remain retryable subject to the native
+child lookup. Changing the initial question on an existing assignment is a
+conflict, not a later attachment operation. Unassigned answers remain saved and report
+`not-requested` / `question-not-assigned`, without a guessed route or intent.
+Assigned answers and their primary-addressed intents commit together and report
+`stored-for-session` / `not-attempted`. Destination liveness is not checked at
+answer time. All stored associations and intents set `automatic_continuation:false`.
+
+These are implemented storage rules, not independently accepted delivery behavior.
+Automatic assignment capture, route changes/fallback, sending, admission recovery
+and cancellation remain future work. No current child/location check proves a
+particular native generation or future delivery eligibility. Do not add a
+compulsory planning, attachment or permission ceremony for ordinary work.
 
 ## Answer delivery and uncertain admission — target contract
 
@@ -174,7 +195,11 @@ For either mode, discovery must be Session-wide, independent of selected Action,
 selected task, absent selection or an unreadable selection. Use bounded previews,
 explicit omissions/paging and exact full-thread/report retrieval without changing
 selection. Missing routing and uncertain attempts must not be buried by observations.
-This describes required future access, not existing production notification views.
+The storage slice implements explicit `query view=assignments` and
+`view=deliveries` reads independently of selection; see the
+[implemented access contract](assignment-delivery.md#selection-independent-discovery).
+Automatic context presentation, missing-route attention and transport status beyond
+stored/not-attempted remain future work.
 
 Keep five tools. Any future association, delivery status, cancellation or retry
 operations must appear directly in the help returned by tool search, with inputs,
@@ -185,13 +210,17 @@ must not bypass native permissions or silently enable execution on upgrade.
 
 ## Bounded implementation sequence and acceptance
 
-1. Define the minimal assignment/routing API and persist the association. Test two
-   primaries, reused Worker Sessions, removed work, changed references and key order.
-2. Commit answer + delivery intent atomically; expose saved IDs and Session-wide
-   attention without requiring valid selection. Test failed saves and failed sends.
+1. Independently review the implemented `3f08da9` assignment association and the
+   supplied author probes: exact primary/child checks, reused Worker/reference
+   pairs, explicit handles, conflicts, historical work and attachment races.
+2. Independently verify atomic answer/intent persistence, actual commit failure,
+   selection-independent discovery and stored `automatic_continuation:false`.
+   Storage implementation and author-reported tests are not an independent PASS.
+   Preservation of this opt-out across future upgrades belongs in sender tests.
 3. Establish supported admission reconciliation, concurrent claims and bounded
    retry recovery together with cancellation. Test before-send, after-admission
-   and before-receipt crashes, actual user stop, and overlapping native activity.
+   and before-receipt crashes, failed sends, actual user stop, and overlapping
+   native activity. Do not add a sender before the storage review is complete.
 4. Connect the primary notice to native re-delegation and publish tool-search help.
    Reuse the existing whole-chain tests, with requests observed before script guards.
 
