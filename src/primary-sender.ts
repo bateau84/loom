@@ -22,13 +22,53 @@ const object = (value:unknown):Record<string,unknown> => {
 const equal = (a:unknown,b:unknown) => canonical(a) === canonical(b)
 const message = (error:unknown) => error instanceof Error ? error.message : String(error)
 
+const deliveryColumns = `intent_id TEXT PRIMARY KEY REFERENCES ledger(id), intent_seq INTEGER NOT NULL, assignment_id TEXT NOT NULL, bucket TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 0, phase TEXT NOT NULL DEFAULT 'pending', attempt_id TEXT,
+  binding_record_id TEXT, latest_event_id TEXT, receipt_id TEXT, started INTEGER NOT NULL DEFAULT 0, native_cancel_event_id TEXT`
+// Only this observed, empty projection has an accepted compatibility meaning.
+// Do not derive assignment IDs from old rows or reconstruct a queue from history.
+const emptyLegacyColumns = `intent_id TEXT PRIMARY KEY REFERENCES ledger(id), intent_seq INTEGER NOT NULL, bucket TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 0, phase TEXT NOT NULL DEFAULT 'pending', attempt_id TEXT,
+  binding_record_id TEXT, latest_event_id TEXT, receipt_id TEXT, native_cancel_event_id TEXT, started INTEGER NOT NULL DEFAULT 0`
+const schemaText = (sql:string) => {
+  // Recognize only the known DDL tokens. Preserve token boundaries and literal
+  // case: versionINTEGER and DEFAULT 'PENDING' are not the supported definition.
+  const tokens = sql.replace(/^(\s*CREATE\s+TABLE)\s+IF\s+NOT\s+EXISTS\b/i, "$1").match(/'(?:''|[^'])*'|[a-z_][a-z_0-9]*|[0-9]+|[^\s]/gi) ?? []
+  if (tokens.at(-1) === ";") tokens.pop()
+  return tokens.map(token => token.startsWith("'") ? token : token.toLowerCase()).join(" ")
+}
+const deliverySchemaError = (reason:string) => new Error(`Unsupported primary_deliveries schema: ${reason}. Close Loom and preserve a backup of this database for an explicit compatibility upgrade; do not reset or delete it. Initialization did not change history or delivery state.`)
+
 /** Durable, indexed local fence. All methods are synchronous; no transaction crosses host I/O. */
 export class DeliveryState {
   constructor(private store:Store, private db:SQL, private projectScope="") {
-    db.exec(`CREATE TABLE IF NOT EXISTS primary_deliveries (
-      intent_id TEXT PRIMARY KEY REFERENCES ledger(id), intent_seq INTEGER NOT NULL, assignment_id TEXT NOT NULL, bucket TEXT NOT NULL,
-      version INTEGER NOT NULL DEFAULT 0, phase TEXT NOT NULL DEFAULT 'pending', attempt_id TEXT,
-      binding_record_id TEXT, latest_event_id TEXT, receipt_id TEXT, started INTEGER NOT NULL DEFAULT 0, native_cancel_event_id TEXT);
+    const table = db.prepare("SELECT type,sql FROM sqlite_schema WHERE name='primary_deliveries'").get() as {type:string;sql:string}|undefined
+    const ddl = (columns:string) => schemaText(`CREATE TABLE primary_deliveries (${columns})`)
+    const legacy = table?.type === "table" && schemaText(table.sql) === ddl(emptyLegacyColumns)
+    // ALTER appends the required column without rewriting any historical row.
+    const upgraded = ddl(`${emptyLegacyColumns}, assignment_id TEXT NOT NULL`)
+    if (table && (table.type !== "table" || ![ddl(deliveryColumns), upgraded, ddl(emptyLegacyColumns)].includes(schemaText(table.sql)))) {
+      throw deliverySchemaError("unrecognized table definition (required assignment_id and delivery fences must be intact)")
+    }
+    // A same-name index is not proof that the indexed columns exist or agree.
+    for (const [name,columns] of [["primary_delivery_bucket",["bucket","intent_seq"]],["primary_delivery_assignment",["assignment_id","intent_seq"]]] as const) {
+      const index = db.prepare("SELECT tbl_name FROM sqlite_schema WHERE name=?").get(name) as {tbl_name:string}|undefined
+      if (!index) continue
+      const info = db.prepare(`PRAGMA index_info(${name})`).all() as {name:string}[]
+      const flags = db.prepare("PRAGMA index_list(primary_deliveries)").all() as {name:string;unique:number;partial:number}[]
+      const flag = flags.find(row => row.name === name)
+      if (index.tbl_name !== "primary_deliveries" || !flag || flag.unique || flag.partial || !equal(info.map(row=>row.name),columns)) {
+        throw deliverySchemaError(`incompatible index ${name}`)
+      }
+    }
+    if (legacy) {
+      if (db.prepare("SELECT 1 FROM primary_deliveries LIMIT 1").get()) throw deliverySchemaError("nonempty legacy projection has no supported assignment mapping")
+      if (db.prepare("SELECT 1 FROM sqlite_schema WHERE tbl_name='primary_deliveries' AND type='trigger' LIMIT 1").get()) throw deliverySchemaError("legacy projection has unrecognized triggers")
+      const indexes = db.prepare("PRAGMA index_list(primary_deliveries)").all() as {name:string;origin:string}[]
+      if (indexes.some(index => index.origin !== "pk" && index.name !== "primary_delivery_bucket")) throw deliverySchemaError("legacy projection has unrecognized indexes")
+      db.exec("ALTER TABLE primary_deliveries ADD COLUMN assignment_id TEXT NOT NULL")
+    }
+    db.exec(`CREATE TABLE IF NOT EXISTS primary_deliveries (${deliveryColumns});
       CREATE INDEX IF NOT EXISTS primary_delivery_bucket ON primary_deliveries(bucket,intent_seq);
       CREATE INDEX IF NOT EXISTS primary_delivery_assignment ON primary_deliveries(assignment_id,intent_seq);
       CREATE INDEX IF NOT EXISTS primary_delivery_events ON ledger(json_extract(data,'$.data.intent_id'),seq) WHERE kind='delivery-event';

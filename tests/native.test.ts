@@ -9,11 +9,12 @@ import entrypoint from "../server.js"
 import { loadConfig } from "../src/config.js"
 import { Store } from "../src/store.js"
 import { digest } from "../src/model.js"
+import { legacyFixture, savedRows } from "./helpers/legacy-delivery.js"
 
-for (const scenario of ["missing-column", "unsupported-version", "healthy"] as const) test(scenario === "healthy"
-  ? "healthy startup still registers five tools and closes its private database on disposal"
+for (const scenario of ["missing-column", "unsupported-version", "healthy", "empty-legacy", "nonempty-legacy", "masked-index"] as const) test(scenario === "healthy" || scenario === "empty-legacy"
+  ? `${scenario} startup still registers five tools and closes its private database on disposal`
   : `startup ${scenario} identifies the resolved database and known stage, preserves cause and closes before tools`, async () => {
-  const healthy = scenario === "healthy"
+  const healthy = scenario === "healthy" || scenario === "empty-legacy"
   await mkdir(new URL("../.test-build/", import.meta.url), { recursive: true })
   const dir = await mkdtemp(join(import.meta.dir, "../.test-build/startup-"))
   const previous = { state: process.env.XDG_STATE_HOME, config: process.env.OPENCODE_CONFIG_DIR }
@@ -27,13 +28,17 @@ for (const scenario of ["missing-column", "unsupported-version", "healthy"] as c
   const actor = { session_id: "private-session", agent: "author" }
   const action = store.create("Private action", "Not diagnostic output", actor)
   store.record(actor, { action_id: action.id }, { kind: "claim", statement: "PRIVATE-RECORD-CONTENT" })
-  // Old-shaped delivery table: the assignment index must really fail in DeliveryState.
-  if (scenario === "missing-column") db.exec("DROP TABLE primary_deliveries; CREATE TABLE primary_deliveries (intent_id TEXT PRIMARY KEY, intent_seq INTEGER, bucket TEXT)")
+  if (scenario === "empty-legacy" || scenario === "nonempty-legacy") legacyFixture(db)
+  if (scenario === "nonempty-legacy") db.exec("INSERT INTO primary_deliveries(intent_id,intent_seq,bucket) SELECT id,seq,'uncertain' FROM ledger ORDER BY seq LIMIT 1")
+  if (scenario === "missing-column" || scenario === "masked-index") db.exec("DROP TABLE primary_deliveries; CREATE TABLE primary_deliveries (intent_id TEXT PRIMARY KEY, intent_seq INTEGER, bucket TEXT)")
+  if (scenario === "masked-index") db.exec("CREATE INDEX primary_delivery_assignment ON primary_deliveries(bucket,intent_seq)")
   if (scenario === "unsupported-version") db.exec("PRAGMA user_version=42")
   const history = db.query("SELECT data FROM ledger ORDER BY seq").all()
+  const allRows = savedRows(db), schema = db.query("SELECT * FROM sqlite_schema ORDER BY name").all(), schemaVersion = db.query("PRAGMA schema_version").get()
   db.close()
   const registrations: string[] = [], tools: string[] = [], closed: Database[] = []
   let skillDisposals = 0
+  const hostIO: string[] = []
   const originalClose = Database.prototype.close
   const close = spyOn(Database.prototype, "close").mockImplementation(function(this: Database, ...args: Parameters<Database["close"]>) {
     closed.push(this); return originalClose.apply(this, args)
@@ -53,7 +58,10 @@ for (const scenario of ["missing-column", "unsupported-version", "healthy"] as c
       },
       hook: async () => ({ dispose: async () => {} }),
     },
-    session: { hook: async () => ({ dispose: async () => {} }) },
+    session: { hook: async () => ({ dispose: async () => {} }),
+      get: async () => { hostIO.push("get"); throw new Error("Startup must not look up a Session") },
+      context: async () => { hostIO.push("context"); return [] },
+      synthetic: async () => { hostIO.push("synthetic"); throw new Error("Startup must not deliver") } },
     event: { subscribe: async function* () { registrations.push("event") } },
   }
   let cleanup: (() => void | Promise<void>) | undefined
@@ -79,10 +87,10 @@ for (const scenario of ["missing-column", "unsupported-version", "healthy"] as c
       expect(failure.cause).toBeInstanceOf(Error)
       if (!(failure.cause instanceof Error)) throw new Error("Expected original SQLite cause")
       expect(failure.message).toContain(failure.cause.message)
-      if (scenario === "missing-column") {
-        expect(failure.cause.message).toContain("no such column: assignment_id")
+      if (scenario !== "unsupported-version") {
+        expect(failure.cause.message).toContain("Unsupported primary_deliveries schema")
+        expect(failure.cause.message).toContain("preserve a backup")
         expect(failure.cause.stack).toContain("primary-sender.ts")
-        expect(failure.cause).toHaveProperty("code", "SQLITE_ERROR")
       } else expect(failure.cause.message).toContain("Unsupported Loom Action database version")
       expect(`${failure.message}\n${failure.stack}\n${failure.cause.stack}`).not.toContain("PRIVATE-RECORD-CONTENT")
       expect(registrations).toEqual(["skill"])
@@ -90,12 +98,18 @@ for (const scenario of ["missing-column", "unsupported-version", "healthy"] as c
     }
     expect(closed).toHaveLength(1)
     expect(skillDisposals).toBe(1)
+    expect(hostIO).toEqual([])
     expect(() => closed[0].query("SELECT 1")).toThrow()
     close.mockRestore()
     const after = new Database(filename)
     try {
       expect(after.query("SELECT data FROM ledger ORDER BY seq").all()).toEqual(history)
-      expect(after.query("PRAGMA table_info(primary_deliveries)").all().some((column: any) => column.name === "assignment_id")).toBe(scenario !== "missing-column")
+      expect(savedRows(after)).toEqual(allRows)
+      if (!healthy) {
+        expect(after.query("SELECT * FROM sqlite_schema ORDER BY name").all()).toEqual(schema)
+        expect(after.query("PRAGMA schema_version").get()).toEqual(schemaVersion)
+      }
+      expect(after.query("PRAGMA table_info(primary_deliveries)").all().some((column: any) => column.name === "assignment_id")).toBe(healthy || scenario === "unsupported-version")
       expect(after.query("PRAGMA user_version").get()).toEqual({ user_version: scenario === "unsupported-version" ? 42 : 1 })
     } finally { after.close() }
   } finally {

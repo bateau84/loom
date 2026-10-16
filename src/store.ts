@@ -31,7 +31,11 @@ export class Store {
     const version = db.prepare("PRAGMA user_version").get() as { user_version: number }
     if (![0, 1].includes(version.user_version)) throw new Error("Unsupported Loom Action database version; existing data was not modified")
     db.exec("PRAGMA busy_timeout=2000; PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
-    db.exec(`CREATE TABLE IF NOT EXISTS actions (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+    // Schema initialization, including the bounded empty-delivery upgrade, is one
+    // transaction: an incompatible projection must not leave partial DDL behind.
+    db.exec("BEGIN IMMEDIATE")
+    try {
+      db.exec(`CREATE TABLE IF NOT EXISTS actions (id TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS plans (action_id TEXT NOT NULL REFERENCES actions(id), revision INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(action_id, revision));
       CREATE TABLE IF NOT EXISTS focus (session_id TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS ledger (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, action_id TEXT, session_id TEXT NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL);
@@ -49,8 +53,10 @@ export class Store {
       CREATE INDEX IF NOT EXISTS ledger_observation_action ON ledger(action_id, seq) WHERE kind='observation';
       CREATE INDEX IF NOT EXISTS ledger_observation_scope ON ledger(action_id, json_extract(data,'$.node_id'), seq) WHERE kind='observation';
       PRAGMA user_version=1;`)
-    this.delivery = new DeliveryState(this, db, projectScope)
-    this.collaboration = new Collaboration(this, db)
+      this.delivery = new DeliveryState(this, db, projectScope)
+      this.collaboration = new Collaboration(this, db)
+      db.exec("COMMIT")
+    } catch (error) { db.exec("ROLLBACK"); throw error }
   }
   /** Stable within a host lifetime, even when a replacement opens a new connection. */
   captureScope(): string | object {

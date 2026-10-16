@@ -8,6 +8,125 @@ import { execFileSync } from "node:child_process"
 import { join } from "node:path"
 import { registeredLoom } from "./helpers/registered-loom.js"
 import { digest } from "../src/model.js"
+import { legacyDeliveryDDL, legacyFixture, savedRows } from "./helpers/legacy-delivery.js"
+
+test("observed empty legacy delivery projection initializes and repeatedly reopens without changing history or creating work", async () => {
+  const dir = mkdtempSync("/tmp/opencode/ALP08-legacy-"), filename = join(dir, "synthetic.sqlite")
+  let db = new Database(filename)
+  try {
+    const f = legacyFixture(db), before = savedRows(db), meaning = f.meaning(f.store)
+    expect(db.query("PRAGMA table_info(primary_deliveries)").all()).toHaveLength(11)
+    expect(db.query("SELECT count(*) AS n FROM ledger WHERE kind IN ('assignment','continuation-authorization','continuation-withdrawal','answer','delivery-intent','delivery-event')").get()).toEqual({ n: 0 })
+    expect(before.actions).toHaveLength(2); expect(before.plans).toHaveLength(4)
+    expect(before.action_versions).toHaveLength(1); expect(before.ledger.length).toBeGreaterThan(5)
+    expect(meaning.selected).toEqual({ action_id: f.action.id, node_id: "work" })
+    expect(meaning.progress.items[0]).toMatchObject({ state: "open", current_node: true, reported_by: "worker" })
+    expect(meaning.progress.note).toContain("not independent acceptance")
+    expect(meaning.thread.question.data.work_ref).toEqual(f.ref)
+    expect(meaning.thread.note).toContain("not resolution, approval or permission")
+    expect(meaning.ref.action_revision).toBe(2); expect(meaning.ref.plan_revision).toBe(2)
+    db.close()
+    for (let reopen = 0; reopen < 3; reopen++) {
+      db = new Database(filename)
+      const store = new Store(db), b = boundary()
+      expect(store.delivery.startup()).toEqual([])
+      expect(db.query("PRAGMA table_info(primary_deliveries)").all().find((c: any) => c.name === "assignment_id")).toMatchObject({ type: "TEXT", notnull: 1, dflt_value: null })
+      expect(db.query("PRAGMA index_info(primary_delivery_assignment)").all().map((c: any) => c.name)).toEqual(["assignment_id", "intent_seq"])
+      await b.sender(store.delivery).startup()
+      expect(b.calls).toEqual([])
+      expect(savedRows(db)).toEqual(before)
+      expect(f.meaning(store)).toEqual(meaning)
+      expect(db.query("PRAGMA foreign_key_check").all()).toEqual([])
+      expect(db.query("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" })
+      expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 1 })
+      expect(db.query("PRAGMA application_id").get()).toEqual({ application_id: 0 })
+      db.close()
+    }
+  } finally { db.close(); rmSync(dir, { recursive: true, force: true }) }
+})
+
+for (const scenario of ["nonempty-legacy", "masked-legacy-index", "masked-missing-column", "extra-column", "changed-default", "token-boundary", "literal-case", "legacy-trigger", "legacy-unique-index", "current-wrong-index"]) {
+  test(`incompatible delivery schema ${scenario} rejects explicitly without changing any rows or schema`, () => {
+    const db = new Database(":memory:")
+    try {
+      const f = legacyFixture(db)
+      if (scenario === "nonempty-legacy") db.exec("INSERT INTO primary_deliveries(intent_id,intent_seq,bucket) SELECT id,seq,'uncertain' FROM ledger ORDER BY seq LIMIT 1")
+      if (scenario === "masked-missing-column") db.exec("DROP TABLE primary_deliveries; CREATE TABLE primary_deliveries (intent_id TEXT PRIMARY KEY, intent_seq INTEGER, bucket TEXT)")
+      if (scenario.startsWith("masked-")) db.exec("CREATE INDEX primary_delivery_assignment ON primary_deliveries(bucket,intent_seq)")
+      if (scenario === "extra-column") db.exec("ALTER TABLE primary_deliveries ADD COLUMN unknown TEXT")
+      if (scenario === "changed-default") db.exec("DROP TABLE primary_deliveries;" + legacyDeliveryDDL.replace("DEFAULT 'pending'", "DEFAULT 'done'"))
+      if (scenario === "token-boundary") db.exec("DROP TABLE primary_deliveries;" + legacyDeliveryDDL.replace("version INTEGER NOT NULL DEFAULT 0", "versionINTEGER NOTNULLDEFAULT0"))
+      if (scenario === "literal-case") db.exec("DROP TABLE primary_deliveries;" + legacyDeliveryDDL.replace("'pending'", "'PENDING'"))
+      if (scenario === "legacy-trigger") db.exec("CREATE TRIGGER unknown_delivery AFTER INSERT ON primary_deliveries BEGIN UPDATE primary_deliveries SET started=1; END")
+      if (scenario === "legacy-unique-index") db.exec("CREATE UNIQUE INDEX unknown_delivery ON primary_deliveries(bucket)")
+      if (scenario === "current-wrong-index") {
+        new Store(db)
+        db.exec("DROP INDEX primary_delivery_assignment; CREATE INDEX primary_delivery_assignment ON primary_deliveries(bucket,intent_seq)")
+      }
+      // Force some otherwise-normal initialization DDL to be needed before rejection.
+      db.exec("DROP INDEX ledger_action; PRAGMA user_version=0")
+      const rows = savedRows(db), schema = db.query("SELECT * FROM sqlite_schema ORDER BY name").all()
+      const version = db.query("PRAGMA schema_version").get(), meaning = f.meaning(f.store)
+      for (let attempt = 0; attempt < 2; attempt++) {
+        expect(() => new Store(db)).toThrow("Unsupported primary_deliveries schema")
+        expect(() => new Store(db)).toThrow("preserve a backup")
+        expect(savedRows(db)).toEqual(rows)
+        expect(db.query("SELECT * FROM sqlite_schema ORDER BY name").all()).toEqual(schema)
+        expect(db.query("PRAGMA schema_version").get()).toEqual(version)
+        expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: 0 })
+        expect(f.meaning(f.store)).toEqual(meaning)
+      }
+    } finally { db.close() }
+  })
+}
+
+test("an injected later driver failure rolls back the empty legacy upgrade as well as earlier DDL", () => {
+  const db = new Database(":memory:")
+  try {
+    legacyFixture(db)
+    db.exec("DROP INDEX ledger_action")
+    const rows = savedRows(db), schema = db.query("SELECT * FROM sqlite_schema ORDER BY name").all(), version = db.query("PRAGMA schema_version").get()
+    const driver = { prepare: (sql: string) => db.prepare(sql), exec: (sql: string) => {
+      if (sql.startsWith("CREATE TABLE IF NOT EXISTS action_versions")) {
+        expect(db.query("PRAGMA table_info(primary_deliveries)").all()).toHaveLength(12)
+        throw new Error("synthetic late initialization driver failure")
+      }
+      return db.exec(sql)
+    } }
+    expect(() => new Store(driver)).toThrow("synthetic late initialization driver failure")
+    expect(savedRows(db)).toEqual(rows)
+    expect(db.query("SELECT * FROM sqlite_schema ORDER BY name").all()).toEqual(schema)
+    expect(db.query("PRAGMA schema_version").get()).toEqual(version)
+  } finally { db.close() }
+})
+
+test("empty legacy upgrade never turns historical false or missing authorization into startup consent", async () => {
+  const f = fixture(), b = boundary()
+  try {
+    const falseID = f.answer().delivery.intent_id!, missingID = f.answer().delivery.intent_id!
+    f.db.prepare("UPDATE ledger SET data=json_remove(data,'$.data.automatic_continuation') WHERE id=?").run(missingID)
+    f.db.exec("DROP TABLE primary_deliveries;" + legacyDeliveryDDL)
+    const before = savedRows(f.db), store = new Store(f.db, "scope")
+    for (const id of [falseID, missingID]) expect(store.delivery.status(id)).toMatchObject({ eligibility: "stored-only", reason: "automatic-continuation-not-authorized", transport: "not-attempted" })
+    expect(store.delivery.startup()).toEqual([])
+    await b.sender(store.delivery).startup()
+    expect(b.calls).toEqual([])
+    expect(savedRows(f.db)).toEqual(before)
+    expect(f.db.query("SELECT count(*) AS n FROM ledger WHERE kind='continuation-authorization'").get()).toEqual({ n: 0 })
+    // Only a new explicit authorization and subsequent answer may enter the queue.
+    f.authorize()
+    const newID = f.answer().delivery.intent_id!
+    expect(store.delivery.startup()).toEqual([newID])
+    expect((await b.sender(store.delivery).attempt(newID)).transport).toBe("admitted")
+    expect(b.calls).toHaveLength(1)
+    expect(b.calls[0].metadata.delivery_id).toBe(newID)
+    const populated = savedRows(f.db), reloaded = new Store(f.db, "scope")
+    await b.sender(reloaded.delivery).startup()
+    expect(b.calls).toHaveLength(1)
+    expect(savedRows(f.db)).toEqual(populated)
+    for (const id of [falseID, missingID]) expect(reloaded.delivery.status(id).eligibility).toBe("stored-only")
+  } finally { f.db.close() }
+})
 
 function fixture(filename=":memory:") {
   const db = new Database(filename), store = new Store(db,"scope"), c = store.collaboration
