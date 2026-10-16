@@ -3,8 +3,8 @@
 **Breaking redesign draft. Not a drop-in replacement for the old Loom bundle.**
 
 Loom helps agents organize work and recover its context later. It does not own
-agent definitions, skills, models, permissions, Git commands or a mandatory
-workflow state machine. This repository contains the plugin and its own tests,
+agent definitions, general engineering skills, models, permissions, Git commands
+or a mandatory workflow state machine. This repository contains the plugin and its own tests,
 configuration example, documentation and migration helper.
 
 ## What is implemented
@@ -18,6 +18,7 @@ configuration example, documentation and migration helper.
 - Persistent observations, claims, results, Assessment and QA records.
 - Reported completion/reopening and contextual question/answer threads.
 - Usage documentation returned directly by tool search.
+- A bundled native `loom` skill, discoverable and loaded on demand.
 - Five tools: `loom_agents`, `loom_action`, `loom_plan`, `loom_context`, `loom_record`.
 
 A conversation needs no Action. An Action needs no plan. A task does not need to
@@ -124,6 +125,34 @@ Each file is limited to 64 KiB. Context budgets are **characters, not tokens**:
 there is no fabricated tokenizer-independent `max_tokens` guarantee. The schema
 is a first implementation, not an implementation of every earlier sketch.
 
+## Bundled Loom skill
+
+Loading this plugin also registers the native skill **`loom`**. Agents can discover
+its description and load the guide with OpenCode V2's regular tool:
+
+```ts
+skill({ id: "loom" })
+```
+
+The [guide](src/skills/loom/SKILL.md) ships inside the plugin and has a real package
+path. No separate skill installation, global-directory copy or network fetch is
+needed. The public `server.ts` entrypoint composes the existing core plugin with
+this skill; `src/plugin.ts` remains the internal core implementation.
+
+Only metadata is advertised until OpenCode loads the skill. The V2 `autoinvoke`
+flag is enabled for discovery; it does **not** inject the full guide at startup.
+Native skill permissions still apply, and Loom does not force loading, rewrite
+agents, add a sixth tool or change role/context injection. The guide is available
+without an Action or configured role, including when `instructions.enabled` is
+false. General engineering and review skills remain external.
+
+The skill transform preserves an existing skill with the same ID, including its
+visibility settings. Rename or remove an old custom `loom` skill to use the
+bundled one. Reload replays registration without duplicating the entry, and
+unloading removes this plugin's contribution, not other skills. Update the guide
+alongside changes to Loom's tools; it explicitly describes the current
+storage-only assignment/delivery boundary, not the test-only continuation path.
+
 ## Agent experience
 
 Start with the [five-tool guide and Research → Worker example](docs/tools.md).
@@ -137,7 +166,8 @@ For concrete work, create an Action. For complex work, save an optional plan.
 Pass the Action and Task IDs in the native delegation message. The receiving
 agent calls `loom_context` once with those IDs to select work and get its context.
 Future model turns receive that context automatically for configured agents.
-Unconfigured agents get no Loom instructions or context injection.
+Unconfigured agents get no automatic Loom instructions or context injection,
+but can still load the bundled skill.
 
 This is an explicit task selection, not a permission/attachment gate. Native
 execution is never gated by it. The current implementation intentionally does not

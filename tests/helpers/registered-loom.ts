@@ -1,10 +1,10 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import plugin from "../../src/plugin.js"
+import plugin from "../../server.js"
 
-/** Actual plugin setup/storage with a simulated registration host, not a live CLI. */
-export async function registeredLoom() {
+/** Actual public plugin setup/storage with a simulated registration host, not a live CLI. */
+export async function registeredLoom(initialSkills: any[] = []) {
   const directory = await mkdtemp(join(tmpdir(), "loom-tool-help-"))
   const previous = { state: process.env.XDG_STATE_HOME, config: process.env.OPENCODE_CONFIG_DIR }
   process.env.XDG_STATE_HOME = join(directory, "state")
@@ -12,11 +12,26 @@ export async function registeredLoom() {
   const sessions = new Map<string, any>()
   const tools = new Map<string, any>(), namespaces = new Map<string, any>()
   const hooks = new Map<string, any>()
+  const skills = new Map<string, any>(), skillTransforms = new Set<(editor: any) => void>()
+  const reloadSkills = () => {
+    skills.clear()
+    for (const skill of initialSkills) skills.set(skill.id, { ...skill })
+    for (const transform of skillTransforms) transform({
+      get: (id: string) => skills.get(id), list: () => [...skills.values()],
+      add: (skill: any) => skills.set(skill.id, skill),
+    })
+  }
   const registration = () => ({ dispose: async () => {} })
   const ctx = {
     location: { directory, project: { id: "tool-help", canonical: directory, directory } },
     agent: { list: async () => [{ id: "investigator" }, { id: "author" }], transform: () => { throw new Error("No agent rewriting") } },
     permission: { hook: () => { throw new Error("No new permission hooks") } },
+    skill: {
+      transform: async (fn: (editor: any) => void) => {
+        skillTransforms.add(fn); reloadSkills()
+        return { dispose: async () => { skillTransforms.delete(fn); reloadSkills() } }
+      },
+    },
     tool: {
       transform: async (fn: any) => { fn({ namespace: (n: any) => namespaces.set(n.name, n), add: (t: any) => tools.set(t.name, t) }); return registration() },
       hook: async (name: string, fn: any) => { hooks.set(name, fn); return registration() },
@@ -47,7 +62,7 @@ export async function registeredLoom() {
     await writeFile(join(directory, ".loom.yaml"), "agents: {}\ninstructions: {enabled: false}\nledger: {capture: off}\n")
     dispose = await (plugin as any).setup(ctx)
     return {
-      tools, namespaces, close, directory, hooks, sessions,
+      tools, namespaces, close, directory, hooks, sessions, skills, reloadSkills,
       context: async (sessionID: string, agent: string) => {
         const event = { sessionID, agent, system: [] as Array<{ type: string; text: string }>, messages: [], tools: {}, options: {} }
         await hooks.get("context")(event)
