@@ -4,6 +4,7 @@ import {DatabaseSync} from 'node:sqlite'
 import {Worker} from 'node:worker_threads'
 import {mkdtempSync,rmSync} from 'node:fs'
 import {join} from 'node:path'
+import {tmpdir} from 'node:os'
 import {Store} from '../.test-build/store.js'
 import {workReference} from '../.test-build/collaboration.js'
 
@@ -17,8 +18,14 @@ const program=`const {parentPort,workerData}=require('node:worker_threads');cons
  parentPort.postMessage({type:'result',result:c.execute(workerData.actor,workerData.input)})}catch(e){parentPort.postMessage({type:'result',error:e.message})}finally{db.close();parentPort.close()}})})().catch(e=>{throw e})`
 
 for(const order of ['authorization-first','answer-first','authorization-rollback','withdrawal-first','answer-before-withdrawal'])test(`real concurrent SQL writers serialize ${order}`,async t=>{
-  const root=mkdtempSync('/tmp/opencode/loom-sender-race-');t.after(()=>rmSync(root,{recursive:true,force:true}))
-  const path=join(root,'db.sqlite'),db=new DatabaseSync(path);t.after(()=>db.close())
+  const root=mkdtempSync(join(tmpdir(),'loom-sender-race-')),workers=[]
+  let db
+  t.after(async()=>{
+    await Promise.all(workers.map(w=>w.terminate()))
+    db?.close()
+    rmSync(root,{recursive:true,force:true})
+  })
+  const path=join(root,'db.sqlite');db=new DatabaseSync(path)
   const store=new Store(db),c=store.collaboration,a=store.create('Race','Serialize consent',actor),p=store.savePlan(a.id,0,[{id:'work',kind:'task',title:'Work'}])
   c.assign(actor,{assignment_id:'assignment',worker_session_id:'worker',work_ref:workReference(a,p,'work')})
   const q=c.ask({session_id:'worker',agent:'worker'},undefined,{assignment_id:'assignment',statement:'Question',respondent:'research'})
@@ -30,7 +37,7 @@ for(const order of ['authorization-first','answer-first','authorization-rollback
   const barrier=new SharedArrayBuffer(4)
   const spawn=(input,hold)=>{
     const w=new Worker(program,{eval:true,workerData:{path,module:new URL('../.test-build/store.js',import.meta.url).href,actor,input,hold,barrier,rollback:order==='authorization-rollback'&&hold}})
-    t.after(()=>w.terminate())
+    workers.push(w)
     const messages=[],waiting=new Map();w.on('message',m=>{messages.push(m);waiting.get(m.type)?.(m)})
     const take=type=>new Promise((resolve,reject)=>{const m=messages.find(m=>m.type===type);if(m)resolve(m);else waiting.set(type,resolve);w.on('error',reject)})
     return {w,take}
