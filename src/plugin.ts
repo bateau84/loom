@@ -21,6 +21,23 @@ function unwrapped(value: unknown): unknown {
   if (value && typeof value === "object" && "data" in value) return (value as { data: unknown }).data
   return value
 }
+/** Bound diagnostic JSON before reserving it, leaving room for useful context and
+ * selection/readback outcomes. All failing sources remain visible as prefixes. */
+function contextConfigDiagnostics(errors: string[], maxChars: number): { config_errors?: string[]; config_errors_excerpted?: true } {
+  if (!errors.length) return {}
+  const allowance = Math.floor(maxChars / 8)
+  if (JSON.stringify({ config_errors: errors }).length <= allowance) return { config_errors: errors }
+  const diagnostics = { config_errors: errors.map(() => ""), config_errors_excerpted: true as const }
+  let low = 0, high = allowance
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2)
+    diagnostics.config_errors = errors.map(error => error.slice(0, middle))
+    if (JSON.stringify(diagnostics).length <= allowance) low = middle
+    else high = middle - 1
+  }
+  diagnostics.config_errors = errors.map(error => error.slice(0, low))
+  return diagnostics
+}
 function agents(value: unknown): NativeAgent[] {
   const items = unwrapped(value)
   if (!Array.isArray(items)) throw new Error("OpenCode returned an unsupported agent registry shape")
@@ -119,6 +136,8 @@ export default Plugin.define({
             const snapshot = await getConfig(toolContext.signal)
             lifetime.signal.throwIfAborted()
             toolContext.signal.throwIfAborted()
+            const diagnostics = spec.name === "context" ? contextConfigDiagnostics(snapshot.errors, snapshot.config.context.max_chars)
+              : snapshot.errors.length ? { config_errors: snapshot.errors } : {}
             let result: unknown
             switch (spec.name) {
               case "agents": {
@@ -141,7 +160,7 @@ export default Plugin.define({
                 // Clearing is navigation, not a read of the possibly damaged selection.
                 const focus = focusFor(input, actor.session_id)
                 if (!focus) { result = { selected: null, note: "No Action selected. Ordinary conversation needs no Action." }; break }
-                const envelopeChars = JSON.stringify({ result: null, ...(snapshot.errors.length ? { config_errors: snapshot.errors } : {}) }).length - 4
+                const envelopeChars = JSON.stringify({ result: null, ...diagnostics }).length - 4
                 result = taskContextOrRecovery(store, focus, snapshot.config.context.max_chars, actor.agent, {
                   ...(input.action_id ? { selectForSession: actor.session_id } : {}), envelopeChars,
                 })
@@ -195,7 +214,7 @@ export default Plugin.define({
               result = { ...page, items: page.items.map(r => ({ ...r, data: typeof r.data.statement === "string" && r.data.statement.length > 600
                 ? { ...r.data, statement: r.data.statement.slice(0,600), truncated: true, read_full: "Pass this record_id to loom_record query" } : r.data })) }
             }
-            return { content: JSON.stringify({ result, ...(snapshot.errors.length ? { config_errors: snapshot.errors } : {}) }) }
+            return { content: JSON.stringify({ result, ...diagnostics }) }
           },
         })
       }))

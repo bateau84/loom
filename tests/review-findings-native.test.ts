@@ -1,7 +1,7 @@
 import { test, expect, spyOn } from "bun:test"
 import { Error as ToolError } from "@opencode/plugin/promise/tool"
 import { Database } from "bun:sqlite"
-import { readdir, writeFile } from "node:fs/promises"
+import { mkdir, readdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { digest, PROCESSING_LIMITS } from "../src/model.js"
 import { Store } from "../src/store.js"
@@ -306,6 +306,158 @@ for (const previous of ["task", "none", "corrupt", "unavailable"] as const) for 
     }
     expect(f.history()).toEqual(before)
   } finally { await f.close() }
+})
+
+test("oversized configuration diagnostics share the registered context envelope without losing a successful read or failed save", async () => {
+  const f = await fixture()
+  const read = spyOn(Store.prototype, "contextSnapshot"), select = spyOn(Store.prototype, "select")
+  try {
+    await f.invoke("plan", { operation: "save", action_id: f.action.id, expected_revision: 1, nodes: [
+      { id: "task", kind: "task", title: "Persisted task" },
+      { id: "requested", kind: "task", title: "Useful requested task", outcome: "Useful retrieved contract" },
+    ] })
+    const requested = { action_id: f.action.id, node_id: "requested" }
+    const worked = (await f.invoke("context", requested)).result
+    const finding = (await f.invoke("record", { operation: "add", ...requested, kind: "result", statement: "Useful conclusion with its original qualifications." })).result
+    await f.invoke("context", { action_id: f.action.id, node_id: "task" })
+    const saved = f.selection(), before = f.history()
+    await writeFile(join(f.directory, ".loom.yaml"), "agents: {author: {roles: [implementation]}}\ninstructions: {enabled: true}\nledger: {capture: automatic}\n")
+    await writeFile(join(f.directory, ".loom.local.yaml"), `${"x".repeat(17000)}: true\n`)
+    const discovery = await f.invoke("agents", {})
+    expect(discovery.config_errors[0].length).toBeGreaterThan(16000)
+    expect(discovery.result.evidence.capture).toBe("off")
+    expect(discovery.result.agents.every((a: any) => !a.configured)).toBe(true)
+    f.db.exec("CREATE TRIGGER refuse_selection BEFORE INSERT ON focus BEGIN SELECT RAISE(ABORT,'injected selection write refusal'); END")
+    read.mockClear(); select.mockClear()
+    let output
+    try {
+      output = await f.tools.get("context").execute(requested, {
+        sessionID: "s", agent: "author", messageID: "message", id: "config-envelope-regression", signal: new AbortController().signal,
+      })
+    } finally {
+      console.info("Oversized config read/save counts:", JSON.stringify({ config_error_chars: discovery.config_errors[0].length,
+        snapshots: read.mock.calls.length, saves: select.mock.calls.length }))
+    }
+    const response = JSON.parse(output.content), result = response.result
+    expect(output.content.length).toBeLessThanOrEqual(16000) // Invalid config uses fail-closed defaults.
+    expect(response.config_errors.length).toBe(1)
+    expect(discovery.config_errors[0].startsWith(response.config_errors[0])).toBe(true)
+    expect(response.config_errors[0]).toContain("Unknown setting")
+    expect(response.config_errors_excerpted).toBe(true)
+    expect(result.action.id).toBe(f.action.id)
+    expect(result.task).toMatchObject({ id: "requested", outcome: "Useful retrieved contract" })
+    expect(result.work_ref).toEqual(worked.work_ref)
+    expect(result.records.some((r: any) => r.id === finding.id && r.data.statement.startsWith("Useful conclusion"))).toBe(true)
+    expect(result.selection).toMatchObject({ status: "save-failed", persisted: { action_id: f.action.id, node_id: "task" } })
+    expect(result.selection.error).toContain("injected selection write refusal")
+    expect(read).toHaveBeenCalledTimes(1); expect(select).toHaveBeenCalledTimes(1)
+    expect(f.selection()).toBe(saved)
+    expect(await f.context("s", "author")).toBeUndefined() // Invalid configuration still disables injection.
+    await writeFile(join(f.directory, ".loom.local.yaml"), "{}\n")
+    expect((await f.context("s", "author")).task.id).toBe("task")
+    expect(f.history()).toEqual(before)
+    console.info("Oversized config response:", JSON.stringify({ max_chars: 16000, response_chars: output.content.length,
+      config_excerpt_chars: response.config_errors[0].length, retrieved_task: result.task.id, status: result.selection.status,
+      records_retained: result.records.length, work_ref_unchanged: JSON.stringify(result.work_ref) === JSON.stringify(worked.work_ref) }))
+  } finally { read.mockRestore(); select.mockRestore(); await f.close() }
+})
+
+for (const previous of ["task", "fresh", "corrupt", "unavailable"] as const) for (const task of [false, true]) test(`configuration and selection diagnostics retain bounded useful ${task ? "task" : "Action"} context with ${previous} readback`, async () => {
+  const f = await fixture()
+  const read = spyOn(Store.prototype, "contextSnapshot"), select = spyOn(Store.prototype, "select")
+  try {
+    const savedNode = "s".repeat(120), requestedNode = "r".repeat(120), escaped = "\u0001\\\"".repeat(1000)
+    await f.invoke("action", { operation: "update", action_id: f.action.id, expected_revision: 1, goal: "Useful goal." })
+    await f.invoke("plan", { operation: "save", action_id: f.action.id, expected_revision: 1, nodes: [
+      { id: savedNode, kind: "task", title: "Persisted task" },
+      { id: requestedNode, kind: "task", title: "Useful requested task", context: "Useful task context. " + escaped },
+    ] })
+    const requested = { action_id: f.action.id, ...(task ? { node_id: requestedNode } : {}) }
+    const worked = (await f.invoke("context", requested)).result
+    const finding = (await f.invoke("record", { operation: "add", ...requested, kind: "result", statement: "Useful conclusion. " + escaped })).result
+    await f.invoke("context", { action_id: f.action.id, node_id: savedNode })
+    if (previous === "fresh") f.db.exec("DELETE FROM focus WHERE session_id='s'")
+    if (previous === "corrupt") f.corrupt()
+    if (previous === "unavailable") f.db.exec("DROP TABLE focus")
+    else f.db.exec(`CREATE TRIGGER refuse_selection BEFORE INSERT ON focus BEGIN SELECT RAISE(ABORT,'injected refusal ${escaped}'); END`)
+    const before = f.history()
+    await mkdir(join(f.directory, "config"), { recursive: true })
+    for (const [label, key] of [["short", "unknown"], ["large", "x".repeat(17000)], ["escaped", escaped]] as const) {
+      // Three independent failed layers, still within each source's existing byte limit.
+      for (const path of [join(f.directory, "config", ".loom.yaml"), join(f.directory, ".loom.yaml"), join(f.directory, ".loom.local.yaml")]) {
+        await writeFile(path, `${JSON.stringify(key)}: true\n`)
+      }
+      const discovery = await f.invoke("agents", {}), errors = discovery.config_errors
+      expect(errors).toHaveLength(3)
+      read.mockClear(); select.mockClear()
+      const response = await f.invoke("context", requested), result = response.result
+      expect(JSON.stringify(response).length).toBeLessThanOrEqual(16000)
+      expect(response.config_errors).toHaveLength(3)
+      for (let i = 0; i < errors.length; i++) {
+        expect(response.config_errors[i].length).toBeGreaterThan(0)
+        expect(errors[i].startsWith(response.config_errors[i])).toBe(true)
+      }
+      if (label === "short") { expect(response.config_errors).toEqual(errors); expect(response.config_errors_excerpted).toBeUndefined() }
+      else expect(response.config_errors_excerpted).toBe(true)
+      expect(result.selection.status).toBe("save-failed")
+      expect(result.selection.persisted).toEqual(previous === "task" ? { action_id: f.action.id, node_id: savedNode } : previous === "fresh" ? null : "unknown")
+      expect(result.selection.error).toStartWith(previous === "unavailable" ? "no such table" : "injected refusal")
+      if (previous === "corrupt" || previous === "unavailable") expect(result.selection.read_error.length).toBeGreaterThan(0)
+      else expect(result.selection.read_error).toBeUndefined()
+      expect(result.action.id).toBe(f.action.id)
+      expect(result.action.goal).toStartWith("Useful goal")
+      if (task) { expect(result.task.id).toBe(requestedNode); expect(result.task.context).toStartWith("Useful task context"); expect(result.work_ref).toEqual(worked.work_ref) }
+      else expect(result.task).toBeNull()
+      expect(result.records.some((r: any) => r.id === finding.id && r.data.statement.startsWith("Useful conclusion"))).toBe(true)
+      expect(read).toHaveBeenCalledTimes(1); expect(select).toHaveBeenCalledTimes(1)
+      expect(f.history()).toEqual(before)
+      console.info("Combined diagnostic budget:", JSON.stringify({ previous, task, label, max_chars: 16000,
+        response_chars: JSON.stringify(response).length, config_sources: errors.length, selection_excerpted: !!result.selection.diagnostics_excerpted }))
+    }
+  } finally { read.mockRestore(); select.mockRestore(); await f.close() }
+})
+
+test("oversized config diagnostics preserve successful navigation, missing-task recovery and native read failures", async () => {
+  const f = await fixture()
+  const read = spyOn(Store.prototype, "contextSnapshot"), select = spyOn(Store.prototype, "select")
+  try {
+    const worked = (await f.invoke("context", { action_id: f.action.id, node_id: "task" })).result
+    const saved = f.selection(), before = f.history()
+    await writeFile(join(f.directory, ".loom.local.yaml"), `${"x".repeat(60000)}: true\n`)
+    const check = (response: any) => {
+      expect(JSON.stringify(response).length).toBeLessThanOrEqual(16000)
+      expect(response.config_errors_excerpted).toBe(true)
+      expect(response.config_errors).toHaveLength(1)
+      expect(response.config_errors[0]).toContain("Unknown setting")
+      return response.result
+    }
+    read.mockClear(); select.mockClear()
+    const success = check(await f.invoke("context", { action_id: f.action.id, node_id: "task" }))
+    expect(success.work_ref).toEqual(worked.work_ref)
+    expect(success.selection).toBeUndefined()
+    expect(success.records.some((r: any) => r.id === f.finding.id)).toBe(true)
+    expect(read).toHaveBeenCalledTimes(1); expect(select).toHaveBeenCalledTimes(1)
+    select.mockClear()
+    expect(check(await f.invoke("context", {})).work_ref).toEqual(worked.work_ref)
+    expect(check(await f.invoke("context", {}, "fresh")).selected).toBeNull()
+    const missing = check(await f.invoke("context", { action_id: f.action.id, node_id: "missing" }))
+    expect(missing.recovery.code).toBe("task-not-in-current-plan")
+    expect(missing.selection_unchanged).toBe(true)
+    expect(missing.selection).toBeUndefined()
+    await expect(f.invoke("context", { node_id: "task" })).rejects.toThrow("node_id requires action_id")
+    await expect(f.invoke("context", { action_id: "" })).rejects.toThrow("id must be a simple identifier")
+    await expect(f.invoke("context", { action_id: "not-found" })).rejects.toThrow("Unknown Action")
+    f.db.prepare("UPDATE plans SET data=? WHERE action_id=?").run("{broken plan", f.action.id)
+    await expect(f.invoke("context", { action_id: f.action.id, node_id: "task" })).rejects.toThrow()
+    expect(select).not.toHaveBeenCalled()
+    expect(f.selection()).toBe(saved)
+    expect(check(await f.invoke("context", { clear: true })).selected).toBeNull()
+    f.db.exec("CREATE TRIGGER refuse_selection BEFORE INSERT ON focus BEGIN SELECT RAISE(ABORT,'injected clear refusal'); END")
+    await expect(f.invoke("context", { clear: true })).rejects.toThrow("injected clear refusal")
+    expect(f.history()).toEqual(before)
+    expect(f.tools.size).toBe(5)
+    expect(f.tools.get("context").description).toContain("config_errors_excerpted marks configuration diagnostic prefixes")
+  } finally { read.mockRestore(); select.mockRestore(); await f.close() }
 })
 
 test("failed selection save reports unknown persisted selection when it cannot be read", async () => {
