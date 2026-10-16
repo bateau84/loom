@@ -16,6 +16,8 @@ configuration example, documentation and migration helper.
 - Optional Phase → Wave → Task → Subtask levels and dependency validation.
 - Task context with goals, parent/dependency context and recent ledger entries.
 - Persistent observations, claims, results, Assessment and QA records.
+- Reported completion/reopening and contextual question/answer threads.
+- Usage documentation returned directly by tool search.
 - Five tools: `loom_agents`, `loom_action`, `loom_plan`, `loom_context`, `loom_record`.
 
 A conversation needs no Action. An Action needs no plan. A task does not need to
@@ -36,9 +38,12 @@ See [Migration](docs/migration.md), including the separate agent/skill cleanup.
 
 The alpha milestone is useful Research → Worker handoff and fresh-session
 resumption with trustworthy history, clear tool guidance, and one tested manual
-backup/restore procedure. Independent review and that real-host scenario remain
-outstanding. A successful context read must also survive a failed selection save;
-that correction is not yet implemented. See the [narrow alpha operating policy](docs/operating-policy.md).
+backup/restore procedure. The test-only comparison at `c2db6e7` now has independent
+feasibility acceptance, as reported by the user. It proves its scripted-host scope,
+not production delivery or live-model usefulness. See the
+[coordination direction](docs/coordination.md) and [reviewed comparison](docs/handback-comparison.md).
+A successful context read must also survive a failed selection save; that correction
+is not yet implemented. See the [narrow alpha operating policy](docs/operating-policy.md).
 
 Advanced storage recovery, maintenance/capacity modes, strict WAL-growth quotas,
 scheduling, dashboards and legacy import are deferred, not alpha prerequisites.
@@ -52,7 +57,7 @@ Target: **OpenCode 2.0.29**. The SDK, isolated Code Mode search fixture and inst
 CLI boot test use that exact version. This checkout does not upgrade your local
 OpenCode executable or change your model. See [the upgrade notes](docs/opencode-2.0.29.md).
 **Bun support: `>=1.4.2 <2.0.0`. Use Bun 1.4.2 to reproduce validation.**
-The exact tested baseline is recorded in `.bun-version` and used by both CI jobs.
+The exact tested baseline is recorded in `.bun-version` and used by the CI jobs.
 This is a supported minimum based on that tested baseline, not a claim that
 1.4.2 was the first release to fix the issue or that every newer release was tested.
 
@@ -77,7 +82,7 @@ not two-agent behavior, meaningful-record persistence, or graceful teardown.
 The capture-gap repair also requires a **full OpenCode host restart on first
 installation**; hot-upgrading cannot recover uncertainty discarded by the old
 implementation. See [Evidence pairing](docs/evidence-reliability.md).
-Both CI jobs install Loom dependencies from the committed lockfile with frozen
+The CI jobs install Loom dependencies from the committed lockfile with frozen
 installation and a lock-stability check. The separately installed host's dependency
 graph and the manual state-backup/restore procedure remain separate release work.
 
@@ -123,9 +128,10 @@ is a first implementation, not an implementation of every earlier sketch.
 
 Start with the [five-tool guide and Research → Worker example](docs/tools.md).
 It covers operation inputs, side effects, exact dependency-record retrieval,
-replanning, review records and fresh-session resumption. It describes intended
-usage, not a completed live-host acceptance test. The document is not automatically
-injected; actual tool descriptions and role-injected help still need agent trials.
+replanning, review records and fresh-session resumption. Usage is also registered
+directly in tool descriptions and returned by tool search; agents do not need to
+fetch this Markdown first. See [tool discovery](docs/tool-discovery.md). Live-model
+usefulness of the guidance remains separate from scripted-host feasibility.
 
 For concrete work, create an Action. For complex work, save an optional plan.
 Pass the Action and Task IDs in the native delegation message. The receiving
@@ -137,6 +143,14 @@ This is an explicit task selection, not a permission/attachment gate. Native
 execution is never gated by it. The current implementation intentionally does not
 infer a child's task from its parent's *current* selection, which might have
 changed after dispatch. Fully automatic native handoff remains future work.
+
+The selected coordination candidate sends answer references to the exact primary,
+which retrieves the thread and natively re-delegates to the same Worker Session.
+Native delegation owns the completion return: no competing Loom completion nudge
+or direct Worker synthetic resume is planned for that path. It is currently
+**test-only**. Durable assignment routing, answer delivery, uncertain admission
+recovery and cancellation are not enabled in the production plugin. Passive
+notices remain a separate candidate, not equivalent automatic continuation.
 
 Use `loom_record` to record useful results, claims, Assessment or QA findings.
 Load external skills and their `ASSESSMENT.md`/`QA.md` companions with native tools.
@@ -183,5 +197,5 @@ Tests isolate config and state in temporary directories. No paid inference is
 required by CI. The native contract test uses a fake host API with real Bun
 primitives; it does **not** replace a live OpenCode installation smoke test.
 
-See [Design and remaining work](docs/design.md) for broader redesign ideas;
+See [Design and implementation boundaries](docs/design.md) and [Coordination](docs/coordination.md);
 [the alpha operating policy](docs/operating-policy.md) defines the narrower release scope.

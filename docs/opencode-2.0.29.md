@@ -56,14 +56,24 @@ implementation are unchanged in the inspected files. Code Mode still passes
 outer call context to nested tools. Keep conservative pairing; richer progress
 output is not a new authoritative invocation identity.
 
-## Passive notifications remain a separate candidate
+## Notification modes after the reviewed comparison
+
+The earlier passive-only direction is superseded as the complete coordination
+solution by [primary-first native re-delegation](coordination.md). The reviewed
+`c2db6e7` experiment intentionally requests continuation of the original primary,
+which retrieves the answer and re-delegates to the same Worker through OpenCode.
+That path sends no direct Worker synthetic resume or Loom completion nudge.
+Production durable delivery and recovery remain unimplemented; this is not a new
+behavior enabled by the SDK upgrade.
+
+### Passive notices retain their narrower contract
 
 Synthetic input still enters the native inbox before the `resume:false` check.
 An ordinary running drain can still promote queued input at its next input
 boundary. Skipping an explicit wake is not a no-additional-step guarantee.
 This upgrade does not enable native-inbox notifications.
 
-The agreed candidate is a Loom-owned, immutable Session-addressed notice,
+For passive mode, the separate candidate is a Loom-owned, immutable Session-addressed notice,
 available independently of Action selection and inserted only during an
 already-requested context preparation. It must never submit execution input.
 
@@ -96,9 +106,11 @@ backup/restore. Source inspection is not installed-host behavioural acceptance.
 
 The concurrent `efe6683` review corrections are preserved, including failure
 capture, selection-independent recovery and CI mutation counterchecks. The
-successful-read/failed-selection-save issue remains separate. Keep PR #180 draft;
-independent acceptance and the real Research-to-Worker scenario remain open.
-No whole-process resource guarantee or execution machinery is added.
+successful-read/failed-selection-save issue remains separate. Keep PR #180 draft.
+Independent feasibility review of the later [host comparison](handback-comparison.md)
+is complete as reported by the user. Overall production acceptance, live-model
+usefulness and broader background/replay cases remain open. The upgrade itself
+adds no whole-process resource guarantee or execution machinery.
 
 ## Pinned sources
 

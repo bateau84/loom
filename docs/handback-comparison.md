@@ -4,8 +4,29 @@
 
 The user reports that Reviewer and Critic independently reproduced the 17 selector
 tests and all six installed-host cases at `925a79f`. That closes independent review
-of the **narrow feasibility result**, not production readiness or review of this
-follow-up. The earlier experiment stays as a comparison control.
+of the **narrow feasibility result**, not production readiness. The earlier
+experiment stays as a comparison control.
+
+## Independent comparison review completed
+
+The user subsequently reports that independent review **passes `c2db6e7`** with
+no additional material defect within its declared scope. Reviewer personally
+verified 29/29 focused tests, all 12 real-host scenarios, and all 100 supplied CI
+artifact files byte-for-byte. The review confirms reuse of the same Worker Session
+and original `work_ref`, authoritative retrieval, native completion return, and no
+direct Worker synthetic continuation or Loom completion nudge in the native path.
+
+The second-yield negative control reproduces a stall; its PASS is not recovery.
+The improved duplicate checks detect extra continuations, not prevent them.
+The next-action endpoint is still a coordinating ledger write, not practical
+live-model usefulness or production readiness. These review facts are recorded
+from the user's report; this documentation update does not claim another review
+run or independently recovered Reviewer transcript.
+
+Use [primary-first coordination](coordination.md) as the next implementation
+candidate. Preserve this experiment and its direct-bridge controls rather than
+transplanting the selector. Durable answer delivery, uncertain admission recovery,
+cancellation, assignment routing and broader background/replay coverage remain open.
 
 Four findings remain in its selector/provider: sticky native ownership without
 sufficient assignment/primary/generation scope; `resumed` saved before native
@@ -29,8 +50,8 @@ The unchanged selector is still present for identity/control traces, not used to
 choose this alternative's answer destination or native return.
 
 An answer remains a response, not approval or independently verified completion.
-A successful result here would not make best-effort answer-to-primary sending a
-durable retry implementation. It still needs an assignment association, a saved
+The successful reviewed result does not make best-effort answer-to-primary
+sending a durable retry implementation. It still needs an assignment association, a saved
 answer-delivery intent, safe handling of ambiguous admission and cancellation.
 
 ## Cases and pass conditions

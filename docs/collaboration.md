@@ -1,8 +1,23 @@
 # Reported progress and contextual questions
 
 The Plan describes intent. The ledger stores completion reports, reopen events,
-questions and answers. The five tool names remain unchanged. There is no scheduler,
-blocking-question state, approval grant, automatic parent completion or agent wakeup.
+questions and answers. The five tool names remain unchanged. The current production
+implementation has no scheduler, blocking-question state, approval grant, automatic
+parent completion or agent wakeup.
+
+## Coordination candidate, not current tool behavior
+
+The independently reviewed comparison at `c2db6e7` favors answer -> original primary
+-> native re-delegation to the same Worker Session, retaining its original
+`work_ref`. The native call owns completion return; Loom must not also send a
+completion nudge or directly resume Worker for that continuation. See
+[Coordination](coordination.md) for assignment/routing, delivery, uncertain-admission
+recovery and cancellation requirements. Those capabilities remain unimplemented.
+Passive notices are a separate candidate, not a way to resume an idle primary.
+
+The operations below document shipped code in this draft, not proposed fields or
+notifications. Do not infer dispatch from `respondent`, completion from native
+idleness, or a cancellation effect from an Action label.
 
 ## Completing the work actually performed
 
@@ -119,8 +134,11 @@ context hooks using a simulated host. Existing pinned Code Mode tests verify tha
 search returns complete registered help and signatures, now including these operations.
 The record manual has a 6,000-character metadata ceiling; other tools retain 3,600.
 
-None of this is the installed/model-driven Research-to-Worker acceptance trial or
-independent review. The pre-existing successful-read/failed-selection limitation,
-tested manual backup/restore and wider E operating limits remain separate work.
-Keep PR #180 draft. Do not run paid inference, construct a dashboard or add scheduling
-to claim this bounded implementation is accepted.
+The separate [host comparison](handback-comparison.md) now exercises actual Loom
+callbacks through installed native delegation with a scripted provider. The user
+reports independent acceptance of that comparison's narrow scope at `c2db6e7`.
+That does not turn the test-only delivery code into production behavior or establish
+live-model usefulness, task-removal/fresh-Session acceptance, or overall readiness.
+The pre-existing successful-read/failed-selection limitation, tested manual
+backup/restore and wider E operating limits remain separate work. Keep PR #180
+draft; this status update does not authorize paid inference, dashboards or scheduling.
