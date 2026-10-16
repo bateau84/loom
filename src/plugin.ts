@@ -141,24 +141,10 @@ export default Plugin.define({
                 // Clearing is navigation, not a read of the possibly damaged selection.
                 const focus = focusFor(input, actor.session_id)
                 if (!focus) { result = { selected: null, note: "No Action selected. Ordinary conversation needs no Action." }; break }
-                const context = taskContextOrRecovery(store, focus, snapshot.config.context.max_chars, actor.agent)
-                result = context
-                if (input.action_id && !("recovery" in context)) {
-                  try { store.select(actor.session_id, focus) }
-                  catch (error) {
-                    // Retrieval succeeded. Report the separate navigation failure without
-                    // retrying the write or assuming the requested reference was saved.
-                    let persisted: Focus | null | "unknown" = "unknown", readError: string | undefined
-                    try { persisted = store.selected(actor.session_id) ?? null }
-                    catch (error) { readError = error instanceof Error ? error.message : String(error) }
-                    result = { ...context, selection: {
-                      status: "save-failed",
-                      warning: "Context was read, but saving selection failed. Later automatic context follows persisted selection, not this unsaved request.",
-                      error: error instanceof Error ? error.message : String(error), persisted,
-                      ...(readError === undefined ? {} : { read_error: readError }),
-                    } }
-                  }
-                }
+                const envelopeChars = JSON.stringify({ result: null, ...(snapshot.errors.length ? { config_errors: snapshot.errors } : {}) }).length - 4
+                result = taskContextOrRecovery(store, focus, snapshot.config.context.max_chars, actor.agent, {
+                  ...(input.action_id ? { selectForSession: actor.session_id } : {}), envelopeChars,
+                })
                 break
               }
               case "record": {

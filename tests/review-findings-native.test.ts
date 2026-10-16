@@ -221,6 +221,93 @@ for (const previous of ["fresh", "cleared"] as const) for (const task of [false,
   } finally { await f.close() }
 })
 
+test("registered context response budgets selection failure alongside useful retrieved context at 2000 characters", async () => {
+  const f = await fixture()
+  const read = spyOn(Store.prototype, "contextSnapshot"), select = spyOn(Store.prototype, "select")
+  try {
+    await f.invoke("action", { operation: "update", action_id: f.action.id, expected_revision: 1, goal: "Useful goal. " + "g".repeat(14980) })
+    await f.invoke("plan", { operation: "save", action_id: f.action.id, expected_revision: 1, nodes: [
+      { id: "task", kind: "task", title: "Persisted task" },
+      { id: "requested", kind: "task", title: "Requested task", context: "Useful task context. " + "c".repeat(7979) },
+    ] })
+    const requested = { action_id: f.action.id, node_id: "requested" }
+    for (let i = 0; i < 6; i++) await f.invoke("record", { operation: "add", ...requested, kind: "result", statement: `Useful result ${i}. ` + "r".repeat(480) })
+    await writeFile(join(f.directory, ".loom.yaml"), "context: {max_chars: 2000}\nagents: {author: {roles: [implementation]}}\ninstructions: {enabled: true}\nledger: {capture: off}\n")
+    const workedResponse = await f.invoke("context", requested), worked = workedResponse.result
+    expect(JSON.stringify(workedResponse).length).toBeLessThanOrEqual(2000)
+    await f.invoke("context", { action_id: f.action.id, node_id: "task" })
+    const saved = f.selection(), before = f.history()
+    f.db.exec("CREATE TRIGGER refuse_selection BEFORE INSERT ON focus BEGIN SELECT RAISE(ABORT,'injected selection write refusal'); END")
+    read.mockClear(); select.mockClear()
+    const response = await f.tools.get("context").execute(requested, {
+      sessionID: "s", agent: "author", messageID: "message", id: "budget-regression", signal: new AbortController().signal,
+    }), result = JSON.parse(response.content).result
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(select).toHaveBeenCalledTimes(1)
+    expect(response.content.length).toBeLessThanOrEqual(2000)
+    expect(result.selection).toMatchObject({ status: "save-failed", persisted: { action_id: f.action.id, node_id: "task" } })
+    expect(result.selection.error).toContain("injected selection write refusal")
+    expect(result.selection.warning).toContain("Context was read")
+    expect(result.work_ref).toEqual(worked.work_ref)
+    expect(result.action.id).toBe(f.action.id)
+    expect(result.action.goal).toStartWith("Useful goal")
+    expect(result.task.id).toBe("requested")
+    expect(result.task.context).toStartWith("Useful task context")
+    expect(result.records.some((r: any) => r.data.statement?.startsWith("Useful result"))).toBe(true)
+    expect(result.truncated).toBe(true)
+    expect(f.tools.get("context").description).toContain("selection.diagnostics_excerpted marks error/read_error prefixes")
+    expect(f.selection()).toBe(saved)
+    expect((await f.context("s", "author")).task.id).toBe("task")
+    expect(f.history()).toEqual(before)
+    console.info("Context budget regression:", JSON.stringify({ max_chars: 2000,
+      success_chars: JSON.stringify(workedResponse).length, failure_chars: response.content.length,
+      status: result.selection.status, persisted_task: result.selection.persisted.node_id,
+      retrieved_task: result.task.id, records_retained: result.records.length,
+      work_ref_unchanged: JSON.stringify(result.work_ref) === JSON.stringify(worked.work_ref),
+    }))
+  } finally { read.mockRestore(); select.mockRestore(); await f.close() }
+})
+
+for (const previous of ["task", "none", "corrupt", "unavailable"] as const) for (const task of [false, true]) test(`selection diagnostics stay in the serialized response budget with escaped text and ${previous} readback (${task ? "task" : "Action"})`, async () => {
+  const f = await fixture()
+  try {
+    const savedNode = "s".repeat(120), requestedNode = "r".repeat(120), escaped = "\u0001\\\"".repeat(1000)
+    await f.invoke("action", { operation: "update", action_id: f.action.id, expected_revision: 1, goal: "Useful goal. " + escaped })
+    await f.invoke("plan", { operation: "save", action_id: f.action.id, expected_revision: 1, nodes: [
+      { id: savedNode, kind: "task", title: "Persisted task" },
+      { id: requestedNode, kind: "task", title: "Useful requested task", context: "Useful task context. " + escaped },
+    ] })
+    const requested = { action_id: f.action.id, ...(task ? { node_id: requestedNode } : {}) }
+    const worked = (await f.invoke("context", requested)).result
+    const finding = (await f.invoke("record", { operation: "add", ...requested, kind: "result", statement: "Useful result. " + escaped })).result
+    await f.invoke("context", { action_id: f.action.id, node_id: savedNode })
+    if (previous === "none") await f.invoke("context", { clear: true })
+    if (previous === "corrupt") f.corrupt()
+    if (previous === "unavailable") f.db.exec("DROP TABLE focus")
+    else f.db.exec(`CREATE TRIGGER refuse_selection BEFORE INSERT ON focus BEGIN SELECT RAISE(ABORT,'injected refusal ${escaped}'); END`)
+    const before = f.history()
+    for (const budget of [2000, 2001, 2100, 4000, 16000, 64000]) {
+      await writeFile(join(f.directory, ".loom.yaml"), `context: {max_chars: ${budget}}\nagents: {author: {roles: [implementation]}}\ninstructions: {enabled: true}\nledger: {capture: off}\n`)
+      const response = await f.invoke("context", requested), result = response.result
+      expect(JSON.stringify(response).length).toBeLessThanOrEqual(budget)
+      expect(result.selection.status).toBe("save-failed")
+      expect(result.selection.warning).toContain("persisted selection, not this unsaved request")
+      expect(result.selection.persisted).toEqual(previous === "task" ? { action_id: f.action.id, node_id: savedNode } : previous === "none" ? null : "unknown")
+      expect(result.selection.error).toStartWith(previous === "unavailable" ? "no such table" : "injected refusal")
+      if (previous === "corrupt" || previous === "unavailable") expect(result.selection.read_error.length).toBeGreaterThan(0)
+      if (budget === 2000) expect(result.selection.diagnostics_excerpted).toBe(true)
+      expect(result.action.id).toBe(f.action.id)
+      if (task) { expect(result.task.id).toBe(requestedNode); expect(result.work_ref).toEqual(worked.work_ref) }
+      else expect(result.task).toBeNull()
+      expect(JSON.stringify(result)).toContain("Useful")
+      if (previous === "task") expect((await f.context("s", "author")).task.id).toBe(savedNode)
+      if (previous === "none") expect(await f.context("s", "author")).toBeUndefined()
+      if (budget === 64000) expect(result.records.some((r: any) => r.id === finding.id)).toBe(true)
+    }
+    expect(f.history()).toEqual(before)
+  } finally { await f.close() }
+})
+
 test("failed selection save reports unknown persisted selection when it cannot be read", async () => {
   const f = await fixture()
   try {
