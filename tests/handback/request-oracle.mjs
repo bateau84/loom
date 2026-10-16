@@ -34,3 +34,9 @@ export function observeResponse(state, role, response) {
     view.terminal[role] = true
   }
 }
+
+/** Missing IDs must not turn an answer-thread read into a completion receipt. */
+export function isCompletionRead(input, completion) {
+  return typeof completion?.id === 'string' && completion.id.length > 0
+    && input.operation === 'query' && input.record_id === completion.id
+}

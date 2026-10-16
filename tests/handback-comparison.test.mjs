@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
 import { HandbackExperiment } from './handback/bridge.mjs'
-import { observeRequest, observeResponse } from './handback/request-oracle.mjs'
+import { observeRequest, observeResponse, isCompletionRead } from './handback/request-oracle.mjs'
 
 const user = text => ({ role: 'user', content: [{ type: 'text', text }] })
 const notice = user('Answer recorded for question q1. Read the authoritative thread.')
@@ -75,4 +75,15 @@ test('characterization: native ownership has no primary or generation argument a
   bridge.resumeAfterAnswer('work', 'answer')
   assert.equal(bridge.offer('work', report).state, 'native-owned')
   assert.equal(bridge.get('work').return_owner, 'native')
+})
+
+test('answer-thread queries with absent or different completion IDs are not completion reads', () => {
+  assert.equal(isCompletionRead({ operation: 'query', view: 'thread', question_id: 'q' }, undefined), false)
+  assert.equal(isCompletionRead({ operation: 'query' }, {}), false)
+  assert.equal(isCompletionRead({ operation: 'query', record_id: '' }, { id: '' }), false)
+  assert.equal(isCompletionRead({ operation: 'query', record_id: 'other' }, { id: 'c' }), false)
+})
+test('completion read requires the actual saved record ID and a query', () => {
+  assert.equal(isCompletionRead({ operation: 'query', record_id: 'c' }, { id: 'c' }), true)
+  assert.equal(isCompletionRead({ operation: 'add', record_id: 'c' }, { id: 'c' }), false)
 })

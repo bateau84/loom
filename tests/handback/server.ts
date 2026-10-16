@@ -5,7 +5,7 @@ import { appendFileSync, readFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { randomUUID } from "node:crypto"
 import { HandbackExperiment } from "./bridge.mjs"
-import { observeRequest, observeResponse } from "./request-oracle.mjs"
+import { observeRequest, observeResponse, isCompletionRead } from "./request-oracle.mjs"
 
 const provider = "handback-fixture"
 const providerPackage = "aisdk:" + new URL("./provider.mjs", import.meta.url).href
@@ -210,7 +210,7 @@ export default Plugin.define({
             }
           }
         }
-        if (name === "record" && input.operation === "query" && input.record_id === state.completion?.id && event.agent === "bridge-primary") { state.primaryRead = true; audit("primary-completion-retrieved") }
+        if (name === "record" && isCompletionRead(input, state.completion) && event.agent === "bridge-primary") { state.primaryRead = true; audit("primary-completion-retrieved") }
         if (name === "record" && input.operation === "add" && event.agent === "bridge-primary") {
           require(state.primaryRead, "Primary coordinated without retrieving completion")
           state.coordinations++; state.coordinationRecord = result
