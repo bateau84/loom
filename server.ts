@@ -9,7 +9,11 @@ export default Plugin.define({
     const skill = await loomSkill()
     const registration = await ctx.skill.transform(editor => {
       // Respect an existing user skill. Rebuilds get a fresh, unmodified definition.
-      if (!editor.get(skill.id)) editor.add({ ...skill })
+      if (!editor.get(skill.id)) editor.add({
+        ...skill,
+        // The pinned SDK brands IDs; this is the fixed, plugin-owned literal.
+        id: skill.id as Parameters<typeof editor.add>[0]["id"],
+      })
     })
     try {
       const cleanup = await core.setup(ctx)
