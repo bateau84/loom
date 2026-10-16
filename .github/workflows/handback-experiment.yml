@@ -20,18 +20,25 @@ jobs:
           node-version: 22
       - run: bun install --frozen-lockfile
       - run: git diff --exit-code -- bun.lock
-      - run: node --test tests/handback-experiment.test.mjs
+      - run: node --test tests/handback-experiment.test.mjs tests/handback-comparison.test.mjs
       - name: Install exact isolated host
         run: npm install --prefix "$RUNNER_TEMP/loom-handback-host" --no-audit --no-fund @opencode/cli@2.0.29
-      - name: Real host, scripted provider, no external inference
+      - name: Real host, original six scenarios
         run: >-
           python3 tests/installed_handback_experiment.py
           --opencode "$RUNNER_TEMP/loom-handback-host/node_modules/.bin/opencode"
           --report-directory "$RUNNER_TEMP/loom-handback-report"
+      - name: Native re-delegation comparison and duplicate counterchecks
+        run: >-
+          python3 tests/installed_handback_experiment.py --comparison
+          --opencode "$RUNNER_TEMP/loom-handback-host/node_modules/.bin/opencode"
+          --report-directory "$RUNNER_TEMP/loom-handback-comparison"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: assignment-handback-${{ github.sha }}
-          path: ${{ runner.temp }}/loom-handback-report/
+          path: |
+            ${{ runner.temp }}/loom-handback-report/
+            ${{ runner.temp }}/loom-handback-comparison/
           if-no-files-found: warn
           retention-days: 7

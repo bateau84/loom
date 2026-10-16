@@ -5,6 +5,7 @@ import { appendFileSync, readFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { randomUUID } from "node:crypto"
 import { HandbackExperiment } from "./bridge.mjs"
+import { observeRequest, observeResponse } from "./request-oracle.mjs"
 
 const provider = "handback-fixture"
 const providerPackage = "aisdk:" + new URL("./provider.mjs", import.meta.url).href
@@ -21,6 +22,10 @@ export default Plugin.define({
     const bridge = new HandbackExperiment(db)
     const prior = db.prepare("SELECT data FROM bridge_fixture WHERE key='state'").get() as any
     const state: any = prior ? JSON.parse(prior.data) : { requests: [], nudges: 0, answers: 0, completions: 0, coordinations: 0 }
+    state.answerNotices ??= 0
+    state.redelegations ??= 0
+    state.directWorkerRequests ??= 0
+    state.nativeCalls ??= []
     let closed = false
     const regs: Array<{ dispose(): Promise<void> }> = []
     const save = () => db.prepare("INSERT INTO bridge_fixture VALUES('state',?) ON CONFLICT(key) DO UPDATE SET data=excluded.data").run(JSON.stringify(state))
@@ -39,7 +44,19 @@ export default Plugin.define({
         if (!state.action) return execute('const a=JSON.parse(await tools.loom.action({operation:"create",title:"Handback experiment",goal:"Use a qualified answer and coordinate the result"})).result; await tools.loom.plan({operation:"save",action_id:a.id,expected_revision:0,nodes:[{id:"worker",kind:"task",title:"Original Worker assignment",outcome:"Return the qualified finding"}]}); return a.id')
         if (!state.originalReturned) return { tool: "subagent", input: { agent: "bridge-worker", description: "Ask and yield", prompt: `Select Action ${state.action.id}, node worker. Ask Research for the qualified marker, then yield.` } }
         if (options.mode === "native-covered" && !state.newerReturned) return { tool: "subagent", input: { agent: "bridge-worker", sessionID: state.worker, background: true, description: "Native continuation owns return", prompt: "Continue the same assignment when Research answers." } }
+        if (options.newerYields && !state.newerReturned) return { tool: "subagent", input: {
+          agent: "bridge-worker", sessionID: state.worker, description: "Newer generation also yields",
+          prompt: "Recheck the same assignment; yield again if its question is still unanswered." } }
         if (!state.researchReturned) return { tool: "subagent", input: { agent: "bridge-research", background: true, description: "Answer Worker question", prompt: `Answer authoritative question ${state.question.id} after the fixture barrier.` } }
+        if (options.routePrimary && state.answer && !state.completion) {
+          if (!state.primaryAnswerRead) {
+            require(text.includes(state.question.id), "Primary lacks the question reference")
+            return call("record", { operation: "query", view: "thread", question_id: state.question.id })
+          }
+          require(text.includes(options.marker), "Primary did not retrieve the qualified answer")
+          return { tool: "subagent", input: { agent: "bridge-worker", sessionID: state.worker,
+            description: "Native answer continuation", prompt: `Native continuation for assignment ${options.assignment}. Retrieve authoritative question ${state.question.id}, answer ${state.answer.id}; finish the original assignment using its retained work reference.` } }
+        }
         if (!state.completion) return { text: "PRIMARY_WAITING_FOR_ASSIGNMENT" }
         if (!state.primaryRead) { require(text.includes(state.completion.id), "Primary did not receive the completion reference"); return call("record", { operation: "query", action_id: state.action.id, record_id: state.completion.id }) }
         if (!state.coordinations) { require(text.includes(options.marker) && text.includes(state.completion.id), "Primary request lacks the retrieved authoritative completion"); return call("record", { operation: "add", action_id: state.action.id, kind: "result", statement: `PRIMARY_NEXT_COORDINATING_ACTION using ${state.completion.id}` }) }
@@ -49,7 +66,7 @@ export default Plugin.define({
         if (!state.workRef) { require(text.includes(state.action.id), "Worker did not receive its Action"); return call("context", { action_id: state.action.id, node_id: "worker" }) }
         if (!state.question) return call("record", { operation: "ask", action_id: state.action.id, node_id: "worker", respondent: "bridge-research", statement: "What is the qualified marker?" })
         if (!state.answer) {
-          if (state.newerStarted) await waitFor(() => Boolean(state.answer))
+          if (state.newerStarted && !options.newerYields) await waitFor(() => Boolean(state.answer))
           else return { text: "WORKER_ASKED_AND_YIELDED" }
         }
         if (!state.workerRead) return call("record", { operation: "query", view: "thread", question_id: state.question.id })
@@ -64,6 +81,16 @@ export default Plugin.define({
         if (!state.answer) return call("record", { operation: "answer", question_id: state.question.id, statement: `${options.marker}; valid only for this fixture, not a general conclusion.`, artifact_refs: ["fixture:qualified-source"] })
         // Keep unrelated native background work active until the driver records the
         // handback result. Its own native return must not mask a missing Worker return.
+        if (options.duplicateTarget) {
+          await waitFor(() => control().injectDuplicate === true)
+          require(!state.duplicateInjected, "Fault injected more than once")
+          state.duplicateInjected = true
+          const original = options.duplicateTarget === "worker" ? state.answerPayload : bridge.get(options.assignment)?.payload
+          require(original, "No original delivery to duplicate")
+          const payload = { ...original, id: "msg_" + randomUUID().replaceAll("-", "").slice(0, 26) }
+          audit("duplicate-input-injected", { target: options.duplicateTarget, payload })
+          await ctx.session.synthetic(payload as any)
+        }
         await waitFor(() => control().releaseResearch === true)
         return { text: "RESEARCH_FINISHED" }
       }
@@ -75,8 +102,11 @@ export default Plugin.define({
       doStream: async (input: any) => {
         try {
           if (state.requests.length >= 100) throw new Error("Scripted request ceiling exceeded")
-          state.requests.push(role); audit("provider-request", { role, prompt: input.prompt })
+          observeRequest(state, role, input.prompt)
+          state.requests.push(role); audit("provider-request", { role, prompt: input.prompt, request_oracle: state.request_oracle })
           const response = await script(role, input.prompt)
+          observeResponse(state, role, response)
+          audit("provider-response", { role, response })
           const events: any[] = [{ type: "stream-start", warnings: [] }]
           if (response.tool) events.push({ type: "tool-call", toolCallId: randomUUID(), toolName: response.tool, input: JSON.stringify(response.input) })
           else events.push({ type: "text-start", id: "text" }, { type: "text-delta", id: "text", delta: response.text }, { type: "text-end", id: "text" })
@@ -101,7 +131,15 @@ export default Plugin.define({
       regs.push(await ctx.tool.hook("execute.before", async event => {
         const input = event.input as any
         if (event.tool === "subagent" && input?.sessionID === state.worker && state.originalReturned) {
-          bridge.nativeOwns(options.assignment); state.newerStarted = true; audit("newer-native-start", { primary: event.sessionID, worker: state.worker })
+          // Retain the reviewed selector, including sticky ownership, as the
+          // comparison control. This trace is NOT a new production detector.
+          bridge.nativeOwns(options.assignment); state.newerStarted = true
+          if (state.answer) state.redelegations++
+          const call = { primary: event.sessionID, worker: state.worker, message: event.messageID,
+            call: event.id, assignment: options.assignment, after_answer: Boolean(state.answer),
+            background: input.background === true, returned: false }
+          state.nativeCalls.push(call)
+          audit("newer-native-start", call)
         }
       }))
       regs.push(await ctx.tool.hook("execute.after", async raw => {
@@ -115,7 +153,13 @@ export default Plugin.define({
             state.worker = output.sessionID; state.primary = event.sessionID; state.originalReturned = true
             bridge.track({ id: options.assignment, primary: state.primary, worker: state.worker, work_ref: state.workRef, original_returned: true })
             audit("original-delegation-returned", { worker: state.worker, primary: state.primary })
-          } else if (input.agent === "bridge-worker") { state.newerReturned = true; audit("newer-native-return", { status: output.status }) }
+          } else if (input.agent === "bridge-worker") {
+            state.newerReturned = true
+            const call = state.nativeCalls.find((item: any) => item.primary === event.sessionID && item.message === event.messageID && item.call === event.id)
+            require(call && !call.returned, "Missing or repeated native-call return")
+            call.returned = true; call.status = output.status
+            audit("newer-native-return", { ...call, completion_id: state.completion?.id })
+          }
           else if (input.agent === "bridge-research") { state.research = output.sessionID; state.researchReturned = true; audit("research-background-launched") }
           return
         }
@@ -127,18 +171,32 @@ export default Plugin.define({
         if (name === "record" && input.operation === "ask") state.question = result
         if (name === "record" && input.operation === "answer") {
           state.answer = result; state.answers++; audit("answer-saved")
-          if (bridge.resumeAfterAnswer(options.assignment, result.id)) {
+          if (options.routePrimary) {
+            // Only this answer notice goes through Loom. Primary requests the
+            // native subagent call; OpenCode owns its eventual completion return.
+            const payload = { id: "msg_" + result.id.replaceAll("-", "").slice(0, 26),
+              sessionID: state.primary, resume: true, delivery: "steer",
+              text: `Answer ready for assignment ${options.assignment}. Retrieve authoritative question ${state.question.id} and answer ${result.id}, then continue the exact Worker Session ${state.worker} using native subagent delegation. An answer is a response, not approval.`,
+              metadata: { source: "loom-answer-primary-experiment", assignment_id: options.assignment, question_id: state.question.id } }
+            state.answerNotices++; state.answerPayload = payload; state.answerDelivery = "submitted"
+            audit("primary-answer-notice-submitted", { payload })
+            try { await ctx.session.synthetic(payload as any); state.answerDelivery = "admitted" }
+            catch (error) { state.answerDelivery = "uncertain"; audit("answer-notice-uncertain", { error: String(error) }); throw error }
+            audit("primary-answer-notice-admitted", { payload })
+          } else if (bridge.resumeAfterAnswer(options.assignment, result.id)) {
             const payload = { id: "msg_" + result.id.replaceAll("-", "").slice(0,26), sessionID: state.worker, resume: true, delivery: "steer",
               text: `Answer recorded for question ${state.question.id}. Retrieve its authoritative thread and finish assignment ${options.assignment}.`, metadata: { source: "loom-answer-experiment", question_id: state.question.id } }
+            state.directWorkerRequests++; state.answerPayload = payload
             audit("worker-continuation-requested", { payload })
             await ctx.session.synthetic(payload as any)
           }
         }
         if (name === "record" && input.view === "thread" && event.agent === "bridge-worker") { state.workerRead = true; audit("worker-thread-retrieved") }
+        if (name === "record" && input.view === "thread" && event.agent === "bridge-primary") { state.primaryAnswerRead = true; audit("primary-answer-retrieved") }
         if (name === "record" && input.operation === "complete") {
           state.completion = result; state.completions++; audit("worker-explicit-completion")
           if (options.mode === "cancelled") bridge.cancel(options.assignment) // deliberate injected assignment cancellation, NOT idle inference
-          if (options.mode !== "baseline") {
+          if (options.mode !== "baseline" && !options.routePrimary) {
             const offer = bridge.offer(options.assignment, result); audit("handback-decision", { decision: offer.state })
             if (offer.payload && bridge.beginSend(options.assignment)) {
               state.nudges++; audit("primary-nudge-submitted", { payload: offer.payload })
