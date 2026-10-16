@@ -142,8 +142,23 @@ export default Plugin.define({
                 const focus = focusFor(input, actor.session_id)
                 if (!focus) { result = { selected: null, note: "No Action selected. Ordinary conversation needs no Action." }; break }
                 const context = taskContextOrRecovery(store, focus, snapshot.config.context.max_chars, actor.agent)
-                if (input.action_id && !("recovery" in context)) store.select(actor.session_id, focus)
                 result = context
+                if (input.action_id && !("recovery" in context)) {
+                  try { store.select(actor.session_id, focus) }
+                  catch (error) {
+                    // Retrieval succeeded. Report the separate navigation failure without
+                    // retrying the write or assuming the requested reference was saved.
+                    let persisted: Focus | null | "unknown" = "unknown", readError: string | undefined
+                    try { persisted = store.selected(actor.session_id) ?? null }
+                    catch (error) { readError = error instanceof Error ? error.message : String(error) }
+                    result = { ...context, selection: {
+                      status: "save-failed",
+                      warning: "Context was read, but saving selection failed. Later automatic context follows persisted selection, not this unsaved request.",
+                      error: error instanceof Error ? error.message : String(error), persisted,
+                      ...(readError === undefined ? {} : { read_error: readError }),
+                    } }
+                  }
+                }
                 break
               }
               case "record": {

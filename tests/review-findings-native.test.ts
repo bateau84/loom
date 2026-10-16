@@ -1,9 +1,10 @@
-import { test, expect } from "bun:test"
+import { test, expect, spyOn } from "bun:test"
 import { Error as ToolError } from "@opencode/plugin/promise/tool"
 import { Database } from "bun:sqlite"
 import { readdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { digest, PROCESSING_LIMITS } from "../src/model.js"
+import { Store } from "../src/store.js"
 import { registeredLoom } from "./helpers/registered-loom.js"
 
 async function fixture() {
@@ -158,6 +159,120 @@ test("failed clear and failed Action creation report write failure and preserve 
     f.db.exec("DROP TRIGGER refuse_selection")
     expect((await f.invoke("context", { clear: true })).result.selected).toBeNull()
   } finally { await f.close() }
+})
+
+test("context read survives selection-save failure and automatic context follows the persisted task", async () => {
+  const f = await fixture()
+  const select = spyOn(Store.prototype, "select") // Observe real writes; do not replace storage behavior.
+  try {
+    await f.invoke("plan", { operation: "save", action_id: f.action.id, expected_revision: 1, nodes: [
+      { id: "task", kind: "task", title: "Original task" },
+      { id: "requested", kind: "task", title: "Requested task", outcome: "Useful retrieved contract" },
+    ] })
+    const requested = { action_id: f.action.id, node_id: "requested" }
+    const worked = (await f.invoke("context", requested)).result
+    const completion = (await f.invoke("record", { operation: "complete", work_ref: worked.work_ref, statement: "Fixture completion without assignment" })).result
+    await f.invoke("context", { action_id: f.action.id, node_id: "task" })
+    const question = (await f.invoke("record", { operation: "ask", ...requested, respondent: "author", statement: "Retain this question?" })).result
+    const before = f.history(), saved = f.selection()
+    await writeFile(join(f.directory, ".loom.yaml"), "agents: {author: {roles: [implementation]}}\ninstructions: {enabled: true}\nledger: {capture: off}\n")
+    f.db.exec("CREATE TRIGGER refuse_selection BEFORE INSERT ON focus BEGIN SELECT RAISE(ABORT,'injected selection write refusal'); END")
+    select.mockClear()
+    const result = (await f.invoke("context", requested)).result
+    expect(select).toHaveBeenCalledTimes(1)
+    expect(result.task.id).toBe("requested")
+    expect(result.task.outcome).toBe("Useful retrieved contract")
+    expect(result.work_ref.node_id).toBe("requested")
+    expect(result.work_ref).toEqual(worked.work_ref)
+    expect(result.progress.some((p: any) => p.report_id === completion.id && p.state === "reported-complete")).toBe(true)
+    expect(result.questions.some((q: any) => q.question_id === question.id)).toBe(true)
+    expect(result.recovery).toBeUndefined()
+    expect(result.selection).toMatchObject({ status: "save-failed", persisted: { action_id: f.action.id, node_id: "task" } })
+    expect(result.selection.error).toContain("injected selection write refusal")
+    expect(result.selection.warning).toContain("Context was read")
+    expect(f.selection()).toBe(saved)
+    expect((await f.invoke("context", {})).result.task.id).toBe("task")
+    expect((await f.context("s", "author")).task.id).toBe("task")
+    expect(f.history()).toEqual(before)
+    expect(f.tools.size).toBe(5)
+  } finally { select.mockRestore(); await f.close() }
+})
+
+for (const previous of ["fresh", "cleared"] as const) for (const task of [false, true]) test(`failed selection save keeps useful ${task ? "task" : "Action"} context in a ${previous} Session`, async () => {
+  const f = await fixture()
+  try {
+    if (previous === "cleared") await f.invoke("context", { clear: true }, "reader")
+    const before = f.history()
+    await writeFile(join(f.directory, ".loom.yaml"), "agents: {author: {roles: [implementation]}}\ninstructions: {enabled: true}\nledger: {capture: off}\n")
+    f.db.exec("CREATE TRIGGER refuse_selection BEFORE INSERT ON focus BEGIN SELECT RAISE(ABORT,'injected selection write refusal'); END")
+    const result = (await f.invoke("context", { action_id: f.action.id, ...(task ? { node_id: "task" } : {}) }, "reader")).result
+    expect(result.action.id).toBe(f.action.id)
+    expect(result.action.title).toBe("Original")
+    if (task) { expect(result.task.id).toBe("task"); expect(result.work_ref.node_id).toBe("task") }
+    else expect(result.task).toBeNull()
+    expect(result.records.some((r: any) => r.id === f.finding.id)).toBe(true)
+    expect(result.selection).toMatchObject({ status: "save-failed", persisted: null })
+    expect(result.selection.error).toContain("injected selection write refusal")
+    expect(result.selection.read_error).toBeUndefined()
+    expect((await f.invoke("context", {}, "reader")).result.selected).toBeNull()
+    expect(await f.context("reader", "author")).toBeUndefined()
+    expect(f.db.prepare("SELECT data FROM focus WHERE session_id='reader'").get()).toEqual(previous === "fresh" ? null : { data: "null" })
+    expect(f.history()).toEqual(before)
+  } finally { await f.close() }
+})
+
+test("failed selection save reports unknown persisted selection when it cannot be read", async () => {
+  const f = await fixture()
+  try {
+    f.corrupt(); const before = f.history()
+    f.db.exec("CREATE TRIGGER refuse_selection BEFORE INSERT ON focus BEGIN SELECT RAISE(ABORT,'injected selection write refusal'); END")
+    const result = (await f.invoke("context", { action_id: f.action.id, node_id: "task" })).result
+    expect(result.task.id).toBe("task")
+    expect(result.work_ref.node_id).toBe("task")
+    expect(result.selection).toMatchObject({ status: "save-failed", persisted: "unknown" })
+    expect(result.selection.error).toContain("injected selection write refusal")
+    expect(result.selection.read_error).toBeString()
+    expect(result.selection.read_error.length).toBeGreaterThan(0)
+    expect(f.selection()).toBe("{broken selection")
+    await expect(f.invoke("context", {})).rejects.toThrow()
+    expect(f.history()).toEqual(before)
+  } finally { await f.close() }
+})
+
+test("context read survives unavailable selection storage without inventing a saved reference", async () => {
+  const f = await fixture()
+  try {
+    const before = f.history()
+    f.db.exec("DROP TABLE focus")
+    const result = (await f.invoke("context", { action_id: f.action.id, node_id: "task" })).result
+    expect(result.task.id).toBe("task")
+    expect(result.selection).toMatchObject({ status: "save-failed", persisted: "unknown" })
+    expect(result.selection.error).toContain("no such table: focus")
+    expect(result.selection.read_error).toContain("no such table: focus")
+    await expect(f.invoke("context", { clear: true })).rejects.toThrow("no such table: focus")
+    expect(f.history()).toEqual(before)
+  } finally { await f.close() }
+})
+
+test("context validation, missing task recovery and storage read errors remain distinct from selection-save failure", async () => {
+  const f = await fixture()
+  const select = spyOn(Store.prototype, "select")
+  try {
+    const saved = f.selection(), before = f.history()
+    f.db.exec("CREATE TRIGGER refuse_selection BEFORE INSERT ON focus BEGIN SELECT RAISE(ABORT,'injected selection write refusal'); END")
+    await expect(f.invoke("context", { node_id: "task" })).rejects.toThrow("node_id requires action_id")
+    await expect(f.invoke("context", { action_id: "" })).rejects.toThrow("id must be a simple identifier")
+    await expect(f.invoke("context", { action_id: "not-found" })).rejects.toThrow("Unknown Action")
+    const missing = (await f.invoke("context", { action_id: f.action.id, node_id: "not-found" })).result
+    expect(missing.recovery.code).toBe("task-not-in-current-plan")
+    expect(missing.selection).toBeUndefined()
+    expect(missing.selection_unchanged).toBe(true)
+    f.db.prepare("UPDATE plans SET data=? WHERE action_id=?").run("{broken plan", f.action.id)
+    await expect(f.invoke("context", { action_id: f.action.id, node_id: "task" })).rejects.toThrow()
+    expect(select).not.toHaveBeenCalled()
+    expect(f.selection()).toBe(saved)
+    expect(f.history()).toEqual(before)
+  } finally { select.mockRestore(); await f.close() }
 })
 
 test("selection-dependent operations still expose corruption instead of treating it as no selection", async () => {
