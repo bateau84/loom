@@ -8,7 +8,7 @@ import { configPaths, loadConfig } from "./config.js"
 import { configLoadStatus } from "./config-admission.js"
 import { injectInstructions, registry, type NativeAgent } from "./agents.js"
 import { taskContextOrRecovery, Observer } from "./context.js"
-import { digest, type Actor, type Focus } from "./model.js"
+import { digest, uid, type Actor, type Focus } from "./model.js"
 import { Store } from "./store.js"
 import { TOOL_HELP, LOOM_NAMESPACE_HELP } from "./tool-help.js"
 
@@ -37,7 +37,7 @@ const specs = [
   { name: "action", description: TOOL_HELP.action, input: obj({ operation: choice("list", "create", "update"), action_id: str, title: str, goal: str, state: choice("active", "paused", "completed", "cancelled"), expected_revision: num, offset: num }, ["operation"]) },
   { name: "plan", description: TOOL_HELP.plan, input: obj({ operation: choice("read", "save"), action_id: str, revision: num, expected_revision: num, nodes: { type: "array", maxItems: 300, items: obj({ id: str, kind: choice("phase", "wave", "task", "subtask"), title: str, parent: str, depends_on: list, outcome: str, context: str, criteria: list, skills: list, roles: list, agent: str }, ["id", "kind", "title"]) } }, ["operation", "action_id"]) },
   { name: "context", description: TOOL_HELP.context, input: obj({ action_id: str, node_id: str, clear: { type: "boolean" } }) },
-  { name: "record", description: TOOL_HELP.record, input: obj({ operation: choice("add", "query", "complete", "reopen", "ask", "answer"), view: choice("ledger", "progress", "questions", "thread"), work_ref: workRefInput, question_id: str, respondent: str, background: str, question_state: choice("open", "answered", "all"), offset: num, action_id: str, node_id: str, kind: choice("claim", "result", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
+  { name: "record", description: TOOL_HELP.record, input: obj({ operation: choice("add", "query", "complete", "reopen", "ask", "answer", "assign"), view: choice("ledger", "progress", "questions", "thread", "assignments", "deliveries"), work_ref: workRefInput, assignment_id: str, worker_session_id: str, delivery_id: str, question_id: str, respondent: str, background: str, question_state: choice("open", "answered", "all"), offset: num, action_id: str, node_id: str, kind: choice("claim", "result", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
 ] as const
 
 export default Plugin.define({
@@ -64,12 +64,13 @@ export default Plugin.define({
       if (message !== lastWarning) { console.warn(message); lastWarning = message }
     }
     // A plugin instance's location is not necessarily the location of all server events.
-    const owns = async (sessionID: Parameters<typeof ctx.session.get>[0]["sessionID"]) => {
-      const session = payload(unwrapped(await ctx.session.get({ sessionID })))
+    const sessionIsLocal = async (session: Record<string, unknown>) => {
       const location = payload(session.location)
       if (session.projectID !== ctx.location.project.id || typeof location.directory !== "string" || location.workspaceID !== ctx.location.workspaceID) return false
       try { return await realpath(location.directory) === directory } catch { return false }
     }
+    const owns = async (sessionID: Parameters<typeof ctx.session.get>[0]["sessionID"]) =>
+      sessionIsLocal(payload(unwrapped(await ctx.session.get({ sessionID }))))
     const focusFor = (input: Record<string, unknown>, session: string): Focus | undefined => {
       if (input.action_id !== undefined) return { action_id: String(input.action_id), ...(input.node_id !== undefined ? { node_id: String(input.node_id) } : {}) }
       if (input.node_id !== undefined) throw new Error("node_id requires action_id")
@@ -117,10 +118,24 @@ export default Plugin.define({
               case "record": {
                 // Only selection-scoped operations need the saved reference. Explicit
                 // work/thread identity and Session-only recovery must not depend on it.
-                const identityScoped = input.operation === "complete" || input.operation === "answer" || (input.operation === "query" && input.view === "thread")
+                if (input.operation === "assign") {
+                  const sessionID = uid(input.worker_session_id, "worker_session_id") as Parameters<typeof ctx.session.get>[0]["sessionID"]
+                  const child = payload(unwrapped(await ctx.session.get({ sessionID })))
+                  if (child.id !== sessionID || child.parentID !== actor.session_id || !await sessionIsLocal(child))
+                    throw new Error("Assignment Worker must be this primary's native child in this Loom location")
+                  // No writes occur after cancellation during the asynchronous host lookup.
+                  lifetime.signal.throwIfAborted(); toolContext.signal.throwIfAborted()
+                }
+                const identityScoped = ["complete", "answer", "assign"].includes(String(input.operation))
+                  || (input.operation === "query" && ["thread", "assignments", "deliveries"].includes(String(input.view)))
+                  || (input.operation === "ask" && input.assignment_id !== undefined)
                 const focus = identityScoped || input.session_only ? undefined : focusFor(input, actor.session_id)
-                if (["complete", "reopen", "ask", "answer"].includes(String(input.operation)) || (input.operation === "query" && input.view !== undefined && input.view !== "ledger")) {
-                  result = store.collaboration.execute(actor, input, focus)
+                const assignedFocus = input.operation === "ask" && input.assignment_id !== undefined && input.action_id !== undefined
+                  ? { action_id: input.action_id as string, ...(input.node_id === undefined ? {} : { node_id: input.node_id as string }) } : focus
+                if (input.operation === "ask" && input.assignment_id !== undefined && input.node_id !== undefined && input.action_id === undefined)
+                  throw new Error("node_id requires action_id")
+                if (["complete", "reopen", "ask", "answer", "assign"].includes(String(input.operation)) || (input.operation === "query" && input.view !== undefined && input.view !== "ledger")) {
+                  result = store.collaboration.execute(actor, input, assignedFocus)
                   break
                 }
                 if (input.session_only && (input.operation !== "query" || input.action_id !== undefined || input.node_id !== undefined)) throw new Error("session_only is a query option and cannot be combined with work IDs")

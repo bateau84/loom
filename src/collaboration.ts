@@ -60,8 +60,19 @@ function checkedRef(value: WorkRef): WorkRef {
   uid(value.action_id); uid(value.node_id)
   for (const revision of [value.action_revision, value.plan_revision]) if (!Number.isSafeInteger(revision) || revision < 1) throw new Error("work_ref revisions must identify saved work")
   if (typeof value.hash !== "string" || !/^[a-f0-9]{64}$/.test(value.hash)) throw new Error("Invalid work_ref hash")
-  return { ...value }
+  return { action_id: value.action_id, node_id: value.node_id, action_revision: value.action_revision,
+    plan_revision: value.plan_revision, hash: value.hash }
 }
+function sameRef(a: WorkRef, b: WorkRef) {
+  return a.action_id === b.action_id && a.node_id === b.node_id && a.action_revision === b.action_revision
+    && a.plan_revision === b.plan_revision && a.hash === b.hash
+}
+type Assignment = LedgerRecord & { data: Record<string, unknown> & { assignment_id: string; primary_session_id: string; worker_session_id: string; work_ref: WorkRef } }
+export type AnswerResult = LedgerRecord & { delivery: {
+  state: "stored-for-session" | "not-requested"; transport: "not-attempted";
+  reason: "transport-not-implemented" | "question-not-assigned"; intent_id?: string; destination_session_id?: string
+} }
+
 const semantics = "Agent-reported, not independent acceptance. Answered means a response exists, not resolution, approval or permission."
 type ReadAllowance = { bytes: number }
 type Candidate = { seq: number; data_bytes: number }
@@ -76,7 +87,13 @@ export class Collaboration {
       CREATE INDEX IF NOT EXISTS ledger_progress ON ledger(action_id,json_extract(data,'$.node_id'),seq)
         WHERE kind IN ('completion','reopen');
       CREATE INDEX IF NOT EXISTS ledger_questions ON ledger(action_id,seq) WHERE kind='question';
-      CREATE INDEX IF NOT EXISTS ledger_answers ON ledger(action_id,json_extract(data,'$.data.question_id'),seq) WHERE kind='answer';`)
+      CREATE INDEX IF NOT EXISTS ledger_answers ON ledger(action_id,json_extract(data,'$.data.question_id'),seq) WHERE kind='answer';
+      CREATE UNIQUE INDEX IF NOT EXISTS ledger_assignment_id ON ledger(json_extract(data,'$.data.assignment_id')) WHERE kind='assignment';
+      CREATE UNIQUE INDEX IF NOT EXISTS ledger_assignment_question ON ledger(json_extract(data,'$.data.question_id')) WHERE kind='assignment';
+      CREATE INDEX IF NOT EXISTS ledger_assignment_primary ON ledger(session_id,seq) WHERE kind='assignment';
+      CREATE INDEX IF NOT EXISTS ledger_assignment_worker ON ledger(json_extract(data,'$.data.worker_session_id'),seq) WHERE kind='assignment';
+      CREATE INDEX IF NOT EXISTS ledger_delivery_session ON ledger(json_extract(data,'$.data.destination_session_id'),seq) WHERE kind='delivery-intent';`)
+
   }
   /** Called inside the Action update transaction, before mutating the old object. */
   preserveAction(action: Action) {
@@ -113,15 +130,70 @@ export class Collaboration {
     if (!record) throw new Error(`Unknown ${kind}: ${id}`)
     return record
   }
-  complete(actor: Actor, input: { work_ref: WorkRef; statement: string; artifact_refs?: string[] }): LedgerRecord {
+  /** Caller owns a write transaction. Never substitutes a current definition. */
+  private verifyReference(ref: WorkRef) {
+    const original = this.originalAction(this.store.action(ref.action_id), ref.action_revision)
+    if (workReference(original, this.store.plan(ref.action_id, ref.plan_revision), ref.node_id).hash !== ref.hash)
+      throw new Error("work_ref does not match the recorded definition; no record saved")
+    return original
+  }
+  private findAssignment(id: string): Assignment | undefined {
+    const rows = this.candidates("SELECT seq,octet_length(data) AS data_bytes FROM ledger WHERE kind='assignment' AND json_extract(data,'$.data.assignment_id')=?", [uid(id, "assignment_id")])
+    const result = this.load(rows, { bytes: 0 })[0]
+    if (!result) return undefined
+    const ref = checkedRef(result.data.work_ref as WorkRef), primary = uid(result.data.primary_session_id), worker = uid(result.data.worker_session_id)
+    if (result.data.assignment_id !== id || result.session_id !== primary || result.action_id !== ref.action_id
+      || result.node_id !== ref.node_id || worker === primary) throw new Error("Inconsistent saved assignment")
+    return { ...result, data: { ...result.data, assignment_id: id, primary_session_id: primary, worker_session_id: worker, work_ref: ref } }
+  }
+  private assignment(id: string): Assignment {
+    const assignment = this.findAssignment(id)
+    if (!assignment) throw new Error(`Unknown assignment: ${id}`)
+    return assignment
+  }
+  /** Explicit association, not a native call or an execution grant. The plugin validates the child Session. */
+  assign(actor: Actor, input: { assignment_id: string; worker_session_id: string; work_ref: WorkRef; question_id?: string }): LedgerRecord {
+    canonical(input, new ProcessingBudget(8192, 200))
+    const assignment_id = uid(input.assignment_id, "assignment_id"), worker = uid(input.worker_session_id, "worker_session_id")
+    const primary = uid(actor.session_id, "primary Session"), ref = checkedRef(input.work_ref)
+    const question_id = input.question_id === undefined ? undefined : uid(input.question_id, "question_id")
+    if (primary === worker) throw new Error("Worker and primary must be different Sessions")
+    return this.atomic(true, () => {
+      const existing = this.findAssignment(assignment_id)
+      if (existing) {
+        if (existing.data.primary_session_id !== primary || existing.data.worker_session_id !== worker || !sameRef(existing.data.work_ref, ref)
+          || existing.data.question_id !== question_id)
+          throw new Error("assignment_id already binds different work or Sessions; no retargeting performed")
+        return existing // Same identity is an idempotent registration, not a second assignment.
+      }
+      this.verifyReference(ref)
+      if (question_id !== undefined) {
+        const question = this.record(question_id, "question")
+        if (question.session_id !== worker || question.action_id !== ref.action_id || question.node_id !== ref.node_id
+          || !sameRef(checkedRef(question.data.work_ref as WorkRef), ref)) throw new Error("Question does not match the exact Worker and work_ref")
+        if (question.data.assignment_id !== undefined) throw new Error("Question already has an assignment")
+        if (this.answerRows(question, 0, 1).length) throw new Error("Question already answered; no retroactive delivery created")
+      }
+      return this.store.append({ ...actor, action_id: ref.action_id, node_id: ref.node_id, kind: "assignment",
+        data: { assignment_id, primary_session_id: primary, worker_session_id: worker, work_ref: ref, ...(question_id === undefined ? {} : { question_id }),
+          statement: "Explicit work association; does not dispatch or prove execution", automatic_continuation: false } })
+    })
+  }
+  private assignedWork(actor: Actor, assignmentID: string, ref?: WorkRef): Assignment {
+    const assignment = this.assignment(assignmentID)
+    if (assignment.data.worker_session_id !== actor.session_id) throw new Error("Only the assigned Worker Session may associate its question or completion")
+    if (ref && !sameRef(assignment.data.work_ref, ref)) throw new Error("work_ref differs from the assignment's original reference")
+    return assignment
+  }
+  complete(actor: Actor, input: { work_ref: WorkRef; statement: string; artifact_refs?: string[]; assignment_id?: string }): LedgerRecord {
     canonical(input, new ProcessingBudget(PROCESSING_LIMITS.recordChars))
     const ref = checkedRef(input.work_ref), statement = text(input.statement, "statement"), artifact_refs = references(input.artifact_refs)
     return this.atomic(true, () => {
-      const current = this.store.action(ref.action_id)
-      const original = this.originalAction(current, ref.action_revision), plan = this.store.plan(ref.action_id, ref.plan_revision)
-      if (workReference(original, plan, ref.node_id).hash !== ref.hash) throw new Error("work_ref does not match the recorded definition; no completion recorded")
+      if (input.assignment_id !== undefined) this.assignedWork(actor, input.assignment_id, ref)
+      const original = this.verifyReference(ref)
       return this.store.append({ ...actor, action_id: ref.action_id, node_id: ref.node_id, kind: "completion",
-        data: { statement, work_ref: ref, work_goal: { title: original.title, goal: original.goal }, artifact_refs, verification: "Performing agent reports work finished; not acceptance or proof" } })
+        data: { statement, work_ref: ref, ...(input.assignment_id === undefined ? {} : { assignment_id: input.assignment_id }),
+          work_goal: { title: original.title, goal: original.goal }, artifact_refs, verification: "Performing agent reports work finished; not acceptance or proof" } })
     })
   }
   reopen(actor: Actor, focus: Focus, statement: string): LedgerRecord {
@@ -132,27 +204,82 @@ export class Collaboration {
       return this.store.append({ ...actor, ...focus, kind: "reopen", data: { statement: reason, previous_report_id: previous?.id, plan_revision: plan.revision } })
     })
   }
-  ask(actor: Actor, focus: Focus, input: { statement: string; respondent: string; background?: string; artifact_refs?: string[] }): LedgerRecord {
+  ask(actor: Actor, focus: Focus | undefined, input: { statement: string; respondent: string; background?: string; artifact_refs?: string[]; assignment_id?: string }): LedgerRecord {
     canonical(input, new ProcessingBudget(PROCESSING_LIMITS.recordChars))
     const statement = text(input.statement, "statement"), respondent = text(input.respondent, "respondent", 100)
     const background = input.background === undefined ? undefined : text(input.background, "background", 8000)
     const artifact_refs = references(input.artifact_refs)
     return this.atomic(true, () => {
+      if (input.assignment_id !== undefined) {
+        const assignment = this.assignedWork(actor, input.assignment_id), ref = assignment.data.work_ref
+        if (focus && (focus.action_id !== ref.action_id || (focus.node_id !== undefined && focus.node_id !== ref.node_id)))
+          throw new Error("Explicit scope disagrees with assignment")
+        return this.store.append({ ...actor, action_id: ref.action_id, node_id: ref.node_id, kind: "question",
+          data: { statement, respondent, background, artifact_refs, assignment_id: input.assignment_id, work_ref: ref,
+            action_revision: ref.action_revision, plan_revision: ref.plan_revision } })
+      }
+      if (!focus) throw new Error("Provide action_id or select an Action for this operation")
       const action = this.store.action(focus.action_id), plan = this.store.plan(focus.action_id)
       const work_ref = focus.node_id === undefined ? undefined : workReference(action, plan, focus.node_id)
       return this.store.append({ ...actor, ...focus, kind: "question", data: { statement, respondent, background, artifact_refs, work_ref,
         action_revision: action.revision, plan_revision: plan.revision } })
     })
   }
-  answer(actor: Actor, input: { question_id: string; statement: string; artifact_refs?: string[]; action_id?: string }): LedgerRecord {
+  answer(actor: Actor, input: { question_id: string; statement: string; artifact_refs?: string[]; action_id?: string }): AnswerResult {
     canonical(input, new ProcessingBudget(PROCESSING_LIMITS.recordChars))
     const statement = text(input.statement, "statement"), artifact_refs = references(input.artifact_refs)
     return this.atomic(true, () => {
       const question = this.record(input.question_id, "question")
       if (input.action_id !== undefined && input.action_id !== question.action_id) throw new Error("Question belongs to another Action")
-      // No selection, current node or current Plan is required to preserve an answer.
-      return this.store.append({ ...actor, action_id: question.action_id, node_id: question.node_id, kind: "answer",
-        data: { question_id: question.id, statement, artifact_refs, verification: "Response only; not resolution, approval or execution permission" } })
+      const linked = question.data.assignment_id === undefined ? this.load(this.candidates(
+        "SELECT seq,octet_length(data) AS data_bytes FROM ledger WHERE kind='assignment' AND json_extract(data,'$.data.question_id')=?", [question.id]), { bytes: 0 })[0] : undefined
+      const assignmentID = question.data.assignment_id ?? linked?.data.assignment_id
+      const assignment = assignmentID === undefined ? undefined : this.assignedWork(
+        { session_id: question.session_id, agent: question.agent }, uid(assignmentID), checkedRef(question.data.work_ref as WorkRef))
+      if (assignment && (assignment.action_id !== question.action_id || assignment.node_id !== question.node_id)) throw new Error("Question scope disagrees with assignment")
+      // No selection, current node, Plan or host availability is required to preserve an answer.
+      const answer = this.store.append({ ...actor, action_id: question.action_id, node_id: question.node_id, kind: "answer",
+        data: { question_id: question.id, statement, artifact_refs, ...(assignment ? { assignment_id: assignment.data.assignment_id } : {}),
+          verification: "Response only; not resolution, approval or execution permission" } })
+      if (!assignment) return { ...answer, delivery: { state: "not-requested", transport: "not-attempted", reason: "question-not-assigned" } }
+      const destination = assignment.data.primary_session_id
+      const intent = this.store.append({ ...actor, action_id: question.action_id, node_id: question.node_id, kind: "delivery-intent",
+        data: { assignment_id: assignment.data.assignment_id, question_id: question.id, answer_id: answer.id,
+          destination_session_id: destination, state: "stored-for-session", transport: "not-attempted",
+          reason: "transport-not-implemented", automatic_continuation: false,
+          payload: { format: "loom-answer-notice/v1", assignment_id: assignment.data.assignment_id,
+            primary_session_id: destination, worker_session_id: assignment.data.worker_session_id,
+            question_id: question.id, answer_id: answer.id, work_ref: assignment.data.work_ref,
+            thread_query: { operation: "query", view: "thread", question_id: question.id, action_id: question.action_id } } } })
+      // Response-only delivery outcome is not added to the authoritative answer.
+      return { ...answer, delivery: { state: "stored-for-session", transport: "not-attempted", reason: "transport-not-implemented",
+        intent_id: intent.id, destination_session_id: destination } }
+    })
+  }
+  /** Explicit Session-wide access; never consults selection or current Action/Plan. */
+  coordinationRecords(actor: Actor, view: "assignments" | "deliveries", after = 0, limit = 20, identity?: string) {
+    page(after, limit); uid(actor.session_id, "Session id")
+    if (identity !== undefined) uid(identity)
+    return this.atomic(false, () => {
+      let rows: Candidate[]
+      if (view === "assignments") {
+        if (identity !== undefined) {
+          rows = this.candidates(`SELECT seq,octet_length(data) AS data_bytes FROM ledger WHERE kind='assignment'
+            AND json_extract(data,'$.data.assignment_id')=? AND seq>? AND (session_id=? OR json_extract(data,'$.data.worker_session_id')=?)`,
+            [identity, after, actor.session_id, actor.session_id])
+        } else {
+          // Merge two bounded indexed heads; unrelated history need not be materialized.
+          rows = ["session_id", "json_extract(data,'$.data.worker_session_id')"].flatMap(column => this.candidates(
+            `SELECT seq,octet_length(data) AS data_bytes FROM ledger WHERE kind='assignment' AND ${column}=? AND seq>? ORDER BY seq LIMIT ?`,
+            [actor.session_id, after, limit + 1])).sort((a, b) => a.seq - b.seq).slice(0, limit + 1)
+        }
+      } else {
+        rows = this.candidates(`SELECT seq,octet_length(data) AS data_bytes FROM ledger WHERE kind='delivery-intent'
+          AND json_extract(data,'$.data.destination_session_id')=? AND seq>?${identity === undefined ? "" : " AND id=?"} ORDER BY seq LIMIT ?`,
+          [actor.session_id, after, ...(identity === undefined ? [] : [identity]), limit + 1])
+      }
+      return { items: this.load(rows.slice(0, limit), { bytes: 0 }), next_after: rows.length > limit ? rows[limit - 1].seq : null,
+        note: "Session-wide stored associations/intents only. Transport is not implemented; no inbox admission, presentation, wakeup or retry is claimed. Never recreate an answer merely because sending is unavailable." }
     })
   }
   private latest(action: string, node: string, allowance: ReadAllowance = { bytes: 0 }) {
@@ -248,28 +375,35 @@ export class Collaboration {
     const operation = input.operation, view = input.view
     const key = operation === "query" ? `query:${view}` : String(operation)
     const allowed: Record<string, string[]> = {
-      complete: ["operation", "work_ref", "statement", "artifact_refs", "action_id", "node_id"],
+      complete: ["operation", "work_ref", "statement", "artifact_refs", "action_id", "node_id", "assignment_id"],
+      assign: ["operation", "assignment_id", "worker_session_id", "work_ref", "question_id"],
       reopen: ["operation", "action_id", "node_id", "statement"],
-      ask: ["operation", "action_id", "node_id", "statement", "respondent", "background", "artifact_refs"],
+      ask: ["operation", "action_id", "node_id", "statement", "respondent", "background", "artifact_refs", "assignment_id"],
       answer: ["operation", "question_id", "action_id", "statement", "artifact_refs"],
+      "query:assignments": ["operation", "view", "assignment_id", "after", "limit"],
+      "query:deliveries": ["operation", "view", "delivery_id", "after", "limit"],
       "query:progress": ["operation", "view", "action_id", "node_id", "offset", "limit"],
       "query:questions": ["operation", "view", "action_id", "node_id", "respondent", "question_state", "after", "limit"],
       "query:thread": ["operation", "view", "question_id", "action_id", "after", "limit"],
     }
     if (!allowed[key]) throw new Error("Unknown collaboration operation/view")
     for (const field of Object.keys(input)) if (!allowed[key].includes(field)) throw new Error(`${field} is not supported by ${key}`)
+    if (operation === "assign") return this.assign(actor, { assignment_id: input.assignment_id as string,
+      worker_session_id: input.worker_session_id as string, work_ref: input.work_ref as WorkRef, question_id: input.question_id as string | undefined })
+    if (view === "assignments" || view === "deliveries") return this.coordinationRecords(actor, view,
+      input.after as number | undefined, input.limit as number | undefined, (view === "assignments" ? input.assignment_id : input.delivery_id) as string | undefined)
     if (operation === "complete") {
       const ref = checkedRef(input.work_ref as WorkRef)
       if ((input.action_id !== undefined && input.action_id !== ref.action_id) || (input.node_id !== undefined && input.node_id !== ref.node_id)) throw new Error("Explicit scope disagrees with work_ref")
-      return this.complete(actor, { work_ref: ref, statement: input.statement as string, artifact_refs: input.artifact_refs as string[] | undefined })
+      return this.complete(actor, { work_ref: ref, assignment_id: input.assignment_id as string | undefined, statement: input.statement as string, artifact_refs: input.artifact_refs as string[] | undefined })
     }
     if (operation === "answer") return this.answer(actor, { question_id: input.question_id as string, statement: input.statement as string,
       action_id: input.action_id as string | undefined, artifact_refs: input.artifact_refs as string[] | undefined })
     if (view === "thread") return this.thread(input.question_id as string, input.after as number | undefined, input.limit as number | undefined, input.action_id as string | undefined)
+    if (operation === "ask") return this.ask(actor, focus, { assignment_id: input.assignment_id as string | undefined, statement: input.statement as string, respondent: input.respondent as string,
+      background: input.background as string | undefined, artifact_refs: input.artifact_refs as string[] | undefined })
     if (!focus) throw new Error("Provide action_id or select an Action for this operation")
     if (operation === "reopen") return this.reopen(actor, focus, input.statement as string)
-    if (operation === "ask") return this.ask(actor, focus, { statement: input.statement as string, respondent: input.respondent as string,
-      background: input.background as string | undefined, artifact_refs: input.artifact_refs as string[] | undefined })
     if (view === "progress") return this.progress(focus.action_id, focus.node_id, input.offset as number | undefined, input.limit as number | undefined)
     // Unlike ordinary ledger queries, questions default to the selected Action,
     // not its Task: the recipient can discover incoming questions from other nodes.
