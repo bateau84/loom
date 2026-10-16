@@ -1,24 +1,4 @@
 {
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
-    "strict": true,
-    "noEmit": true,
-    "skipLibCheck": true,
-    "types": [
-      "bun"
-    ],
-    "jsx": "preserve",
-    "jsxImportSource": "@opentui/solid"
-  },
-  "include": [
-    "plugins/loom/**/*.ts",
-    "plugins/loom/**/*.tsx",
-    "scripts/**/*.ts",
-    "dashboard/**/*.ts"
-  ],
-  "exclude": [
-    "dashboard/**/*.e2e.spec.ts"
-  ]
+  "compilerOptions": { "target": "ES2022", "module": "NodeNext", "moduleResolution": "NodeNext", "strict": true, "noEmit": true, "skipLibCheck": true, "types": ["bun", "node"] },
+  "include": ["server.ts", "src/**/*.ts", "tests/*.test.ts", "tests/sender-host/**/*.ts"]
 }
