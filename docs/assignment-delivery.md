@@ -1,10 +1,11 @@
-# Assignment association and stored answer-delivery intent
+# Assignment association and opt-in answer-to-primary delivery
 
-This implements the **storage-only first slice** of the
-[primary-first coordination candidate](coordination.md). It does not implement
-native sending, automatic context presentation, retries, cancellation of future
-continuation, or native re-delegation integration. No Session is woken by this code.
-The reviewed `c2db6e7` experiment remains separate feasibility evidence.
+The accepted `3f08da9` storage slice is retained, with a bounded **explicitly
+opt-in sender**. Default coordination remains off. Historical intents remain
+stored-only forever, including after upgrade or later authorization. Native
+execution and completion return belong to OpenCode, not a Loom Worker runner.
+The reviewed `c2db6e7` experiment remains separate feasibility evidence; current
+qualification uses the production sender, not its test bridge.
 
 ## Register exact work, not a permanent native owner
 
@@ -87,7 +88,8 @@ route or need a working selection. For an assigned question, the transaction
 appends both the answer and a `delivery-intent` ledger record. A refused answer,
 intent insert or pre-commit failure rolls back the pair. Concurrent association
 and answer writes are serialized: there is no silent association-after-answer
-backfill. Host I/O is not performed inside this transaction or afterward.
+backfill. Host I/O is not performed inside this transaction. Only a newly
+authorized intent receives a post-commit sending opportunity.
 
 The answer result preserves the existing `result.id`, scope, author and data.
 It additionally returns response-only `result.delivery`:
@@ -98,7 +100,7 @@ It additionally returns response-only `result.delivery`:
 | `intent_id` | Exact delivery-intent ledger record ID |
 | `destination_session_id` | Primary retained by the assignment |
 | `transport: not-attempted` | No native send was made |
-| `reason: transport-not-implemented` | Sending is unavailable, not a failed answer save |
+| `reason: automatic-continuation-not-authorized` | Default stored-only save, not consent or a failed answer save |
 
 An unassigned question returns `state: not-requested` and
 `reason: question-not-assigned`, also with `transport: not-attempted`.
@@ -111,15 +113,103 @@ thread for sources, qualifications and conflicting answers. A removed/offline
 primary does not prevent storing the answer; this slice does not test destination
 liveness or guess a replacement. Recorded intents remain available in history.
 
-There are no attempt records because there are no sends. `stored-for-session`
-is not native admission, presentation, understanding, resolution or a continuation
-receipt. All stored associations/intents set `automatic_continuation: false`.
-A future sender must not treat these historical records as permission to wake
-Sessions merely because the plugin was upgraded or a setting changed.
+`stored-for-session` is not native admission, presentation, understanding,
+resolution or completion. Assignment records retain `automatic_continuation:false`.
+Only future intents produced after an explicit supported authorization set it to
+true, with that authorization ID and `sender_policy:loom-primary-native-sender/v1`.
+Missing/false bits, unknown versions and inconsistent links never authorize I/O.
+Historical raw intent bytes are never changed into consent.
 
 Separate `answer` calls still create separate answer records and intents. This
 slice does not add answer-request idempotency. Do not repeat an answer to try to
-send it. Uncertain native admission, safe retries and replay remain later work.
+send it. Use the existing intent ID to inspect/reconcile sending instead.
+
+## Prospective authorization and irreversible withdrawal
+
+Only the exact saved primary Session may call these selection-independent operations:
+
+```json
+{"operation":"authorize-continuation","assignment_id":"guide-worker-1","continuation":"primary-native/v1"}
+{"operation":"withdraw-continuation","assignment_id":"guide-worker-1","statement":"Do not automatically continue this assignment."}
+```
+
+The literal `continuation` is required. Authorization is one immutable prospective
+record per assignment, not a per-answer approval gate. Identical retries return
+the original record. It sends no old intent. Configuration, roles, skill changes,
+and upgrade are never authorization. IDs use the existing simple 1–120 character
+syntax; withdrawal statement is nonblank, at most 16,000 characters. Irrelevant
+fields fail rather than silently changing the operation's meaning.
+
+Withdrawal records an irreversible tombstone, even before authorization. The first
+reason is retained. There is no re-enable operation; genuinely new work needs a
+new assignment handle. `continuation` in write/assignment-read responses reports
+off/authorized/withdrawn plus authorization/mode/withdrawal IDs when present.
+Withdrawal also reports delivery disposition counts: admitted, possibly_admitted,
+suppressed_before_send. Questions, answers, attempts and explicit completion remain.
+
+If withdrawal commits before send-started, no native call is permitted. After
+that marker, input may still be admitted: the final check is best-effort, not an
+atomic transaction with the host. Withdrawal does **not** retract queued input,
+stop native work, or undo a Worker call. Native Stop, Action labels and disconnect
+are not assignment withdrawal. A native cancellation observation suppresses that
+input locally without pretending it is a payload-validated receipt.
+
+## One native call, positive-only recovery
+
+Before I/O, Loom binds one immutable envelope to the intent and exact primary. It
+contains the structured thread reference, not answer excerpts. The deterministic
+native ID and full request are saved in a `delivery-event` bound record. Later
+attempts reuse those bytes, including after renderer changes. No fallback or route
+edit is supported. Loom preflights the exact primary's project/directory/workspace;
+missing, moved, deleted or mismatched destinations require attention, never guessing.
+
+The saved envelope's self-digest alone is not authority. Before host lookup,
+sending or admission reconciliation, Loom validates its destination, native ID,
+bound-record scope/assignment/authorization, payload digest, metadata and versioned
+notice against the authorized intent/question/answer/assignment chain. Intent
+author identity must match its source answer. Digest-consistent but inconsistent
+records fail closed without selecting another destination or rewriting the saved
+envelope. Supported, valid frozen requests retain their original bytes on reload;
+renderer upgrades do not change the host project's namespace or re-render old sends.
+
+Short SQLite transactions coordinate PREPARING tokens. Explicit retry/startup may
+supersede preparation; an older owner's send-started CAS must lose. No transaction
+crosses native I/O. The send-started marker permits at most one synthetic call to
+the primary (`resume:true`, `delivery:steer`). Once marked, no subsequent attempt
+calls synthetic—even after timeout, lost ACK, crash, reload or elapsed time.
+A crash **between marker and call** may remain uncertain forever. Safety takes
+precedence over automatic liveness in that gap.
+
+```json
+{"operation":"retry-delivery","delivery_id":"DELIVERY_INTENT_ID"}
+{"operation":"query","view":"deliveries","delivery_id":"DELIVERY_INTENT_ID","attempt_after":0,"attempt_limit":20}
+```
+
+Retry is exact-primary only and never appends another answer/intent. Preflight-only
+failure may be retried after the exact route is corrected. Possibly-invoked calls
+only reconcile: matching ACK, live enqueued event, or exact synthetic promoted in
+actual `ctx.session.context` can persist a positive receipt. Live events are not
+replayed; an observed event sequence does not expose a plugin log/inbox API.
+Missing/unpromoted/compacted history or read failure never proves nonadmission and
+never causes resend. A committed receipt is strongest even alongside withdrawal,
+native cancellation or a late error. Receipt means admission, not processing,
+comprehension, successful re-delegation or acceptance.
+
+Delivery reads add response-only `delivery_status`: eligibility
+eligible/stored-only/withdrawn/unsupported/native-cancelled/invalid; transport
+not-attempted/preparing/needs-attention/admission-uncertain/admitted; reason and
+latest attempt/event/receipt/withdrawal/native-cancellation IDs when available.
+Exact delivery reads add separately paged `attempts.items/next_after`, ledger
+sequence ascending. `attempt_after` defaults to 0, `attempt_limit` to 20 (1–50);
+these cursors require `delivery_id`. Base after/limit still filter the intent.
+Status, lifecycle history and base records share the existing 4 MiB reservation
+and per-record budgets; a read-limit failure is not an eligibility decision.
+
+Only a newly authorized answer, one startup batch (at most 20 indexed distinct
+intents: 10 pending/preparing + 10 uncertain, unused slots transferable), or an
+explicit retry creates an opportunity. No timer, all-history scan, false-history
+backfill, or page-to-exhaustion maintenance loop exists. Reads and authorization
+never dispatch. No timely/eventual delivery guarantee is made.
 
 ## Selection-independent discovery
 
@@ -165,16 +255,26 @@ Core tests cover historical identity, field order, two primaries/reused Workers,
 pre-existing questions, unique bindings, failed inserts/commit, concurrent SQLite
 connections, unchanged source records, bounded paging and reopening persisted
 state. Plugin tests check native child/location validation, cancelled lookup,
-selection-independent access, search-visible help and the absence of send APIs.
+selection-independent access, search-visible help and default zero sends.
 
-Those tests are not acceptance of a native sender, unknown-admission recovery,
-real user-stop handling, automatic question delivery, repeated background runs or
-live-model usefulness. The existing host comparison still uses its test adapter;
-it does not become a production-routing test by running on this newer commit.
+`tests/primary-sender-native.test.ts` exercises real local SQLite transactions,
+competing connections, persistence failures, withdrawal, conservative uncertainty
+and retry/startup bounds. `tests/installed_sender_qualification.py` runs isolated
+OpenCode 2.0.29 with a local scripted provider and production Loom setup/sender.
+Boundary wrappers inject lost ACK/receipt failures but call the actual public
+plugin APIs; they never fabricate positive evidence or submit notices themselves.
+The full chain includes original-call return/primary idle before Research answers,
+full conflicting/qualified paginated thread reads, native same-Worker/original-ref
+delegation, explicit completion retrieval and an actual coordinating operation.
+Request entry is counted before provider guards; actual native inputs and writes
+are checked separately. The older comparison controls remain test-only.
+
+These are author qualification tests, not independent acceptance, live-model
+usefulness, arbitrary burst-answer scheduling or production coordination readiness.
 The successful-context/failed-selection correction, manual backup/restore and
 overall alpha readiness remain separate. Keep PR #180 draft and unmerged.
 
 The new operations are documented directly in registered tool-search help. The
-record manual's metadata ceiling is now 8,000 characters; other manuals retain
+record manual's metadata ceiling is now 10,000 characters; other manuals retain
 3,600 and summaries 120. These are description conventions, not model-token or
 whole-process budgets. The compact catalog still uses the short summary.

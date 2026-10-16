@@ -151,7 +151,11 @@ visibility settings. Rename or remove an old custom `loom` skill to use the
 bundled one. Reload replays registration without duplicating the entry, and
 unloading removes this plugin's contribution, not other skills. Update the guide
 alongside changes to Loom's tools; it explicitly describes the current
-storage-only assignment/delivery boundary, not the test-only continuation path.
+default stored-only behavior and explicitly opt-in answer-to-primary sender,
+separate from the older test-only continuation path. See
+[sender operations and uncertainty](docs/assignment-delivery.md) and
+[isolated qualification](docs/sender-qualification.md). No upgrade, configuration
+or guide loading authorizes historical intents or enables default coordination.
 
 ## Agent experience
 

@@ -1,4 +1,5 @@
 import { Collaboration } from "./collaboration.js"
+import { DeliveryState } from "./primary-sender.js"
 import { randomUUID } from "node:crypto"
 import { realpathSync } from "node:fs"
 import { type Action, type Actor, type Focus, type LedgerRecord, type Plan, type PlanNode, type RecordKind, subject, uid, validatePlan, canonical, ProcessingBudget, ProcessingLimitError, PROCESSING_LIMITS } from "./model.js"
@@ -25,7 +26,8 @@ const nonempty = (s: unknown, label: string, max = 16000): string => {
 }
 export class Store {
   readonly collaboration: Collaboration
-  constructor(private db: SQL) {
+  readonly delivery: DeliveryState
+  constructor(private db: SQL, projectScope = "") {
     const version = db.prepare("PRAGMA user_version").get() as { user_version: number }
     if (![0, 1].includes(version.user_version)) throw new Error("Unsupported Loom Action database version; existing data was not modified")
     db.exec("PRAGMA busy_timeout=2000; PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
@@ -47,6 +49,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS ledger_observation_action ON ledger(action_id, seq) WHERE kind='observation';
       CREATE INDEX IF NOT EXISTS ledger_observation_scope ON ledger(action_id, json_extract(data,'$.node_id'), seq) WHERE kind='observation';
       PRAGMA user_version=1;`)
+    this.delivery = new DeliveryState(this, db, projectScope)
     this.collaboration = new Collaboration(this, db)
   }
   /** Stable within a host lifetime, even when a replacement opens a new connection. */

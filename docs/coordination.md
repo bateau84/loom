@@ -1,12 +1,14 @@
 # Coordination direction: primary-first native re-delegation
 
-Status: **selected next implementation candidate after review of `c2db6e7`**.
+Status: **bounded opt-in sender implemented; default coordination remains off**.
 The experiment has independent feasibility acceptance, as reported by the user.
 The storage-only assignment contract is implemented at `3f08da9`; see
 [assignment association and stored delivery intent](assignment-delivery.md).
-Independent review of that storage slice remains pending. Sending, recovery and
-cancellation are not implemented; normal Loom does not yet continue agents.
-The end-to-end sequence below remains the target, not current runtime behavior.
+The user accepted the storage slice independently. The current sender adds only
+prospective exact-primary authorization, fenced sending, positive admission
+reconciliation and irreversible explicit withdrawal. It is not default enablement,
+independent sender acceptance or overall production coordination readiness. See
+[the implemented operations and uncertainty limits](assignment-delivery.md).
 
 ## Decision and evidence
 
@@ -54,7 +56,7 @@ Primary delegates an assignment through native OpenCode
 -> Primary reads that completion and performs its next coordinating action
 ```
 
-Automatic mode intentionally requests execution and may spend tokens. Native
+Explicit opt-in intentionally requests execution and may spend tokens. Native
 execution ownership does not mean a blanket ban on Loom requesting continuation.
 The primary decides whether and how to continue work; an answer does not authorize
 unrelated work or override native permissions. No new respondent is created just
@@ -66,7 +68,7 @@ worked-against reference. Completion remains separate from Assessment, QA,
 acceptance, resolved uncertainty and completion of the parent Action. No global
 question-reconciliation barrier or wait for all background jobs is introduced.
 
-## Durable assignment identity and routing — target contract
+## Durable assignment identity and routing
 
 The durable unit is a delegated assignment, not a native call's lifetime or the
 current Session selection. Retain a stable assignment ID, project/Action/node,
@@ -87,11 +89,10 @@ Expertise (`respondent`), respondent Session, asking Worker Session and primary
 Session are separate facts. Do not infer the primary from the newest Session,
 Action creator, selected Action or role name. An unresolved/deleted destination
 must preserve the saved exchange and expose an actionable routing problem.
-Only an explicitly registered coordinator is a fallback; label that delivery as
-fallback, not proof the original primary or respondent received it. Reassignment
-or rerouting must be explicit and preserve prior delivery identities and attempts.
+This bounded version has **no fallback, reassignment or rerouting operation**.
+Never guess another Session. Preserve the saved route and expose the failure.
 
-The implemented [storage-only contract](assignment-delivery.md) defines
+The implemented [assignment contract](assignment-delivery.md) defines
 `loom_record operation=assign`: the calling primary registers a project-unique
 `assignment_id`, its checked native child Worker and the original `work_ref`.
 Identical registrations reuse the original record; conflicting bindings fail
@@ -105,25 +106,28 @@ rejected; identical saved registrations remain retryable subject to the native
 child lookup. Changing the initial question on an existing assignment is a
 conflict, not a later attachment operation. Unassigned answers remain saved and report
 `not-requested` / `question-not-assigned`, without a guessed route or intent.
-Assigned answers and their primary-addressed intents commit together and report
-`stored-for-session` / `not-attempted`. Destination liveness is not checked at
-answer time. All stored associations and intents set `automatic_continuation:false`.
+Assigned answers and primary-addressed intents commit together. Destination
+liveness is not required for saving. Without earlier explicit authorization,
+intents remain `automatic_continuation:false`, `stored-for-session/not-attempted`.
+Only future intents after `authorize-continuation` carry true consent and the
+authorization/policy IDs. An upgrade, setting, role or skill never authorizes
+historical intents. Sending occurs separately after commit and returns its own
+status; failed transport never asks Research to save the answer again.
 
-These are implemented storage rules, not independently accepted delivery behavior.
-Automatic assignment capture, route changes/fallback, sending, admission recovery
-and cancellation remain future work. No current child/location check proves a
+Automatic assignment capture and route changes/fallback remain outside this slice.
+No current child/location check proves a
 particular native generation or future delivery eligibility. Do not add a
 compulsory planning, attachment or permission ceremony for ordinary work.
 
-## Answer delivery and uncertain admission — target contract
+## Answer delivery and uncertain admission
 
 Save the answer and its delivery intent in one database transaction. Send only
 after commit. A transport failure must return the saved answer/question IDs and a
 separate delivery outcome, not encourage creation of the same answer again.
 
 One delivery ID binds an assignment, source answer, destination Session and exact
-payload. Retrying preserves all of them. A changed route or payload creates a new,
-linked delivery; it cannot withdraw a message already or possibly admitted.
+payload. Retrying preserves all of them. This version does not edit routes or
+payloads or replace an uncertain intent with a new one.
 Notifications identify the authoritative thread rather than replacing it with an
 unqualified summary. Primary must retrieve the source before re-delegating.
 
@@ -143,25 +147,31 @@ resume Worker at all. Even primary admission does not prove that native
 re-delegation occurred. Observe that separately; never manufacture success from
 an attempted call, idle state or prepared context.
 
-Retry opportunities are post-save, a bounded startup batch and an explicit retry
-operation. Coordinate concurrent claims without holding a database transaction
-across host I/O. Define recovery for interrupted claims before enabling it. No
-polling loop is required, and pending work does not promise timely delivery when
-no eligible retry opportunity occurs.
+Opportunities are post-save for a newly authorized intent, one startup batch of
+at most 20 indexed distinct intents, and explicit `retry-delivery`. PREPARING
+recovery can supersede tokens; the old owner must lose its send-started CAS.
+No transaction crosses I/O, timer polls history or loop drains pages to exhaustion.
+Pending work does not promise timely delivery without an opportunity.
 
 **Unknown is not unsent.** Do not blindly retry an uncertain send with `resume:true`.
 A stable message ID is not sufficient evidence of duplicate-free continuation.
-The implementation must establish what the pinned host can verify about admission
-and processing, and which retries are safe. An unresolved outcome stays visible
+The pinned plugin API supports positive ACK, live-enqueued and context-promoted
+evidence. Live event item identity comes from the event's sessionID/inboxID, not
+from nonexistent item.id/sessionID fields. Context is latest-compaction bounded;
+absence/error proves nothing about admission. After send-started there is at most
+ONE synthetic call, with no lease takeover/replay. A marker-before-call crash can
+remain uncertain forever. An unresolved outcome stays visible
 for intervention rather than silently replaying work or claiming delivery.
 Read-before-send alone is not an atomic claim over host execution.
 
 Cancellation and native permission denials are not transient transport failures
 to retry away. Failed/uncertain delivery recovery, including the crash after
 admission but before receipt storage, remains an implementation and test obligation.
-The experiment's successful managed restart is not proof of that crash window.
+The old experiment's successful managed restart is not proof of that crash window.
+Current qualification additionally injects ACK/receipt failures through production
+sender I/O and tests actual public ctx reconciliation without another synthetic.
 
-## Cancellation and concurrent work — target contract
+## Withdrawal and concurrent work
 
 Record explicit withdrawal of an assignment's automatic continuation. Idle alone
 cannot distinguish waiting from deliberate stopping. Recheck before delivery,
@@ -171,8 +181,9 @@ was interrupted. Native interruption and permissions remain with OpenCode.
 
 A delivered notice may already be queued or executing when cancellation arrives.
 Do not promise atomic cancellation across Loom and the host. Define the observable
-user-stop signal, pending-input treatment, and race boundaries before shipping
-automatic mode. Recovery must not deliberately revive withdrawn work, while normal
+explicit tombstone and race boundary: before send-started it fences I/O; afterward
+withdrawal may return possibly-admitted/admitted. No native-stop inference or
+pending-input retraction is implemented. Recovery must not deliberately revive withdrawn work, while normal
 native work and authoritative reads remain available. Assignment cancellation is
 not silently inferred from a current Action label or a lost client connection.
 
@@ -198,31 +209,32 @@ selection. Missing routing and uncertain attempts must not be buried by observat
 The storage slice implements explicit `query view=assignments` and
 `view=deliveries` reads independently of selection; see the
 [implemented access contract](assignment-delivery.md#selection-independent-discovery).
-Automatic context presentation, missing-route attention and transport status beyond
-stored/not-attempted remain future work.
+Automatic passive context presentation remains outside this slice. Explicit reads
+now expose continuation/withdrawal, needs-attention/uncertain transport and paged
+attempt history; they never send.
 
-Keep five tools. Any future association, delivery status, cancellation or retry
-operations must appear directly in the help returned by tool search, with inputs,
+Keep five tools. Authorization, delivery status, withdrawal and retry
+operations appear directly in the help returned by tool search, with inputs,
 side effects, failure meanings and examples. Do not publish working-looking calls
 or configuration settings before the corresponding implementation exists. Choosing
 automatic mode should not require a new approval ritual for every answer; it also
 must not bypass native permissions or silently enable execution on upgrade.
 
-## Bounded implementation sequence and acceptance
+## Qualification and acceptance boundaries
 
-1. Independently review the implemented `3f08da9` assignment association and the
-   supplied author probes: exact primary/child checks, reused Worker/reference
-   pairs, explicit handles, conflicts, historical work and attachment races.
-2. Independently verify atomic answer/intent persistence, actual commit failure,
-   selection-independent discovery and stored `automatic_continuation:false`.
-   Storage implementation and author-reported tests are not an independent PASS.
-   Preservation of this opt-out across future upgrades belongs in sender tests.
-3. Establish supported admission reconciliation, concurrent claims and bounded
-   retry recovery together with cancellation. Test before-send, after-admission
-   and before-receipt crashes, failed sends, actual user stop, and overlapping
-   native activity. Do not add a sender before the storage review is complete.
-4. Connect the primary notice to native re-delegation and publish tool-search help.
-   Reuse the existing whole-chain tests, with requests observed before script guards.
+The storage slice has the user's independent acceptance. Sender qualification is
+separate. `tests/primary-sender-native.test.ts` covers transactional identity,
+authorization/withdrawal, failures, competing real connections and local crash
+boundaries. `tests/installed_sender_qualification.py` exercises production sender
+composition on isolated OpenCode 2.0.29 with local scripted inference. Test-only
+wrappers fail real public I/O boundaries; they do not manufacture receipts or send
+the notice. Request ENTRY is observed before script guards, alongside actual
+native inputs, Worker operations, completion reads and coordinating writes.
+See the [test commands](sender-qualification.md) and retained run evidence.
+
+Independent review is still required; default coordination is not enabled by
+passing these checks. Explicit withdrawal is qualified, not automatic native Stop
+propagation, arbitrary overlapping/burst-answer scheduling or live-model usefulness.
 
 The pass endpoint remains: after original delegation returns and Primary is idle,
 an answer leads to Worker completion and Primary's next coordinating action,

@@ -52,7 +52,7 @@ export function workReference(action: Action, plan: Plan, nodeID: string, budget
   return { action_id: action.id, node_id: nodeID, action_revision: action.revision, plan_revision: plan.revision,
     hash: digest({ version: "loom-work/v1", action_id: action.id, goal: { title: action.title, goal: action.goal }, node_id: nodeID, contracts }, budget) }
 }
-function checkedRef(value: WorkRef): WorkRef {
+export function checkedRef(value: WorkRef): WorkRef {
   canonical(value, new ProcessingBudget(4096, 100))
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("work_ref from the worked-against context is required")
   const keys = ["action_id", "node_id", "action_revision", "plan_revision", "hash"]
@@ -63,14 +63,14 @@ function checkedRef(value: WorkRef): WorkRef {
   return { action_id: value.action_id, node_id: value.node_id, action_revision: value.action_revision,
     plan_revision: value.plan_revision, hash: value.hash }
 }
-function sameRef(a: WorkRef, b: WorkRef) {
+export function sameRef(a: WorkRef, b: WorkRef) {
   return a.action_id === b.action_id && a.node_id === b.node_id && a.action_revision === b.action_revision
     && a.plan_revision === b.plan_revision && a.hash === b.hash
 }
 type Assignment = LedgerRecord & { data: Record<string, unknown> & { assignment_id: string; primary_session_id: string; worker_session_id: string; work_ref: WorkRef } }
 export type AnswerResult = LedgerRecord & { delivery: {
   state: "stored-for-session" | "not-requested"; transport: "not-attempted";
-  reason: "transport-not-implemented" | "question-not-assigned"; intent_id?: string; destination_session_id?: string
+  reason: string; intent_id?: string; destination_session_id?: string
 } }
 
 const semantics = "Agent-reported, not independent acceptance. Answered means a response exists, not resolution, approval or permission."
@@ -92,7 +92,9 @@ export class Collaboration {
       CREATE UNIQUE INDEX IF NOT EXISTS ledger_assignment_question ON ledger(json_extract(data,'$.data.question_id')) WHERE kind='assignment';
       CREATE INDEX IF NOT EXISTS ledger_assignment_primary ON ledger(session_id,seq) WHERE kind='assignment';
       CREATE INDEX IF NOT EXISTS ledger_assignment_worker ON ledger(json_extract(data,'$.data.worker_session_id'),seq) WHERE kind='assignment';
-      CREATE INDEX IF NOT EXISTS ledger_delivery_session ON ledger(json_extract(data,'$.data.destination_session_id'),seq) WHERE kind='delivery-intent';`)
+      CREATE INDEX IF NOT EXISTS ledger_delivery_session ON ledger(json_extract(data,'$.data.destination_session_id'),seq) WHERE kind='delivery-intent';
+      CREATE UNIQUE INDEX IF NOT EXISTS ledger_continuation_authorization ON ledger(json_extract(data,'$.data.assignment_id')) WHERE kind='continuation-authorization';
+      CREATE UNIQUE INDEX IF NOT EXISTS ledger_continuation_withdrawal ON ledger(json_extract(data,'$.data.assignment_id')) WHERE kind='continuation-withdrawal';`)
 
   }
   /** Called inside the Action update transaction, before mutating the old object. */
@@ -150,6 +152,44 @@ export class Collaboration {
     const assignment = this.findAssignment(id)
     if (!assignment) throw new Error(`Unknown assignment: ${id}`)
     return assignment
+  }
+  /** Caller owns the current SQLite snapshot/transaction. */
+  continuation(assignment: LedgerRecord, allowance = {bytes:0}) {
+    const find = (kind: string) => this.load(this.candidates(`SELECT seq,octet_length(data) AS data_bytes FROM ledger
+      WHERE kind=? AND json_extract(data,'$.data.assignment_id')=?`, [kind, assignment.data.assignment_id]), allowance)[0]
+    const authorization = find("continuation-authorization"), withdrawal = find("continuation-withdrawal")
+    return {authorization, withdrawal, view: {state: withdrawal ? "withdrawn" : this.supportedAuthorization(assignment,authorization) ? "authorized" : "off",
+      ...(authorization ? {authorization_id:authorization.id,mode:authorization.data.mode} : {}), ...(withdrawal ? {withdrawal_id:withdrawal.id} : {})}}
+  }
+  private supportedAuthorization(assignment: LedgerRecord, auth?: LedgerRecord): boolean {
+    try {return !!auth && auth.data.format === "loom-primary-continuation-authorization/v1" && auth.data.mode === "primary-native/v1"
+      && auth.data.assignment_id === assignment.data.assignment_id && auth.data.assignment_record_id === assignment.id
+      && auth.data.primary_session_id === assignment.data.primary_session_id && auth.session_id === assignment.data.primary_session_id
+      && auth.action_id === assignment.action_id && auth.node_id === assignment.node_id
+      && auth.data.worker_session_id === assignment.data.worker_session_id
+      && sameRef(checkedRef(auth.data.work_ref as WorkRef),checkedRef(assignment.data.work_ref as WorkRef))
+    } catch {return false}
+  }
+  private changeContinuation(actor: Actor, input: Record<string, unknown>) {
+    return this.atomic(true, () => {
+      const assignment = this.assignment(uid(input.assignment_id)), prior = this.continuation(assignment)
+      if (actor.session_id !== assignment.data.primary_session_id) throw new Error("Only the exact saved primary Session may change continuation")
+      if (input.operation === "authorize-continuation") {
+        if (input.continuation !== "primary-native/v1") throw new Error("continuation must be primary-native/v1")
+        if (prior.authorization) return {...prior.authorization,continuation:prior.view}
+        if (prior.withdrawal) throw new Error("continuation-withdrawn")
+        const record = this.store.append({...actor,action_id:assignment.action_id,node_id:assignment.node_id,kind:"continuation-authorization",
+          data:{format:"loom-primary-continuation-authorization/v1",assignment_id:assignment.data.assignment_id,assignment_record_id:assignment.id,
+            mode:"primary-native/v1",primary_session_id:assignment.data.primary_session_id,worker_session_id:assignment.data.worker_session_id,work_ref:assignment.data.work_ref}})
+        return {...record,continuation:this.continuation(assignment).view}
+      }
+      const statement = text(input.statement,"statement")
+      if (prior.withdrawal) return {...prior.withdrawal,continuation:prior.view,delivery_disposition:this.store.delivery.withdraw(assignment.data.assignment_id)}
+      const record = this.store.append({...actor,action_id:assignment.action_id,node_id:assignment.node_id,kind:"continuation-withdrawal",
+        data:{format:"loom-primary-continuation-withdrawal/v1",assignment_id:assignment.data.assignment_id,assignment_record_id:assignment.id,
+          primary_session_id:assignment.data.primary_session_id,...(prior.authorization?{authorization_id:prior.authorization.id}:{}),statement}})
+      return {...record,continuation:this.continuation(assignment).view,delivery_disposition:this.store.delivery.withdraw(assignment.data.assignment_id),notice:"Withdrawal suppresses future local sends; in-flight input may already be admitted. It does not stop native work or retract input."}
+    })
   }
   /** Explicit association, not a native call or an execution grant. The plugin validates the child Session. */
   assign(actor: Actor, input: { assignment_id: string; worker_session_id: string; work_ref: WorkRef; question_id?: string }): LedgerRecord {
@@ -243,23 +283,30 @@ export class Collaboration {
           verification: "Response only; not resolution, approval or execution permission" } })
       if (!assignment) return { ...answer, delivery: { state: "not-requested", transport: "not-attempted", reason: "question-not-assigned" } }
       const destination = assignment.data.primary_session_id
+      const continuation = this.continuation(assignment), auth = continuation.authorization
+      const authorized = !continuation.withdrawal && this.supportedAuthorization(assignment,auth)
+      const reason = continuation.withdrawal ? "continuation-withdrawn" : "automatic-continuation-not-authorized"
       const intent = this.store.append({ ...actor, action_id: question.action_id, node_id: question.node_id, kind: "delivery-intent",
         data: { assignment_id: assignment.data.assignment_id, question_id: question.id, answer_id: answer.id,
           destination_session_id: destination, state: "stored-for-session", transport: "not-attempted",
-          reason: "transport-not-implemented", automatic_continuation: false,
+          reason: authorized ? "authorized-pending" : reason, automatic_continuation: authorized,
+          ...(authorized && auth ? {authorization_id:auth.id,sender_policy:"loom-primary-native-sender/v1"} : {}),
           payload: { format: "loom-answer-notice/v1", assignment_id: assignment.data.assignment_id,
             primary_session_id: destination, worker_session_id: assignment.data.worker_session_id,
             question_id: question.id, answer_id: answer.id, work_ref: assignment.data.work_ref,
             thread_query: { operation: "query", view: "thread", question_id: question.id, action_id: question.action_id } } } })
+      if (authorized) this.store.delivery.enqueue(intent)
       // Response-only delivery outcome is not added to the authoritative answer.
-      return { ...answer, delivery: { state: "stored-for-session", transport: "not-attempted", reason: "transport-not-implemented",
+      return { ...answer, delivery: { state: "stored-for-session", transport: "not-attempted", reason: authorized ? "authorized-pending" : reason,
         intent_id: intent.id, destination_session_id: destination } }
     })
   }
   /** Explicit Session-wide access; never consults selection or current Action/Plan. */
-  coordinationRecords(actor: Actor, view: "assignments" | "deliveries", after = 0, limit = 20, identity?: string) {
+  coordinationRecords(actor: Actor, view: "assignments" | "deliveries", after = 0, limit = 20, identity?: string, attemptAfter?: number, attemptLimit?: number) {
     page(after, limit); uid(actor.session_id, "Session id")
     if (identity !== undefined) uid(identity)
+    if ((attemptAfter !== undefined || attemptLimit !== undefined) && (view !== "deliveries" || identity === undefined)) throw new Error("attempt cursors require exact delivery_id")
+    if (view === "deliveries" && identity !== undefined) page(attemptAfter,attemptLimit)
     return this.atomic(false, () => {
       let rows: Candidate[]
       if (view === "assignments") {
@@ -278,8 +325,15 @@ export class Collaboration {
           AND json_extract(data,'$.data.destination_session_id')=? AND seq>?${identity === undefined ? "" : " AND id=?"} ORDER BY seq LIMIT ?`,
           [actor.session_id, after, ...(identity === undefined ? [] : [identity]), limit + 1])
       }
-      return { items: this.load(rows.slice(0, limit), { bytes: 0 }), next_after: rows.length > limit ? rows[limit - 1].seq : null,
-        note: "Session-wide stored associations/intents only. Transport is not implemented; no inbox admission, presentation, wakeup or retry is claimed. Never recreate an answer merely because sending is unavailable." }
+      const allowance = {bytes:0}
+      const items = this.load(rows.slice(0, limit), allowance).map(item => ({...item,
+        ...(view === "assignments" ? {continuation:this.continuation(item,allowance).view} : {delivery_status:this.store.delivery.status(item.id,allowance)})}))
+      // Authorize exact history independently of the base intent cursor, preserving its semantics.
+      const visible = identity !== undefined && view === "deliveries" && this.candidates(`SELECT seq,octet_length(data) AS data_bytes FROM ledger
+        WHERE kind='delivery-intent' AND id=? AND json_extract(data,'$.data.destination_session_id')=?`, [identity,actor.session_id]).length > 0
+      return { items, next_after: rows.length > limit ? rows[limit - 1].seq : null,
+        ...(view === "deliveries" && identity !== undefined ? {attempts:visible ? this.store.delivery.history(identity,attemptAfter,attemptLimit,allowance) : {items:[],next_after:null}} : {}),
+        note: "Session-wide history. Reads never send. Stored-only intents never gain authorization. Native admission is separate from processing or completion; do not repeat answer to retry transport." }
     })
   }
   private latest(action: string, node: string, allowance: ReadAllowance = { bytes: 0 }) {
@@ -377,21 +431,27 @@ export class Collaboration {
     const allowed: Record<string, string[]> = {
       complete: ["operation", "work_ref", "statement", "artifact_refs", "action_id", "node_id", "assignment_id"],
       assign: ["operation", "assignment_id", "worker_session_id", "work_ref", "question_id"],
+      "authorize-continuation": ["operation", "assignment_id", "continuation"],
+      "withdraw-continuation": ["operation", "assignment_id", "statement"],
+      "retry-delivery": ["operation", "delivery_id"],
       reopen: ["operation", "action_id", "node_id", "statement"],
       ask: ["operation", "action_id", "node_id", "statement", "respondent", "background", "artifact_refs", "assignment_id"],
       answer: ["operation", "question_id", "action_id", "statement", "artifact_refs"],
       "query:assignments": ["operation", "view", "assignment_id", "after", "limit"],
-      "query:deliveries": ["operation", "view", "delivery_id", "after", "limit"],
+      "query:deliveries": ["operation", "view", "delivery_id", "after", "limit", "attempt_after", "attempt_limit"],
       "query:progress": ["operation", "view", "action_id", "node_id", "offset", "limit"],
       "query:questions": ["operation", "view", "action_id", "node_id", "respondent", "question_state", "after", "limit"],
       "query:thread": ["operation", "view", "question_id", "action_id", "after", "limit"],
     }
     if (!allowed[key]) throw new Error("Unknown collaboration operation/view")
     for (const field of Object.keys(input)) if (!allowed[key].includes(field)) throw new Error(`${field} is not supported by ${key}`)
+    if (operation === "authorize-continuation" || operation === "withdraw-continuation") return this.changeContinuation(actor,input)
+    if (operation === "retry-delivery") return this.store.delivery.retryIdentity(actor,uid(input.delivery_id))
     if (operation === "assign") return this.assign(actor, { assignment_id: input.assignment_id as string,
       worker_session_id: input.worker_session_id as string, work_ref: input.work_ref as WorkRef, question_id: input.question_id as string | undefined })
     if (view === "assignments" || view === "deliveries") return this.coordinationRecords(actor, view,
-      input.after as number | undefined, input.limit as number | undefined, (view === "assignments" ? input.assignment_id : input.delivery_id) as string | undefined)
+      input.after as number | undefined, input.limit as number | undefined, (view === "assignments" ? input.assignment_id : input.delivery_id) as string | undefined,
+      input.attempt_after as number | undefined,input.attempt_limit as number | undefined)
     if (operation === "complete") {
       const ref = checkedRef(input.work_ref as WorkRef)
       if ((input.action_id !== undefined && input.action_id !== ref.action_id) || (input.node_id !== undefined && input.node_id !== ref.node_id)) throw new Error("Explicit scope disagrees with work_ref")

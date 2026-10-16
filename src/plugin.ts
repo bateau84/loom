@@ -10,6 +10,7 @@ import { injectInstructions, registry, type NativeAgent } from "./agents.js"
 import { taskContextOrRecovery, Observer } from "./context.js"
 import { digest, uid, type Actor, type Focus } from "./model.js"
 import { Store } from "./store.js"
+import { PrimarySender } from "./primary-sender.js"
 import { TOOL_HELP, LOOM_NAMESPACE_HELP } from "./tool-help.js"
 
 function payload(value: unknown): Record<string, unknown> {
@@ -37,7 +38,7 @@ const specs = [
   { name: "action", description: TOOL_HELP.action, input: obj({ operation: choice("list", "create", "update"), action_id: str, title: str, goal: str, state: choice("active", "paused", "completed", "cancelled"), expected_revision: num, offset: num }, ["operation"]) },
   { name: "plan", description: TOOL_HELP.plan, input: obj({ operation: choice("read", "save"), action_id: str, revision: num, expected_revision: num, nodes: { type: "array", maxItems: 300, items: obj({ id: str, kind: choice("phase", "wave", "task", "subtask"), title: str, parent: str, depends_on: list, outcome: str, context: str, criteria: list, skills: list, roles: list, agent: str }, ["id", "kind", "title"]) } }, ["operation", "action_id"]) },
   { name: "context", description: TOOL_HELP.context, input: obj({ action_id: str, node_id: str, clear: { type: "boolean" } }) },
-  { name: "record", description: TOOL_HELP.record, input: obj({ operation: choice("add", "query", "complete", "reopen", "ask", "answer", "assign"), view: choice("ledger", "progress", "questions", "thread", "assignments", "deliveries"), work_ref: workRefInput, assignment_id: str, worker_session_id: str, delivery_id: str, question_id: str, respondent: str, background: str, question_state: choice("open", "answered", "all"), offset: num, action_id: str, node_id: str, kind: choice("claim", "result", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
+  { name: "record", description: TOOL_HELP.record, input: obj({ operation: choice("add", "query", "complete", "reopen", "ask", "answer", "assign", "authorize-continuation", "withdraw-continuation", "retry-delivery"), continuation: choice("primary-native/v1"), attempt_after: num, attempt_limit: {type:"integer",minimum:1,maximum:50}, view: choice("ledger", "progress", "questions", "thread", "assignments", "deliveries"), work_ref: workRefInput, assignment_id: str, worker_session_id: str, delivery_id: str, question_id: str, respondent: str, background: str, question_state: choice("open", "answered", "all"), offset: num, action_id: str, node_id: str, kind: choice("claim", "result", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
 ] as const
 
 export default Plugin.define({
@@ -50,13 +51,14 @@ export default Plugin.define({
       signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal)
     const xdg = process.env.XDG_STATE_HOME
     const stateHome = xdg && isAbsolute(xdg) ? xdg : join(homedir(), ".local", "state")
-    const state = join(stateHome, "loom", "actions-v1", digest({ project: ctx.location.project.id, canonical: ctx.location.project.canonical }))
+    const projectScope = digest({ project: ctx.location.project.id, canonical: ctx.location.project.canonical })
+    const state = join(stateHome, "loom", "actions-v1", projectScope)
     await mkdir(state, { recursive: true, mode: 0o700 })
     const filename = join(state, "ledger.sqlite")
     const handle = await open(filename, "a", 0o600); await handle.close()
     const db = new Database(filename)
     let store: Store, observer: Observer
-    try { store = new Store(db); observer = new Observer(store) } catch (error) { db.close(); throw error }
+    try { store = new Store(db, projectScope); observer = new Observer(store) } catch (error) { db.close(); throw error }
     const disposers: Array<{ dispose(): Promise<void> }> = []
     let lastWarning = ""
     const warn = (error: unknown) => {
@@ -71,6 +73,19 @@ export default Plugin.define({
     }
     const owns = async (sessionID: Parameters<typeof ctx.session.get>[0]["sessionID"]) =>
       sessionIsLocal(payload(unwrapped(await ctx.session.get({ sessionID }))))
+    const sender = new PrimarySender(store.delivery,ctx.session,session => sessionIsLocal(payload(session)),lifetime.signal,warn)
+    // Live-only admission evidence. Gaps are never evidence of nonadmission.
+    const admissions = (async () => {
+      try {
+        for await (const event of ctx.event.subscribe({signal:lifetime.signal})) {
+          if (lifetime.signal.aborted) return
+          if (["session.inbox.enqueued","session.inbox.delivered","session.inbox.cancelled"].includes(event.type)) {
+            try { store.delivery.observe(event) } catch (error) { warn(error) }
+          }
+        }
+      } catch (error) { if (!lifetime.signal.aborted) warn("Admission observer unavailable; uncertain deliveries require positive reconciliation") }
+    })()
+    const recovery = sender.startup().catch(warn)
     const focusFor = (input: Record<string, unknown>, session: string): Focus | undefined => {
       if (input.action_id !== undefined) return { action_id: String(input.action_id), ...(input.node_id !== undefined ? { node_id: String(input.node_id) } : {}) }
       if (input.node_id !== undefined) throw new Error("node_id requires action_id")
@@ -126,7 +141,7 @@ export default Plugin.define({
                   // No writes occur after cancellation during the asynchronous host lookup.
                   lifetime.signal.throwIfAborted(); toolContext.signal.throwIfAborted()
                 }
-                const identityScoped = ["complete", "answer", "assign"].includes(String(input.operation))
+                const identityScoped = ["complete", "answer", "assign", "authorize-continuation", "withdraw-continuation", "retry-delivery"].includes(String(input.operation))
                   || (input.operation === "query" && ["thread", "assignments", "deliveries"].includes(String(input.view)))
                   || (input.operation === "ask" && input.assignment_id !== undefined)
                 const focus = identityScoped || input.session_only ? undefined : focusFor(input, actor.session_id)
@@ -134,8 +149,19 @@ export default Plugin.define({
                   ? { action_id: input.action_id as string, ...(input.node_id === undefined ? {} : { node_id: input.node_id as string }) } : focus
                 if (input.operation === "ask" && input.assignment_id !== undefined && input.node_id !== undefined && input.action_id === undefined)
                   throw new Error("node_id requires action_id")
-                if (["complete", "reopen", "ask", "answer", "assign"].includes(String(input.operation)) || (input.operation === "query" && input.view !== undefined && input.view !== "ledger")) {
+                if (["complete", "reopen", "ask", "answer", "assign", "authorize-continuation", "withdraw-continuation", "retry-delivery"].includes(String(input.operation)) || (input.operation === "query" && input.view !== undefined && input.view !== "ledger")) {
                   result = store.collaboration.execute(actor, input, assignedFocus)
+                  if (input.operation === "retry-delivery") {
+                    const identity = payload(result), id = uid(identity.intent_id)
+                    result = {...identity,delivery_status:await sender.attempt(id,true,toolContext.signal)}
+                  } else if (input.operation === "answer") {
+                    // Source transaction has committed. A sending failure cannot undo it.
+                    const saved = payload(result), delivery = payload(saved.delivery)
+                    if (typeof delivery.intent_id === "string") {
+                      const status = await sender.attempt(delivery.intent_id,false,toolContext.signal)
+                      result = {...saved,delivery:{...delivery,reason:status.reason,transport:status.transport,delivery_status:status,answer_id:saved.id,question_id:input.question_id,assignment_id:payload(saved.data).assignment_id}}
+                    }
+                  }
                   break
                 }
                 if (input.session_only && (input.operation !== "query" || input.action_id !== undefined || input.node_id !== undefined)) throw new Error("session_only is a query option and cannot be combined with work IDs")
@@ -205,8 +231,8 @@ export default Plugin.define({
       }))
     } catch (error) {
       lifetime.abort()
-      await Promise.allSettled(disposers.map(d => d.dispose())); db.close(); throw error
+      await Promise.allSettled([...disposers.map(d => d.dispose()),admissions,recovery,sender.settled()]); db.close(); throw error
     }
-    return async () => { lifetime.abort(); await Promise.allSettled(disposers.map(d => d.dispose())); db.close() }
+    return async () => { lifetime.abort(); await Promise.allSettled([...disposers.map(d => d.dispose()),admissions,recovery,sender.settled()]); db.close() }
   },
 })

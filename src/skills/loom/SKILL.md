@@ -130,14 +130,14 @@ records; do not erase evidence or claim that reopening undid native side effects
 Update the Action state separately and only when justified by the overall goal.
 Paused/cancelled Action labels do not stop OpenCode execution.
 
-## Questions and assignments: current limits
+## Questions, assignments and opt-in continuation
 
 Use `ask` for a scoped question with enough background and an intended respondent;
 use `answer` with the actual `question_id`. Retrieve the authoritative thread with
 `query` and `view:thread`. An answer is a response, not resolution, approval or
 permission. Check it against the question and its qualifications before continuing.
 
-The current assignment slice is storage-only. `assign` binds a stable
+`assign` binds a stable
 `assignment_id`, the calling primary, an existing native child Worker Session in
 the same Loom location, and the original `work_ref`. Repeating identical
 registration returns the same record; do not reuse a handle for different work.
@@ -145,17 +145,45 @@ An optional `question_id` can link a matching unanswered question; it cannot
 retroactively create delivery intent for an already committed answer.
 
 Assigned questions and completion may name `assignment_id`. Answering an assigned
-question atomically stores the answer and a primary-addressed delivery intent.
-`stored-for-session` with `transport:not-attempted` means stored only: no native
-send, wakeup, retry or automatic continuation has happened. Do not repeat an
-answer to try delivery. `query` views `assignments` and `deliveries` are explicit,
-bounded Session-wide reads, independent of selection, not automatic notices.
-Historical storage-only intents are not authority for future Session wakeups.
+question atomically saves the answer and primary-addressed intent. Default sends
+none. Under user-authorized coordination only, the exact primary may opt in with
+`{operation:"authorize-continuation",assignment_id,continuation:"primary-native/v1"}`.
+One prospective authorization permits only FUTURE intents; historical false or
+missing consent remains unsendable, including on upgrade/config/skill changes.
+Authorization itself sends nothing. Historical storage-only intents remain
+transport:not-attempted. No new tool or permission gate is added.
 
-Continue through the existing native handoff path and explicit reads as needed;
-this skill does not implement or authorize a new automatic sending loop. Do not
-promise that saving a Plan, answering a question or recording completion will
-wake another agent. The experiment is not production behavior.
+`withdraw-continuation` requires assignment_id and statement from that primary.
+It is irreversible, including before authorization. It suppresses pending sends,
+retains history and does not stop native work/retract input. Before send-started
+it fences I/O; afterward input may still admit despite best-effort checking.
+Native Stop/disconnect/Action labels are not this operation.
+
+Save and transport outcomes are separate. Do not repeat an
+answer to try delivery.
+The primary uses `retry-delivery` with an EXISTING delivery_id. Preflight failure
+can be explicitly retried after correcting the exact destination. Once marked
+send-started, Loom never calls synthetic again: lost ACK/crash reconciliation
+requires positive ACK/live-enqueued/context-promoted evidence. Missing/pending/
+compacted context or read errors stay admission-uncertain. Even a crash between
+marker and call may remain uncertain; no eventual-delivery promise is made.
+Admission does not prove model processing, delegation or completion.
+
+`query` views `assignments` and `deliveries` are selection-independent bounded
+Session-wide reads, not sending. They expose continuation and delivery_status.
+Exact delivery_id also returns attempt history with attempt_after/attempt_limit
+(default 0/20, max 50), separate from base intent after/limit. Follow next_after.
+Only a new authorized answer, one <=20-intent startup batch or explicit retry is
+a sending/reconciliation opportunity; no timer or general notification engine.
+
+A native primary notice identifies records, not an answer summary. Read the exact
+association/delivery and FULL paginated question thread, including qualifications
+and conflicts. Check withdrawal and whether work already runs/completed; recheck
+withdrawal before native delegation to the SAME Worker Session/original work_ref.
+Loom never sends directly to Worker or nudges completion. OpenCode owns that call's
+execution/return; retrieve the exact explicit completion/results before the next
+coordinating action. A native run ending is not assignment completion. Plan saves,
+ordinary answers and completion reports do not inherently wake another agent.
 
 ## Recover without guessing
 

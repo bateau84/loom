@@ -98,15 +98,14 @@ strong adversarial evidence collection is outside this plugin's current scope.
 | Tool discovery | Usage help is registered directly in tool descriptions, not only Markdown |
 | Installed-host boot | Existing loader/equivalent-empty-ledger check; not whole collaboration acceptance |
 | Direct bridge and primary-first comparison | Test-only feasibility; user reports independent acceptance at `925a79f` and `c2db6e7` respectively |
-| Durable primary-first delivery, routing, recovery and cancellation | Target contract in `coordination.md`; not implemented by this reconciliation |
+| Bounded primary-first delivery | Explicit prospective opt-in, one-call fence, positive admission recovery and irreversible withdrawal; see `assignment-delivery.md`. Default off; not independent sender acceptance |
 | Practical live-model improvement, production readiness | Not established by scripted-provider tests |
 
 ## Next bounded work
 
-Follow the sequence in [Coordination](coordination.md): assignment/routing,
-transactional answer-delivery intent and Session-wide access, safe admission
-recovery/cancellation, then native re-delegation integration and search-visible
-help. Keep the measured whole-chain endpoint and stronger duplicate counterchecks.
+Review the bounded sender in [Coordination](coordination.md) and its production-path
+[qualification](sender-qualification.md), separately from enabling default
+coordination. Preserve the measured whole-chain endpoint and duplicate counterchecks.
 Do not assume untested background/replay paths work because the foreground
 comparison passed. This document does not authorize paid inference.
 

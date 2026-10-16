@@ -27,6 +27,12 @@ test('two actionable inputs in the same model step are detected', () => {
   observeRequest(state, 'worker', [notice, notice])
   assert.equal(state.request_oracle.violations[0].kind, 'duplicate-actionable-input')
 })
+test('production primary notice header also detects duplicate actionable inputs before script guards', () => {
+  const state = {}
+  const input = user('[Loom primary-native/v1]\n{"delivery_id":"delivery"}')
+  observeRequest(state, 'primary', [input, input])
+  assert.equal(state.request_oracle.violations[0].kind, 'duplicate-actionable-input')
+})
 test('quoted notices in a tool or assistant result are not new actionable inputs', () => {
   const state = {}
   observeRequest(state, 'worker', [notice, { ...notice, role: 'assistant' }, { ...notice, role: 'tool' }])

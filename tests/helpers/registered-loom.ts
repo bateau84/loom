@@ -26,6 +26,7 @@ export async function registeredLoom(initialSkills: any[] = []) {
     location: { directory, project: { id: "tool-help", canonical: directory, directory } },
     agent: { list: async () => [{ id: "investigator" }, { id: "author" }], transform: () => { throw new Error("No agent rewriting") } },
     permission: { hook: () => { throw new Error("No new permission hooks") } },
+    event: {subscribe: async function* () {}},
     skill: {
       transform: async (fn: (editor: any) => void) => {
         skillTransforms.add(fn); reloadSkills()
@@ -37,6 +38,8 @@ export async function registeredLoom(initialSkills: any[] = []) {
       hook: async (name: string, fn: any) => { hooks.set(name, fn); return registration() },
     },
     session: {
+      synthetic: async (r:any) => ({id:r.id,sessionID:r.sessionID,type:"synthetic",delivery:r.delivery,payload:{text:r.text,description:r.description,metadata:r.metadata}}),
+      context: async () => [],
       get: async ({ sessionID }: { sessionID: string }) => {
         if (sessions.has(sessionID)) {
           const session = sessions.get(sessionID)

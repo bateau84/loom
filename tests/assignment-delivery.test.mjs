@@ -32,7 +32,7 @@ test('atomic assigned answer stores a separate immutable intent with exact route
   assert.deepEqual(n.data.payload.work_ref,f.ref);assert.equal(n.data.payload.worker_session_id,'worker')
   assert.deepEqual(n.data.payload.thread_query,{operation:'query',view:'thread',action_id:f.action.id,question_id:q.id})
   assert.equal(a.delivery.state,'stored-for-session');assert.equal(a.delivery.transport,'not-attempted')
-  assert.equal(a.delivery.reason,'transport-not-implemented');assert.equal(n.data.automatic_continuation,false)
+  assert.equal(a.delivery.reason,'automatic-continuation-not-authorized');assert.equal(n.data.automatic_continuation,false)
   assert.equal(n.session_id,'research');assert.equal(rows(f,'answer')[0].delivery,undefined)
   assert.equal(rows(f,'answer')[0].data.delivery,undefined);assert.equal(rows(f,'answer')[0].data.assignment_id,'assignment')
   assert.ok(!JSON.stringify(n).includes('Only for empty files'));assert.equal(n.data.payload.resume,undefined)

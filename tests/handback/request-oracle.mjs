@@ -15,7 +15,7 @@ export function observeRequest(state, role, prompt) {
     if (message.role !== 'user') continue
     const text = typeof message.content === 'string' ? message.content
       : message.content.filter(part => part.type === 'text').map(part => part.text).join('\n')
-    const pattern = /(?:Answer recorded for question |Answer ready for assignment |Native continuation for assignment |Assignment )([^\s]+)(?: reports completion\.)?/g
+    const pattern = /(?:Answer recorded for question |Answer ready for assignment |Native continuation for assignment |Assignment )([^\s]+)(?: reports completion\.)?|\[Loom primary-native\/v1\]/g
     for (const match of text.matchAll(pattern)) {
       const key = match[0]
       const count = (current.get(key) ?? 0) + 1
@@ -30,7 +30,7 @@ export function observeRequest(state, role, prompt) {
 
 export function observeResponse(state, role, response) {
   const view = state.request_oracle ??= { counts: {}, terminal: {}, violations: [] }
-  if (response.text?.startsWith('WORKER_FINISHED completion=') || response.text === 'PRIMARY_COORDINATION_FINISHED') {
+  if (response.text?.startsWith('WORKER_FINISHED completion=') || response.text === 'PRIMARY_COORDINATION_FINISHED' || response.text === 'PRIMARY_WITHDRAWN') {
     view.terminal[role] = true
   }
 }
