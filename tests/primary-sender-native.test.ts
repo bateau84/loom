@@ -3,13 +3,14 @@ import { Database } from "bun:sqlite"
 import { Store } from "../src/store.js"
 import { workReference } from "../src/collaboration.js"
 import { PrimarySender, DeliveryState } from "../src/primary-sender.js"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
-import { execFileSync } from "node:child_process"
+import { mkdtempSync, rmSync, readFileSync } from "node:fs"
+import { createHash } from "node:crypto"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { registeredLoom } from "./helpers/registered-loom.js"
 import { digest } from "../src/model.js"
 import { legacyDeliveryDDL, legacyFixture, savedRows } from "./helpers/legacy-delivery.js"
+import historicalSource from "./fixtures/historical-3f08da9/provenance.json" with { type: "json" }
 
 test("observed empty legacy delivery projection initializes and repeatedly reopens without changing history or creating work", async () => {
   const dir = mkdtempSync(join(tmpdir(), "ALP08-legacy-")), filename = join(dir, "synthetic.sqlite")
@@ -306,24 +307,53 @@ test("authorization is prospective, exact-primary and idempotent; historical int
 
 test("database actually produced by accepted 3f08da9 reopens without historical consent or byte changes",async()=>{
   const root=mkdtempSync(join(tmpdir(),"loom-legacy-")),filename=join(root,"ledger.sqlite"),b=boundary()
+  const hostIO:string[]=[]
+  b.host.get=async()=>{hostIO.push("get");throw new Error("No historical Session lookup")}
+  b.host.context=async()=>{hostIO.push("context");throw new Error("No historical Session context")}
   let db:Database|undefined
   try {
-    for(const name of ["store","collaboration","model"])writeFileSync(join(root,name+".ts"),execFileSync("git",["show",`3f08da9:src/${name}.ts`]))
-    const {Store:Old}=await import(join(root,"store.ts")),{workReference:oldRef}=await import(join(root,"collaboration.ts"))
-    const oldDB=new Database(filename),old=new Old(oldDB),primary={session_id:"primary",agent:"primary"},worker={session_id:"worker",agent:"worker"}
+    // Check the frozen implementation before executing it; never substitute current Store.
+    expect(historicalSource.commit).toBe("3f08da989c6c64aa94f797732201441119f88180")
+    expect(historicalSource.files.map(file=>file.path)).toEqual(["store.ts","collaboration.ts","model.ts"])
+    for(const file of historicalSource.files) {
+      const bytes=readFileSync(new URL(`./fixtures/historical-3f08da9/${file.path}`,import.meta.url))
+      expect(createHash("sha256").update(bytes).digest("hex")).toBe(file.sha256)
+      expect(createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex")).toBe(file.git_blob)
+    }
+    const {Store:Old}=await import("./fixtures/historical-3f08da9/store.js"),{workReference:oldRef}=await import("./fixtures/historical-3f08da9/collaboration.js")
+    db=new Database(filename)
+    const oldDB=db,old=new Old(oldDB),primary={session_id:"primary",agent:"primary"},worker={session_id:"worker",agent:"worker"}
     const a=old.create("Legacy","Stored only",primary),p=old.savePlan(a.id,0,[{id:"work",kind:"task",title:"Work"}]),ref=oldRef(a,p,"work")
     old.collaboration.assign(primary,{assignment_id:"assignment",worker_session_id:"worker",work_ref:ref})
     const q=old.collaboration.ask(worker,undefined,{assignment_id:"assignment",statement:"Question",respondent:"research"})
     const answer=old.collaboration.answer({session_id:"research",agent:"research"},{question_id:q.id,statement:"Legacy answer"})
-    const before=oldDB.query("SELECT data FROM ledger WHERE id=?").get(answer.delivery.intent_id)
+    const intentID=answer.delivery.intent_id
+    if(!intentID)throw new Error("Historical answer did not create a delivery intent")
+    const intentSQL="SELECT data,CAST(data AS BLOB) AS bytes FROM ledger WHERE id=?"
+    const before=oldDB.query<{data:string;bytes:Uint8Array},[string]>(intentSQL).get(intentID)
+    if(!before)throw new Error("Historical delivery intent was not persisted")
+    // These must be facts of the old writer, before current initialization runs.
+    expect(oldDB.query("PRAGMA user_version").get()).toEqual({user_version:1})
+    expect(oldDB.query("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name").all()).toEqual(
+      ["action_versions","actions","focus","ledger","plans","sqlite_sequence"].map(name=>({name})))
+    expect(oldDB.query<{name:string},[]>("PRAGMA table_info(ledger)").all().map(column=>column.name)).toEqual(
+      ["seq","id","action_id","session_id","kind","data"])
+    expect(JSON.parse(before.data)).toMatchObject({kind:"delivery-intent",data:{automatic_continuation:false,
+      reason:"transport-not-implemented",transport:"not-attempted",state:"stored-for-session",
+      assignment_id:"assignment",question_id:q.id,answer_id:answer.id,destination_session_id:"primary"}})
+    expect(oldDB.query("SELECT count(*) AS n FROM ledger WHERE kind='continuation-authorization'").get()).toEqual({n:0})
     oldDB.close();db=new Database(filename)
     const store=new Store(db,"upgraded-scope")
+    expect(store.delivery.status(intentID).eligibility).toBe("stored-only")
     store.collaboration.execute(primary,{operation:"authorize-continuation",assignment_id:"assignment",continuation:"primary-native/v1"})
+    expect(db.query("SELECT count(*) AS n FROM ledger WHERE kind='continuation-authorization'").get()).toEqual({n:1})
+    expect(store.delivery.startup()).toEqual([])
     await b.sender(store.delivery).startup()
-    expect((await b.sender(store.delivery).attempt(answer.delivery.intent_id,true)).eligibility).toBe("stored-only")
-    expect(db.query("SELECT data FROM ledger WHERE id=?").get(answer.delivery.intent_id)).toEqual(before)
+    expect((await b.sender(store.delivery).attempt(intentID,true)).eligibility).toBe("stored-only")
+    expect(db.query(intentSQL).get(intentID)).toEqual(before)
     expect(db.query("SELECT COUNT(*) AS n FROM primary_deliveries").get()).toEqual({n:0})
     expect(b.calls).toHaveLength(0)
+    expect(hostIO).toEqual([])
   }finally{db?.close();rmSync(root,{recursive:true,force:true})}
 })
 
