@@ -21,18 +21,21 @@ The initial compact catalog uses only the first description line, limited by the
 host to 120 characters. Each Loom summary fits that boundary. Detailed help is
 therefore available at discovery without putting all five manuals into every
 role's initial instructions. Descriptions are at most 3,600 characters, except
-`loom_record` (6,000) which also teaches completion and question operations;
+`loom_record` (10,000) which also teaches completion, questions and full_thread;
 this is a tested metadata size convention, not a tokenizer-independent limit or
 control over the host's output budget.
 
 Help includes the difference between Action and Plan revisions, full-plan
 replacement, explicit context-selection side effects, full dependency-record
 retrieval with Action ID (without inheriting the Worker's task filter), ledger
-paging, Assessment/QA verdicts and evidence limits. It documents the currently
-unfixed selection-save failure rather than promising the proposed partial-result
-behavior. Discovery alone does not implement that fix. The subsequent
-[completion and question extension](collaboration.md) adds operations to the
-existing record tool and views to context, not a sixth tool or execution engine.
+paging, Assessment/QA verdicts and evidence limits. Successful context reads survive
+selection-save failure with a separate truthful outcome; failed clear still throws.
+[Collaboration](collaboration.md) uses canonical `context_attachments` on both ask
+and answer (never an `attachments` alias), manual native handling after fail-closed
+question dispatch, first-answer-only best-effort resume and explicit-scope/cursor
+`full_thread`. Retired assignment/delivery operations and views are not advertised.
+There is no sixth tool or execution engine. Live descriptions are syntax authority;
+the bundled on-demand guide teaches use without eager full-guide injection.
 
 ## Await work whose result matters
 

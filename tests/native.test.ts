@@ -9,12 +9,12 @@ import entrypoint from "../server.js"
 import { loadConfig } from "../src/config.js"
 import { Store } from "../src/store.js"
 import { digest } from "../src/model.js"
-import { legacyFixture, savedRows } from "./helpers/legacy-delivery.js"
+import { legacyFixture, legacyDeliveryDDL, savedRows } from "./helpers/legacy-delivery.js"
 
-for (const scenario of ["missing-column", "unsupported-version", "healthy", "empty-legacy", "nonempty-legacy", "masked-index"] as const) test(scenario === "healthy" || scenario === "empty-legacy"
+for (const scenario of ["missing-column", "unsupported-version", "healthy", "empty-legacy", "nonempty-legacy", "masked-index"] as const) test(scenario !== "unsupported-version"
   ? `${scenario} startup still registers five tools and closes its private database on disposal`
   : `startup ${scenario} identifies the resolved database and known stage, preserves cause and closes before tools`, async () => {
-  const healthy = scenario === "healthy" || scenario === "empty-legacy"
+  const healthy = scenario !== "unsupported-version"
   await mkdir(new URL("../.test-build/", import.meta.url), { recursive: true })
   const dir = await mkdtemp(join(import.meta.dir, "../.test-build/startup-"))
   const previous = { state: process.env.XDG_STATE_HOME, config: process.env.OPENCODE_CONFIG_DIR }
@@ -29,6 +29,7 @@ for (const scenario of ["missing-column", "unsupported-version", "healthy", "emp
   const action = store.create("Private action", "Not diagnostic output", actor)
   store.record(actor, { action_id: action.id }, { kind: "claim", statement: "PRIVATE-RECORD-CONTENT" })
   if (scenario === "empty-legacy" || scenario === "nonempty-legacy") legacyFixture(db)
+  else db.exec(legacyDeliveryDDL)
   if (scenario === "nonempty-legacy") db.exec("INSERT INTO primary_deliveries(intent_id,intent_seq,bucket) SELECT id,seq,'uncertain' FROM ledger ORDER BY seq LIMIT 1")
   if (scenario === "missing-column" || scenario === "masked-index") db.exec("DROP TABLE primary_deliveries; CREATE TABLE primary_deliveries (intent_id TEXT PRIMARY KEY, intent_seq INTEGER, bucket TEXT)")
   if (scenario === "masked-index") db.exec("CREATE INDEX primary_delivery_assignment ON primary_deliveries(bucket,intent_seq)")
@@ -74,7 +75,7 @@ for (const scenario of ["missing-column", "unsupported-version", "healthy", "emp
     if (healthy) {
       expect(failure).toBeUndefined()
       expect(tools.sort()).toEqual(["action", "agents", "context", "plan", "record"])
-      expect(registrations.sort()).toEqual(["event", "skill", "tool"])
+       expect(registrations.sort()).toEqual(["skill", "tool"])
       expect(closed).toHaveLength(0)
       if (!cleanup) throw new Error("Healthy startup must return cleanup")
       await cleanup(); cleanup = undefined
@@ -87,11 +88,7 @@ for (const scenario of ["missing-column", "unsupported-version", "healthy", "emp
       expect(failure.cause).toBeInstanceOf(Error)
       if (!(failure.cause instanceof Error)) throw new Error("Expected original SQLite cause")
       expect(failure.message).toContain(failure.cause.message)
-      if (scenario !== "unsupported-version") {
-        expect(failure.cause.message).toContain("Unsupported primary_deliveries schema")
-        expect(failure.cause.message).toContain("preserve a backup")
-        expect(failure.cause.stack).toContain("primary-sender.ts")
-      } else expect(failure.cause.message).toContain("Unsupported Loom Action database version")
+      expect(failure.cause.message).toContain("Unsupported Loom Action database version")
       expect(`${failure.message}\n${failure.stack}\n${failure.cause.stack}`).not.toContain("PRIVATE-RECORD-CONTENT")
       expect(registrations).toEqual(["skill"])
       expect(tools).toEqual([])
@@ -105,11 +102,10 @@ for (const scenario of ["missing-column", "unsupported-version", "healthy", "emp
     try {
       expect(after.query("SELECT data FROM ledger ORDER BY seq").all()).toEqual(history)
       expect(savedRows(after)).toEqual(allRows)
-      if (!healthy) {
-        expect(after.query("SELECT * FROM sqlite_schema ORDER BY name").all()).toEqual(schema)
-        expect(after.query("PRAGMA schema_version").get()).toEqual(schemaVersion)
-      }
-      expect(after.query("PRAGMA table_info(primary_deliveries)").all().some((column: any) => column.name === "assignment_id")).toBe(healthy || scenario === "unsupported-version")
+      // No empty-projection migration or schema interpretation after retirement.
+      expect(after.query("SELECT * FROM sqlite_schema ORDER BY name").all()).toEqual(schema)
+      expect(after.query("PRAGMA schema_version").get()).toEqual(schemaVersion)
+      expect(after.query("PRAGMA table_info(primary_deliveries)").all().some((column: any) => column.name === "assignment_id")).toBe(false)
       expect(after.query("PRAGMA user_version").get()).toEqual({ user_version: scenario === "unsupported-version" ? 42 : 1 })
     } finally { after.close() }
   } finally {

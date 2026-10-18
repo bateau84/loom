@@ -16,7 +16,8 @@ configuration example, documentation and migration helper.
 - Optional Phase → Wave → Task → Subtask levels and dependency validation.
 - Task context with goals, parent/dependency context and recent ledger entries.
 - Persistent observations, claims, results, Assessment and QA records.
-- Reported completion/reopening and contextual question/answer threads.
+- Reported completion/reopening, durable attributed questions/answers and complete
+  relational `full_thread` history with explicit part/cursor continuation.
 - Usage documentation returned directly by tool search.
 - A bundled native `loom` skill, discoverable and loaded on demand.
 - Five tools: `loom_agents`, `loom_action`, `loom_plan`, `loom_context`, `loom_record`.
@@ -41,8 +42,8 @@ See [Migration](docs/migration.md) for other installations and legacy exports.
 
 The alpha milestone is useful Research → Worker handoff and fresh-session
 resumption with trustworthy history, clear tool guidance, and one tested manual
-backup/restore procedure. The default-off sender is accepted within its bounded
-scope, not as general production coordination readiness. A real native handoff,
+backup/restore procedure. The former assignment/delivery sender is retired;
+its acceptance does not qualify this replacement. A historical real native handoff,
 completion/replan/removal and independently checked fresh-Session recovery trial
 also passed its declared scope; it sent no automatic continuation. Successful
 context reads now survive selection-save failures with a separate truthful outcome.
@@ -158,12 +159,10 @@ unloading removes this plugin's contribution, not other skills. Update the guide
 alongside changes to Loom's tools. The guide body is read during plugin setup;
 an already loaded host needs plugin re-registration and a fresh native skill
 load to use an updated body, not just a YAML reread. This documentation change
-does not reload or restart the host. The guide explicitly describes the current
-default stored-only behavior and explicitly opt-in answer-to-primary sender,
-separate from the older test-only continuation path. See
-[sender operations and uncertainty](docs/assignment-delivery.md) and
-[isolated qualification](docs/sender-qualification.md). No upgrade, configuration
-or guide loading authorizes historical intents or enables default coordination.
+does not reload or restart the host. The guide teaches fail-closed manual question
+handling, one-shot best-effort first-answer resume and complete stored history.
+See [collaboration](docs/collaboration.md). Historical assignment/delivery records
+remain inert; guide loading or configuration cannot authorize/replay old intents.
 
 ## Agent experience
 
@@ -186,14 +185,34 @@ execution is never gated by it. The current implementation intentionally does no
 infer a child's task from its parent's *current* selection, which might have
 changed after dispatch. Fully automatic native handoff remains future work.
 
-The implemented opt-in sender sends answer references to the exact primary,
-which retrieves the thread and natively re-delegates to the same Worker Session.
-Native delegation owns the completion return: no competing Loom completion nudge
-or direct Worker synthetic resume is sent on that path. Assignment routing,
-positive-only admission recovery and irreversible explicit withdrawal are
-implemented. Default sends none: only future intents after exact-primary
-authorization are eligible. Native Stop is not withdrawal; admission is not
-processing or acceptance. Passive notices are not equivalent continuation.
+Ask uses `question`, `to_agent`, explicit Boolean `blocking`, and optional
+`context`, `context_attachments`, `reference:{action_id,kind,id}`. Answer uses
+`question_id`, `answer`, optional `context_attachments`; `attachments` is not an
+alias. Actual author/Session derive from the caller. Without reference/selection,
+questions belong only to the asking Session; answers inherit original nullable
+association without selecting its work. Invalid explicit reference never falls back.
+
+Pinned OpenCode 2.0.29 question dispatch is fail-closed:
+`not-attempted / policy-capability-unavailable`. The question is stored, recipient
+NOT contacted; arrange manual native handling. If arranged, a blocking asker may
+naturally yield, but blocking is intent, not a forced wait or gate.
+
+Only the FIRST committed answer to a new-format blocking question qualifies for
+one postcommit best-effort resume of the exact asking Session. Later/nonblocking/
+legacy answers never submit asker input. No retries, transfers, recovery replay
+or consumption guarantee: crash after commit may permanently lose resume.
+Missing/moved/inaccessible targets fail visibly, never retarget; current native
+agent/model/permissions remain unchanged. Target checks are not leases; the
+5000ms deadline bounds waiting, not cancellation of started I/O. Admission is not
+processing or completion. Answer durability and separate SYSTEM outcome annotation
+are independent. General assignment/delivery operations AND views are retired.
+
+`loom_record query view:full_thread` requires explicit Action/node OR Session
+scope. It returns escaped complete stored content, actual authors/IDs/links and
+qualifications, with `next_cursor` and labelled oversized-record parts. Follow the
+cursor with the same scope until null; a short page can still be incomplete.
+No recursive evidence expansion, invented raw bodies, cross-project/native Session
+reads, frozen concurrent snapshot or perpetual-cursor guarantee is provided.
 
 Use `loom_record` to record useful results, claims, Assessment or QA findings.
 Load external skills and their `ASSESSMENT.md`/`QA.md` companions with native tools.
@@ -225,9 +244,10 @@ disabled with `ledger.capture: off`. Explicitly recorded text is not redacted;
 never put credentials or other secrets in a result, claim or artifact reference.
 
 Before an upgrade, preserve state using the [offline procedure](docs/manual-backup-restore.md).
-Only the observed empty predecessor sender-table shape has a supported in-place
-compatibility upgrade; unsupported/nonempty predecessor shapes fail explicitly,
-without resetting history. This is not legacy workflow-ledger import. See
+Retired sender tables are preserved without operational hydration or sending.
+Meaningful populated history has a frozen synthetic preservation fixture; that is
+not universal migration or installed-host acceptance. No destructive repair or
+legacy workflow-ledger import is provided. See
 [state and rollback](docs/migration.md#state-and-rollback).
 
 ## Development

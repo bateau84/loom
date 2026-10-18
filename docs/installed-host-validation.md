@@ -1,5 +1,50 @@
 # Installed-host validation: separate boot from acceptance
 
+## Replacement collaboration acceptance
+
+The boot scope below and earlier sender/handback scenarios are historical or
+narrow supporting evidence, not acceptance of the current replacement. Current
+acceptance must identify the exact assembled artifact (including help and harness),
+build/configuration, unmodified native 2.0.29 host and producing state/run. Do not
+inherit old scenario counts or label a simulated ToolContext as installed proof.
+
+- **E1 durable/manual question:** real discovered/registered tools and genuine
+  caller attribution through SQLite and full_thread. Require canonical ask/answer
+  `context_attachments`, rejection of `attachments` alone/alongside it, five tools,
+  optional Plan, valid/invalid references and Session-only questions. Ask must
+  save with `not-attempted / policy-capability-unavailable`, zero recipient contact,
+  permission prompt, child, executor or probe. Blocking guidance is conditional
+  on arranged manual handling, not a forced wait. Reads/restart must not dispatch.
+- **E2 one-shot authority:** real first new-format blocking answer commit through
+  production adapter/native synthetic to the exact stored asking Session. Preserve
+  current target agent/model/permissions. Exercise publicly created idle/running/
+  pre-yield, agent-switch and missing/moved/inaccessible targets where available.
+  Later/nonblocking/legacy answers and failed/unknown first attempts followed by
+  later answers never submit additional asker input. No retarget, retry or replay.
+  Separate SYSTEM outcome/annotation failure must not erase the durable answer.
+  Admission is not consumption/completion; timeout is not native cancellation;
+  target validation is not a lease. Crash can permanently lose resume.
+- **E3 preservation/history:** frozen portable synthetic populated old producer
+  state, actual candidate startup and new API writes, unchanged raw IDs/bytes/
+  attribution/links/completion qualifications. Explicit Action/node OR Session
+  membership, direct later answers, deduplication/sequence order, escaped Unicode
+  record parts and final-only advance, corruption/cursor failures and retired
+  operations/views must be checked with an independent enumeration/content oracle.
+  No invented receipt from notices/admission/assignments/same-agent names, no
+  recursive evidence expansion or fabricated raw observation bodies. Verify
+  clean-clone/no-old-Git portability and disposable separate-location rollback.
+
+Only the genuinely external model dependency may be substituted by a deterministic
+local provider preserving native tool/admission behavior; no paid inference is
+implied. Product-owned registration, persistence, selection, rendering and resume
+must remain real. Fault doubles are supporting narrower evidence, never a substitute
+for those installed paths. Missing public target variants remain UNPROVEN and
+must be escalated. Record PASS/FAIL/UNPROVEN, substitutions, logs and limitations;
+repeat affected proof when content changes. No normal-host API, config, DB,
+restart, active integration or activation is authorized by this document.
+
+## Existing no-inference boot scope
+
 The existing Bun native suite uses a simulated host API. It proves callback
 behavior under that contract, not that the published OpenCode CLI can load Loom.
 `tests/installed_host_smoke.py` is a separate, no-inference boot probe using an
@@ -82,7 +127,7 @@ Use isolated state and record host version, real tool results, ledger snapshots
 and limits. Do not replace host execution with manual hook calls and call it live
 acceptance. Model-driven runs need their own explicit execution setup.
 
-## Review independence and subsequent evidence
+## Historical review independence and subsequent evidence
 
 This authoring session does not supply an independent Reviewer gate by renaming
 its own checks. That gate stays open. The supplied review of `6c8abb3` found no

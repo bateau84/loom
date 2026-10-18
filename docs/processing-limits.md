@@ -127,3 +127,17 @@ installation, backup/restore and retention remain separate. The committed
 Reference: Node's [event-loop guidance](https://nodejs.org/en/learn/asynchronous-work/dont-block-the-event-loop)
 explains why applying output truncation only after large JSON operations is not
 a processing safeguard. Our limits and measurements above are project-specific.
+
+## Current collaboration/history boundary
+
+The new question/answer and `full_thread` paths preserve the processing/read
+guards documented above. Complete stored content does not mean unlimited readable
+history. Full-thread pages default to 20/max 50, use explicit Action/node OR
+Session scope, and may end early on a labelled partial record. Follow
+`next_cursor` as `cursor` with the same scope until null. A record advances only
+on its final representation part. Scope/location/version cursors are not perpetual
+or cross-page concurrent snapshots. Corrupt/unsupported data fails without advance;
+reduce page limit for aggregate/serialized-response limits where instructed,
+not to bypass an individually inadmissible record. No recursive evidence expansion,
+raw-body reconstruction, automatic repair or new storage program is introduced.
+See [collaboration](collaboration.md) and the manual stopped-writers backup procedure.

@@ -73,22 +73,23 @@ state for inspection with the old plugin until a provenance-preserving importer 
 Upgrading an existing **Action Store** is a different boundary. Close all writers
 and SQLite connections and preserve its original files/sidecars using the
 [manual stopped-writers backup/restore procedure](manual-backup-restore.md).
-The current startup compatibility path recognizes only the observed empty
-`primary_deliveries` predecessor definition lacking `assignment_id`, with its
-recognized indexes and no unrecognized triggers. It adds the required column and
-current indexes transactionally; it does not infer assignment IDs, rewrite ledger
-records or turn historical false/missing continuation consent into authorization.
-Unrecognized definitions, incompatible indexes, unexpected legacy indexes/triggers
-and nonempty predecessor projections fail explicitly. Initialization rolls back;
-the diagnostic says to close Loom and preserve a backup, **not reset/delete state**.
-Do not treat `user_version=1` alone as a compatibility guarantee.
+The retired sender's tables/projections are left in place without operational
+hydration, migration or dispatch. Meaningful populated synthetic legacy history
+is preserved by the frozen baseline fixture and compared through candidate reads.
+Do not infer universal schema compatibility from that fixture or `user_version=1`.
+Unreadable/unsupported data must fail visibly, not reset/delete state. Current
+startup does not reinterpret old authorization, infer blocking intent, rewrite
+answers or reconstruct pending sends. Never reopen a preserved pending projection
+with an older sender merely to finish delivery.
 
 The captured observed-empty upgrade retained all 1,675 ledger records, 2 Actions,
 4 Plans and 7 focus values byte-for-byte. Its private derivative exposed five
 tools with zero Session/authorization/delivery I/O; actual operator startup then
 succeeded and historical Actions/Plans were accessible normally. This is evidence
-for that observed predecessor, not universal legacy migration or populated sender
-table support. See the [alpha evidence boundaries](operating-policy.md).
+for that historical observed predecessor, not a rerun on this candidate or
+universal legacy migration. Current retirement preserves populated history without
+an operative sender; installed preservation acceptance remains separate. See the
+[alpha evidence boundaries](operating-policy.md).
 
 For rollback to the old workflow runtime, restore its previous plugin entry/
 configuration and old bundle; that workflow database remains separate. This is

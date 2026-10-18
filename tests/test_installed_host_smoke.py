@@ -14,6 +14,15 @@ spec.loader.exec_module(smoke)
 
 
 class BootHarnessTest(unittest.TestCase):
+    def test_source_inventory_works_without_git_objects(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src").mkdir()
+            (root / "src/example.ts").write_text("export const x = 1\n")
+            result = smoke.source_inventory(root)
+            self.assertIsNone(result["head"])
+            self.assertIn("src/example.ts", result["runtime_sha256"])
+
     def test_same_host_retries_empty_inventory_until_observable_readiness(self):
         host = object.__new__(smoke.PrivateHost)
         host.project, host.label = Path("/tmp/project"), "unit"

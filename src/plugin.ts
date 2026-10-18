@@ -8,9 +8,11 @@ import { configPaths, loadConfig } from "./config.js"
 import { configLoadStatus } from "./config-admission.js"
 import { injectInstructions, registry, type NativeAgent } from "./agents.js"
 import { taskContextOrRecovery, Observer } from "./context.js"
-import { digest, uid, type Actor, type Focus } from "./model.js"
+import { digest, PROCESSING_LIMITS, type Actor, type Focus } from "./model.js"
+import { renderFullHistory } from "./history-renderer.js"
 import { Store } from "./store.js"
-import { PrimarySender } from "./primary-sender.js"
+import { QUESTION_DISPATCH } from "./collaboration.js"
+import { resumeAnswer } from "./answer-resume.js"
 import { TOOL_HELP, LOOM_NAMESPACE_HELP } from "./tool-help.js"
 
 function payload(value: unknown): Record<string, unknown> {
@@ -50,12 +52,25 @@ const obj = (properties: Record<string, unknown>, required: string[] = []) => ({
 const choice = (...values: string[]) => ({ type: "string", enum: values })
 const workRefInput = obj({ action_id: str, node_id: str, action_revision: { type: "integer", minimum: 1 }, plan_revision: { type: "integer", minimum: 1 }, hash: str },
   ["action_id", "node_id", "action_revision", "plan_revision", "hash"])
+const contextAttachments = { type: "array", items: { type: "string", maxLength: 2000 }, maxItems: 50 }
+const askInput = { question: str, to_agent: str, blocking: { type: "boolean" }, context: str, context_attachments: contextAttachments,
+  reference: obj({ action_id: str, kind: choice("action", "phase", "wave", "task", "subtask"), id: str }, ["action_id", "kind", "id"]) }
+const answerInput = { question_id: str, answer: str, context_attachments: contextAttachments }
 const specs = [
   { name: "agents", description: TOOL_HELP.agents, input: obj({}) },
   { name: "action", description: TOOL_HELP.action, input: obj({ operation: choice("list", "create", "update"), action_id: str, title: str, goal: str, state: choice("active", "paused", "completed", "cancelled"), expected_revision: num, offset: num }, ["operation"]) },
   { name: "plan", description: TOOL_HELP.plan, input: obj({ operation: choice("read", "save"), action_id: str, revision: num, expected_revision: num, nodes: { type: "array", maxItems: 300, items: obj({ id: str, kind: choice("phase", "wave", "task", "subtask"), title: str, parent: str, depends_on: list, outcome: str, context: str, criteria: list, skills: list, roles: list, agent: str }, ["id", "kind", "title"]) } }, ["operation", "action_id"]) },
   { name: "context", description: TOOL_HELP.context, input: obj({ action_id: str, node_id: str, clear: { type: "boolean" } }) },
-  { name: "record", description: TOOL_HELP.record, input: obj({ operation: choice("add", "query", "complete", "reopen", "ask", "answer", "assign", "authorize-continuation", "withdraw-continuation", "retry-delivery"), continuation: choice("primary-native/v1"), attempt_after: num, attempt_limit: {type:"integer",minimum:1,maximum:50}, view: choice("ledger", "progress", "questions", "thread", "assignments", "deliveries"), work_ref: workRefInput, assignment_id: str, worker_session_id: str, delivery_id: str, question_id: str, respondent: str, background: str, question_state: choice("open", "answered", "all"), offset: num, action_id: str, node_id: str, kind: choice("claim", "result", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
+  { name: "record", description: TOOL_HELP.record, input: { ...obj({ operation: choice("add", "query", "complete", "reopen", "ask", "answer"), view: choice("ledger", "progress", "questions", "thread", "full_thread"), session_id: str, cursor: str, work_ref: workRefInput, ...askInput, ...answerInput, respondent: str, question_state: choice("open", "answered", "all"), offset: num, action_id: str, node_id: str, kind: choice("claim", "result", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]),
+    allOf: [
+      { if: { properties: { operation: { const: "ask" } } }, then: obj({ operation: { const: "ask" }, ...askInput }, ["operation", "question", "to_agent", "blocking"]) },
+      { if: { properties: { operation: { const: "answer" } } }, then: obj({ operation: { const: "answer" }, ...answerInput }, ["operation", "question_id", "answer"]) },
+      { if: { properties: { view: { const: "full_thread" } }, required: ["view"] }, then: {
+        ...obj({ operation: { const: "query" }, view: { const: "full_thread" }, action_id: str, node_id: str, session_id: str, cursor: str,
+          limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation", "view"]),
+        oneOf: [{ required: ["action_id"], not: { required: ["session_id"] } }, { required: ["session_id"], not: { anyOf: [{ required: ["action_id"] }, { required: ["node_id"] }] } }],
+      } },
+    ] } },
 ] as const
 
 export default Plugin.define({
@@ -106,19 +121,6 @@ export default Plugin.define({
     }
     const owns = async (sessionID: Parameters<typeof ctx.session.get>[0]["sessionID"]) =>
       sessionIsLocal(payload(unwrapped(await ctx.session.get({ sessionID }))))
-    const sender = new PrimarySender(store.delivery,ctx.session,session => sessionIsLocal(payload(session)),lifetime.signal,warn)
-    // Live-only admission evidence. Gaps are never evidence of nonadmission.
-    const admissions = (async () => {
-      try {
-        for await (const event of ctx.event.subscribe({signal:lifetime.signal})) {
-          if (lifetime.signal.aborted) return
-          if (["session.inbox.enqueued","session.inbox.delivered","session.inbox.cancelled"].includes(event.type)) {
-            try { store.delivery.observe(event) } catch (error) { warn(error) }
-          }
-        }
-      } catch (error) { if (!lifetime.signal.aborted) warn("Admission observer unavailable; uncertain deliveries require positive reconciliation") }
-    })()
-    const recovery = sender.startup().catch(warn)
     const focusFor = (input: Record<string, unknown>, session: string): Focus | undefined => {
       if (input.action_id !== undefined) return { action_id: String(input.action_id), ...(input.node_id !== undefined ? { node_id: String(input.node_id) } : {}) }
       if (input.node_id !== undefined) throw new Error("node_id requires action_id")
@@ -167,37 +169,37 @@ export default Plugin.define({
                 break
               }
               case "record": {
-                // Only selection-scoped operations need the saved reference. Explicit
-                // work/thread identity and Session-only recovery must not depend on it.
-                if (input.operation === "assign") {
-                  const sessionID = uid(input.worker_session_id, "worker_session_id") as Parameters<typeof ctx.session.get>[0]["sessionID"]
-                  const child = payload(unwrapped(await ctx.session.get({ sessionID })))
-                  if (child.id !== sessionID || child.parentID !== actor.session_id || !await sessionIsLocal(child))
-                    throw new Error("Assignment Worker must be this primary's native child in this Loom location")
-                  // No writes occur after cancellation during the asynchronous host lookup.
-                  lifetime.signal.throwIfAborted(); toolContext.signal.throwIfAborted()
+                // Reject retired protocol fields even when a caller bypasses schema validation.
+                if (["assign", "authorize-continuation", "withdraw-continuation", "retry-delivery"].includes(String(input.operation))
+                  || ["assignments", "deliveries"].includes(String(input.view))) throw new Error("Assignment/delivery operation or view is retired; history remains in the ledger")
+                for (const field of ["assignment_id", "worker_session_id", "delivery_id", "continuation", "attempt_after", "attempt_limit"])
+                  if (field in input) throw new Error(`${field} is not supported; assignment/delivery protocol is retired`)
+                if (input.view === "full_thread") {
+                  if (input.operation !== "query") throw new Error("full_thread requires query")
+                  const { operation: _operation, view: _view, ...query } = input
+                  result = renderFullHistory(store.history.read(query))
+                  break
                 }
-                const identityScoped = ["complete", "answer", "assign", "authorize-continuation", "withdraw-continuation", "retry-delivery"].includes(String(input.operation))
-                  || (input.operation === "query" && ["thread", "assignments", "deliveries"].includes(String(input.view)))
-                  || (input.operation === "ask" && input.assignment_id !== undefined)
-                const focus = identityScoped || input.session_only ? undefined : focusFor(input, actor.session_id)
-                const assignedFocus = input.operation === "ask" && input.assignment_id !== undefined && input.action_id !== undefined
-                  ? { action_id: input.action_id as string, ...(input.node_id === undefined ? {} : { node_id: input.node_id as string }) } : focus
-                if (input.operation === "ask" && input.assignment_id !== undefined && input.node_id !== undefined && input.action_id === undefined)
-                  throw new Error("node_id requires action_id")
-                if (["complete", "reopen", "ask", "answer", "assign", "authorize-continuation", "withdraw-continuation", "retry-delivery"].includes(String(input.operation)) || (input.operation === "query" && input.view !== undefined && input.view !== "ledger")) {
-                  result = store.collaboration.execute(actor, input, assignedFocus)
-                  if (input.operation === "retry-delivery") {
-                    const identity = payload(result), id = uid(identity.intent_id)
-                    result = {...identity,delivery_status:await sender.attempt(id,true,toolContext.signal)}
-                  } else if (input.operation === "answer") {
-                    // Source transaction has committed. A sending failure cannot undo it.
-                    const saved = payload(result), delivery = payload(saved.delivery)
-                    if (typeof delivery.intent_id === "string") {
-                      const status = await sender.attempt(delivery.intent_id,false,toolContext.signal)
-                      result = {...saved,delivery:{...delivery,reason:status.reason,transport:status.transport,delivery_status:status,answer_id:saved.id,question_id:input.question_id,assignment_id:payload(saved.data).assignment_id}}
-                    }
-                  }
+                if ("session_id" in input || "cursor" in input) throw new Error("session_id and cursor are full_thread query options only")
+                // Explicit work/thread identity must not depend on saved selection.
+                const identityScoped = ["complete", "answer"].includes(String(input.operation))
+                  || (input.operation === "query" && input.view === "thread")
+                const focus = identityScoped || input.session_only || (input.operation === "ask" && input.reference !== undefined) ? undefined : focusFor(input, actor.session_id)
+                if (input.operation === "answer") {
+                  const { operation: _operation, ...answer } = input
+                  const committed = store.collaboration.answer(actor, answer)
+                  result = await resumeAnswer(store, committed, async sessionID => {
+                    const target = payload(unwrapped(await ctx.session.get({ sessionID })))
+                    return target.id === sessionID && await sessionIsLocal(target)
+                  }, notice => ctx.session.synthetic(notice), AbortSignal.any([toolContext.signal, lifetime.signal]))
+                  break
+                }
+                if (["complete", "reopen", "ask"].includes(String(input.operation)) || (input.operation === "query" && input.view !== undefined && input.view !== "ledger")) {
+                  result = store.collaboration.execute(actor, input, focus)
+                  if (input.operation === "ask") result = { ...result as object, dispatch: QUESTION_DISPATCH,
+                    guidance: input.blocking === true
+                      ? "Recipient not contacted. Manual/native handling is required. If manual handling has been arranged, you may naturally yield for a response; blocking intent does not force a wait."
+                      : "Recipient not contacted. Manual/native handling is required; continue your work and retrieve answers later." }
                   break
                 }
                 if (input.session_only && (input.operation !== "query" || input.action_id !== undefined || input.node_id !== undefined)) throw new Error("session_only is a query option and cannot be combined with work IDs")
@@ -214,7 +216,10 @@ export default Plugin.define({
               result = { ...page, items: page.items.map(r => ({ ...r, data: typeof r.data.statement === "string" && r.data.statement.length > 600
                 ? { ...r.data, statement: r.data.statement.slice(0,600), truncated: true, read_full: "Pass this record_id to loom_record query" } : r.data })) }
             }
-            return { content: JSON.stringify({ result, ...diagnostics }) }
+            const content = JSON.stringify({ result, ...diagnostics })
+            if (spec.name === "record" && input.view === "full_thread" && content.length > PROCESSING_LIMITS.valueChars)
+              throw new Error("Full thread serialized response exceeds processing limit; cursor not advanced; reduce limit")
+            return { content }
           },
         })
       }))
@@ -267,8 +272,8 @@ export default Plugin.define({
       }))
     } catch (error) {
       lifetime.abort()
-      await Promise.allSettled([...disposers.map(d => d.dispose()),admissions,recovery,sender.settled()]); database.close(); throw error
+      await Promise.allSettled(disposers.map(d => d.dispose())); database.close(); throw error
     }
-    return async () => { lifetime.abort(); await Promise.allSettled([...disposers.map(d => d.dispose()),admissions,recovery,sender.settled()]); database.close() }
+    return async () => { lifetime.abort(); await Promise.allSettled(disposers.map(d => d.dispose())); database.close() }
   },
 })

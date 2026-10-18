@@ -160,7 +160,12 @@ def ledger_inventory(state: Path) -> list[dict]:
 
 
 def source_inventory(repo: Path) -> dict:
-    paths = subprocess.check_output(["git", "-C", str(repo), "ls-files", "-z"]).decode().split("\0")
+    # Inspect the candidate on disk, including additions and deletions. A source
+    # archive/shallow checkout must not depend on historical Git objects.
+    paths = [str(p.relative_to(repo)) for name in ("src", "tests") for p in (repo / name).rglob("*") if p.is_file()]
+    identity = subprocess.run(["git", "-C", str(repo), "rev-parse", "--show-toplevel", "HEAD"], capture_output=True, text=True)
+    lines = identity.stdout.splitlines()
+    head = lines[1] if identity.returncode == 0 and len(lines) == 2 and Path(lines[0]).resolve() == repo.resolve() else None
     callers, definitions = [], []
     for name in filter(None, paths):
         if not name.endswith((".ts", ".mjs", ".js")):
@@ -170,14 +175,14 @@ def source_inventory(repo: Path) -> dict:
                 callers.append({"path": name, "line": number})
             if re.search(r"^\s*recent\s*\(", line):
                 definitions.append({"path": name, "line": number})
-    return {"head": subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip(),
+    return {"head": head,
             "runtime_sha256": {str(p.relative_to(repo)): hashlib.sha256(p.read_bytes()).hexdigest()
                                for p in sorted((repo / "src").glob("*.ts"))},
             "recent_direct_call_sites": callers, "recent_definitions": definitions,
             "consumer_check_limit": "Direct source scan only; not an independent review or proof about external consumers."}
 
 
-def run_probe(executable: str, repo: Path, output: Path, expected: str) -> dict:
+def run_probe(executable: str, repo: Path, output: Path, expected: str, disable_watcher: bool = False) -> dict:
     require(os.name == "posix", "This isolated process-group probe currently supports POSIX only")
     output.mkdir(parents=True, exist_ok=True)
     report = {"status": "running", "kind": "installed-host-boot-only", "expected_version": expected,
@@ -187,6 +192,9 @@ def run_probe(executable: str, repo: Path, output: Path, expected: str) -> dict:
         with tempfile.TemporaryDirectory(prefix="loom-installed-") as temporary:
             root = Path(temporary).resolve()
             env = isolated_environment(root)
+            if disable_watcher:
+                env["OPENCODE_FILEWATCHER_DISABLE"] = "1"
+                report["filewatcher"] = "Disabled only inside disposable owned hosts; watcher behavior not qualified"
             project = root / "project"
             project.mkdir()
             subprocess.run(["git", "init", "-q", str(project)], env=env, check=True, timeout=10)
@@ -251,8 +259,9 @@ if __name__ == "__main__":
     parser.add_argument("--repository", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--report-directory", required=True, type=Path)
     parser.add_argument("--expect-version", default="2.0.29")
+    parser.add_argument("--disable-filewatcher", action="store_true", help="Owned disposable hosts only; does not qualify watcher behavior")
     args = parser.parse_args()
     try:
-        print(json.dumps(run_probe(str(args.opencode.absolute()), args.repository.resolve(), args.report_directory.resolve(), args.expect_version), indent=2))
+        print(json.dumps(run_probe(str(args.opencode.absolute()), args.repository.resolve(), args.report_directory.resolve(), args.expect_version, args.disable_filewatcher), indent=2))
     except Exception as error:
         parser.exit(1, f"Installed-host boot probe failed: {error}\n")

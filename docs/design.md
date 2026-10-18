@@ -1,142 +1,104 @@
-# Redesign direction and implementation boundaries
+# Implementation boundaries
 
-## Product boundary
+## Product and ownership
 
-A Session hosts conversation and execution. An Action represents something to
-accomplish. An Action may have a Plan. A Plan may include Phases, Waves, Tasks and
-Subtasks, skipping levels that are not useful. An Action can span Sessions, and a
-Session can contribute to different Actions. Ordinary conversation creates no
-Action automatically. A Plan describes intent and relationships, not a schedule.
-
-Agents and general engineering skills are external; the bundled `loom` skill is
-the plugin usage guide. `.loom.yaml` maps native agent IDs to roles and
-optional coordination descriptions. Role guidance is injected into transient
-model context, not written into agent files. Roles guide selection and tool use;
-they are not authority classes or permission grants. The plugin has no fixed
-General/Planner/Worker/Reviewer/Critic roster.
-
-The plugin supports work; it must not make agents maintain internal lifecycle
-machinery. There are five task-oriented tools, no workflow admission/attachment,
-no recompilation gate, no custom shell permission parser and no mandatory review
-pipeline. Native OpenCode tools and permissions remain unchanged.
-
-## Ownership
+A Session hosts conversation/execution. An Action is a retained goal and may have
+an optional Plan with phase/wave/task/subtask nodes. Levels can be skipped;
+siblings do not implicitly depend on each other. An Action can span Sessions and
+a Session can contribute to several Actions. Ordinary conversation creates none.
 
 | Owner | Responsibility |
 | --- | --- |
-| User / external config | Agent prompts, engineering skills, models, native permissions and explicit opt-in continuation choice |
-| Agent | Professional judgment, decomposition, native delegation, useful results and completion reports |
-| Loom today | Action/Plan data, context, observations, records, reported progress, question threads and bundled usage guide |
-| Loom bounded coordination | Durable assignment association and default-off opt-in answer-to-primary delivery with honest status/recovery |
-| OpenCode | Sessions, execution, permissions, native delegation and its return |
+| User / external configuration | Agent definitions, professional skills, models, native permissions |
+| Agent | Professional judgment, native delegation, useful findings and honest completion reports |
+| Loom | Action/Plan/context, observations and attributed history, questions/answers, bundled usage guide |
+| OpenCode | Sessions, execution, native delegation/return, skills and authority |
 
-Native execution ownership is compatible with Loom requesting native continuation.
-That is intentional automation, not passive presentation or another agent runner.
-Normal production Loom does not implement the candidate delivery path yet.
+There are five tools, no scheduler, workflow gate, dashboard, custom permission
+parser or mandatory review pipeline. `.loom.yaml` maps native IDs to roles and
+optional coordination descriptions; transient guidance does not rewrite agents
+or grant permissions. General skills remain external; do not restore removed
+workflow-specific skills. The bundled native `loom` guide is loaded on demand;
+registered live help is syntax authority.
 
-Assessment and QA are separate record kinds. The plugin does not manufacture an
-independent reviewer, a test run, a satisfied requirement, or a final PASS from an
-agent's claim. Reported completion does not automatically complete parents or the
-Action; an answer is a response, not resolution or permission to proceed.
+## Collaboration and history
 
-## Coordination direction after the reviewed comparison
+[Questions](collaboration.md) require question/to_agent/explicit blocking; answer
+requires question_id/answer. Optional `context_attachments` is canonical on both,
+never an `attachments` alias. Actual author/Session come from the caller. Explicit
+references validate Action/node identity and kind; invalid references never fall
+back. Without reference/selection, questions belong only to the asking Session.
+Answers inherit original nullable association without selecting another's work.
 
-Use [primary-first native re-delegation](coordination.md) as the next bounded
-implementation candidate: answer -> original primary -> native call to the same
-Worker Session -> explicit completion -> native return -> primary coordination.
-Retain the original worked-against reference. A native call returning after a
-question does not end the durable assignment or certify that it is complete.
+Pinned 2.0.29 question dispatch is fail-closed: stored, recipient NOT contacted,
+`not-attempted / policy-capability-unavailable`; manual native handling required.
+Blocking is intent, not a forced wait. After manual handling is arranged, the
+asker may naturally yield. No host upgrade or alternate dispatch topology is
+prescribed to remove this accepted limitation.
 
-The `c2db6e7` comparison has independent feasibility acceptance as reported by the
-user. Its installed-host scripted scenarios are not production transport, a
-live-model usefulness result or overall alpha readiness. See the
-[comparison and its evidence boundaries](handback-comparison.md).
+Only the first committed answer to a new-format blocking question qualifies for
+one immediate postcommit best-effort exact-asking-Session resume. Any prior answer
+counts. Later/nonblocking/legacy answers submit no asker input. No retries,
+eligibility transfer, recovery replay or startup/read reconstruction exists;
+crash can permanently lose liveness. Native target agent/model/permissions stay
+unchanged. Missing/moved/inaccessible targets fail visibly without retargeting.
+Target checks are not leases; timeout bounds waiting, not cancellation of started
+I/O. Admission is not processing, consumption or completion. Durable answer and
+separate SYSTEM outcome annotation are independent; annotation failure is visible.
 
-Do not extend or transplant the test-only completion bridge. Primary-first
-continuation uses no direct Worker synthetic resume and no Loom completion nudge
-for that same continuation. Keep passive Session notices separate; they cannot
-guarantee idle-primary continuation. Assignment routing, answer delivery,
-uncertain admission recovery and cancellation remain future implementation work.
+General assignment/delivery/authorization/retry operations AND views are retired.
+Legacy tables and raw records remain inert/readable, not current consent or newly
+blocking questions. Earlier [comparison](handback-comparison.md)/sender evidence
+is historical, not proof of this replacement.
 
-## Data and concurrency
+`full_thread` is an existing record query with explicit Action/node OR Session
+scope, default limit 20/max 50. Local authorized Loom Store only; no native
+Session body or cross-project reads. Membership is authored/direct question-answer
+relations including later answers, not notices, admission, assignments or same
+agent name. Output is sequence-ordered/deduplicated escaped Markdown with full
+stored content, attribution, IDs/links/verdicts/metadata and historical qualifiers.
+No recursive expansion or raw-body invention. Labelled parts/next_cursor expose
+incompleteness; records advance only at final part. Scope/location/version cursors
+are not perpetual or concurrent snapshots. Existing read guards still apply.
 
-The Action database is distinct from the old workflow database. Plan revisions
-are retained. SQLite transactions and optimistic revision checks prevent stale
-writers from silently replacing another agent's plan. Ledger entries are added,
-not rewritten by plan changes. Node identity is retained when the planner keeps
-the same ID. Deleted/changed tasks keep their history.
+## Data, completion and limits
 
-[Completion references](collaboration.md) identify the work performed using the
-retained goal, node contracts, relevant ancestors/dependencies and group contents.
-Plan revisions supply traceability, not blanket invalidation after unrelated
-edits. Adding contained work reconfirms its group without invalidating unrelated
-siblings. Historical completion can remain saved while needing reconfirmation.
-This is not a code-freshness proof, execution authority or independent acceptance.
+The Action database remains separate from the old workflow database. SQLite
+transactions and optimistic revision checks prevent stale plan replacement;
+Plan revisions and ledger history are retained. Completion/reopen keep the
+original worked-against `work_ref`, goal and qualifications. Changed relevant
+contracts may require reconfirmation; unrelated replanning does not erase history.
+A completion does not complete parents/Action or prove independent acceptance;
+an answer is response, not resolution/approval/permission. Assessment and QA
+remain separate review records, not manufactured independence or final PASS.
 
-Session work selection is attribution, not execution authority or a substitute
-for a durable assignment route. The production context tool saves selection after
-reading it; that save can still fail and hide a successful read. The small
-separate-outcome correction remains open in the [alpha policy](operating-policy.md).
+Selection is attribution, not authority. A successful context read survives failed
+selection-save with separate status/persisted diagnostics; failed clear still
+throws. Automatic injection follows saved selection, not an unsaved request.
+Observation starts retain original work association; missing/ambiguous capture
+never borrows a newer selection. See [evidence reliability](evidence-reliability.md)
+and [read consistency](read-consistency.md). A snapshot is not a lease.
 
-Observation starts retain the original work association. Missing or ambiguous
-starts cannot borrow a newer selection. Incomplete capture is not successful
-evidence. See [evidence reliability](evidence-reliability.md) and the precise
-[read consistency guarantees](read-consistency.md). Read snapshots are not leases
-against later edits. Preserve existing bounded processing/retrieval behavior;
-none establishes a whole-process or unlimited-readable-history guarantee.
+Capture errors warn rather than blocking native work; explicit storage failures
+remain errors. Same-user evaluated code is not an adversarial security boundary.
+Preserve bounded [processing](processing-limits.md), [retrieval](retrieval-limits.md)
+and configuration admission. None guarantees whole-process resources, startup
+cost, disk/WAL quota or unlimited readable history. No automatic retention,
+destructive repair or storage automation is introduced. Use the tested
+[manual stopped-writers procedure](manual-backup-restore.md), preserving originals.
 
-Capture errors are warnings rather than native execution blockers. Explicit
-Loom reads/writes can still fail clearly if storage is unavailable. The database
-is not tamper-proof against evaluated code with the same operating-system rights;
-strong adversarial evidence collection is outside this plugin's current scope.
+## Evidence and release boundary
 
-## Implementation and evidence status
+Registered callback/SQLite tests exercise real product code with a simulated
+native boundary; Code Mode search tests exercise pinned discovery. Neither is
+installed-host native authority or live-model usefulness evidence. Historical
+native trials keep their scope and counts, not current acceptance. The replacement
+requires independent validation of the exact assembled candidate and real installed
+tool/persistence/resume/history paths; missing variants must remain UNPROVEN.
+See [installed validation](installed-host-validation.md) and
+[operating policy](operating-policy.md). Host/dependency pins remain unchanged.
 
-| Layer | Status |
-| --- | --- |
-| Five tools, optional plans, role/context injection and append-only history | Production implementation in this draft; see feature-specific regression reports |
-| Completion/reopening and contextual question/answer operations | Implemented; not a delivery or wakeup service |
-| Tool discovery | Usage help is registered directly in tool descriptions, not only Markdown |
-| Installed-host boot | Existing loader/equivalent-empty-ledger check; not whole collaboration acceptance |
-| Direct bridge and primary-first comparison | Test-only feasibility; user reports independent acceptance at `925a79f` and `c2db6e7` respectively |
-| Bounded primary-first delivery | Explicit prospective opt-in, one-call fence, positive admission recovery and irreversible withdrawal; accepted within bounded scope, default off; see `assignment-delivery.md` |
-| Context selection and offline restoration | Reviewed successful-read/failed-save correction and tested stopped-writers manual procedure; see `operating-policy.md` |
-| Real native trial | Handoff/completion/replan/removal and independent fresh-Session recovery passed bounded scope, no automatic continuation; not whole-alpha acceptance |
-| Practical live-model improvement, production readiness | Not established by scripted-provider tests |
-
-## Next bounded work
-
-Consult the bounded sender in [Coordination](coordination.md) and its production-path
-[qualification](sender-qualification.md), separately from enabling default
-coordination. Preserve the measured whole-chain endpoint and duplicate counterchecks.
-Do not assume untested background/replay paths work because the foreground
-comparison passed. This document does not authorize paid inference.
-
-The context-read/selection-save correction and one tested manual backup/restore
-procedure now have bounded evidence; see [operating policy](operating-policy.md).
-Current native agent mappings use migrated definitions, not a migration guarantee
-for other hosts. Agents and general engineering skills live outside the plugin;
-the bundled `loom` skill is its usage guide. Do not restore removed external Loom
-skills. Migrated prompts must not depend on removed
-workflow tools. Preserve optional external `SKILL.md` / `ASSESSMENT.md` / `QA.md`
-companions and native loading. The skills repository is
-[bateau84/skills](https://github.com/bateau84/skills).
-
-## Deferred, not missing prerequisites
-
-Scheduling, dashboards, automatic parent completion, universal grants/gates,
-legacy ledger import, automatic retention and elaborate storage maintenance are
-not prerequisites for this coordination candidate. They need their own demonstrated
-use and explicit scope before development; their presence in old Loom is not a
-reason to restore them. E remains partial without storage/whole-process claims.
-
-The PR stays draft until the chosen usable alpha and migration are verified.
-Removed tests and historical success do not certify rewritten behavior.
-
-## Versioned references
-
-The current compatibility target is OpenCode 2.0.29; see the
-[upgrade notes and pinned sources](opencode-2.0.29.md). Earlier evidence reports
-retain their historical v2.0.18 references rather than being relabelled as new runs.
-Production YAML parsing uses the [pinned bounded parser](configuration-parser.md),
-not an assumed allocation boundary from Bun YAML alone.
+Scheduling, dashboards, automatic parent completion, legacy import, retention and
+elaborate maintenance are deferred, not prerequisites. E remains partial. Draft
+status and separate integration/activation authority remain; docs/tests do not
+authorize watched-checkout/config changes, restart, paid inference or publication.

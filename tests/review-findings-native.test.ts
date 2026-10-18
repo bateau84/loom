@@ -173,7 +173,7 @@ test("context read survives selection-save failure and automatic context follows
     const worked = (await f.invoke("context", requested)).result
     const completion = (await f.invoke("record", { operation: "complete", work_ref: worked.work_ref, statement: "Fixture completion without assignment" })).result
     await f.invoke("context", { action_id: f.action.id, node_id: "task" })
-    const question = (await f.invoke("record", { operation: "ask", ...requested, respondent: "author", statement: "Retain this question?" })).result
+    const question = (await f.invoke("record", { operation: "ask", reference: { action_id: requested.action_id, kind: "task", id: requested.node_id }, to_agent: "author", question: "Retain this question?", blocking: false })).result
     const before = f.history(), saved = f.selection()
     await writeFile(join(f.directory, ".loom.yaml"), "agents: {author: {roles: [implementation]}}\ninstructions: {enabled: true}\nledger: {capture: off}\n")
     f.db.exec("CREATE TRIGGER refuse_selection BEFORE INSERT ON focus BEGIN SELECT RAISE(ABORT,'injected selection write refusal'); END")

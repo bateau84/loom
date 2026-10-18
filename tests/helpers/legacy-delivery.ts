@@ -23,7 +23,7 @@ export function legacyFixture(db: Database) {
   store.record(actor, focus, { kind: "result", statement: "Agent-reported result", evidence_ids: [observation.id], artifact_refs: ["fixture://result"] })
   store.record(actor, focus, { kind: "assessment", statement: "Qualified assessment", verdict: "inconclusive", evidence_ids: [observation.id] })
   store.collaboration.complete(actor, { work_ref: ref, statement: "Reported, not accepted", artifact_refs: ["fixture://completion"] })
-  const question = store.collaboration.ask(actor, focus, { respondent: "reviewer", statement: "Still needs an answer?" })
+  const question = store.collaboration.ask(actor, focus, { to_agent: "reviewer", question: "Still needs an answer?", blocking: false })
   store.collaboration.reopen(actor, focus, "Explicitly reopened")
   store.update(action.id, 1, { goal: "Changed contract needs reconfirmation" })
   store.savePlan(action.id, 1, [{ ...nodes[0], criteria: ["New qualification"] }])
@@ -31,7 +31,7 @@ export function legacyFixture(db: Database) {
   store.savePlan(other.id, 1, [{ ...nodes[0], title: "Other contract" }])
   // Only the known-empty projection is replaced to reproduce the captured input.
   // All meaningful history/control rows already exist and are retained below.
-  db.exec("DROP TABLE primary_deliveries;" + legacyDeliveryDDL)
+  db.exec("DROP TABLE IF EXISTS primary_deliveries;" + legacyDeliveryDDL)
   const meaning = (s: Store) => ({
     ref: workReference(s.action(action.id), s.plan(action.id), "work"),
     selected: s.selected(actor.session_id),

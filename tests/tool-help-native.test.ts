@@ -67,6 +67,52 @@ test("discovery help keeps truthful current errors and scope boundaries visible"
   expect(TOOL_HELP.action).toContain("not a Plan revision")
 })
 
+test("canonical collaboration help matches conditional schemas and rejects aliases", async () => {
+  const f = await registeredLoom()
+  try {
+    const tool = f.tools.get("record")
+    for (const [operation, required, allowed] of [
+      ["ask", ["operation", "question", "to_agent", "blocking"], ["operation", "question", "to_agent", "blocking", "context", "context_attachments", "reference"]],
+      ["answer", ["operation", "question_id", "answer"], ["operation", "question_id", "answer", "context_attachments"]],
+    ] as const) {
+      const schema = tool.input.allOf.find((s: any) => s.if.properties.operation?.const === operation).then
+      expect(schema.required).toEqual(required)
+      expect(Object.keys(schema.properties).sort()).toEqual([...allowed].sort())
+      expect(schema.additionalProperties).toBe(false)
+      expect(schema.properties.context_attachments).toEqual(tool.input.properties.context_attachments)
+      expect(schema.properties).not.toHaveProperty("attachments")
+    }
+    const examples = TOOL_EXAMPLES.record
+    const ask = examples.find(e => e.operation === "ask" && "reference" in e)!
+    const answer = examples.find(e => e.operation === "answer")!
+    expect(ask).toHaveProperty("context_attachments")
+    expect(answer).toHaveProperty("context_attachments")
+    const { reference: _reference, ...unscoped } = ask
+    const question = (await f.invoke("record", unscoped, "asker")).result
+    expect(question.data.context_attachments).toEqual(ask.context_attachments)
+    expect(question.action_id).toBeUndefined()
+    expect(question.dispatch).toEqual({ status: "not-attempted", reason: "policy-capability-unavailable" })
+    const answered = (await f.invoke("record", { ...answer, question_id: question.id }, "respondent")).result
+    expect(answered.data.context_attachments).toEqual(answer.context_attachments)
+    expect(answered.session_id).toBe("respondent")
+    for (const input of [unscoped, { ...answer, question_id: question.id }]) {
+      const { context_attachments: _canonical, ...withoutCanonical } = input
+      for (const invalid of [{ ...withoutCanonical, attachments: [] }, { ...input, attachments: [] }])
+        await expect(f.invoke("record", invalid)).rejects.toThrow("attachments is not supported")
+    }
+    for (const text of ["FIRST committed", "policy-capability-unavailable", "manual native handling required", "No retries", "not an atomic lease", "not perpetual", "No recursive evidence expansion"]) expect(tool.description).toContain(text)
+    expect(tool.input.properties.operation.enum).toEqual(["add", "query", "complete", "reopen", "ask", "answer"])
+    expect(tool.input.properties.view.enum).toEqual(["ledger", "progress", "questions", "thread", "full_thread"])
+    const history = (await f.invoke("record", { operation: "query", view: "full_thread", session_id: "asker", limit: 1 })).result
+    expect(history.format).toBe("loom-full-thread/v1")
+    expect(history.markdown).toContain(question.id)
+    expect(history.next_cursor).not.toBeNull()
+    const next = (await f.invoke("record", { operation: "query", view: "full_thread", session_id: "asker", cursor: history.next_cursor })).result
+    expect(next.markdown).toContain(answered.id)
+    expect(next.next_cursor).toBeNull()
+  } finally { await f.close() }
+})
+
 test("Plan search help explains intent and every declared node field", async () => {
   const f = await registeredLoom()
   try {

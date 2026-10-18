@@ -1,6 +1,6 @@
 # Loom usage guide
 
-Use this guide when coordinating or resuming work through the Loom plugin. It
+Use this guide when coordinating or resuming work through Loom. It
 teaches Loom, not general coding, Git, testing or agent design. Load applicable
 external engineering skills separately, using OpenCode's native skill tool.
 
@@ -20,7 +20,7 @@ an execution/permission gate. Do not invent mandatory stages or legacy tools.
 | `loom_action` | List, create or update a goal. Creation selects it for this Session. State labels do not interrupt Sessions or certify success. |
 | `loom_plan` | Read or replace an optional flat list of nodes. Saving does not dispatch work or load the listed skills. |
 | `loom_context` | Read selected work, or explicitly select an Action/task and retrieve context. A fresh Session starts unselected. |
-| `loom_record` | Store or query claims, results, Assessment/QA, completion/reopening, questions, answers and assignment/delivery records. Stored records are not proof of delivery or acceptance. |
+| `loom_record` | Store or query claims, results, Assessment/QA, completion/reopening, questions, answers and full stored history. Stored records are not proof of delivery or acceptance. |
 
 Use tool search for the installed tool's complete schema, operation help and
 examples. Treat those live descriptions as the input reference, not remembered
@@ -32,10 +32,8 @@ calls, use Promise.allSettled and inspect every outcome.
 
 ## Start or resume work
 
-First use `loom_agents` with `{}` to discover the real roster. Role names such as
-Research, Worker, Reviewer or Critic are responsibilities, not guaranteed agent
-IDs. Select agents from the returned roster and load their applicable external
-skills through native OpenCode mechanisms.
+Use `loom_agents` with `{}` for the real roster, not assumed role-name IDs.
+Load applicable external skills natively.
 
 For existing work, recover its actual Action ID from the handoff or `loom_action`
 list. Do not create a duplicate merely because this Session has no selection.
@@ -45,8 +43,7 @@ For new work worth retaining, create a goal:
 {"operation":"create","title":"Explain a setting","goal":"Produce a source-backed explanation with its limitations."}
 ```
 
-Keep the returned `result.id`. In the following examples replace `ACTION_ID`
-with that real ID. Other placeholders must also come from actual tool results.
+Replace placeholders with actual returned IDs; `result.id` is the Action ID.
 
 Read the current optional Plan before changing it:
 
@@ -71,11 +68,9 @@ Explicitly select the work before performing it:
 {"action_id":"ACTION_ID","node_id":"TASK_ID"}
 ```
 
-Retain the returned `work_ref`: it identifies the definition actually worked
-against. Give native delegates the Action/task IDs, goal, constraints, relevant
-record IDs and original work reference. A child must select its own work; do not
-assume it inherits its parent's selection. Keep handoffs short and retrieve the
-full referenced records instead of copying entire conversations.
+Retain `work_ref`, the definition actually worked against. Give native delegates
+the Action/task IDs, goal, constraints, record IDs and original reference.
+Each child selects its own work; selection is not inherited.
 
 ## Read evidence before using conclusions
 
@@ -94,18 +89,15 @@ Use exact record reads for full statements within the tool's read limits.
 `contract_match` is about the saved work definition, not code freshness;
 `contract_match:null` means unknown, not success.
 
-Record useful findings with `loom_record` operation `add`: `result` describes
-work performed; `claim` states a conclusion with its support and uncertainty.
-State what was actually checked, what was found, relevant artifact references
-and what remains untested. Do not log every thought or repeat the Plan.
+Use `add`: `result` describes actual work; `claim` states a supported conclusion
+and uncertainty. Include checks, sources and untested limits, not activity logs.
 `evidence_ids` must be real host observation IDs from the same Action, not invented
 IDs or other conclusion records. Omit unavailable evidence and explain the gap.
 Artifact references are pointers, not proof that Loom read or verified them.
 
-Host start/finish observations contain identity references and digests, not raw
-arguments/output. Missing or unpaired observations prove neither success nor
-failure. For unpaired Session history without changing selection, query with
-`session_only:true`; this query option cannot be combined with work IDs.
+Observations store identity/digests, not raw arguments/output. Missing/unpaired
+observations prove neither success nor failure. `session_only:true` reads Session
+ledger history without selection; it cannot combine with work IDs.
 Never put credentials or other secrets in records or artifact references:
 explicitly recorded text is not redacted.
 
@@ -119,71 +111,90 @@ and whether it still matches current work. Changed contracts may require fresh
 work or reconfirmation; unrelated replanning must not be treated as lost history.
 
 Completion does not complete parents or the Action and does not establish
-independent acceptance. Assessment and QA are separate review records with
-`pass`, `fail` or `inconclusive` verdicts. Use independent reviewers when required
-by the task, and the relevant external ASSESSMENT.md or QA.md companions. Writing
-a review record does not prove independence. Do not convert a stored PASS into
-an Action-wide success claim or force every conversation through fixed gates.
+independent acceptance. Assessment/QA verdicts are `pass`, `fail`, `inconclusive`.
+Use independent reviewers where required and external ASSESSMENT.md / QA.md
+companions; a stored PASS does not prove independence or Action-wide success.
 
-Use `reopen` with a reason when work must be revisited. Preserve the earlier
-records; do not erase evidence or claim that reopening undid native side effects.
-Update the Action state separately and only when justified by the overall goal.
-Paused/cancelled Action labels do not stop OpenCode execution.
+`reopen` appends a reason without erasing history or undoing native side effects.
+Update Action state separately; paused/cancelled labels do not stop execution.
 
-## Questions, assignments and opt-in continuation
+## Questions and manual native handling
 
-Use `ask` for a scoped question with enough background and an intended respondent;
-use `answer` with the actual `question_id`. Retrieve the authoritative thread with
-`query` and `view:thread`. An answer is a response, not resolution, approval or
-permission. Check it against the question and its qualifications before continuing.
+Ask with `question`, `to_agent` and an explicit Boolean `blocking`. Optional
+fields are `context`, `context_attachments` (string references) and
+`reference:{action_id,kind:action|phase|wave|task|subtask,id}`. Without a reference,
+selection supplies association; without either, the question belongs to the
+asking Session only. No Action, Plan or assignment is required. Invalid explicit
+references never fall back: Action IDs must match; node ID and kind must match.
 
-`assign` binds a stable
-`assignment_id`, the calling primary, an existing native child Worker Session in
-the same Loom location, and the original `work_ref`. Repeating identical
-registration returns the same record; do not reuse a handle for different work.
-An optional `question_id` can link a matching unanswered question; it cannot
-retroactively create delivery intent for an already committed answer.
+```json
+{"operation":"ask","question":"Which limit applies here?","to_agent":"research","blocking":false,"context_attachments":["SOURCE_REFERENCE"]}
+```
 
-Assigned questions and completion may name `assignment_id`. Answering an assigned
-question atomically saves the answer and primary-addressed intent. Default sends
-none. Under user-authorized coordination only, the exact primary may opt in with
-`{operation:"authorize-continuation",assignment_id,continuation:"primary-native/v1"}`.
-One prospective authorization permits only FUTURE intents; historical false or
-missing consent remains unsendable, including on upgrade/config/skill changes.
-Authorization itself sends nothing. Historical storage-only intents remain
-transport:not-attempted. No new tool or permission gate is added.
+The question is saved, but the recipient is NOT contacted on pinned OpenCode
+2.0.29. Inspect `dispatch:{status:not-attempted,reason:policy-capability-unavailable}`.
+Arrange manual native handling outside ask. If manual handling has been arranged,
+a blocking asker may naturally yield. Blocking is collaboration intent, not an
+enforced wait, approval grant or gate; nonblocking work can continue.
 
-`withdraw-continuation` requires assignment_id and statement from that primary.
-It is irreversible, including before authorization. It suppresses pending sends,
-retains history and does not stop native work/retract input. Before send-started
-it fences I/O; afterward input may still admit despite best-effort checking.
-Native Stop/disconnect/Action labels are not this operation.
+Answer with `question_id`, `answer` and optional `context_attachments`. Actual
+author and Session derive from the caller. Answers inherit the question's original
+nullable association, even after node removal, without selecting the asker's work.
+Multiple/conflicting answers remain stored. `attachments` is not an alias, alone
+or with the canonical field; old statement/respondent/background/artifact_refs
+are not ask/answer inputs.
 
-Save and transport outcomes are separate. Do not repeat an
+```json
+{"operation":"answer","question_id":"QUESTION_ID","answer":"Read the source and its limitations.","context_attachments":["SOURCE_REFERENCE"]}
+```
+
+Only the FIRST committed answer to a new-format blocking question qualifies for
+one immediate postcommit best-effort resume of the exact stored asking Session.
+Later, nonblocking and legacy answers never submit asker input. Missing, moved or
+inaccessible targets fail visibly without retargeting. Current native target
+agent/model/permissions remain unchanged. Target validation is not an atomic lease.
+The 5000ms deadline bounds waiting, not cancellation of already-started native I/O.
+Admission is not processing, consumption or completion; timeout can leave an
+unknown outcome. No retries, transfer, recovery replay or reconstruction on reads
+or restart: a crash after answer commit may permanently lose resume. Do not repeat an
 answer to try delivery.
-The primary uses `retry-delivery` with an EXISTING delivery_id. Preflight failure
-can be explicitly retried after correcting the exact destination. Once marked
-send-started, Loom never calls synthetic again: lost ACK/crash reconciliation
-requires positive ACK/live-enqueued/context-promoted evidence. Missing/pending/
-compacted context or read errors stay admission-uncertain. Even a crash between
-marker and call may remain uncertain; no eventual-delivery promise is made.
-Admission does not prove model processing, delegation or completion.
 
-`query` views `assignments` and `deliveries` are selection-independent bounded
-Session-wide reads, not sending. They expose continuation and delivery_status.
-Exact delivery_id also returns attempt history with attempt_after/attempt_limit
-(default 0/20, max 50), separate from base intent after/limit. Follow next_after.
-Only a new authorized answer, one <=20-intent startup batch or explicit retry is
-a sending/reconciliation opportunity; no timer or general notification engine.
+The answer remains durable separately from transport. Eligible responses include
+`resume` with source IDs, `status`, `reason`, `attempted`, `qualification` and
+`annotation`. Status is `admission-observed`, `failed`, `outcome-unknown` or
+`not-attempted`. A separate SYSTEM result annotation links the IDs and outcome;
+annotation failure is visible and cannot erase the answer or undo native I/O.
+Retrieve the authoritative paginated `view:thread` before using a notice. Answered
+means response, not resolution, approval or permission.
 
-A native primary notice identifies records, not an answer summary. Read the exact
-association/delivery and FULL paginated question thread, including qualifications
-and conflicts. Check withdrawal and whether work already runs/completed; recheck
-withdrawal before native delegation to the SAME Worker Session/original work_ref.
-Loom never sends directly to Worker or nudges completion. OpenCode owns that call's
-execution/return; retrieve the exact explicit completion/results before the next
-coordinating action. A native run ending is not assignment completion. Plan saves,
-ordinary answers and completion reports do not inherently wake another agent.
+General assignment/delivery operations AND views are retired. Historical records
+remain readable and inert, not current consent. No startup sender or retry engine
+exists. Completion/reopen semantics above are unchanged.
+
+## Complete stored history
+
+```json
+{"operation":"query","view":"full_thread","action_id":"ACTION_ID","node_id":"TASK_ID","limit":20}
+```
+
+Alternatively supply explicit `session_id`, never combined with Action/node.
+This view does not inherit selection. It reads only the current authorized Loom
+Store, not native Session bodies or cross-project databases. Session membership
+comes from authored records and direct question/answer relationships, including
+later answers; notice destinations, admission, assignments and agent-name equality
+do not create membership. Fail-closed ask does not invent recipient receipt.
+
+The result contains `format:loom-full-thread/v1`, `scope`, `markdown`, `next_cursor`.
+Follow `next_cursor` as `cursor` with the SAME explicit scope until null. Default
+limit is 20, maximum 50. Stored records are deduplicated and ordered by sequence.
+Escaped Markdown includes full stored content, actual authors/Sessions/times,
+IDs, links, verdicts, observation metadata and historical Plan/work_ref information.
+References are not recursively expanded; unavailable raw tool bodies are never
+invented. Labelled oversized-record parts repeat identity and advance the record
+only on its final part. A page below limit may still be incomplete. Cursors are
+scope/location/version-bound, not a perpetual or concurrent-snapshot guarantee.
+Corrupt/unsupported data fails without advancing; existing read limits still
+apply. Smaller pages do not make an individually inadmissible record readable.
 
 ## Recover without guessing
 
@@ -199,7 +210,6 @@ Later automatic context follows persisted selection. Do not assume the
 selection changed after an error, or that a failed clear succeeded: clear still
 fails on a write error. Unreadable context still fails, not a missing-task notice.
 Explicit Plan and ledger queries are alternative reads that do not save selection.
-Role/context injection is optional `.loom.yaml` behavior; tools and this skill
-remain usable without it. Respect native permission denials rather than bypassing
-them. End handoffs with actual results, record IDs, remaining work and honest
-verification limits, not unsupported claims of delivery or readiness.
+Role/context injection is optional; tools and this guide remain usable without
+it. Respect native denials. Hand off results, IDs, remaining work and test limits,
+not unsupported delivery/readiness claims.

@@ -1,201 +1,177 @@
-# Using Loom: five tools, one handoff
+# Five tools, optional structure
 
-This guide describes the API inspected at `504584b`. It is usage documentation,
-**not a report of a successful installed-host two-agent trial**. Examples are tool
-inputs, not shell commands. Replace `ACTION_ID` and `RECORD_ID` with IDs actually
-returned by Loom; do not invent evidence IDs. Native OpenCode still executes work,
-delegates agents, loads skills and enforces permissions.
+Loom retains goals, context and attributed history. OpenCode owns execution,
+native delegation, skills, models and permissions. A conversation needs no Action;
+an Action needs no Plan. Live tool search is the syntax authority; the bundled
+native `loom` guide teaches use without requiring this document to be fetched.
 
-A conversation needs no Action. An Action needs no Plan. Use Loom when another
-agent or a later Session will benefit from remembering the work.
+| Tool | Purpose |
+| --- | --- |
+| `loom_agents` | Existing native roster, roles, configuration/capture diagnostics |
+| `loom_action` | Create/list/update a goal and its progress label |
+| `loom_plan` | Read/replace optional intended work and relationships |
+| `loom_context` | Read selection, explicitly select work or clear selection |
+| `loom_record` | Results, claims, Assessment/QA, completion/reopen, questions/answers and history |
 
-## Choose the tool
+Responses are JSON text with `result` and optional `config_errors`. In Code Mode,
+parse once; await writes before using IDs or ending the script. Sequence dependent
+calls. Use `Promise.allSettled` for independent calls and inspect every outcome;
+this is not an atomic multi-write transaction. Use the exact callable search path.
 
-| Tool | Use it for | Important effect or limit |
-| --- | --- | --- |
-| `loom_agents` | Available agent IDs, roles, descriptions and config/capture diagnostics | Does not create agents, assign work or grant permission |
-| `loom_action` | List, create or update a goal | Create selects the Action for this Session; state labels do not stop work or certify success |
-| `loom_plan` | Read or replace a complete optional plan | Save needs the current plan revision; retain unchanged node IDs; it does not dispatch work |
-| `loom_context` | Read selected work, or select explicit Action/task IDs and read them | Explicit IDs normally save Session selection; `{}` reads existing selection; a new Session starts unselected |
-| `loom_record` | Add a useful result/claim/Assessment/QA record, or read ledger history | It cannot create host observations, prove independence or certify a claim |
+## Recover or define work
 
-A successful tool result has JSON content with a `result` field; configuration
-problems can also appear in `config_errors`. No-error content is not proof of task
-success. An explicit operation may throw a storage/input error instead of returning
-a result. Check the returned operation outcome before using IDs or claiming a write.
-
-## Research -> Worker example
-
-### 1. Discover the real roster and create work
-
-Call `loom_agents` with `{}`. Choose existing native agents with relevant roles;
-"Research" and "Worker" below describe responsibilities, not mandatory agent IDs.
-Role mapping and descriptions live in `.loom.yaml`, not this example.
-
-Call `loom_action`:
+Discover the actual roster with `loom_agents {}`; role names are not guaranteed IDs.
+For existing work use its actual Action ID rather than creating a duplicate.
+For a new persistent goal:
 
 ```json
-{"operation":"create","title":"Explain a repository setting","goal":"Investigate one setting and produce a source-backed explanation with its limitations."}
+{"operation":"create","title":"Explain a setting","goal":"Produce a source-backed explanation with limitations."}
 ```
 
-Keep `result.id` as `ACTION_ID`. The new Action has no Plan and is selected only
-for the calling Session. For this two-part example, call `loom_plan`:
+Action creation selects it. `list` uses `offset`/`next_offset` (50 per page).
+Updates require the Action's current `expected_revision`, not a Plan revision.
+State labels active/paused/completed/cancelled do not stop execution or certify success.
+
+Read the optional Plan:
 
 ```json
-{
-  "operation":"save",
-  "action_id":"ACTION_ID",
-  "expected_revision":0,
-  "nodes":[
-    {"id":"research","kind":"task","title":"Investigate the setting","outcome":"Record the finding, source and material qualifications.","roles":["research"]},
-    {"id":"explain","kind":"task","title":"Write the explanation","depends_on":["research"],"outcome":"Use the research and retain its qualifications.","roles":["implementation"]}
-  ]
-}
+{"operation":"read","action_id":"ACTION_ID"}
 ```
 
-`0` applies only when there is no saved Plan. On existing work, first read
-`loom_plan` with `{"operation":"read","action_id":"ACTION_ID"}` and use its
-returned revision. Save supplies the whole node list, not an incremental patch.
-Phases, waves and subtasks are optional; dependencies organize context, not execution.
+To save, pass `operation:save`, `action_id`, current Plan `expected_revision`
+(0 only before first save) and the **complete** `nodes` list. Preserve stable IDs.
+Nodes require `id`, `kind`, `title`; kinds are phase/wave/task/subtask. Optional
+fields: `outcome`, `criteria`, `context`, `depends_on`, `parent`, `agent`, `roles`,
+`skills`. At most 300 nodes; cycles/invalid references fail. Siblings do not
+implicitly depend on each other. Plan saves do not dispatch, load skills, enforce
+order or complete work. Reread/reconcile stale revisions, never guess a replacement.
 
-### 2. Research with native tools; preserve a useful conclusion
-
-Use native OpenCode delegation. Give the Research agent the goal, `ACTION_ID` and
-node `research`. It calls `loom_context`:
+Select work through `loom_context`:
 
 ```json
-{"action_id":"ACTION_ID","node_id":"research"}
+{"action_id":"ACTION_ID","node_id":"TASK_ID"}
 ```
 
-After actual investigation, call `loom_record` with the observed finding. The text
-below is a placeholder, not a finding to record unchanged:
+Retain `result.work_ref` before working. A native delegate receives IDs, goal,
+constraints, useful record IDs and the original reference, then selects its own
+work. It does not inherit the parent's selection. `{}` reads current selection;
+`{"clear":true}` clears it. Selection is attribution, not permission to execute.
 
-```json
-{"operation":"add","action_id":"ACTION_ID","node_id":"research","kind":"result","statement":"REPLACE_WITH_OBSERVED_FINDING_SOURCE_AND_QUALIFICATIONS"}
-```
+Successful context reads survive selection-save failure with separate
+`selection.status:save-failed` diagnostics and `persisted` (saved reference,
+null, or `unknown` with read error). Later injection follows persisted selection,
+not the unsaved request. Failed clear still throws. Removed tasks return recovery
+choices; do not guess a replacement from its title. Explicit Plan/history reads
+do not change selection. Context is sampled, not complete.
 
-Keep the returned record ID. Optional `artifact_refs` are references, not proof
-that Loom read or checked their contents. Optional `evidence_ids` must refer to
-existing host observations in this Action, not other conclusion records. Omit
-missing evidence rather than manufacture it. Never put credentials in records.
+## Read before relying on a conclusion
 
-### 3. Hand off identifiers, not another copy of the conversation
-
-Send the chosen Worker agent a native delegation message such as:
-
-> Continue Action ACTION_ID, task explain. Use loom_context for that task.
-> Research is recorded as RECORD_ID on task research. Read that complete record
-> before writing the explanation; preserve its qualifications. Record your result.
-
-The Worker first calls:
-
-```json
-{"action_id":"ACTION_ID","node_id":"explain"}
-```
-
-Task context includes sampled dependency conclusions. For the full research
-record, use `loom_record` with the explicit Action ID and record ID:
+Use explicit Action plus exact record ID, with no node filter, for a dependency:
 
 ```json
 {"operation":"query","action_id":"ACTION_ID","record_id":"RECORD_ID"}
 ```
 
-**Do not rely on the selected Worker's node filter to retrieve a dependency's
-record.** Supplying `action_id` without `node_id` searches the Action rather than
-silently inheriting the currently selected task. Supplying only `record_id` can
-inherit that task and return no match. Empty results under a filter do not prove
-that the historical record never existed.
+A record ID alone can inherit the selected task and miss a dependency. Ledger
+pages default to 30, max 50; follow `next_after` as `after`. Statements over 600
+characters are previews; exact record reads return full stored records within
+read limits. `session_only:true` is ledger-only and incompatible with work IDs.
+Empty filtered results are not absence proof. `contract_match:null` means unknown;
+a matching contract is not code freshness or independent validation.
 
-Configured, enabled agents receive selected-work context on subsequent turns
-while instruction injection is enabled. Setting `instructions.enabled: false`
-also disables that automatic context block; explicit tools remain available.
-Excerpts can omit qualifications. `contract_match` concerns the saved goal/Plan,
-not code freshness; `null` is unknown, not success or failure.
+`add` accepts Action/node or selection, `kind:result|claim|assessment|qa` and
+`statement`; Assessment/QA require `verdict:pass|fail|inconclusive`. Record actual
+checks, sources and limits. `evidence_ids` reference existing same-Action host
+observations only; `artifact_refs` are unverified pointers. No raw tool bodies
+are captured, and explicit text is not redacted: never record credentials.
 
-### 4. Replan, recover explicitly, then resume in a fresh Session
-
-Read the current Plan and save a complete replacement node list with its current
-`expected_revision`. Retain `research`; for the removal trial, remove `explain`
-and add an explicitly different task such as `explain-v2`. Do not silently treat
-that as equivalent work. Saved history is not deleted by this plan change.
-
-Reading the old `explain` selection should produce `task-not-in-current-plan`
-with current-Plan/history queries and recovery choices. Read those records, then
-explicitly select `explain-v2`, select Action-only context, or clear selection.
-Do not infer replacement from a similar title.
-
-Call `loom_context` with one of these choices, not all three:
+## Questions without assignment machinery
 
 ```json
-{"action_id":"ACTION_ID","node_id":"explain-v2"}
+{"operation":"ask","question":"Does the finding cover empty input?","to_agent":"research","blocking":true,"context":"The cited source is ambiguous.","context_attachments":["SOURCE_REFERENCE"],"reference":{"action_id":"ACTION_ID","kind":"task","id":"TASK_ID"}}
 ```
+
+Required: `question`, `to_agent`, explicit Boolean `blocking`. Optional: `context`,
+`context_attachments`, `reference`. Without reference, selection supplies association;
+without either, the question belongs only to its asking Session. No Action, Plan,
+assignment or selection is created for an unscoped ask. Explicit Action reference
+requires `id=action_id`; node ID and kind must match. Invalid explicit reference
+never falls back. Reference kinds are action/phase/wave/task/subtask.
+
+On pinned OpenCode 2.0.29 ask stores the question and returns
+`dispatch:{status:"not-attempted",reason:"policy-capability-unavailable"}`.
+The recipient is **NOT contacted**. Arrange manual native handling outside ask.
+If that is arranged, a blocking asker may naturally yield. Blocking is intent,
+not a gate, forced wait or statement that the recipient is working.
 
 ```json
-{"action_id":"ACTION_ID"}
+{"operation":"answer","question_id":"QUESTION_ID","answer":"Empty input is excluded; see the source limits.","context_attachments":["SOURCE_REFERENCE"]}
 ```
+
+Answer requires `question_id`, `answer`; optional `context_attachments`. Actual
+author/Session derive from the caller. Association is inherited from the question,
+even if nullable or its node was removed; answering does not select the asker's
+work. Both canonical attachment fields are string-reference arrays. `attachments`
+is never an alias, alone or alongside the canonical field. Old statement,
+respondent, background and artifact_refs are not ask/answer inputs.
+
+Only the FIRST committed answer to a new-format blocking question qualifies for
+one immediate postcommit best-effort exact-asking-Session resume. Later,
+nonblocking and legacy answers never submit asker input. No retries, eligibility
+transfer, recovery replay or startup/read reconstruction exists; crash after
+commit can permanently lose liveness. Missing/moved/inaccessible targets fail
+visibly without retargeting; current native agent/model/permissions stay unchanged.
+Target check is not an atomic lease. The 5000ms deadline bounds waiting, not
+cancellation of started native I/O. Admission is not consumption or completion.
+An eligible response's `resume` and separate SYSTEM annotation qualify the outcome;
+annotation failure cannot erase the answer or undo I/O. Never repeat an answer
+to try delivery. Read [full outcome details](collaboration.md#one-shot-first-answer-resume).
+
+## Query views and complete history
+
+| View | Scope / continuation |
+| --- | --- |
+| `ledger` (default) | Explicit Action/node or selection, otherwise caller Session; `after`/`next_after` |
+| `progress` | Action/node or selection; `offset`/`next_offset` |
+| `questions` | Explicit/selected Action, optional explicit node/respondent, question_state open/answered/all; `after`/`next_after`; does not inherit task filter |
+| `thread` | Required question_id, optional matching action_id; full question plus paged answers, `after`/`next_after`; no selection required |
+| `full_thread` | Explicit Action/node OR Session; `cursor`/`next_cursor`; no selection fallback |
+
+Views other than ledger default to 20, max 50. For full stored relational history:
 
 ```json
-{"clear":true}
+{"operation":"query","view":"full_thread","action_id":"ACTION_ID","node_id":"TASK_ID","limit":20}
 ```
 
-In a genuinely fresh Session, provide the Action ID, not the old conversation.
-Read the Plan, select the intended current task and retrieve the same record by
-ID. `loom_action` list can locate Actions; follow `next_offset` if needed. A fresh
-Session's `{}` context read does not automatically inherit another Session's task.
+Or use `session_id` instead of Action/node. Response: `format:loom-full-thread/v1`,
+`scope`, escaped `markdown`, `next_cursor`. Follow `next_cursor` as `cursor` with
+the same explicit scope until null. Do not combine scopes or pass ledger-only
+after/session_only/record_id options. It reads the authorized local Loom Store,
+not native Session bodies or cross-project databases. Session membership is
+authored records/direct question-answer relations including later answers, not
+notice destination, admission, assignments or agent-name equality.
 
-## Records, review and finding missing information
+Records are deduplicated, sequence-ordered and include full stored content, true
+authors/Sessions/times, IDs, links, verdicts, attachment/evidence references,
+observation metadata and historical Plan/work_ref qualifications. No recursive
+evidence expansion or fabricated raw bodies. Oversized records have labelled
+parts with repeated identity; only the final part advances the record. A short
+page may still be incomplete. Cursors are scope/location/version-bound, not
+perpetual or a frozen concurrent snapshot. Corrupt/unsupported data fails without
+advancing; read limits remain. General assignment/delivery operations AND views
+are retired; old records remain readable and inert, not current consent.
 
-A `result` describes work performed; a `claim` records a conclusion with its
-support and uncertainty. `assessment` and `qa` are independent record kinds, not
-mandatory stages. Load external skills and their ASSESSMENT.md or QA.md companions
-where useful. Record review against actual work, for example:
+## Complete and reopen honestly
 
-```json
-{"operation":"add","action_id":"ACTION_ID","node_id":"explain-v2","kind":"qa","verdict":"inconclusive","statement":"REPLACE_WITH_ACTUAL_REVIEW_FINDINGS_AND_UNTESTED_RISKS"}
-```
+`complete` takes a truthful `statement` and the exact original retained `work_ref`,
+not a fresh reference fetched to relabel old work. Optional `artifact_refs` are
+unverified. All node kinds use it; no parent/Action completes automatically.
+Original `work_goal`, revisions and qualifications stay in history. Progress is
+open/reported-complete/needs-reconfirmation/validity-unknown, not independent
+acceptance. `reopen` appends a reason for explicit/selected node; history is not
+erased and native side effects are not undone. An answer is a response, not
+resolution/approval/permission. Use external professional/review skills natively.
 
-Review verdicts are `pass`, `fail` or `inconclusive`. They do not establish reviewer
-independence or change Action state automatically. Updating an Action requires
-its own current `expected_revision`, separate from the Plan revision.
-
-Ledger query pages use `limit` (1-50) and `after`; pass a returned `next_after` as
-`after`, stopping at null. General pages shorten long statements; pass an exact
-`record_id` for the full record within the existing read limits. Historical records
-of a removed task remain queryable with explicit Action/node IDs. To inspect
-unpaired observations from this Session without changing work selection:
-
-```json
-{"operation":"query","session_only":true}
-```
-
-`session_only` cannot be combined with work IDs or used for writes. Observation
-start/finish records may be absent or unpaired; neither situation is proof that
-native work failed or succeeded. No raw tool output is stored by the observer.
-Use the recorded Session/message/call references to investigate the original work.
-
-## Selection outcomes and bounded real-host evidence
-
-**A successful context read survives failed selection saving.** Inspect the
-separate `selection.status: "save-failed"` outcome and diagnostics. `persisted`
-names the actual saved reference, null if absent, or "unknown" if readback fails.
-Automatic context follows persisted selection, not the unsaved request. `{}` reads
-the saved selection where storage permits. Explicit Plan and ledger queries offer
-history without saving selection. Unreadable context still fails, and a failed
-clear must not be interpreted as successful clearing.
-
-The bounded run recorded in [operating policy](operating-policy.md) passed native
-research/coder/follow-up, completion/replan/removal and independently checked fresh
-recovery, with no automatic continuation authorized or sent. It did not include
-restart, source-freshness, transport or save-failure probes. It is not whole-alpha
-acceptance. Any broader acceptance run must use installed OpenCode, actual native Research and Worker
-execution, and meaningful records. Give Research a distinctive finding that is
-not copied into the Worker prompt; verify the Worker actually retrieves it and
-retains its qualifications. Then remove its task, exercise explicit recovery,
-and verify the same records from a fresh Session, including a host restart.
-Record commit/runtime versions, tool results, record IDs, errors and any user
-intervention. A written sequence, manual hook calls or an empty database boot
-cannot establish this result. This guide does not authorize paid model spending.
-
-The [manual stopped-writers backup/restore procedure](manual-backup-restore.md)
-now has meaningful-record isolated proof; it does not restore native Sessions or
-replay work. The alpha policy still defers advanced storage automation.
+See [operating limits](operating-policy.md), [read consistency](read-consistency.md)
+and [manual stopped-writers backup/restore](manual-backup-restore.md). No read view
+promises unlimited readable history or automatic storage repair.

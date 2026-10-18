@@ -5,6 +5,7 @@ export type Action = { id: string; title: string; goal: string; state: "active" 
 export type Plan = { revision: number; nodes: PlanNode[] }
 export type Focus = { action_id: string; node_id?: string }
 export type Actor = { session_id: string; agent: string }
+// Legacy assignment/delivery kinds remain readable history, not writable tool capabilities.
 export type RecordKind = "observation" | "claim" | "result" | "assessment" | "qa" | "completion" | "reopen" | "question" | "answer" | "assignment" | "delivery-intent" | "continuation-authorization" | "continuation-withdrawal" | "delivery-event"
 export type LedgerRecord = Actor & { id: string; action_id?: string; node_id?: string; kind: RecordKind; created_at: string; fingerprint?: string; data: Record<string, unknown> }
 export const uid = (value: unknown, label = "id"): string => {

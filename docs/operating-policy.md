@@ -84,8 +84,21 @@ replacement cannot retrospectively count work that was never registered.
 
 ## Bounded evidence and remaining acceptance
 
-The default-off sender has accepted bounded evidence; this does not enable
-continuation by default. Historical false/missing consent never authorizes I/O.
+The former default-off sender has historical bounded evidence and is now retired,
+including its operations/views and startup/retry paths. Its acceptance does not
+qualify the replacement. Historical consent never authorizes current I/O.
+Current questions are stored without contacting recipients on pinned 2.0.29;
+manual native handling is required. Blocking is intent, not a gate or forced wait.
+Only the first committed new-format blocking answer qualifies for one immediate
+best-effort exact-asker resume. No retries, transfer, replay or consumption
+guarantee exists; crash after commit may permanently lose liveness. Current native
+agent/model/permissions remain unchanged. Admission is not processing/completion;
+timeout bounds waiting, not cancellation; target checks are not leases.
+See [collaboration](collaboration.md) for durable answer/separate SYSTEM annotation
+outcomes and complete escaped relational `full_thread` history. Cursors and labelled
+parts expose incompleteness; they do not promise a concurrent snapshot, perpetual
+validity, recursive expansion or unlimited readable history. New installed proof
+must identify the exact assembled artifact; historical counts below are not reruns.
 The context correction (`3c474c2`) and manual procedure (`51dc355`) have independent
 review. The supplied composition evidence at `245f74a` reports 254 native tests,
 370 core tests (five hard-coded external-scratch concurrency cases excluded),

@@ -5,6 +5,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdir
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { Store } from "../src/store.js"
+import { Store as BaselineStore } from "./fixtures/baseline-c9ffcfa/producer/store.js"
 import { workReference } from "../src/collaboration.js"
 import { taskContext, taskContextOrRecovery } from "../src/context.js"
 
@@ -31,7 +32,8 @@ const worker = { session_id: "worker", agent: "implementer" }
 const primary = { session_id: "primary", agent: "coordinator" }
 
 function seed(filename: string) {
-  const db = new Database(filename), store = new Store(db, "isolated-fixture")
+  // The old producer is a legitimate upgrade input, not an operative candidate API.
+  const db = new Database(filename), store = new BaselineStore(db, "isolated-fixture")
   try {
     const action = store.create("Qualified restore fixture", "Fixture only; not production acceptance", worker)
     const other = store.create("Unrelated Action", "Preserve independently", { session_id: "other", agent: "researcher" })
@@ -71,7 +73,8 @@ function seed(filename: string) {
     const delivery = store.delivery.status(intentID)
     expect(delivery.transport).toBe("admission-uncertain")
     return { action, current, other, plan1, plan2, focus, start, finish, interrupted, ambiguous, unpaired, conclusions,
-      ref, assignment, question, answer, intentID, completion, removedCompletion, delivery }
+      ref, assignment, question, answer, intentID, completion, removedCompletion, delivery,
+      projection: db.query("SELECT * FROM primary_deliveries ORDER BY intent_seq").all() }
   } finally { db.exec("PRAGMA wal_checkpoint(TRUNCATE)"); db.close() }
 }
 
@@ -151,12 +154,12 @@ for (const mode of ["closed", "residual-WAL"] as const) test(`manual restore pre
     expect(thread.question).toMatchObject(fixture.question)
     expect(thread.answers).toHaveLength(1)
     expect(thread.answers[0]).toMatchObject({ id: fixture.answer.id, data: { question_id: fixture.question.id, statement: "No; fixture only, not approval." } })
-    expect(store.collaboration.coordinationRecords(primary, "assignments").items[0]).toMatchObject(fixture.assignment)
-    const delivery = store.collaboration.coordinationRecords(primary, "deliveries").items[0]
+    expect(store.records({ action_id: fixture.action.id, record_id: fixture.assignment.id }).items[0]).toMatchObject(fixture.assignment)
+    const delivery = store.records({ action_id: fixture.action.id, record_id: fixture.intentID }).items[0]
     expect(delivery).toMatchObject({ id: fixture.intentID, data: { question_id: fixture.question.id, answer_id: fixture.answer.id, payload: { work_ref: fixture.ref } } })
-    expect(store.delivery.status(fixture.intentID)).toEqual(fixture.delivery)
-    expect(store.delivery.request(fixture.intentID)?.request.sessionID).toBe(primary.session_id)
-    expect(store.delivery.claim(fixture.intentID, true)).toBeUndefined() // uncertain admission must not become a new send
+    expect(inspection.query("SELECT * FROM primary_deliveries ORDER BY intent_seq").all()).toEqual(fixture.projection)
+    expect(store).not.toHaveProperty("delivery")
+    expect(() => store.collaboration.execute(primary, { operation: "retry-delivery", delivery_id: fixture.intentID })).toThrow()
     expect(byID.get(fixture.completion.id)).toMatchObject({ data: { work_ref: fixture.ref, work_goal: { goal: fixture.action.goal } } })
     expect(byID.get(fixture.removedCompletion.id)).toMatchObject(fixture.removedCompletion)
     expect(store.collaboration.progress(fixture.action.id, "work").items[0].state).toBe("needs-reconfirmation")

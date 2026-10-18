@@ -56,33 +56,39 @@ implementation are unchanged in the inspected files. Code Mode still passes
 outer call context to nested tools. Keep conservative pairing; richer progress
 output is not a new authoritative invocation identity.
 
-## Notification modes after the reviewed comparison
+## Current collaboration on pinned OpenCode 2.0.29
 
-The earlier passive-only direction is superseded as the complete coordination
-solution by [primary-first native re-delegation](coordination.md). The reviewed
-`c2db6e7` experiment intentionally requests continuation of the original primary,
-which retrieves the answer and re-delegates to the same Worker through OpenCode.
-That path sends no direct Worker synthetic resume or Loom completion nudge.
-Production bounded delivery and positive-only admission recovery were subsequently
-implemented with prospective exact-primary authorization, default off; see
-[assignment delivery](assignment-delivery.md). This was not behavior enabled by
-the SDK upgrade, and native admission still does not prove processing.
+The [simple collaboration model](collaboration.md) replaces the historical
+primary-first authorization/recovery route. Its assignment/delivery operations
+AND views are retired; existing history stays readable and inert, not current
+consent. Earlier comparison results do not qualify the replacement.
 
-### Passive notices retain their narrower contract
+Ask requires `question`, `to_agent`, explicit Boolean `blocking`; optional
+`context`, `context_attachments`, `reference`. Answer requires `question_id`,
+`answer`, optional `context_attachments`. `attachments` is not an alias. Actual
+author/Session derive from the caller; no Action, Plan or assignment is required.
 
-Synthetic input still enters the native inbox before the `resume:false` check.
-An ordinary running drain can still promote queued input at its next input
-boundary. Skipping an explicit wake is not a no-additional-step guarantee.
-This upgrade does not enable native-inbox notifications.
+Question dispatch fails closed: stored, recipient NOT contacted,
+`not-attempted / policy-capability-unavailable`. Arrange manual native handling.
+If arranged, a blocking asker may naturally yield; blocking is intent, not a
+forced wait or gate. No SDK upgrade or alternate dispatch topology is prescribed.
 
-For passive mode, the separate candidate is a Loom-owned, immutable Session-addressed notice,
-available independently of Action selection and inserted only during an
-already-requested context preparation. It must never submit execution input.
+Only the FIRST committed answer to a new-format blocking question qualifies for
+one immediate postcommit best-effort exact-asking-Session resume. Later,
+nonblocking and legacy answers never submit asker input. No retries, transfers,
+recovery replay or consumption guarantee; a crash after commit can lose resume.
+Missing/moved/inaccessible targets fail visibly without retargeting. Current
+native target agent/model/permissions remain unchanged. Target checks are not
+leases; the 5000ms deadline bounds waiting, not cancellation of started native I/O.
+Admission is not processing or completion. Durable answer and separate SYSTEM
+outcome annotation are independent. Read the authoritative thread before continuing.
 
-- **Stored for Session:** durably available while the record is retained.
-- **Presented in context:** included in prepared context, not proof of a successful
-  model request, consumption, acknowledgement or resolution.
-- **Admitted to native inbox:** reserved for separately authorized transport.
+`query view:full_thread` reads complete stored relational history with explicit
+Action/node OR Session scope, escaped Markdown, labelled record parts and
+`next_cursor`. No recursive evidence expansion, invented raw bodies, notice-based
+membership, concurrent snapshot or perpetual-cursor promise is added.
+
+### Historical passive-notice proposal — non-operative, not current requirements
 
 Durable availability does not imply timely presentation. A Session that never
 runs again cannot encounter the notice. Routing, attempt history, coordinator

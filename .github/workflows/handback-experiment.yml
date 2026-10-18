@@ -1,13 +1,13 @@
-name: Installed assignment handback experiment
+name: Installed question production-path qualification
 on:
   pull_request:
     branches: [main]
 permissions:
   contents: read
 jobs:
-  experiment:
+  questions:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -20,25 +20,23 @@ jobs:
           node-version: 22
       - run: bun install --frozen-lockfile
       - run: git diff --exit-code -- bun.lock
-      - run: node --test tests/handback-experiment.test.mjs tests/handback-comparison.test.mjs
-      - name: Install exact isolated host
-        run: npm install --prefix "$RUNNER_TEMP/loom-handback-host" --no-audit --no-fund @opencode/cli@2.0.29
-      - name: Real host, original six scenarios
+      - name: Mandatory COMPONENT SDK-get rejection, not installed ACL evidence
+        run: bun test tests/question-host/get-rejection.test.ts
+      - name: Install exact isolated unmodified host
+        run: npm install --prefix "$RUNNER_TEMP/loom-question-host" --no-audit --no-fund @opencode/cli@2.0.29
+      # This is NOT the retired six-scenario handback/comparison experiment.
+      # UNPROVEN mandatory variants fail; the sole source-qualified Plan4
+      # NOT APPLICABLE entry is not an executed installed PASS.
+      - name: Real production questions, resume, full_thread and native duplicate countercheck
         run: >-
-          python3 tests/installed_handback_experiment.py
-          --opencode "$RUNNER_TEMP/loom-handback-host/node_modules/.bin/opencode"
-          --report-directory "$RUNNER_TEMP/loom-handback-report"
-      - name: Native re-delegation comparison and duplicate counterchecks
-        run: >-
-          python3 tests/installed_handback_experiment.py --comparison
-          --opencode "$RUNNER_TEMP/loom-handback-host/node_modules/.bin/opencode"
-          --report-directory "$RUNNER_TEMP/loom-handback-comparison"
+          python3 tests/installed_questions.py
+          --opencode "$RUNNER_TEMP/loom-question-host/node_modules/.bin/opencode"
+          --report-directory "$RUNNER_TEMP/loom-question-report"
+          --duplicate-input-control
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: assignment-handback-${{ github.sha }}
-          path: |
-            ${{ runner.temp }}/loom-handback-report/
-            ${{ runner.temp }}/loom-handback-comparison/
+          name: installed-question-qualification-${{ github.sha }}
+          path: ${{ runner.temp }}/loom-question-report/
           if-no-files-found: warn
           retention-days: 7

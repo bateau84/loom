@@ -67,7 +67,7 @@ export function taskContextOrRecovery(store: Store, focus: Focus, maxChars = 160
       if (JSON.stringify(extended).length > budget) extended.progress.pop()
     }
     for (const q of extra.questions) {
-      const item = { question_id: q.question_id, state: q.state, question: q.question.slice(0, 80), excerpted: true }
+      const item = { question_id: q.question_id, asked_by: q.asked_by, asking_session_id: q.asking_session_id, state: q.state, question: q.question.slice(0, 80), excerpted: true }
       extended.questions.push(item)
       if (JSON.stringify(extended).length > budget) extended.questions.pop()
     }
@@ -215,23 +215,25 @@ function renderTaskContext(context: ReturnType<typeof readTaskContext>, maxChars
     function addRecord(record: typeof records[number]) {
       const data: Record<string, unknown> = {}
       if (record.data.verdict !== undefined) data.verdict = record.data.verdict
-      const brief: Record<string, unknown> = { id: record.id, kind: record.kind,
+      const brief: Record<string, unknown> = { id: record.id, kind: record.kind, agent: record.agent, session_id: record.session_id,
         ...(record.node_id ? { node_id: record.node_id } : {}),
         contract_match: record.contract_match, ...(record.contract_match_reason ? { contract_match_reason: record.contract_match_reason } : {}), data, truncated: true }
       if (record.kind === "observation") {
         for (const key of ["tool", "phase", "status", "attribution"]) if (record.data[key] !== undefined) data[key] = record.data[key]
       }
-      if (typeof record.data.statement === "string") {
+      const contentKey = ["statement", "question", "answer"].find(key => typeof record.data[key] === "string")
+      if (contentKey) {
+        const content = record.data[contentKey] as string
         const allowance = Math.min(maxChars - used - (summary.records.length ? 1 : 0), Math.floor(maxChars / 5))
-        let low = 0, high = Math.min(record.data.statement.length, 600, Math.floor(maxChars / 20))
+        let low = 0, high = Math.min(content.length, 600, Math.floor(maxChars / 20))
         while (low < high) {
           const middle = Math.ceil((low + high) / 2)
-          data.statement = record.data.statement.slice(0, middle)
+          data[contentKey] = content.slice(0, middle)
           if (JSON.stringify(brief).length <= allowance) low = middle
           else high = middle - 1
         }
         if (!low) return
-        data.statement = record.data.statement.slice(0, low)
+        data[contentKey] = content.slice(0, low)
       }
       append(summary.records, brief, "records")
     }
@@ -240,8 +242,8 @@ function renderTaskContext(context: ReturnType<typeof readTaskContext>, maxChars
     for (const p of extra.progress.slice(0, 3)) append(summary.progress,
       { node_id: p.node_id, state: p.state, ...(p.report_id ? { report_id: p.report_id } : {}), ...(p.reason ? { reason: p.reason } : {}) }, "progress")
     for (const q of extra.questions) {
-      const item: Record<string, unknown> = { question_id: q.question_id, state: q.state, question: "", excerpted: true }
-      if (q.answer) item.answer = { record_id: q.answer.record_id, author: q.answer.author, statement: "" }
+      const item: Record<string, unknown> = { question_id: q.question_id, asked_by: q.asked_by, asking_session_id: q.asking_session_id, state: q.state, question: "", excerpted: true }
+      if (q.answer) item.answer = { record_id: q.answer.record_id, author: q.answer.author, session_id: q.answer.session_id, statement: "" }
       const allowance = Math.min(maxChars - used, Math.floor(maxChars * 0.3))
       let low = 0, high = 100
       while (low < high) {

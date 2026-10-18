@@ -71,12 +71,13 @@ test('large retained work_ref still verifies historical Action and Plan, not the
   assert.equal(store.plan(action.id).revision, 2)
 })
 
-test('large-work question creation uses the same reference allowance as context', t => {
+test('large-work question association does not require a completion hash', t => {
   const { store, focus } = fixture(t)
   const ref = taskContext(store, focus).work_ref
   assert.ok(ref)
-  const question = store.collaboration.ask(actor, focus, { statement: 'Which qualification applies?', respondent: 'research' })
-  assert.deepEqual(question.data.work_ref, ref)
+  const question = store.collaboration.ask(actor, focus, { question: 'Which qualification applies?', to_agent: 'research', blocking: false })
+  assert.deepEqual(question.data.reference, { action_id: focus.action_id, kind: 'phase', id: focus.node_id })
+  assert.equal(question.data.work_ref, undefined)
   assert.equal(store.selected(actor.session_id).node_id, undefined)
 })
 

@@ -94,7 +94,13 @@ plan searched by Action and filtered unrelated nodes; the new plan also searches
 by node. These are reproducible warm examples, not timing acceptance thresholds,
 constant-time proofs, peak-memory results, or guaranteed laptop performance.
 
-## Configuration decoding: investigated, still open
+## Historical configuration-decoder investigation at this baseline
+
+The following characterizes the `83de434` follow-up, not the current loader.
+Subsequent [bounded parser](configuration-parser.md), [file-read guards](configuration-limits.md)
+and [admission](operating-policy.md#existing-configuration-admission-stays-in-place)
+documentation describes the current boundaries; this historical probe is not a
+new claim that the old unbounded path remains in production.
 
 `loadConfig()` currently checks the file's stat size, reads it, checks its byte
 length, then calls the decoder before merging and schema validation. Those
@@ -122,6 +128,17 @@ Rejecting a graph only after decoding must not be called a pre-allocation bound.
 
 ## Preserved is not necessarily readable
 
+The current `full_thread` view adds complete **stored** relational history under
+explicit Action/node OR Session scope, not unbounded export. Default limit 20,
+maximum 50; the existing reservation/hydration guards below remain. Output is
+escaped Markdown with full stored fields, IDs/attribution/links and qualifications,
+never recursive evidence expansion or invented raw bodies. Oversized admissible
+records use labelled representation parts and `next_cursor`; a record advances
+only at its final part. A page below limit can still be incomplete. Follow the
+opaque cursor with the same scope until null; location/scope/version mismatches,
+changed continuation or corrupt data fail without advance. No concurrent snapshot
+across pages or perpetual cursor validity is promised. See [collaboration](collaboration.md).
+
 An individually oversized record still fails exact retrieval. An oversized
 selected set fails without silently skipping the offending records; smaller
 `loom_record` pages or exact IDs can read individually admissible records.
@@ -131,8 +148,9 @@ replace an oversized old revision without deleting or decoding its old body.
 
 Do not delete records, edit the database in place or raise limits blindly merely
 to make context appear complete. Preserve the database for offline recovery.
-There is not yet a tested large-record export or backup/restore command; this
-change does not convert legacy-export guidance into state-backup proof.
+There is no tested large-record export command. The subsequent tested
+[manual stopped-writers backup/restore procedure](manual-backup-restore.md) is
+separate from legacy-export guidance; it does not guarantee unlimited tool reads.
 
 ## Precise E closure criteria
 

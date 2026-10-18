@@ -1,4 +1,4 @@
-name: Installed OpenCode boot smoke
+name: Installed OpenCode boot-only regression
 on:
   pull_request:
     branches: [main]
@@ -22,7 +22,7 @@ jobs:
       - run: git diff --exit-code -- bun.lock
       - name: Install exact external host, without changing plugin dependencies
         run: npm install --prefix "$RUNNER_TEMP/loom-opencode-host" --no-audit --no-fund @opencode/cli@2.0.29
-      - name: Real CLI boot, restart and removal; no model requests
+      - name: Native agent preservation, empty boot, restart and removal; no model requests
         run: >-
           python3 tests/installed_host_smoke.py
           --opencode "$RUNNER_TEMP/loom-opencode-host/node_modules/.bin/opencode"

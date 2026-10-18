@@ -94,9 +94,11 @@ test("skill guidance retains current evidence, coordination and recovery boundar
     "complete node list", "Action's separate current revision", "original",
     "work_ref", "contract_match:null", "next_after", "session_only:true",
     "ASSESSMENT.md", "QA.md", "does not establish", "independent acceptance",
-    "storage-only", "transport:not-attempted", "Do not repeat an",
+    "FIRST committed", "policy-capability-unavailable", "Do not repeat an",
     "answer to try delivery", "credentials", "not redacted", "selection changed after an error",
     "Await writes", "Promise.allSettled",
+    "context_attachments", "full_thread", "next_cursor", "No retries", "not an atomic lease",
+    "recipient is NOT contacted", "5000ms", "Historical records",
   ]) expect(content).toContain(text)
   for (const removed of ["loom_start", "loom_route", "loom_work", "loom_intent", "loom_task_plan"]) expect(content).not.toContain(removed)
 })
@@ -106,7 +108,7 @@ test("bundled JSON examples execute with real returned identities against regist
   try {
     const skill = f.skills.get(LOOM_SKILL_ID)
     const inputs = [...skill.content.matchAll(/```json\n([\s\S]*?)\n```/g)].map(match => JSON.parse(match[1]))
-    expect(inputs).toHaveLength(4)
+    expect(inputs).toHaveLength(7)
     const action = (await f.invoke("action", inputs[0])).result
     const replace = (input: unknown) => JSON.parse(JSON.stringify(input).replaceAll("ACTION_ID", action.id).replaceAll("TASK_ID", "task"))
     expect((await f.invoke("plan", replace(inputs[1]))).result.revision).toBe(0)
@@ -115,5 +117,42 @@ test("bundled JSON examples execute with real returned identities against regist
     const result = (await f.invoke("record", { operation: "add", action_id: action.id, kind: "result", statement: "Fixture only; no external work was performed." })).result
     const query = { ...replace(inputs[3]), record_id: result.id }
     expect((await f.invoke("record", query)).result.items[0].id).toBe(result.id)
+    const question = (await f.invoke("record", inputs[4], "unselected-asker")).result
+    expect(question.action_id).toBeUndefined()
+    expect(question.dispatch).toEqual({ status: "not-attempted", reason: "policy-capability-unavailable" })
+    const answer = (await f.invoke("record", { ...inputs[5], question_id: question.id }, "answerer")).result
+    expect(answer.data.context_attachments).toEqual(inputs[5].context_attachments)
+    expect(answer.session_id).toBe("answerer")
+    const history = (await f.invoke("record", replace(inputs[6]))).result
+    expect(history.format).toBe("loom-full-thread/v1")
+    expect(history.markdown).toContain("Full stored thread")
+  } finally { await f.close() }
+})
+
+test("human five-tool walkthrough examples use canonical collaboration and real stored history", async () => {
+  const f = await registeredLoom()
+  try {
+    const doc = await readFile(new URL("../docs/tools.md", import.meta.url), "utf8")
+    const inputs = [...doc.matchAll(/```json\n([\s\S]*?)\n```/g)].map(match => JSON.parse(match[1]))
+    expect(inputs).toHaveLength(7)
+    const action = (await f.invoke("action", inputs[0])).result
+    const replace = (input: unknown) => JSON.parse(JSON.stringify(input).replaceAll("ACTION_ID", action.id).replaceAll("TASK_ID", "task"))
+    expect((await f.invoke("plan", replace(inputs[1]))).result.revision).toBe(0)
+    await f.invoke("plan", { operation: "save", action_id: action.id, expected_revision: 0, nodes: [{ id: "task", kind: "task", title: "Documented example" }] })
+    const context = (await f.invoke("context", replace(inputs[2]))).result
+    expect(context.task.id).toBe("task")
+    const finding = (await f.invoke("record", { operation: "add", kind: "result", statement: "Fixture only, not an external finding." })).result
+    expect((await f.invoke("record", { ...replace(inputs[3]), record_id: finding.id })).result.items[0].id).toBe(finding.id)
+    const question = (await f.invoke("record", replace(inputs[4]))).result
+    expect(question.node_id).toBe("task")
+    expect(question.dispatch.status).toBe("not-attempted")
+    expect(question.data.context_attachments).toEqual(inputs[4].context_attachments)
+    const answer = (await f.invoke("record", { ...inputs[5], question_id: question.id }, "research")).result
+    expect(answer.data.context_attachments).toEqual(inputs[5].context_attachments)
+    const history = (await f.invoke("record", replace(inputs[6]))).result
+    expect(history.markdown).toContain(question.id)
+    expect(history.markdown).toContain(answer.id)
+    expect(history.next_cursor).toBeNull()
+    for (const input of [inputs[4], inputs[5]]) expect(input).not.toHaveProperty("attachments")
   } finally { await f.close() }
 })

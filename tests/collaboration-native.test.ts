@@ -20,12 +20,12 @@ test("registered collaboration flow: separate agents, injection, reconfirmation 
     await invoke("plan", { operation: "save", action_id: action.id, expected_revision: 0, nodes })
     const initial = await invoke("context", { action_id: action.id, node_id: "worker" })
     await invoke("context", { action_id: action.id, node_id: "research" }, "research", "investigator")
-    const question = await invoke("record", { operation: "ask", respondent: "investigator", statement: "Does the fixture include empty files?" })
+    const question = await invoke("record", { operation: "ask", to_agent: "investigator", question: "Does the fixture include empty files?", blocking: false })
     const incoming = await f.context("research", "investigator")
     expect(incoming.task.id).toBe("research")
     expect(incoming.questions[0].question_id).toBe(question.id)
     const response = await invoke("record", { operation: "answer", question_id: question.id,
-      statement: "Fixture-only response: empty files retain defaults; not a real repository finding.", artifact_refs: ["fixture://empty-file"] }, "research", "investigator")
+      answer: "Fixture-only response: empty files retain defaults; not a real repository finding.", context_attachments: ["fixture://empty-file"] }, "research", "investigator")
     expect(response.agent).toBe("investigator")
     expect(response.node_id).toBe("worker")
     expect((await invoke("context", {}, "research", "investigator")).task.id).toBe("research")
@@ -33,7 +33,7 @@ test("registered collaboration flow: separate agents, injection, reconfirmation 
     expect(received.questions[0].answer.record_id).toBe(response.id)
     expect(received.questions[0].state).toBe("answered")
     const thread = await invoke("record", { operation: "query", view: "thread", question_id: question.id }, "research", "investigator")
-    expect(thread.answers[0].data.artifact_refs).toEqual(["fixture://empty-file"])
+    expect(thread.answers[0].data.context_attachments).toEqual(["fixture://empty-file"])
     const report = await invoke("record", { operation: "complete", work_ref: initial.work_ref, statement: "Fixture work finished." })
     expect((await f.context("worker", "author")).progress[0].state).toBe("reported-complete")
     await invoke("plan", { operation: "save", action_id: action.id, expected_revision: 1,
@@ -54,13 +54,13 @@ test("question identity bypasses unrelated and unreadable selection; wrong expli
   let db: Database | undefined
   try {
     const action = (await f.invoke("action", { operation: "create", title: "A", goal: "A" })).result
-    const question = (await f.invoke("record", { operation: "ask", statement: "Question?", respondent: "investigator" })).result
+    const question = (await f.invoke("record", { operation: "ask", question: "Question?", to_agent: "investigator", blocking: false })).result
     const other = (await f.invoke("action", { operation: "create", title: "B", goal: "B" }, "research", "investigator")).result
-    await expect(f.invoke("record", { operation: "answer", question_id: question.id, action_id: other.id, statement: "Wrong Action" }, "research", "investigator")).rejects.toThrow("another Action")
+    await expect(f.invoke("record", { operation: "answer", question_id: question.id, action_id: other.id, answer: "Wrong Action" }, "research", "investigator")).rejects.toThrow("not supported")
     const root = join(f.directory, "state", "loom", "actions-v1")
     db = new Database(join(root, (await readdir(root))[0], "ledger.sqlite"))
     db.prepare("UPDATE focus SET data=? WHERE session_id=?").run("broken JSON", "research")
-    const result = (await f.invoke("record", { operation: "answer", question_id: question.id, statement: "Response despite unrelated broken selection." }, "research", "investigator")).result
+    const result = (await f.invoke("record", { operation: "answer", question_id: question.id, answer: "Response despite unrelated broken selection." }, "research", "investigator")).result
     expect(result.action_id).toBe(action.id)
     expect((await f.invoke("record", { operation: "query", view: "thread", question_id: question.id }, "research", "investigator")).result.answers[0].id).toBe(result.id)
     expect(db.prepare("SELECT data FROM focus WHERE session_id=?").get("research")).toEqual({ data: "broken JSON" })
@@ -90,10 +90,11 @@ test("search-visible documentation covers new operations, meaning, scope and ret
   try {
     const record = f.tools.get("record")
     expect(record.description).toBe(TOOL_HELP.record)
-    expect(record.input.properties.operation.enum).toEqual(["add", "query", "complete", "reopen", "ask", "answer", "assign", "authorize-continuation", "withdraw-continuation", "retry-delivery"])
+    expect(record.input.properties.operation.enum).toEqual(["add", "query", "complete", "reopen", "ask", "answer"])
     for (const required of ["work_ref", "question_id", "respondent", "view"]) expect(record.input.properties[required]).toBeDefined()
-    for (const phrase of ["BEFORE doing the work", "no parent/Action cascade", "NOT resolution/approval/permission", "does not need or change your selection", "needs-reconfirmation", "validity-unknown"]) expect(record.description).toContain(phrase)
-    expect(TOOL_HELP.context).toContain("no idle agent is resumed")
+    for (const phrase of ["BEFORE doing the work", "no parent/Action cascade", "NOT resolution/approval/permission", "does not require or change selection", "needs-reconfirmation", "validity-unknown"]) expect(record.description).toContain(phrase)
+    expect(TOOL_HELP.context).toContain("this read does not dispatch or resume")
+    expect(TOOL_HELP.context).toContain("separate best-effort exact-asker resume path")
     expect(f.tools.size).toBe(5)
   } finally { await f.close() }
 })

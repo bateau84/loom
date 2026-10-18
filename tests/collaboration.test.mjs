@@ -22,8 +22,8 @@ function fixture(t, db = new DatabaseSync(':memory:')) {
 const context = f => taskContext(f.store, f.focus, 16000, worker.agent)
 const complete = f => f.c.complete(worker, { work_ref: context(f).work_ref, statement: 'Finished the work I was assigned.' })
 const state = (f, node = 'worker') => f.c.progress(f.action.id, node).items[0].state
-const ask = f => f.c.ask(worker, f.focus, { statement: 'Does this apply to empty configuration?', respondent: 'research', background: 'Need the exception, not only the default.' })
-const answer = (f, q) => f.c.answer(research, { question_id: q.id, statement: 'Only for explicit settings. Empty files preserve defaults.', artifact_refs: ['fixture://config/empty-case'] })
+const ask = f => f.c.ask(worker, f.focus, { question: 'Does this apply to empty configuration?', to_agent: 'research', blocking: false, context: 'Need the exception, not only the default.' })
+const answer = (f, q) => f.c.answer(research, { question_id: q.id, answer: 'Only for explicit settings. Empty files preserve defaults.', context_attachments: ['fixture://config/empty-case'] }).record
 
 test('decisive flow: ask, answer, use original work, replan, reopen and recover on a reopened database', t => {
   const dir = mkdtempSync(join(tmpdir(), 'loom-thread-')); t.after(() => rmSync(dir, { recursive: true, force: true }))
@@ -45,7 +45,7 @@ test('decisive flow: ask, answer, use original work, replan, reopen and recover 
   assert.equal(recovered.progress.find(p => p.node_id === 'worker').state, 'open')
   assert.equal(recovered.questions[0].question_id, q.id)
   const thread = fresh.collaboration.thread(q.id)
-  assert.equal(thread.answers[0].id, response.id); assert.deepEqual(thread.answers[0].data.artifact_refs, ['fixture://config/empty-case'])
+  assert.equal(thread.answers[0].id, response.id); assert.deepEqual(thread.answers[0].data.context_attachments, ['fixture://config/empty-case'])
   assert.equal(fresh.records({ action_id: f.action.id, record_id: report.id }).items[0].data.work_ref.plan_revision, 1)
 })
 
@@ -163,14 +163,14 @@ test('reopening appends history and a later explicit report can close the same d
 })
 
 test('question addressing is advisory; recorded actual author is not impersonated', t => {
-  const f = fixture(t), q = ask(f), a = f.c.answer({ session_id: 's2', agent: 'another-expert' }, { question_id: q.id, statement: 'A response, not a resolution.' })
-  assert.equal(a.agent, 'another-expert'); assert.equal(f.c.thread(q.id).question.data.respondent, 'research')
+  const f = fixture(t), q = ask(f), a = f.c.answer({ session_id: 's2', agent: 'another-expert' }, { question_id: q.id, answer: 'A response, not a resolution.' }).record
+  assert.equal(a.agent, 'another-expert'); assert.equal(f.c.thread(q.id).question.data.to_agent, 'research')
   assert.equal(f.c.questions({ action_id: f.action.id, state: 'answered' }).items[0].state, 'answered')
 })
 
 test('answering an Action-only question preserves scope and does not need selection', t => {
-  const f = fixture(t), q = f.c.ask(worker, { action_id: f.action.id }, { statement: 'General question?', respondent: 'user' })
-  const a = f.c.answer({ session_id: 'fresh', agent: 'user-reply' }, { question_id: q.id, statement: 'General response.' })
+  const f = fixture(t), q = f.c.ask(worker, { action_id: f.action.id }, { question: 'General question?', to_agent: 'user', blocking: false })
+  const a = f.c.answer({ session_id: 'fresh', agent: 'user-reply' }, { question_id: q.id, answer: 'General response.' }).record
   assert.equal(a.node_id, undefined); assert.equal(f.store.hasSelection('fresh'), false)
 })
 
@@ -182,17 +182,17 @@ test('removed tasks keep questions and accept answers without rebinding', t => {
   assert.ok(JSON.stringify(recovery).length <= 2000)
 })
 
-test('wrong-Action and unknown-question answers fail without selection or ledger changes', t => {
+test('public Action override and unknown-question answers fail without selection or ledger changes', t => {
   const f = fixture(t), q = ask(f), other = f.store.create('B', 'Other', research), before = f.store.records({ session_id: research.session_id }).items
-  assert.throws(() => f.c.answer(research, { question_id: q.id, action_id: other.id, statement: 'Wrong scope.' }), /another Action/)
-  assert.throws(() => f.c.answer(research, { question_id: 'absent', statement: 'Unknown.' }), /Unknown question/)
+  assert.throws(() => f.c.answer(research, { question_id: q.id, action_id: other.id, answer: 'Wrong scope.' }), /not supported/)
+  assert.throws(() => f.c.answer(research, { question_id: 'absent', answer: 'Unknown.' }), /Unknown question/)
   assert.deepEqual(f.store.records({ session_id: research.session_id }).items, before)
   assert.equal(f.store.selected(research.session_id).action_id, other.id)
 })
 
 test('qualified and conflicting answers remain complete, distinct and paged', t => {
   const f = fixture(t), q = ask(f), first = answer(f, q)
-  const second = f.c.answer(research, { question_id: q.id, statement: 'Conflicting response with a material qualification at the end.' })
+  const second = f.c.answer(research, { question_id: q.id, answer: 'Conflicting response with a material qualification at the end.' }).record
   const page = f.c.thread(q.id, 0, 1)
   assert.equal(page.answers[0].id, first.id); assert.ok(page.next_after)
   const next = f.c.thread(q.id, page.next_after, 1); assert.equal(next.answers[0].id, second.id); assert.equal(next.next_after, null)
@@ -242,7 +242,7 @@ test('compact context retains a qualified answer excerpt and exact lookup at 200
   const ctx = taskContext(f.store, f.focus, 2000, 'worker'); assert.ok(JSON.stringify(ctx).length <= 2000)
   assert.equal(ctx.questions[0].question_id, q.id); assert.equal(ctx.questions[0].answer.record_id, a.id)
   assert.equal(ctx.questions[0].excerpted, true); assert.match(ctx.note, /qualifications/)
-  assert.equal(f.c.thread(q.id).answers[0].data.statement, a.data.statement)
+  assert.equal(f.c.thread(q.id).answers[0].data.answer, a.data.answer)
 })
 
 test('context reads have no ledger or selection side effects', t => {
@@ -252,7 +252,7 @@ test('context reads have no ledger or selection side effects', t => {
 
 test('unknown questions, invalid pagination and oversized writes preserve data', t => {
   const f = fixture(t), before = f.store.records({ action_id: f.action.id }).items
-  assert.throws(() => f.c.ask(worker, f.focus, { statement: 'x'.repeat(16001), respondent: 'research' }))
+  assert.throws(() => f.c.ask(worker, f.focus, { question: 'x'.repeat(16001), to_agent: 'research', blocking: false }))
   assert.throws(() => f.c.questions({ action_id: f.action.id, state: 'resolved' }))
   assert.throws(() => f.c.thread('unknown')); assert.throws(() => f.c.progress(f.action.id, undefined, 0, 51))
   assert.deepEqual(f.store.records({ action_id: f.action.id }).items, before)
@@ -299,7 +299,7 @@ test('progress hash exhaustion is explicitly unknown, never a false mismatch', t
 
 test('combined question transfers are bounded before loading a large body set', t => {
   const f = fixture(t), refs = Array.from({ length: 48 }, () => 'x'.repeat(2000))
-  for (let i = 0; i < 45; i++) f.c.ask(worker, f.focus, { statement: 'Question ' + i, respondent: 'research', artifact_refs: refs })
+  for (let i = 0; i < 45; i++) f.c.ask(worker, f.focus, { question: 'Question ' + i, to_agent: 'research', blocking: false, context_attachments: refs })
   assert.throws(() => f.c.questions({ action_id: f.action.id, limit: 50 }), /4 MiB/)
   assert.equal(f.c.questions({ action_id: f.action.id, limit: 1 }).items.length, 1)
   assert.equal(f.db.prepare("SELECT COUNT(*) n FROM ledger WHERE kind='question'").get().n, 45)
@@ -309,7 +309,7 @@ test('minimum output budget handles long node IDs and escaped question text', t 
   const f = fixture(t), node_id = 'n'.repeat(120)
   f.store.savePlan(f.action.id, 1, [task(node_id)])
   f.focus = { action_id: f.action.id, node_id }
-  f.c.ask(worker, f.focus, { statement: '\u0001'.repeat(150) + 'Still a question', respondent: 'research' })
+  f.c.ask(worker, f.focus, { question: '\u0001'.repeat(150) + 'Still a question', to_agent: 'research', blocking: false })
   const ctx = taskContext(f.store, f.focus, 2000, 'worker')
   assert.ok(JSON.stringify(ctx).length <= 2000)
   assert.ok(ctx.questions.length > 0 || ctx.omitted.questions > 0)
@@ -323,7 +323,7 @@ test('new operation routing rejects ambiguous fields and never substitutes selec
   const q = ask(f)
   assert.throws(() => f.c.execute(research, { operation: 'answer', question_id: q.id, node_id: 'other', statement: 'Wrong' }), /not supported/)
   assert.throws(() => f.c.execute(research, { operation: 'query', view: 'thread', question_id: q.id, session_only: true }), /not supported/)
-  const response = f.c.execute(research, { operation: 'answer', question_id: q.id, statement: 'A qualified response.' })
+  const response = f.c.execute(research, { operation: 'answer', question_id: q.id, answer: 'A qualified response.' })
   assert.equal(response.node_id, f.focus.node_id)
   assert.equal(f.c.execute(worker, { operation: 'query', view: 'thread', question_id: q.id }).answers[0].id, response.id)
 })

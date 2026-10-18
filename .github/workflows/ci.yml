@@ -8,8 +8,11 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: .bun-version
@@ -19,6 +22,10 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: git diff --exit-code -- bun.lock
       - run: bun run typecheck
+      - name: Typecheck external scripted provider fixture (not production code)
+        run: >-
+          ./node_modules/.bin/tsc --noEmit --ignoreConfig --target ES2022 --module NodeNext
+          --moduleResolution NodeNext --strict --skipLibCheck --types bun,node tests/question-host/server.ts tests/question-host/get-rejection.test.ts
       - run: bun run test:core
       - run: bun run test:native
       - name: Install pinned search implementation outside plugin dependencies
@@ -26,7 +33,11 @@ jobs:
       - name: Verify real Code Mode search returns registered Loom help; no model requests
         run: LOOM_CODEMODE_ROOT="$RUNNER_TEMP/loom-tool-search" bun test tests/tool-search-codemode.test.ts
       - run: git diff --exit-code -- package.json bun.lock
-      - run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - run: bun run test:python
+      - name: Build real production module graph (fixtures excluded)
+        run: bun build server.ts --target=bun --external @opencode/plugin --outfile "$RUNNER_TEMP/loom-server.js"
+      - name: Generate portable populated old prerequisite without Git objects
+        run: bun tests/fixtures/baseline-c9ffcfa/generate.ts "$RUNNER_TEMP/loom-old-generated"
       - name: Characterize bounded YAML decoding examples
         run: bun tools/probe-config-decoding.ts
       - name: Check three review mutants and two reverse-fix controls; no inference

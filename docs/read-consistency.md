@@ -54,6 +54,22 @@ missed test callers; the follow-up migrates them without dropping assertions.
 
 ## A snapshot is not a lease
 
+Current question/answer writes add a separate boundary: `BEGIN IMMEDIATE` validates
+the question, checks ANY prior committed answer and appends/commits the response.
+Firstness eligibility exists only immediately after commit, not in durable recovery
+state. Native resume and its separate SYSTEM outcome annotation occur afterward;
+there is no transaction spanning SQLite and native input. A target ownership check
+is not an atomic lease, and a timeout does not cancel started native I/O.
+
+`full_thread` uses one local read transaction per page for eligible relation
+selection/reserved hydration, then renders escaped Markdown. Direct question/answer
+relations, deduplicated IDs and sequence order govern membership; no native Session
+read or recursive evidence expansion occurs. Scope/location/version-bound cursors
+continue labelled partial records, advancing only after their final part. Invalid,
+changed, corrupt or unsupported continuation fails without advancing. Pages are
+not a frozen concurrent snapshot and cursors are not promised perpetual validity.
+See [collaboration](collaboration.md#full-stored-relational-history).
+
 The explicit `loom_context` tool obtains a context snapshot and then revalidates
 selection when supplied IDs should be selected. Those are separate boundaries:
 returned context describes its own read revision, not a promise that no edit

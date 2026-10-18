@@ -65,6 +65,27 @@ test("namespace search carries all five manuals without file reads, selected wor
   })
 })
 
+test("actual search exposes canonical questions and full-thread continuation, not retired routes", async () => {
+  await withSearch(async search => {
+    const result = await search({ query: "tools.loom.record" })
+    const record = result.items[0]
+    for (const field of ["question", "to_agent", "blocking", "context_attachments", "reference", "question_id", "answer", "session_id", "cursor"])
+      expect(record.signature).toContain(field)
+    for (const text of ["attachments is not an accepted alias", "policy-capability-unavailable", "FIRST committed", "No retries", "full_thread", "next_cursor", "not perpetual", "historical records remain readable and inert"])
+      expect(record.description).toContain(text)
+    const examples = record.description.split("\n").filter((s: string) => s.startsWith("{")).map((s: string) => JSON.parse(s))
+    const ask = examples.find((e: any) => e.operation === "ask" && e.reference)
+    const answer = examples.find((e: any) => e.operation === "answer")
+    expect(ask.context_attachments).toEqual(["RECORD_ID"])
+    expect(answer.context_attachments).toEqual(["SOURCE_REFERENCE"])
+    for (const input of [ask, answer]) expect(input).not.toHaveProperty("attachments")
+    for (const retired of ["assign", "authorize-continuation", "withdraw-continuation", "retry-delivery"])
+      expect(examples.some((e: any) => e.operation === retired)).toBe(false)
+    for (const retired of ["assignments", "deliveries"])
+      expect(examples.some((e: any) => e.view === retired)).toBe(false)
+  })
+})
+
 test("task-language discovery finds record and recovery help, including the dependency filter warning", async () => {
   await withSearch(async search => {
     const records = await search({ namespace: "loom", query: "dependency history QA", limit: 5 })
