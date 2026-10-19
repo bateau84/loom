@@ -1,8 +1,7 @@
 # Loom usage guide
 
-Use this guide when coordinating or resuming work through Loom. It
-teaches Loom, not general coding, Git, testing or agent design. Load applicable
-external engineering skills separately, using OpenCode's native skill tool.
+Use for Loom coordination/resumption. Load engineering skills separately with
+OpenCode's native skill tool; this guide teaches Loom, not general engineering.
 
 ## Keep Loom optional
 
@@ -16,19 +15,16 @@ an execution/permission gate. Do not invent mandatory stages or legacy tools.
 
 | Tool | Purpose and boundary |
 | --- | --- |
-| `loom_agents` | Discover existing agent IDs, configured roles and diagnostics. It does not create agents or grant permissions. |
-| `loom_action` | List, create or update a goal. Creation selects it for this Session. State labels do not interrupt Sessions or certify success. |
-| `loom_plan` | Read or replace an optional flat list of nodes. Saving does not dispatch work or load the listed skills. |
-| `loom_context` | Read selected work, or explicitly select an Action/task and retrieve context. A fresh Session starts unselected. |
-| `loom_record` | Store or query claims, results, Assessment/QA, completion/reopening, questions, answers and full stored history. Stored records are not proof of delivery or acceptance. |
+| `loom_agents` | Discover native IDs, roles, diagnostics; no creation/permission grants. |
+| `loom_action` | List/create/update goals; creation selects. State labels do not interrupt or certify success. |
+| `loom_plan` | Read/replace optional nodes; no dispatch or skill loading. |
+| `loom_context` | Read/select Action/task context. Fresh Sessions start unselected. |
+| `loom_record` | Store/query concerns, claims, results, reviews, progress, questions/answers and history; not delivery/acceptance proof. |
 
-Use tool search for the installed tool's complete schema, operation help and
-examples. Treat those live descriptions as the input reference, not remembered
-syntax from older Loom versions. The plugin still has exactly these five tools.
-Tool responses contain JSON with `result` and sometimes `config_errors`. Check
-outcomes before using IDs or claiming success. Await writes before using returned
-IDs or ending Code Mode. Sequence dependent calls; for independent concurrent
-calls, use Promise.allSettled and inspect every outcome.
+Tool search supplies authoritative installed schemas/help/examples. Exactly five
+tools return JSON with `result`, sometimes `config_errors`; check outcomes.
+Await writes before using IDs or ending Code Mode. Sequence dependent calls;
+use Promise.allSettled for independent calls and inspect every outcome.
 
 ## Start or resume work
 
@@ -101,6 +97,22 @@ ledger history without selection; it cannot combine with work IDs.
 Never put credentials or other secrets in records or artifact references:
 explicitly recorded text is not redacted.
 
+## Preserve and route concerns
+
+Every agent records its own task-related concerns with `add`, `kind:concern`,
+`statement`, not only handoffs. Existing scope/evidence rules apply; no task or
+verdict required. Distinguish suspected from confirmed; state support or unknowns.
+Documented, outside-task or handed-off is not resolved.
+
+General routes blockers natively; critic consolidates patterns. These are duties,
+not native IDs: use the roster (coordination/qa guidance respectively).
+Cite sources in later result/claim/assessment text: `Suspected: Action ACTION_ID
+record CONCERN_ID; confirmed: Action ACTION_ID record OTHER_ID; not resolved.`
+Retrieve each with explicit `action_id` plus `record_id`, no `node_id`, as above.
+Concern IDs are not observation `evidence_ids`. Append commentary; originals and
+origin stay unchanged. Context is sampled, full history paged. No lifecycle,
+structured links, automatic escalation or gates.
+
 ## Complete, review and reopen honestly
 
 Report task completion with `loom_record` operation `complete`, the original
@@ -120,29 +132,25 @@ Update Action state separately; paused/cancelled labels do not stop execution.
 
 ## Questions and manual native handling
 
-Ask with `question`, `to_agent` and an explicit Boolean `blocking`. Optional
-fields are `context`, `context_attachments` (string references) and
-`reference:{action_id,kind:action|phase|wave|task|subtask,id}`. Without a reference,
-selection supplies association; without either, the question belongs to the
-asking Session only. No Action, Plan or assignment is required. Invalid explicit
-references never fall back: Action IDs must match; node ID and kind must match.
+Ask with `question`, `to_agent`, explicit Boolean `blocking`; optional `context`,
+`context_attachments` (references), `reference:{action_id,kind:action|phase|wave|task|subtask,id}`.
+Association defaults to selection, otherwise asking Session only; no Action/Plan
+required. Invalid explicit references never fall back: Action/node IDs and kind
+must match.
 
 ```json
 {"operation":"ask","question":"Which limit applies here?","to_agent":"research","blocking":false,"context_attachments":["SOURCE_REFERENCE"]}
 ```
 
-The question is saved, but the recipient is NOT contacted on pinned OpenCode
-2.0.29. Inspect `dispatch:{status:not-attempted,reason:policy-capability-unavailable}`.
-Arrange manual native handling outside ask. If manual handling has been arranged,
-a blocking asker may naturally yield. Blocking is collaboration intent, not an
-enforced wait, approval grant or gate; nonblocking work can continue.
+On pinned OpenCode 2.0.29 the question is saved, recipient is NOT contacted:
+`dispatch:{status:not-attempted,reason:policy-capability-unavailable}`.
+Arrange manual native handling; then a blocking asker may naturally yield.
+Blocking is intent, not enforced wait, approval or gate; nonblocking work continues.
 
-Answer with `question_id`, `answer` and optional `context_attachments`. Actual
-author and Session derive from the caller. Answers inherit the question's original
-nullable association, even after node removal, without selecting the asker's work.
-Multiple/conflicting answers remain stored. `attachments` is not an alias, alone
-or with the canonical field; old statement/respondent/background/artifact_refs
-are not ask/answer inputs.
+Answer with `question_id`, `answer`, optional `context_attachments`. Caller supplies
+actual author/Session. Original nullable association survives node removal without
+selecting asker's work. Conflicting answers remain. `attachments` is never an alias;
+old statement/respondent/background/artifact_refs are not ask/answer inputs.
 
 ```json
 {"operation":"answer","question_id":"QUESTION_ID","answer":"Read the source and its limitations.","context_attachments":["SOURCE_REFERENCE"]}
@@ -167,9 +175,8 @@ annotation failure is visible and cannot erase the answer or undo native I/O.
 Retrieve the authoritative paginated `view:thread` before using a notice. Answered
 means response, not resolution, approval or permission.
 
-General assignment/delivery operations AND views are retired. Historical records
-remain readable and inert, not current consent. No startup sender or retry engine
-exists. Completion/reopen semantics above are unchanged.
+Assignment/delivery operations AND views are retired. Historical records stay
+readable/inert, not current consent. No startup sender or retry engine exists.
 
 ## Complete stored history
 
@@ -177,12 +184,11 @@ exists. Completion/reopen semantics above are unchanged.
 {"operation":"query","view":"full_thread","action_id":"ACTION_ID","node_id":"TASK_ID","limit":20}
 ```
 
-Alternatively supply explicit `session_id`, never combined with Action/node.
-This view does not inherit selection. It reads only the current authorized Loom
-Store, not native Session bodies or cross-project databases. Session membership
-comes from authored records and direct question/answer relationships, including
-later answers; notice destinations, admission, assignments and agent-name equality
-do not create membership. Fail-closed ask does not invent recipient receipt.
+Alternatively use explicit `session_id`, never with Action/node. No inherited
+selection. Reads current authorized Loom Store only, not native Session bodies or
+cross-project databases. Membership follows authorship/direct question-answer
+relations (including later answers), not notices, admission, assignments or agent
+names. Fail-closed ask does not invent receipt.
 
 The result contains `format:loom-full-thread/v1`, `scope`, `markdown`, `next_cursor`.
 Follow `next_cursor` as `cursor` with the SAME explicit scope until null. Default

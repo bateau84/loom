@@ -9,7 +9,7 @@ tool, model call, scheduling rule, mandatory review stage or permission gate.
 
 For a selected Task, consider that Task, the Action, and relevant parents and
 dependencies in breadth-first order. Unrelated sibling records are excluded.
-Read the latest two records of each kind (`result`, `qa`, `assessment`, `claim`)
+Read the latest two records of each kind (`result`, `qa`, `assessment`, `claim`, `concern`)
 for each considered scope, separately from observations. Interleave scopes and
 kinds before considering second-most-recent records. Thus routine tool activity
 cannot displace a result, and numerous local claims cannot crowd out every
@@ -22,6 +22,11 @@ Action without requiring a plan. This is deterministic sampling, **not semantic
 ranking**: older important conclusions may still fall outside the sample when
 there are many newer conclusions of the same kind. No automatic resolution,
 supersession, truth, independence or success is inferred from rank or recency.
+
+Concerns use the same bounded selection and excerpt rules; their presence does
+not confirm a defect, and omission does not establish resolution. Original Action
+and record IDs support exact lookup outside a selected-task filter. Adding the
+kind does not increase the 48-conclusion limit or guarantee concern delivery.
 
 `retrieval.scopes_omitted` and `ledger_has_more` disclose sampling limits. Exact
 records and full paged history remain available through `loom_record`; scope

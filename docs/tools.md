@@ -11,7 +11,7 @@ native `loom` guide teaches use without requiring this document to be fetched.
 | `loom_action` | Create/list/update a goal and its progress label |
 | `loom_plan` | Read/replace optional intended work and relationships |
 | `loom_context` | Read selection, explicitly select work or clear selection |
-| `loom_record` | Results, claims, Assessment/QA, completion/reopen, questions/answers and history |
+| `loom_record` | Concerns, results, claims, Assessment/QA, completion/reopen, questions/answers and history |
 
 Responses are JSON text with `result` and optional `config_errors`. In Code Mode,
 parse once; await writes before using IDs or ending the script. Sequence dependent
@@ -79,11 +79,36 @@ read limits. `session_only:true` is ledger-only and incompatible with work IDs.
 Empty filtered results are not absence proof. `contract_match:null` means unknown;
 a matching contract is not code freshness or independent validation.
 
-`add` accepts Action/node or selection, `kind:result|claim|assessment|qa` and
+`add` accepts Action/node or selection, `kind:result|claim|concern|assessment|qa` and
 `statement`; Assessment/QA require `verdict:pass|fail|inconclusive`. Record actual
 checks, sources and limits. `evidence_ids` reference existing same-Action host
 observations only; `artifact_refs` are unverified pointers. No raw tool bodies
 are captured, and explicit text is not redacted: never record credentials.
+
+### Concerns and follow-up
+
+Every agent records its own task-related concerns, not only handoffs:
+
+```json
+{"operation":"add","action_id":"ACTION_ID","node_id":"TASK_ID","kind":"concern","statement":"Suspected incompatibility; no reproduction yet. Outside this task, not resolved."}
+```
+
+An Action association is required under existing selection rules; a task and
+verdict are optional. State suspected versus confirmed with supporting checks or
+unknowns. Documented, outside-task and handed-off do not mean resolved. General
+routes blockers through existing native coordination; critic consolidates
+patterns with source Action and concern record IDs in later statement text.
+Discover actual roster IDs; built-in coordination/qa guidance carries those
+responsibilities respectively, without creating or renaming agents.
+
+For example, a later assessment can state `Suspected pattern: Action ACTION_ID
+record CONCERN_ID; confirmed mismatch: Action ACTION_ID record OTHER_ID. Neither
+resolved by consolidation.` Retrieve each source using the exact query above
+(`action_id` plus `record_id`, no `node_id`), even while another task is selected.
+Concern IDs are not valid `evidence_ids`. Follow-up appends commentary; it never
+replaces the original text or origin. Context may omit or excerpt concerns under
+ordinary limits; paged Action/Session full history includes eligible concerns.
+No concern lifecycle, structured record links, automatic escalation or gates.
 
 ## Questions without assignment machinery
 
