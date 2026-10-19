@@ -1,3 +1,11 @@
+---
+type: Playbook
+title: "Installed-host validation: separate boot from acceptance"
+description: Defines the bounded installed-host boot evidence and distinguishes it from broader acceptance.
+tags: [installed-host, validation, boot-only]
+timestamp: 2026-10-19T00:00:00Z
+---
+
 # Installed-host validation: separate boot from acceptance
 
 ## Replacement collaboration acceptance
@@ -5,7 +13,7 @@
 The boot scope below and earlier sender/handback scenarios are historical or
 narrow supporting evidence, not acceptance of the current replacement. Current
 acceptance must identify the exact assembled artifact (including help and harness),
-build/configuration, unmodified native 2.0.29 host and producing state/run. Do not
+build/configuration, unmodified native host and producing state/run. Do not
 inherit old scenario counts or label a simulated ToolContext as installed proof.
 
 - **E1 durable/manual question:** real discovered/registered tools and genuine
@@ -48,14 +56,55 @@ restart, active integration or activation is authorized by this document.
 The existing Bun native suite uses a simulated host API. It proves callback
 behavior under that contract, not that the published OpenCode CLI can load Loom.
 `tests/installed_host_smoke.py` is a separate, no-inference boot probe using an
-already installed, exact OpenCode CLI version. CI installs
-`@opencode/cli@2.0.29` outside the plugin dependency tree, matching the reviewed
-SDK target. Loom dependencies use frozen installation in this job too. The external
-CLI has an exact top-level version, not a fully locked dependency graph. It does not upgrade the user's CLI or patch upstream source.
+exact npm-packed candidate artifact, exact installed `@opencode/plugin@2.0.32`,
+and a separately provisioned `@opencode/cli@2.0.32`. CI packs the checkout with
+`npm pack`, installs that tarball into its own prefix, and installs the CLI into a
+different prefix. The report records the artifact SHA-256, installed package and
+SDK versions, and installed path. The CLI has an exact top-level version, not a
+fully locked dependency graph. It does not upgrade the user's CLI or patch upstream
+source.
+
+The previously passing canonical `canonical-2.0.32` run used candidate `loom-plugin@2.0.0-alpha.1`
+with artifact SHA-256
+`67738270ea7d8fe0f55d5524c732c1913d4942822a09b06dd40dae5c59f29d91` and separate
+SDK/CLI versions `2.0.32`/`2.0.32`. This run proves only isolated boot,
+restart/removal, native roster and intact equivalent empty-ledger checks described
+below; it is not model-driven acceptance. Exact top-level CLI version was installed,
+but its transitive dependency graph was not locked. The test does not modify the
+user's CLI or configuration.
+
+A historical, separately copied 2.0.29 artifact boot run (SHA-256
+`d984373ec43823906ace9d9202bb2b37175ef7e36d84fdafad159c56463782de`) used SDK/CLI
+2.0.29. It is retained only as historical evidence and is **not supported or
+maintained**; its workflow has been removed. OpenCode 2.0.32 is the sole supported
+host/SDK target.
+
+The installed-question qualification has passed for the exact packed candidate
+`loom-plugin@2.0.0-alpha.1`, SHA-256
+`ef7dad9a30ade952cd055fe5c637ff19d1b7b75ef8da590cde07fad58e7efd15`, installed
+with SDK/CLI `2.0.32`/`2.0.32`. T2 and an independent reviewer rerun both passed
+E1-E3, restart, and the duplicate-input control using the installed artifact.
+Provider traffic was scripted through a local model; this is not evidence of a
+live-provider run or external MCP behavior. The T2 report is at
+`/tmp/opencode/t2-installed-questions-e3c6d3e/rerun-report/report.json` (audit
+alongside it); the reviewer rerun report is at
+`/tmp/opencode/reviewer-182-rerun/report.json`. These are temporary local evidence
+paths, not committed repository artifacts. The version-specific selective
+session-read check is `NOT APPLICABLE`,
+`executed:false`, based on tagged v2.0.32 source analysis: [`session.get` in the
+Promise adapter](https://github.com/anomalyco/opencode/blob/v2.0.32/packages/plugin/src/promise/adapter.ts)
+delegates through [`core/src/session.ts`](https://github.com/anomalyco/opencode/blob/v2.0.32/packages/core/src/session.ts)
+to [`Session.get`](https://github.com/anomalyco/opencode/blob/v2.0.32/packages/core/src/session/session.ts),
+which directly looks up the ID and returns not-found when absent, without a
+selective session-read ACL. `permission.assert` is separate and is not evidence for
+`session.get`; this N/A is not a PASS and provides no permission proof. The
+qualification establishes only the listed installed-question scenarios and does
+not extend host support beyond 2.0.32 or prove untested variants.
 
 ## What this probe actually checks
 
-The probe creates a temporary Git project and isolated HOME, configuration,
+The candidate plugin and CLI are installed only into separate disposable CI
+prefixes. The probe creates a temporary Git project and isolated HOME, configuration,
 state, data, runtime and cache directories. Provider credentials, shared-server
 addresses and user configuration are not inherited. Two native agent fixtures
 are defined in the temporary OpenCode configuration, outside Loom. The same
@@ -75,7 +124,7 @@ startup boundary reliably.
 
 1. Verify both the CLI and server version; read the host's effective config.
 2. Require the real host to discover both native fixture agents without Loom.
-3. Add Loom's checkout to temporary config and map the Worker fixture to a role
+3. Add the installed candidate artifact to temporary config and map the Worker fixture to a role
    in `.loom.yaml`. Require active plugin ID `loom`, not merely a listed failure.
 4. Compare complete native agent definitions against the pre-Loom baseline.
 5. Read the host-created Loom SQLite database in read-only mode. Require its
@@ -103,7 +152,11 @@ they are not substitutes for the installed-host run.
 ```sh
 python3 tests/installed_host_smoke.py \
   --opencode /absolute/path/to/opencode \
-  --expect-version 2.0.29 \
+  --expect-version 2.0.32 \
+  --plugin /absolute/path/to/plugin-prefix/node_modules/loom-plugin \
+  --artifact /absolute/path/to/loom-plugin-candidate.tgz \
+  --expect-plugin-version 2.0.0-alpha.1 \
+  --expect-sdk-version 2.0.32 \
   --report-directory /absolute/path/to/new-report-directory
 ```
 

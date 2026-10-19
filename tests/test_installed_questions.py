@@ -1,29 +1,58 @@
 """Harness-oracle tests, NOT installed production/native qualification."""
-import json
 import glob
-from pathlib import Path
+import json
+import shlex
+import sqlite3
 import tempfile
 import unittest
-import shlex
+from contextlib import closing
+from pathlib import Path
 from unittest.mock import patch
 
-from installed_questions import Scenario, no_contact, synthetic_events, target_requests, fixture_snapshot, restore_fixture, unchanged_rows, verify_provider_inputs, verify_single_admission, qualification_status, READ_DENIAL_APPLICABILITY, REQUIRED_INSTALLED_CHECKS
-import sqlite3
-from contextlib import closing
+from installed_questions import (
+    READ_DENIAL_APPLICABILITY,
+    REQUIRED_INSTALLED_CHECKS,
+    Scenario,
+    fixture_snapshot,
+    no_contact,
+    qualification_status,
+    restore_fixture,
+    run,
+    synthetic_events,
+    target_requests,
+    unchanged_rows,
+    verify_provider_inputs,
+    verify_single_admission,
+)
 
 
 class QuestionHarnessTest(unittest.TestCase):
+    def test_candidate_artifact_mismatch_is_reported_before_any_host_is_started(self):
+        repo = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            output = root / 'report'
+            with self.assertRaisesRegex(RuntimeError, 'Candidate package artifact is missing'):
+                run('/unused-host', repo, output, root / 'missing.tgz', root / 'missing-plugin', '2.0.0-alpha.1')
+            report = json.loads((output / 'report.json').read_text())
+            self.assertEqual(report['status'], 'FAIL')
+            self.assertIn('Candidate package artifact is missing', report['error'])
+
     def test_plan4_applicability_is_neither_an_executed_pass_nor_a_general_waiver(self):
         checks = [{'name': name, 'status': 'PASS'} for name in REQUIRED_INSTALLED_CHECKS] + [dict(READ_DENIAL_APPLICABILITY)]
-        self.assertEqual(qualification_status(checks, '2.0.29'), 'PASS')
+        self.assertEqual(qualification_status(checks, '2.0.32'), 'PASS')
         self.assertEqual(checks[-1]['status'], 'NOT APPLICABLE')
         self.assertFalse(checks[-1]['executed'])
-        self.assertEqual(qualification_status(checks, '2.0.30'), 'UNPROVEN')
-        self.assertEqual(qualification_status(checks[1:], '2.0.29'), 'UNPROVEN')
+        self.assertEqual(qualification_status(checks, '2.0.29'), 'UNPROVEN')
+        self.assertEqual(qualification_status(checks, '2.0.33'), 'UNPROVEN')
+        self.assertEqual(qualification_status(checks[1:], '2.0.32'), 'UNPROVEN')
         for replacement in [{'name': READ_DENIAL_APPLICABILITY['name'], 'status': 'PASS'},
                             {**READ_DENIAL_APPLICABILITY, 'executed': True},
-                            {**READ_DENIAL_APPLICABILITY, 'sources': []}]:
-            self.assertEqual(qualification_status(checks[:-1] + [replacement], '2.0.29'), 'UNPROVEN')
+                            {**READ_DENIAL_APPLICABILITY, 'sources': []},
+                            {**READ_DENIAL_APPLICABILITY, 'rationale': 'permission.assert enforces session reads'}]:
+            self.assertEqual(qualification_status(checks[:-1] + [replacement], '2.0.32'), 'UNPROVEN')
+        self.assertEqual(READ_DENIAL_APPLICABILITY['host_version'], '2.0.32')
+        self.assertIn('packages/core/src/session/session.ts', READ_DENIAL_APPLICABILITY['sources'][-1])
 
     def test_finishing_a_command_does_not_count_another_running_sessions_tool(self):
         # Supporting driver test only. The external native idle query is not
