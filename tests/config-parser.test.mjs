@@ -14,6 +14,32 @@ function limit(source, boundary) {
   assert.equal(caught.boundary, boundary)
   return caught
 }
+test('parser-frame depth limit has an exact passing boundary', () => {
+  assert.ok(Array.isArray(decodeConfigYaml('['.repeat(30) + '0' + ']'.repeat(30))))
+  limit('['.repeat(31) + '0' + ']'.repeat(31), 'depth')
+})
+test('recursive partial array inspections have a cumulative construction allowance', () => {
+  const source = 'a: &a [' + Array(400).fill('*a').join(',') + ']'
+  const e = limit(source, 'array-inspection')
+  assert.ok(e.attempts < 400)
+  assert.ok(e.position < source.length)
+})
+test('exact flat-array text allowance is accepted and excess is rejected', () => {
+  const within = 'a: &a ' + 'x'.repeat(32767) + '\nb: [*a,*a]\n'
+  assert.equal(decodeConfigYaml(within).b.length, 2)
+  const over = 'a: &a ' + 'x'.repeat(32768) + '\nb: [*a,*a]\n'
+  limit(over, 'array-key-text')
+})
+test('repeated flat-array aliases cannot multiply mapping-key conversion work', () => {
+  const source = 'a: &a ' + 'x'.repeat(8000) + '\nk: &k [' + Array(8).fill('*a').join(',') + ']\n' + Array(50).fill('? *k\n: value\n').join('')
+  const e = limit(source, 'array-conversion-text')
+  assert.ok(e.position < source.length)
+})
+test('a long role-list alias shared by 200 agents stays within ordinary configuration limits', () => {
+  const roles = Array.from({length: 20}, (_, i) => `r${i}-` + 'x'.repeat(95)).join(',')
+  const source = 'agents:\n  a0: {roles: &r [' + roles + ']}\n' + Array.from({length: 199}, (_, i) => `  a${i+1}: {roles: *r}\n`).join('')
+  assert.equal(Object.keys(mergeConfig(defaults(), decodeConfigYaml(source)).agents).length, 200)
+})
 test('parser accepts exact source allowance and rejects overflow before entering YAML', () => {
   assert.equal(decodeConfigYaml('x'.repeat(65536)).length, 65536)
   assert.equal(limit('x'.repeat(65537), 'source-byte').attempts, 0)

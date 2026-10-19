@@ -252,6 +252,9 @@ legacy workflow-ledger import is provided. See
 
 ## Development
 
+See the maintained [test, script and CI guide](docs/testing.md) for every entrypoint,
+fixture, prerequisite, safety boundary and workflow trigger.
+
 Use the Bun version in `.bun-version` (currently **1.4.2**).
 
 ```sh
