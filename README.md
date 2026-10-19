@@ -59,14 +59,19 @@ interrupt an OpenCode session or certify successful delivery.
 
 ## Loading the plugin
 
-Canonical target: **OpenCode 2.0.32**, with `@opencode/plugin@2.0.32` in the
-source package and lockfile. A separate, distinctly packed **2.0.29 compatibility
-artifact** is also boot-proven; that does not establish that the canonical 2.0.32
-artifact works on a 2.0.29 host. The isolated Code Mode search fixture is 2.0.29
-only; no 2.0.32 Code Mode compatibility is claimed. Installed-host evidence is
-boot-only, with no model-driven acceptance. Neither profile upgrades your local
-OpenCode executable, changes your model, or edits your user CLI/configuration.
-See [the version and evidence notes](docs/opencode-2.0.29.md) and
+Supported target: **OpenCode 2.0.32**, with `@opencode/plugin@2.0.32` in the
+source package and lockfile. OpenCode 2.0.29 is not a supported host or SDK.
+The isolated Code Mode search fixture is separately pinned to 2.0.29; this fixture
+does not provide host compatibility evidence. The boot probe covers isolated
+loading and empty-ledger checks only. Separately, installed-question qualification
+passed E1-E3, restart, and the duplicate-input control on packed candidate
+`loom-plugin@2.0.0-alpha.1` (SHA-256
+`ef7dad9a30ade952cd055fe5c637ff19d1b7b75ef8da590cde07fad58e7efd15`) with
+SDK/CLI 2.0.32/2.0.32. This used scripted local-model traffic and does not claim
+live-provider or external-MCP coverage. Selective session-read was not run and is
+source-qualified N/A (`executed:false`), not a PASS. Neither workflow upgrades your
+local OpenCode executable, changes your model, or edits your user CLI/configuration. See
+[historical 2.0.29 analysis](docs/opencode-2.0.29.md) and
 [installed-host validation](docs/installed-host-validation.md).
 **Bun support: `>=1.4.2 <2.0.0`. Use Bun 1.4.2 to reproduce validation.**
 The exact tested baseline is recorded in `.bun-version` and used by the CI jobs.
@@ -198,8 +203,7 @@ alias. Actual author/Session derive from the caller. Without reference/selection
 questions belong only to the asking Session; answers inherit original nullable
 association without selecting its work. Invalid explicit reference never falls back.
 
-In the separately tested OpenCode 2.0.29 compatibility profile, question dispatch
-is fail-closed:
+On the supported OpenCode 2.0.32 host, question dispatch is fail-closed:
 `not-attempted / policy-capability-unavailable`. The question is stored, recipient
 NOT contacted; arrange manual native handling. If arranged, a blocking asker may
 naturally yield, but blocking is intent, not a forced wait or gate.

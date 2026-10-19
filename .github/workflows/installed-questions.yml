@@ -22,30 +22,26 @@ jobs:
       - run: git diff --exit-code -- bun.lock
       - name: Mandatory COMPONENT SDK-get rejection, not installed ACL evidence
         run: bun test tests/question-host/get-rejection.test.ts
-      - name: Prepare isolated 2.0.29 question qualification profile
+      - name: Pack and install the exact 2.0.32 candidate artifact
         run: |
-          PROFILE="$RUNNER_TEMP/loom-question-profile"
-          mkdir -p "$PROFILE"
-          tar --exclude='./.git' --exclude='./node_modules' --exclude='./.bun' -cf - . | tar -xf - -C "$PROFILE"
-          PROFILE_PACKAGE="$PROFILE/package.json" node -e '
-            const fs = require("node:fs");
-            const path = process.env.PROFILE_PACKAGE;
-            const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
-            pkg.dependencies["@opencode/plugin"] = "2.0.29";
-            fs.writeFileSync(path, `${JSON.stringify(pkg, null, 2)}\n`);
-          '
-          bun install --cwd "$PROFILE"
-      - name: Install exact isolated unmodified host
-        run: npm install --prefix "$RUNNER_TEMP/loom-question-host" --no-audit --no-fund @opencode/cli@2.0.29
-      # This is NOT the retired six-scenario handback/comparison experiment.
-      # UNPROVEN mandatory variants fail; the sole source-qualified Plan4
-      # NOT APPLICABLE entry is not an executed installed PASS.
+          mkdir -p "$RUNNER_TEMP/loom-question-artifact"
+          npm pack --json --pack-destination "$RUNNER_TEMP/loom-question-artifact" > "$RUNNER_TEMP/loom-question-artifact/pack.json"
+          ARTIFACT=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))[0].filename)' "$RUNNER_TEMP/loom-question-artifact/pack.json")
+          npm install --prefix "$RUNNER_TEMP/loom-question-install" --no-audit --no-fund "$RUNNER_TEMP/loom-question-artifact/$ARTIFACT"
+      - name: Install exact isolated unmodified OpenCode 2.0.32
+        run: npm install --prefix "$RUNNER_TEMP/loom-question-host" --no-audit --no-fund @opencode/cli@2.0.32
+      # T1 prepares the real candidate path. T2 owns executing and reviewing this
+      # packed-candidate E2E; this workflow definition alone proves no scenario.
       - name: Real production questions, resume, full_thread and native duplicate countercheck
         run: >-
-          python3 "$RUNNER_TEMP/loom-question-profile/tests/installed_questions.py"
+          python3 tests/installed_questions.py
           --opencode "$RUNNER_TEMP/loom-question-host/node_modules/.bin/opencode"
+          --plugin "$RUNNER_TEMP/loom-question-install/node_modules/loom-plugin"
+          --artifact "$(find "$RUNNER_TEMP/loom-question-artifact" -maxdepth 1 -name 'loom-plugin-*.tgz' -print -quit)"
+          --expect-plugin-version "$(node -p 'require("./package.json").version')"
+          --expect-sdk-version 2.0.32
           --report-directory "$RUNNER_TEMP/loom-question-report"
-          --repository "$RUNNER_TEMP/loom-question-profile"
+          --repository "$GITHUB_WORKSPACE"
           --duplicate-input-control
       - uses: actions/upload-artifact@v4
         if: always()

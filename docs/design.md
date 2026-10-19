@@ -45,7 +45,7 @@ references validate Action/node identity and kind; invalid references never fall
 back. Without reference/selection, questions belong only to the asking Session.
 Answers inherit original nullable association without selecting another's work.
 
-On the separately qualified 2.0.29 compatibility profile, question dispatch is
+On the supported OpenCode 2.0.32 host, question dispatch is
 fail-closed: stored, recipient NOT contacted,
 `not-attempted / policy-capability-unavailable`; manual native handling required.
 Blocking is intent, not a forced wait. After manual handling is arranged, the
@@ -112,10 +112,9 @@ native trials keep their scope and counts, not current acceptance. The replaceme
 requires independent validation of the exact assembled candidate and real installed
 tool/persistence/resume/history paths; missing variants must remain UNPROVEN.
 See [installed validation](installed-host-validation.md) and
-[operating policy](operating-policy.md). The canonical source SDK is 2.0.32;
-2.0.29 has a separate compatibility artifact. Installed-host evidence for both
-profiles is boot-only; no model-driven acceptance or canonical-artifact-on-2.0.29
-claim is made.
+[operating policy](operating-policy.md). OpenCode 2.0.32 is the sole supported
+host and SDK target. Historical 2.0.29 work is not a compatibility profile.
+Installed-host boot and installed-question qualification are separate evidence.
 
 Scheduling, dashboards, automatic parent completion, legacy import, retention and
 elaborate maintenance are deferred, not prerequisites. E remains partial. Draft

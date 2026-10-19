@@ -64,28 +64,42 @@ SDK versions, and installed path. The CLI has an exact top-level version, not a
 fully locked dependency graph. It does not upgrade the user's CLI or patch upstream
 source.
 
-The passing canonical `canonical-2.0.32` run used candidate `loom-plugin@2.0.0-alpha.1`
+The previously passing canonical `canonical-2.0.32` run used candidate `loom-plugin@2.0.0-alpha.1`
 with artifact SHA-256
 `67738270ea7d8fe0f55d5524c732c1913d4942822a09b06dd40dae5c59f29d91` and separate
-SDK/CLI versions `2.0.32`/`2.0.32`. The separate passing `compat-2.0.29` run used
-its copied-source artifact (SHA-256
-`d984373ec43823906ace9d9202bb2b37175ef7e36d84fdafad159c56463782de`) with separate
-SDK/CLI versions `2.0.29`/`2.0.29`. These are distinct artifacts and evidence
-records. Both runs prove only the isolated boot, restart/removal, native roster and
-intact equivalent empty-ledger checks described below; neither is model-driven
-acceptance. Exact top-level CLI versions were installed, but their transitive
-dependency graphs were not locked. The tests do not modify the user's CLI or
-configuration.
+SDK/CLI versions `2.0.32`/`2.0.32`. This run proves only isolated boot,
+restart/removal, native roster and intact equivalent empty-ledger checks described
+below; it is not model-driven acceptance. Exact top-level CLI version was installed,
+but its transitive dependency graph was not locked. The test does not modify the
+user's CLI or configuration.
 
-The 2.0.29 compatibility qualification is a separate profile in
-`.github/workflows/installed-host-2.0.29.yml`. It copies the source tree to a
-temporary directory, changes only that copy's `@opencode/plugin` dependency to
-exactly `2.0.29`, packs and installs that distinct artifact, and installs
-`@opencode/cli@2.0.29` in another prefix. The smoke report labels it
-`compat-2.0.29` and records the exact artifact digest and installed SDK. The
-canonical `package.json`, `bun.lock`, and 2.0.32 artifact path remain separate;
-the canonical artifact is not claimed to work with a 2.0.29 host. The host CLI
-has an exact top-level version, not a fully locked transitive dependency graph.
+A historical, separately copied 2.0.29 artifact boot run (SHA-256
+`d984373ec43823906ace9d9202bb2b37175ef7e36d84fdafad159c56463782de`) used SDK/CLI
+2.0.29. It is retained only as historical evidence and is **not supported or
+maintained**; its workflow has been removed. OpenCode 2.0.32 is the sole supported
+host/SDK target.
+
+The installed-question qualification has passed for the exact packed candidate
+`loom-plugin@2.0.0-alpha.1`, SHA-256
+`ef7dad9a30ade952cd055fe5c637ff19d1b7b75ef8da590cde07fad58e7efd15`, installed
+with SDK/CLI `2.0.32`/`2.0.32`. T2 and an independent reviewer rerun both passed
+E1-E3, restart, and the duplicate-input control using the installed artifact.
+Provider traffic was scripted through a local model; this is not evidence of a
+live-provider run or external MCP behavior. The T2 report is at
+`/tmp/opencode/t2-installed-questions-e3c6d3e/rerun-report/report.json` (audit
+alongside it); the reviewer rerun report is at
+`/tmp/opencode/reviewer-182-rerun/report.json`. These are temporary local evidence
+paths, not committed repository artifacts. The version-specific selective
+session-read check is `NOT APPLICABLE`,
+`executed:false`, based on tagged v2.0.32 source analysis: [`session.get` in the
+Promise adapter](https://github.com/anomalyco/opencode/blob/v2.0.32/packages/plugin/src/promise/adapter.ts)
+delegates through [`core/src/session.ts`](https://github.com/anomalyco/opencode/blob/v2.0.32/packages/core/src/session.ts)
+to [`Session.get`](https://github.com/anomalyco/opencode/blob/v2.0.32/packages/core/src/session/session.ts),
+which directly looks up the ID and returns not-found when absent, without a
+selective session-read ACL. `permission.assert` is separate and is not evidence for
+`session.get`; this N/A is not a PASS and provides no permission proof. The
+qualification establishes only the listed installed-question scenarios and does
+not extend host support beyond 2.0.32 or prove untested variants.
 
 ## What this probe actually checks
 
@@ -110,7 +124,7 @@ startup boundary reliably.
 
 1. Verify both the CLI and server version; read the host's effective config.
 2. Require the real host to discover both native fixture agents without Loom.
-3. Add Loom's checkout to temporary config and map the Worker fixture to a role
+3. Add the installed candidate artifact to temporary config and map the Worker fixture to a role
    in `.loom.yaml`. Require active plugin ID `loom`, not merely a listed failure.
 4. Compare complete native agent definitions against the pre-Loom baseline.
 5. Read the host-created Loom SQLite database in read-only mode. Require its

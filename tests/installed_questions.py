@@ -1,4 +1,4 @@
-"""Real production Loom + unmodified 2.0.29 + local scripted model.
+"""Real packed OpenCode 2.0.32 candidate + local scripted model.
 
 No replacement tool registration, ToolContext, permission identity, dispatch or
 resume implementation. Final assembled-candidate acceptance is a separate run.
@@ -22,6 +22,7 @@ from urllib.request import Request
 
 from installed_host_smoke import (
     PrivateHost,
+    installed_plugin_inventory,
     isolated_environment,
     require,
     source_inventory,
@@ -29,13 +30,13 @@ from installed_host_smoke import (
 
 READ_DENIAL_APPLICABILITY = {
     'name': 'E2-selective-session-read-policy-denial', 'status': 'NOT APPLICABLE',
-    'qualification': 'NOT APPLICABLE ON PINNED HOST2.0.29; reassess on host/API change',
-    'host_version': '2.0.29', 'executed': False, 'evidence_kind': 'source/version analysis, not installed execution',
-    'sources': ['v2.0.29 packages/plugin/src/promise/adapter.ts:265-280,597',
-                'v2.0.29 core/src/plugin/host.ts:565', 'v2.0.29 core/src/session.ts:360',
-                'v2.0.29 core/src/session/session.ts:52-55', 'v2.0.29 core/src/session/store.ts:95-97'],
-    'rationale': 'Adapter decode/direct host get/sessions.get/Session handle/store lookup by ID returns existing or NotFound; no selective per-Session read ACL is represented. This proves nothing about native synthetic execution permissions.',
-    'authority': 'Plan4; answer5f5143ee-f753-4785-8f35-eb424ff476cc; critic QA6841497f-2384-4342-82dc-83b8deb30e3c. Source alignment supplied by independently approved authority, not a claim of local source reinspection.',
+    'qualification': 'NOT APPLICABLE ON PINNED HOST 2.0.32; reassess on host/API change',
+    'host_version': '2.0.32', 'executed': False, 'evidence_kind': 'tagged source/version analysis, not installed execution',
+    'sources': ['v2.0.32 packages/plugin/src/promise/adapter.ts: context2.session.get adapts host.session.get',
+                'v2.0.32 packages/core/src/session.ts: get delegates to sessions.forSession(sessionID).get()',
+                'v2.0.32 packages/core/src/session/session.ts: Session.get calls store.get and returns NotFoundError when absent'],
+    'rationale': 'In tagged v2.0.32, session.get delegates to direct lookup by ID and returns an existing Session or not-found; that path has no selective session-read ACL. permission.assert is a separate API and is not evidence that session.get enforces a read policy. This says nothing about synthetic execution permission.',
+    'authority': 'Approved tagged v2.0.32 source analysis for PR #182; source-specific rationale, not installed execution or permission.assert evidence.',
 }
 REQUIRED_INSTALLED_CHECKS = {
     'E1-no-plan-manual-question', 'E1-storage-failure-zero-contact', 'E2-idle-switched-native-resume',
@@ -53,7 +54,7 @@ def qualification_status(checks, version):
     if any(by_name[name]['status'] != 'PASS' for name in REQUIRED_INSTALLED_CHECKS):
         return 'UNPROVEN'
     applicability = by_name.get(READ_DENIAL_APPLICABILITY['name'])
-    if version != '2.0.29' or applicability != READ_DENIAL_APPLICABILITY:
+    if version != '2.0.32' or applicability != READ_DENIAL_APPLICABILITY:
         return 'UNPROVEN'
     return 'PASS' if all(row['status'] == 'PASS' or row == applicability for row in checks) else 'UNPROVEN'
 
@@ -161,7 +162,7 @@ def no_contact(observed):
 
 
 def synthetic_events(root):
-    # 2.0.29 publishes input admission as inbox.enqueued, not session.synthetic.
+    # Count actual native inbox admission events, not session.synthetic aliases.
     # Count real input events before any provider terminal/write guard.
     return [e['data'] for e in events(root) if e['type'] == 'native-event' and e['data']['type'] == 'session.inbox.enqueued'
             and e['data']['data']['item']['type'] == 'synthetic']
@@ -270,23 +271,32 @@ def unchanged_rows(path, saved):
                 require(row in current, f'Historical raw row changed: {table}: {row}')
 
 
-def run(executable, repo, output, disable_watcher=False, duplicate_control=False):
+def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sdk='2.0.32',
+        disable_watcher=False, duplicate_control=False):
     output.mkdir(parents=True, exist_ok=False)
     report = {'status': 'UNPROVEN', 'kind': 'installed-question-production-path', 'checks': [],
               'limits': ['Scripted external model, not live-provider compatibility.',
                          'Admission is not consumption, cancellation, or parent-generation handback.',
                          'Qualification of this harness input, not final task4.2 assembled acceptance.'],
-              **source_inventory(repo)}
+              'source_oracle': source_inventory(repo)}
+    try:
+        report['candidate_artifact'] = installed_plugin_inventory(
+            artifact, plugin, expected_plugin, expected_sdk)
+    except Exception as error:
+        report['status'] = 'FAIL'
+        report['error'] = f'{type(error).__name__}: {error}'
+        (output / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
+        raise
     report['harness_sha256'] = {name: hashlib.sha256((repo / name).read_bytes()).hexdigest()
                                for name in ['server.ts', 'tests/installed_questions.py', 'tests/installed_host_smoke.py',
                                             'tests/question-host/server.ts', 'tests/question-host/provider.mjs']}
-    report['expected_versions'] = {'sdk': '2.0.29', 'host': '2.0.29'}
+    report['expected_versions'] = {'sdk': expected_sdk, 'host': '2.0.32'}
     report['observed_versions'] = {
-        'sdk': json.loads((repo / 'node_modules/@opencode/plugin/package.json').read_text())['version'],
+        'sdk': report['candidate_artifact']['sdk_version'],
         'host': subprocess.check_output([executable, '--version'], text=True, timeout=15).strip(),
     }
     report['sdk_version'] = report['observed_versions']['sdk']
-    host_ok = report['observed_versions']['host'] in ('2.0.29', 'opencode v2.0.29')
+    host_ok = report['observed_versions']['host'] in ('2.0.32', 'opencode v2.0.32')
     if report['observed_versions']['sdk'] != report['expected_versions']['sdk'] or not host_ok:
         report['status'] = 'FAIL'
         report['error'] = ('Version profile mismatch: '
@@ -310,13 +320,13 @@ def run(executable, repo, output, disable_watcher=False, duplicate_control=False
         report['private_root'] = str(root)
         report['versions'] = {name: subprocess.check_output(cmd, env=env, text=True, timeout=15).strip()
                               for name, cmd in [('host', [executable, '--version']), ('bun', ['bun', '--version']), ('node', ['node', '--version'])]}
-        require(report['versions']['host'] in ('2.0.29', 'opencode v2.0.29'), 'Requires exact unmodified host 2.0.29')
+        require(report['versions']['host'] in ('2.0.32', 'opencode v2.0.32'), 'Requires exact unmodified host 2.0.32')
         subprocess.run(['git', 'init', '-q', str(project)], env=env, check=True)
         roles = ['asker', 'respondent', 'reader', 'switched']
         agents = {'question-' + role: {'description': role + ' fixture', 'mode': 'primary', 'model': 'question-fixture/' + role,
                   'system': 'Follow the deterministic local verification script.'} for role in roles}
         agents['question-switched']['permissions'] = [{'action': '*', 'resource': '*', 'effect': 'deny'}]
-        config = {'plugins': ['*', str(repo), str(repo / 'tests/question-host')], 'agents': agents,
+        config = {'plugins': ['*', str(plugin), str(repo / 'tests/question-host')], 'agents': agents,
                   'model': 'question-fixture/asker', 'update': 'disable', 'share': 'disabled'}
         (Path(env['OPENCODE_CONFIG_DIR']) / 'opencode.json').write_text(json.dumps(config))
         (project / '.loom.yaml').write_text('agents: {}\ninstructions: {enabled: false}\nledger: {capture: off}\n')
@@ -328,7 +338,7 @@ def run(executable, repo, output, disable_watcher=False, duplicate_control=False
                 owned_hosts.append(owned)
                 report['owned_hosts'].append({'pid': owned.proc.pid, 'label': label, 'url': owned.url})
                 try:
-                    require(json.loads(owned.get('/api/info', 'info'))['version'] == '2.0.29', 'Wrong actual server')
+                    require(json.loads(owned.get('/api/info', 'info'))['version'] == '2.0.32', 'Wrong actual server')
                     owned.wait_roster('/api/plugin', 'plugins', lambda xs: all(any(p['id'] == name and p.get('state', {}).get('status') == 'active' for p in xs)
                                      for name in ['loom', 'loom.question.fixture']))
                     return owned
@@ -579,7 +589,7 @@ def run(executable, repo, output, disable_watcher=False, duplicate_control=False
             report['component_obligation'] = {'status': 'SEPARATE COMPONENT PROOF REQUIRED',
                                              'command': 'bun test tests/question-host/get-rejection.test.ts',
                                              'boundary': 'SDK session.get rejection through production registered answer/adapter after actual commit; never installed PASS evidence'}
-            report['status'] = qualification_status(report['checks'], '2.0.29')
+            report['status'] = qualification_status(report['checks'], '2.0.32')
         except Exception as error:  # noqa: BLE001 -- persist any failed qualification scenario in its report.
             report['status'] = 'FAIL'
             report['error'] = f'{type(error).__name__}: {error}'
@@ -605,10 +615,16 @@ def main():
     parser.add_argument('--opencode', type=Path, required=True)
     parser.add_argument('--report-directory', type=Path, required=True)
     parser.add_argument('--repository', type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument('--artifact', type=Path, required=True, help='Exact npm candidate tarball installed at --plugin')
+    parser.add_argument('--plugin', type=Path, required=True, help='Installed candidate plugin directory')
+    parser.add_argument('--expect-plugin-version', required=True)
+    parser.add_argument('--expect-sdk-version', default='2.0.32')
     parser.add_argument('--disable-filewatcher', action='store_true', help='Owned disposable host only; watcher behavior not qualified')
     parser.add_argument('--duplicate-input-control', action='store_true', help='Inject one real extra native input and require the normal oracle to reject it')
     args = parser.parse_args()
-    report = run(str(args.opencode.resolve()), args.repository.resolve(), args.report_directory.resolve(), args.disable_filewatcher, args.duplicate_input_control)
+    report = run(str(args.opencode.resolve()), args.repository.resolve(), args.report_directory.resolve(),
+                 args.artifact.resolve(), args.plugin.resolve(), args.expect_plugin_version,
+                 args.expect_sdk_version, args.disable_filewatcher, args.duplicate_input_control)
     print(json.dumps(report, indent=2))
     if report['status'] != 'PASS':
         parser.exit(1, 'Installed question qualification incomplete or failed; inspect report.json\n')

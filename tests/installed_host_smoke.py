@@ -210,7 +210,8 @@ def installed_plugin_inventory(artifact: Path, plugin: Path, expected_version: s
             f"Installed SDK is not @opencode/plugin@{expected_sdk}")
     return {"name": installed_package["name"], "version": installed_package["version"],
             "sdk_version": sdk_package["version"], "artifact_sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
-            "artifact_filename": artifact.name, "installed_path": str(plugin.resolve())}
+            "artifact_filename": artifact.name, "artifact_path": str(artifact.resolve()),
+            "installed_path": str(plugin.resolve())}
 
 
 def run_probe(executable: str, repo: Path, output: Path, expected: str, disable_watcher: bool = False,

@@ -1,12 +1,12 @@
 # Documentation bundle
 
 This OKF bundle contains four source documents: the current test/support inventory,
-installed-host validation scope, version compatibility record, and alpha operating
+installed-host validation scope, historical version analysis, and alpha operating
 policy. Its change log is also listed below.
 
 - [Tests, scripts and CI](/docs/testing.md)
 - [Installed-host validation: separate boot from acceptance](/docs/installed-host-validation.md)
-- [OpenCode 2.0.29 compatibility and opportunities](/docs/opencode-2.0.29.md)
+- [Historical OpenCode 2.0.29 analysis](/docs/opencode-2.0.29.md)
 - [Alpha operating policy: useful context, honest history](/docs/operating-policy.md)
 - [Documentation change log](/docs/log.md)
 

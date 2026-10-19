@@ -7,8 +7,8 @@ Plan are optional; neither assignment registration nor a workflow engine is
 required to ask a question.
 
 Use [the five-tool walkthrough](tools.md), live tool search for exact schemas,
-and [collaboration semantics](collaboration.md). In the separately qualified
-OpenCode 2.0.29 compatibility profile, a saved ask
+and [collaboration semantics](collaboration.md). On the supported OpenCode 2.0.32
+host, a saved ask
 does **not** contact its recipient: dispatch is
 `not-attempted / policy-capability-unavailable`. Arrange manual native handling.
 If that has been arranged, a blocking asker may naturally yield; blocking is

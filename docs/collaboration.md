@@ -9,9 +9,9 @@ Blocking is stored collaboration intent, not a workflow gate or forced wait.
 
 Questions and answers are durable and attributed to the actual calling agent and
 Session. No Action, Plan or assignment is required. Recipient dispatch is
-fail-closed in the separately qualified 2.0.29 compatibility profile; manual
-native handling is required. The canonical 2.0.32 installed-host run was boot-only
-and did not exercise this behavior on a 2.0.32 host.
+fail-closed on the supported OpenCode 2.0.32 host; manual native handling is
+required. Installed-host boot evidence is separate from installed-question
+qualification.
 Only the first committed answer to a new-format blocking question qualifies for
 one best-effort exact-asker resume. General assignment/delivery/authorization/retry
 operations AND views are retired; their history remains readable and inert.

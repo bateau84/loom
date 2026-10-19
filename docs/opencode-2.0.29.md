@@ -1,23 +1,21 @@
 ---
 type: Architecture
-title: OpenCode 2.0.29 compatibility and opportunities
-description: Historical 2.0.29 upgrade analysis and current compatibility-profile boundaries.
-tags: [opencode, compatibility, version-history]
+title: Historical OpenCode 2.0.29 analysis
+description: Preserves the superseded 2.0.29 upgrade research; this version is not a supported host or SDK target.
+tags: [opencode, history, version-analysis]
 timestamp: 2026-10-19T00:00:00Z
 ---
 
-# OpenCode 2.0.29 compatibility and opportunities
+# Historical OpenCode 2.0.29 analysis
 
 ## Version scope
 
-This document preserves the historical 2.0.29 upgrade analysis; it is not the
-current canonical version declaration. The canonical source package and lockfile
-now use `@opencode/plugin@2.0.32`. Separately, a copied source tree is packed as a
-distinct 2.0.29 compatibility artifact and booted with CLI/SDK 2.0.29. The
-canonical 2.0.32 artifact is **not** claimed to work on a 2.0.29 host. The isolated
-Code Mode search fixture remains 2.0.29-only; this does not establish 2.0.32 Code
-Mode compatibility. Installed-host runs are boot-only and make no model-driven
-acceptance claim. No local user CLI, model selection or configuration is changed.
+This document preserves superseded upgrade analysis and past test observations.
+OpenCode 2.0.29 is **not a supported host or SDK target**; OpenCode 2.0.32 is the
+sole supported target. The isolated Code Mode search fixture remains separately
+pinned to Code Mode 2.0.29 and provides no OpenCode host compatibility evidence.
+Historical 2.0.29 host artifacts and runs do not define current support. No local
+user CLI, model selection or configuration is changed.
 
 The historical account below records the prior state: Loom then pinned
 `@opencode/plugin` to **2.0.29**, with the isolated Code Mode fixture and installed
@@ -73,12 +71,11 @@ implementation are unchanged in the inspected files. Code Mode still passes
 outer call context to nested tools. Keep conservative pairing; richer progress
 output is not a new authoritative invocation identity.
 
-## Collaboration behavior observed on the 2.0.29 compatibility profile
+## Historical collaboration behavior observed on OpenCode 2.0.29
 
-The behavior described below is the implementation contract and the 2.0.29
-compatibility profile's installed-host scope. The canonical 2.0.32 installed-host
-run proves boot only; it did not exercise these collaboration paths on a 2.0.32
-host.
+The behavior described below records implementation understanding and historical
+2.0.29 installed-host observations. It is not a support promise. The historical
+2.0.32 boot run proves boot only; it did not exercise these collaboration paths.
 
 The [simple collaboration model](collaboration.md) replaces the historical
 primary-first authorization/recovery route. Its assignment/delivery operations

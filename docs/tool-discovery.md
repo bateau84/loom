@@ -7,7 +7,7 @@ as actual tool metadata, not a link requiring another file read. `docs/tools.md`
 remains an optional human-readable walkthrough; agents need not open it to learn
 how to call a discovered tool.
 
-The separately installed OpenCode 2.0.29 Code Mode search fixture returns the
+The separately installed `@opencode/codemode@2.0.29` search fixture returns the
 full description alongside the exact callable path and generated signature. For
 example, inside Code Mode:
 

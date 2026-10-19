@@ -40,6 +40,9 @@ class BootHarnessTest(unittest.TestCase):
 
             self.assertEqual(result["version"], "2.0.0-alpha.1")
             self.assertEqual(result["sdk_version"], "2.0.32")
+            self.assertEqual(result["artifact_filename"], "loom-plugin.tgz")
+            self.assertEqual(result["artifact_path"], str(artifact.resolve()))
+            self.assertEqual(result["installed_path"], str(plugin.resolve()))
             self.assertEqual(len(result["artifact_sha256"]), 64)
 
     def test_installed_artifact_rejects_sdk_or_package_version_mismatch(self):
@@ -58,7 +61,7 @@ class BootHarnessTest(unittest.TestCase):
                 "dependencies": {"@opencode/plugin": "2.0.32"}}))
             sdk = root / "node_modules/@opencode/plugin"
             sdk.mkdir(parents=True)
-            (sdk / "package.json").write_text(json.dumps({"version": "2.0.29"}))
+            (sdk / "package.json").write_text(json.dumps({"version": "2.0.31"}))
 
             with self.assertRaisesRegex(RuntimeError, "Installed SDK"):
                 smoke.installed_plugin_inventory(artifact, plugin, "2.0.0-alpha.1", "2.0.32")
@@ -187,7 +190,7 @@ class BootHarnessTest(unittest.TestCase):
             sdk.mkdir(parents=True)
             (sdk / "package.json").write_text(json.dumps({"version": "2.0.32"}))
             with patch.object(smoke, "source_inventory", return_value={}), self.assertRaises(FileNotFoundError):
-                smoke.run_probe(str(root / "missing-opencode"), root, output, "2.0.29",
+                smoke.run_probe(str(root / "missing-opencode"), root, output, "2.0.32",
                                 plugin=plugin, artifact=artifact, expected_plugin="2.0.0-alpha.1")
             report = json.loads((output / "report.json").read_text())
             self.assertEqual(report["status"], "failed")

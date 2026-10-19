@@ -142,10 +142,10 @@ must match.
 {"operation":"ask","question":"Which limit applies here?","to_agent":"research","blocking":false,"context_attachments":["SOURCE_REFERENCE"]}
 ```
 
-On pinned OpenCode 2.0.29 the question is saved, recipient is NOT contacted:
-`dispatch:{status:not-attempted,reason:policy-capability-unavailable}`.
-Arrange manual native handling; then a blocking asker may naturally yield.
-Blocking is intent, not enforced wait, approval or gate; nonblocking work continues.
+On pinned OpenCode 2.0.32 the question is saved, but the recipient is NOT contacted.
+Inspect `dispatch:{status:not-attempted,reason:policy-capability-unavailable}`.
+Arrange manual handling outside ask; a blocking asker may yield after it is
+arranged. Blocking is intent, not a wait, approval or gate; nonblocking work continues.
 
 Answer with `question_id`, `answer`, optional `context_attachments`. Caller supplies
 actual author/Session. Original nullable association survives node removal without
