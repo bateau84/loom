@@ -25,7 +25,7 @@ const hash = (text: string) => createHash("sha256").update(text).digest("hex")
 const integer = (n: unknown): n is number => Number.isSafeInteger(n) && (n as number) >= 0
 const mapping = (x: unknown): x is Record<string, unknown> => !!x && typeof x === "object" && !Array.isArray(x)
 const keys = (x: Record<string, unknown>, allowed: string[]) => Object.keys(x).every(k => allowed.includes(k))
-const kinds = new Set(["observation", "claim", "result", "assessment", "qa", "completion", "reopen", "question", "answer",
+const kinds = new Set(["observation", "claim", "result", "concern", "assessment", "qa", "completion", "reopen", "question", "answer",
   "assignment", "delivery-intent", "continuation-authorization", "continuation-withdrawal", "delivery-event"])
 
 function scopeOf(query: HistoryQuery): HistoryScope {

@@ -23,6 +23,21 @@ registered live help is syntax authority.
 
 ## Collaboration and history
 
+`concern` is an ordinary append-only record kind under existing Action/selection,
+attribution and validation rules. It carries statement, same-Action observation
+evidence IDs and unverified artifact pointers; no task or verdict is mandatory.
+It is eligible for bounded context, exact ledger reads and Action/Session full
+history. No historical rewrite or new schema/lifecycle/link operation is needed.
+Later consolidation cites source Action and concern IDs in statement text and
+does not mutate provenance or imply resolution. A concern ID is not observation
+evidence. See [concern requirements](requirements/concern-records/index.md).
+
+Every agent captures its own concerns, distinguishing suspected from confirmed.
+General routing maps to configured coordination guidance; critic consolidation
+maps to qa guidance, using actual native roster IDs. These are guidance duties,
+not provisioned agents or automated escalation, dispatch, gates or risk workflow.
+Documented/outside-task/handed-off is not resolved.
+
 [Questions](collaboration.md) require question/to_agent/explicit blocking; answer
 requires question_id/answer. Optional `context_attachments` is canonical on both,
 never an `attachments` alias. Actual author/Session come from the caller. Explicit

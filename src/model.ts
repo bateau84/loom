@@ -6,7 +6,7 @@ export type Plan = { revision: number; nodes: PlanNode[] }
 export type Focus = { action_id: string; node_id?: string }
 export type Actor = { session_id: string; agent: string }
 // Legacy assignment/delivery kinds remain readable history, not writable tool capabilities.
-export type RecordKind = "observation" | "claim" | "result" | "assessment" | "qa" | "completion" | "reopen" | "question" | "answer" | "assignment" | "delivery-intent" | "continuation-authorization" | "continuation-withdrawal" | "delivery-event"
+export type RecordKind = "observation" | "claim" | "result" | "concern" | "assessment" | "qa" | "completion" | "reopen" | "question" | "answer" | "assignment" | "delivery-intent" | "continuation-authorization" | "continuation-withdrawal" | "delivery-event"
 export type LedgerRecord = Actor & { id: string; action_id?: string; node_id?: string; kind: RecordKind; created_at: string; fingerprint?: string; data: Record<string, unknown> }
 export const uid = (value: unknown, label = "id"): string => {
   if (typeof value !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}$/.test(value)) throw new Error(`${label} must be a simple identifier of 1-120 characters`)

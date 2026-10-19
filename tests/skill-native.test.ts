@@ -134,7 +134,7 @@ test("human five-tool walkthrough examples use canonical collaboration and real 
   try {
     const doc = await readFile(new URL("../docs/tools.md", import.meta.url), "utf8")
     const inputs = [...doc.matchAll(/```json\n([\s\S]*?)\n```/g)].map(match => JSON.parse(match[1]))
-    expect(inputs).toHaveLength(7)
+    expect(inputs).toHaveLength(8)
     const action = (await f.invoke("action", inputs[0])).result
     const replace = (input: unknown) => JSON.parse(JSON.stringify(input).replaceAll("ACTION_ID", action.id).replaceAll("TASK_ID", "task"))
     expect((await f.invoke("plan", replace(inputs[1]))).result.revision).toBe(0)
@@ -143,16 +143,20 @@ test("human five-tool walkthrough examples use canonical collaboration and real 
     expect(context.task.id).toBe("task")
     const finding = (await f.invoke("record", { operation: "add", kind: "result", statement: "Fixture only, not an external finding." })).result
     expect((await f.invoke("record", { ...replace(inputs[3]), record_id: finding.id })).result.items[0].id).toBe(finding.id)
-    const question = (await f.invoke("record", replace(inputs[4]))).result
+    const concern = (await f.invoke("record", replace(inputs[4]))).result
+    expect(concern.kind).toBe("concern")
+    expect(concern.data.statement).toContain("not resolved")
+    const question = (await f.invoke("record", replace(inputs[5]))).result
     expect(question.node_id).toBe("task")
     expect(question.dispatch.status).toBe("not-attempted")
-    expect(question.data.context_attachments).toEqual(inputs[4].context_attachments)
-    const answer = (await f.invoke("record", { ...inputs[5], question_id: question.id }, "research")).result
-    expect(answer.data.context_attachments).toEqual(inputs[5].context_attachments)
-    const history = (await f.invoke("record", replace(inputs[6]))).result
+    expect(question.data.context_attachments).toEqual(inputs[5].context_attachments)
+    const answer = (await f.invoke("record", { ...inputs[6], question_id: question.id }, "research")).result
+    expect(answer.data.context_attachments).toEqual(inputs[6].context_attachments)
+    const history = (await f.invoke("record", replace(inputs[7]))).result
+    expect(history.markdown).toContain(concern.id)
     expect(history.markdown).toContain(question.id)
     expect(history.markdown).toContain(answer.id)
     expect(history.next_cursor).toBeNull()
-    for (const input of [inputs[4], inputs[5]]) expect(input).not.toHaveProperty("attachments")
+    for (const input of [inputs[5], inputs[6]]) expect(input).not.toHaveProperty("attachments")
   } finally { await f.close() }
 })

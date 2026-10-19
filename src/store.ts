@@ -212,7 +212,7 @@ export class Store {
   }
   record(actor: Actor, focus: Focus, input: { kind: Exclude<RecordKind,"observation">; statement: string; evidence_ids?: string[]; verdict?: string; artifact_refs?: string[] }): LedgerRecord {
     canonical(input, new ProcessingBudget(PROCESSING_LIMITS.recordChars))
-    if (!["claim", "result", "assessment", "qa"].includes(input.kind)) throw new Error("Only the host observer may record observations")
+    if (!["claim", "result", "concern", "assessment", "qa"].includes(input.kind)) throw new Error("Only the host observer may record observations")
     const statement = nonempty(input.statement, "statement")
     const ids = input.evidence_ids ?? []
     if (!Array.isArray(ids) || ids.length > 100 || ids.some(x => typeof x !== "string")) throw new Error("evidence_ids must be a list of at most 100 IDs")
@@ -287,7 +287,7 @@ export class Store {
     uid(actionID)
     if (nodeIDs && (!Array.isArray(nodeIDs) || nodeIDs.length > RETRIEVAL_LIMITS.contextNodes)) throw new ProcessingLimitError("context scope list exceeds 300 nodes")
     if (nodeIDs) for (const id of nodeIDs) uid(id, "node id")
-    const kinds = ["result", "qa", "assessment", "claim"] as const
+    const kinds = ["result", "qa", "assessment", "claim", "concern"] as const
     const allScopes = nodeIDs?.length ? [...new Set([nodeIDs[0], null, ...nodeIDs.slice(1)])] : [undefined]
     const scopes = allScopes.slice(0, 16)
     let hasMore = allScopes.length > scopes.length
