@@ -1,8 +1,16 @@
+---
+type: Playbook
+title: Tests, scripts and CI
+description: Maintained inventory of test profiles, supporting files, commands, side effects, and CI membership.
+tags: [testing, ci, test-inventory]
+timestamp: 2026-10-19T00:00:00Z
+---
+
 # Tests, scripts and CI
 
 Run commands from the repository root. This is the maintained inventory of every
 tracked path under `tests/`, `tools/` and `.github/workflows/`, plus the seven
-runner/example supports below: **73 + 7 = 80 paths**. There are 41 test entry files
+runner/example supports below: **74 + 7 = 81 paths**. There are 41 test entry files
 (18 Node, 20 Bun, 3 Python); file counts are not case counts. Update this guide
 when adding, removing or renaming an entrypoint or support input.
 
@@ -11,10 +19,13 @@ when adding, removing or renaming an entrypoint or support input.
 Install with `bun install --frozen-lockfile`. `.bun-version` pins **Bun 1.4.2**;
 the supported package range is `>=1.4.2 <2.0.0`. CI uses **Node 22**; Node
 **22.16+** is required for core SQLite tests. Python 3 and Git are also needed as
-noted below. The locked SDK is `@opencode/plugin@2.0.29`, YAML dependency
-`js-yaml@4.3.2`, compiler `typescript@7.0.2`. Search and installed-host qualification
-require separately provisioned **Code Mode 2.0.29** and **CLI 2.0.29** respectively;
-do not install these into the plugin dependency tree or modify its lockfile.
+noted below. The canonical source SDK is `@opencode/plugin@2.0.32`, YAML dependency
+`js-yaml@4.3.2`, compiler `typescript@7.0.2`. Search uses separately provisioned
+Code Mode **2.0.29**; no 2.0.32 Code Mode compatibility is claimed. The canonical
+installed-host boot uses SDK/CLI **2.0.32/2.0.32**; a separate compatibility-artifact
+boot uses SDK/CLI **2.0.29/2.0.29**. Do not install these test tools into the plugin
+dependency tree or modify its lockfile. The 2.0.32 boot does not establish model-
+driven acceptance or behavior on a 2.0.29 host.
 
 Each per-file row inherits its profile's **exact invocation template, prerequisites,
 outputs, side effects and CI membership**. Substitute the row's full path for
@@ -27,14 +38,15 @@ Component doubles are not installed-host evidence; no suite requires paid infere
 | N | `bun test PATH`; locked dependencies and Bun | Bun report/status; real Bun/SQLite/plugin registration with simulated host. Disposable state/config; fixtures restore environment. Startup cases also write disposable `.test-build/startup-*`. `bun run test:native` discovers root `*native.test.ts` plus explicit package-entry, backup, baseline and question-host globs; main CI. No installed host/model. |
 | P | `python3 -m unittest discover -s tests -p 'BASENAME'`; stdlib Python, Git for export | unittest report/status; temp files/SQLite, mocks/failure subprocesses, ignored bytecode caches. `bun run test:python` discovers `test_*.py`; main CI. No installed qualification. |
 | S | `LOOM_CODEMODE_ROOT=/ABS/PREFIX bun test tests/tool-search-codemode.test.ts`; first `npm install --prefix /ABS/PREFIX --ignore-scripts --no-audit --no-fund @opencode/codemode@2.0.29` | Verifies exact package and imports real search/effect. Registration/temp state and report/status, no model/CLI. npm writes only external prefix. Separate main CI step, excluded from native aggregate. |
-| H | `python3 tests/installed_host_smoke.py --opencode /ABS/CLI --expect-version 2.0.29 --report-directory /ABS/OUTPUT`; Python, Bun/Node, SDK and separate CLI 2.0.29 | Starts owned loopback/stdio hosts in private temp config/state. Boot/restart/removal/roster/empty-ledger checks, no model. Retains version stdout, HTTP JSON, `report.json`; removes temp host state. Installed-host workflow only, or explicit manual invocation. |
-| Q | `python3 tests/installed_questions.py --opencode /ABS/CLI --report-directory /ABS/NEW_OUTPUT --duplicate-input-control`; Python, Bun/Node, exact SDK/CLI 2.0.29 | New-only output directory; owned private hosts/config/state/SQLite, passive audit and local scripted provider traffic. Real admission, no paid model/user sessions. Retains `report.json`, removes private root. Installed-questions workflow only, or explicit manual invocation. |
+| H | `python3 tests/installed_host_smoke.py --opencode /ABS/CLI --expect-version 2.0.32 --plugin /ABS/PLUGIN_PREFIX/node_modules/loom-plugin --artifact /ABS/loom-plugin.tgz --expect-plugin-version 2.0.0-alpha.1 --expect-sdk-version 2.0.32 --report-directory /ABS/OUTPUT`; Python, Bun/Node, candidate npm artifact, canonical SDK 2.0.32 and separate CLI 2.0.32 | Starts owned loopback/stdio hosts in private temp config/state, loading the installed artifact rather than checkout. Verifies artifact metadata/hash and SDK pin/version. Boot/restart/removal/roster/empty-ledger checks, no model. Retains version stdout, HTTP JSON, artifact identity and `report.json`; removes temp host state. Installed-host workflow only, or explicit manual invocation. |
+| H29 | `python3 tests/installed_host_smoke.py --opencode /ABS/CLI --expect-version 2.0.29 --plugin /ABS/PLUGIN_PREFIX/node_modules/loom-plugin --artifact /ABS/loom-plugin-2.0.29.tgz --expect-plugin-version 2.0.0-alpha.1 --expect-sdk-version 2.0.29 --profile compat-2.0.29 --report-directory /ABS/OUTPUT`; copied-source compatibility artifact, separate SDK/CLI 2.0.29 | Boot-only qualification of the distinct artifact; not the canonical 2.0.32 artifact and not model-driven acceptance. See exact artifact identities and digests in [installed-host validation](installed-host-validation.md). Separate workflow, or explicit invocation. |
+| Q | `python3 tests/installed_questions.py --opencode /ABS/CLI --repository /ABS/PROFILE --report-directory /ABS/NEW_OUTPUT --duplicate-input-control`; Python, Bun/Node, isolated SDK/CLI 2.0.29 profile | Private-host question-path qualification with scripted provider traffic, no paid model/user sessions. The installed-questions workflow copies source to a temporary profile, changes only that copy's SDK dependency to 2.0.29, installs its dependencies there, and runs the harness against the separate CLI 2.0.29. Canonical package.json/bun.lock remain 2.0.32. `report.json` records expected and observed SDK/CLI versions before scenarios and on mismatch. |
 
-`bun run test` runs **C then N only**, not P/S/H/Q or utilities. `bun run typecheck`
+`bun run test` runs **C then N only**, not P/S/H/H29/Q or utilities. `bun run typecheck`
 runs `tsc --noEmit`. For H, optional `--repository /ABS/REPO` chooses the source;
 H/Q `--disable-filewatcher` affects owned hosts only and disclaims watcher proof.
 Neither harness installs its CLI. Provision externally, for example
-`npm install --prefix /ABS/HOST --no-audit --no-fund @opencode/cli@2.0.29`, then use
+`npm install --prefix /ABS/HOST --no-audit --no-fund @opencode/cli@2.0.32`, then use
 `/ABS/HOST/node_modules/.bin/opencode`. The package's `test:installed-questions`
 alias invokes Python; the direct Q command above is authoritative (check local
 runner argument forwarding before using the alias).
@@ -172,8 +184,9 @@ Artifacts upload `always()`, retained seven days; workflow source is authoritati
 | Exact path | Events / display name / job / work and outputs |
 |---|---|
 | .github/workflows/ci.yml | `pull_request` (unfiltered); `push` branches `[main]`. **Loom plugin CI**, job `test`, 15m. Root typecheck + external fixture typecheck; C/N/S/P; lock/package diff guards; production build; fresh frozen generation; probe; mutation controls. Uploads review-regression-counterchecks-SHA. |
-| .github/workflows/installed-host.yml | `pull_request` branches `[main]` only. **Installed OpenCode boot-only regression**, job `installed-host`, 10m. Separate CLI2.0.29 + H; uploads installed-host-boot-SHA report. |
-| .github/workflows/installed-questions.yml | `pull_request` branches `[main]` only. **Installed question production-path qualification**, job `questions`, 15m. Explicit get-rejection component test, separate CLI2.0.29 + Q with `--duplicate-input-control`; uploads installed-question-qualification-SHA. Not retired handback experiment. |
+| .github/workflows/installed-host.yml | `pull_request` branches `[main]` only. **Installed OpenCode boot-only regression**, job `installed-host`, 10m. npm-packed candidate artifact + exact SDK2.0.32 + separate CLI2.0.32 + H; uploads installed-host-boot-SHA report. CLI top-level version is exact; transitive graph is not locked. |
+| .github/workflows/installed-host-2.0.29.yml | `pull_request` branches `[main]` only. **Installed OpenCode 2.0.29 compatibility profile**, job `installed-host-2-0-29`, 10m. Copies source, changes only copied SDK pin, packs distinct artifact, installs SDK/CLI 2.0.29 separately + H29; uploads installed-host-compat-2.0.29-SHA report. CLI top-level version exact; transitive graph not locked. |
+| .github/workflows/installed-questions.yml | `pull_request` branches `[main]` only. **Installed question production-path qualification**, job `questions`, 15m. Explicit get-rejection component test; then a temporary copied source profile with SDK2.0.29 + separate CLI2.0.29 runs Q with `--duplicate-input-control`. Canonical dependencies remain 2.0.32. Not retired handback experiment. |
 
 Main CI's external fixture typecheck command is:
 

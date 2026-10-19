@@ -1,15 +1,28 @@
 """Harness-oracle tests, NOT installed production/native qualification."""
-import json
 import glob
-from pathlib import Path
+import json
+import shlex
+import sqlite3
 import tempfile
 import unittest
-import shlex
+from contextlib import closing
+from pathlib import Path
 from unittest.mock import patch
 
-from installed_questions import Scenario, no_contact, synthetic_events, target_requests, fixture_snapshot, restore_fixture, unchanged_rows, verify_provider_inputs, verify_single_admission, qualification_status, READ_DENIAL_APPLICABILITY, REQUIRED_INSTALLED_CHECKS
-import sqlite3
-from contextlib import closing
+from installed_questions import (
+    READ_DENIAL_APPLICABILITY,
+    REQUIRED_INSTALLED_CHECKS,
+    Scenario,
+    fixture_snapshot,
+    no_contact,
+    qualification_status,
+    restore_fixture,
+    synthetic_events,
+    target_requests,
+    unchanged_rows,
+    verify_provider_inputs,
+    verify_single_admission,
+)
 
 
 class QuestionHarnessTest(unittest.TestCase):

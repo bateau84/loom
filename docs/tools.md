@@ -123,7 +123,8 @@ assignment or selection is created for an unscoped ask. Explicit Action referenc
 requires `id=action_id`; node ID and kind must match. Invalid explicit reference
 never falls back. Reference kinds are action/phase/wave/task/subtask.
 
-On pinned OpenCode 2.0.29 ask stores the question and returns
+In the separately qualified OpenCode 2.0.29 compatibility profile, ask stores
+the question and returns
 `dispatch:{status:"not-attempted",reason:"policy-capability-unavailable"}`.
 The recipient is **NOT contacted**. Arrange manual native handling outside ask.
 If that is arranged, a blocking asker may naturally yield. Blocking is intent,

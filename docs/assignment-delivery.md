@@ -10,9 +10,10 @@ readable as inert ledger history. Their stored bytes, attribution and links are
 not rewritten into new questions, blocking intent or current authorization.
 Use exact ledger reads or `query view:full_thread`; references are not expanded.
 
-The replacement is [durable questions and answers](collaboration.md): questions
-are stored without contacting the recipient on pinned OpenCode 2.0.29. Only the
-first committed answer to a new blocking question can qualify for one best-effort
+The replacement is [durable questions and answers](collaboration.md): in the
+separately qualified OpenCode 2.0.29 compatibility profile, questions are stored
+without contacting the recipient. Only the first committed answer to a new
+blocking question can qualify for one best-effort
 resume of the exact asking Session. It is not the former answer-to-primary route.
 
 Earlier sender qualification and comparison results concern that former protocol,

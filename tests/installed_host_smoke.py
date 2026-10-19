@@ -1,23 +1,23 @@
-#!/usr/bin/env python3
 """No-inference installed OpenCode boot probe; NOT the two-agent acceptance test."""
 from __future__ import annotations
 
 import argparse
 import base64
-from contextlib import closing
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import secrets
 import signal
 import sqlite3
 import subprocess
+import tarfile
 import tempfile
 import time
+from contextlib import closing
+from pathlib import Path
 from urllib.parse import urlencode, urlsplit
-from urllib.request import Request, build_opener, ProxyHandler, HTTPRedirectHandler
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 EXPECTED_TABLES = {"actions", "plans", "focus", "ledger"}
 PROBE_AGENTS = {
@@ -163,7 +163,8 @@ def source_inventory(repo: Path) -> dict:
     # Inspect the candidate on disk, including additions and deletions. A source
     # archive/shallow checkout must not depend on historical Git objects.
     paths = [str(p.relative_to(repo)) for name in ("src", "tests") for p in (repo / name).rglob("*") if p.is_file()]
-    identity = subprocess.run(["git", "-C", str(repo), "rev-parse", "--show-toplevel", "HEAD"], capture_output=True, text=True)
+    identity = subprocess.run(["git", "-C", str(repo), "rev-parse", "--show-toplevel", "HEAD"],
+                              capture_output=True, text=True, check=False)
     lines = identity.stdout.splitlines()
     head = lines[1] if identity.returncode == 0 and len(lines) == 2 and Path(lines[0]).resolve() == repo.resolve() else None
     callers, definitions = [], []
@@ -182,13 +183,49 @@ def source_inventory(repo: Path) -> dict:
             "consumer_check_limit": "Direct source scan only; not an independent review or proof about external consumers."}
 
 
-def run_probe(executable: str, repo: Path, output: Path, expected: str, disable_watcher: bool = False) -> dict:
+def installed_plugin_inventory(artifact: Path, plugin: Path, expected_version: str, expected_sdk: str) -> dict:
+    require(artifact.is_file(), f"Candidate package artifact is missing: {artifact}")
+    require(plugin.is_dir(), f"Installed candidate package is missing: {plugin}")
+    with tarfile.open(artifact, "r:gz") as archive:
+        member = archive.extractfile("package/package.json")
+        require(member is not None, "Candidate artifact has no package/package.json")
+        artifact_package = json.load(member)
+    installed_package = json.loads((plugin / "package.json").read_text())
+    require(artifact_package == installed_package, "Installed package metadata differs from candidate artifact")
+    require(installed_package.get("name") == "loom-plugin", "Candidate artifact is not loom-plugin")
+    require(installed_package.get("version") == expected_version, "Wrong installed plugin version")
+    require(installed_package.get("dependencies", {}).get("@opencode/plugin") == expected_sdk,
+            "Candidate artifact does not pin the expected SDK")
+    sdk_package = None
+    for directory in (plugin, *plugin.parents):
+        candidate = directory / "node_modules" / "@opencode" / "plugin" / "package.json"
+        sibling = directory / "@opencode" / "plugin" / "package.json"
+        for path in (candidate, sibling):
+            if path.is_file():
+                sdk_package = json.loads(path.read_text())
+                break
+        if sdk_package is not None:
+            break
+    require(sdk_package is not None and sdk_package.get("version") == expected_sdk,
+            f"Installed SDK is not @opencode/plugin@{expected_sdk}")
+    return {"name": installed_package["name"], "version": installed_package["version"],
+            "sdk_version": sdk_package["version"], "artifact_sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+            "artifact_filename": artifact.name, "installed_path": str(plugin.resolve())}
+
+
+def run_probe(executable: str, repo: Path, output: Path, expected: str, disable_watcher: bool = False,
+              plugin: Path | None = None, artifact: Path | None = None,
+              expected_plugin: str | None = None, expected_sdk: str = "2.0.32",
+              profile: str = "canonical-2.0.32") -> dict:
     require(os.name == "posix", "This isolated process-group probe currently supports POSIX only")
     output.mkdir(parents=True, exist_ok=True)
-    report = {"status": "running", "kind": "installed-host-boot-only", "expected_version": expected,
+    report = {"status": "running", "kind": "installed-host-boot-only", "profile": profile, "expected_version": expected,
               "model_prompts_sent_by_probe": 0, "independent_review": False,
               "two_agent_acceptance": "not exercised", "checks": [], **source_inventory(repo)}
     try:
+        require(plugin is not None and artifact is not None and expected_plugin is not None,
+                "Installed candidate plugin path, artifact and expected plugin version are required")
+        report["candidate_artifact"] = installed_plugin_inventory(artifact.resolve(), plugin.resolve(), expected_plugin, expected_sdk)
         with tempfile.TemporaryDirectory(prefix="loom-installed-") as temporary:
             root = Path(temporary).resolve()
             env = isolated_environment(root)
@@ -207,7 +244,7 @@ def run_probe(executable: str, repo: Path, output: Path, expected: str, disable_
             baseline = None
             first = None
             for label, enabled in [("baseline", False), ("with-loom", True), ("restart", True), ("removed", False)]:
-                config.write_text(json.dumps(host_config(repo if enabled else None)) + "\n")
+                config.write_text(json.dumps(host_config(plugin.resolve() if enabled else None)) + "\n")
                 (config.parent / ".loom.yaml").write_text(json.dumps({"version": 1, "agents": {"probe-worker": {"roles": ["implementation"]}}}) + "\n")
                 started = time.monotonic()
                 with closing(PrivateHost(executable, project, env, output, label)) as host:
@@ -218,7 +255,7 @@ def run_probe(executable: str, repo: Path, output: Path, expected: str, disable_
                         return all(any(a.get("id") == name and a.get("description") == cfg["description"] for a in items)
                                    for name, cfg in PROBE_AGENTS.items())
                     agents, attempts = host.wait_roster("/api/agent", "agents", ready_agents)
-                    def ready_plugins(items):
+                    def ready_plugins(items, enabled=enabled):
                         if not items:
                             return False
                         loom = next((p for p in items if p.get("id") == "loom"), None)
@@ -258,10 +295,17 @@ if __name__ == "__main__":
     parser.add_argument("--opencode", required=True, type=Path, help="Already installed CLI; nothing is installed by this script")
     parser.add_argument("--repository", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--report-directory", required=True, type=Path)
-    parser.add_argument("--expect-version", default="2.0.29")
+    parser.add_argument("--expect-version", default="2.0.32")
+    parser.add_argument("--plugin", required=True, type=Path, help="Installed candidate package directory")
+    parser.add_argument("--artifact", required=True, type=Path, help="Exact npm package tarball installed at --plugin")
+    parser.add_argument("--expect-plugin-version", required=True)
+    parser.add_argument("--expect-sdk-version", default="2.0.32")
+    parser.add_argument("--profile", default="canonical-2.0.32", help="Explicit compatibility profile identity for the report")
     parser.add_argument("--disable-filewatcher", action="store_true", help="Owned disposable hosts only; does not qualify watcher behavior")
     args = parser.parse_args()
     try:
-        print(json.dumps(run_probe(str(args.opencode.absolute()), args.repository.resolve(), args.report_directory.resolve(), args.expect_version, args.disable_filewatcher), indent=2))
-    except Exception as error:
+        print(json.dumps(run_probe(str(args.opencode.absolute()), args.repository.resolve(), args.report_directory.resolve(),
+                                   args.expect_version, args.disable_filewatcher, args.plugin, args.artifact,
+                                   args.expect_plugin_version, args.expect_sdk_version, args.profile), indent=2))
+    except Exception as error:  # noqa: BLE001 -- convert any probe failure to a nonzero CLI exit.
         parser.exit(1, f"Installed-host boot probe failed: {error}\n")

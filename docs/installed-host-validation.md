@@ -1,3 +1,11 @@
+---
+type: Playbook
+title: "Installed-host validation: separate boot from acceptance"
+description: Defines the bounded installed-host boot evidence and distinguishes it from broader acceptance.
+tags: [installed-host, validation, boot-only]
+timestamp: 2026-10-19T00:00:00Z
+---
+
 # Installed-host validation: separate boot from acceptance
 
 ## Replacement collaboration acceptance
@@ -5,7 +13,7 @@
 The boot scope below and earlier sender/handback scenarios are historical or
 narrow supporting evidence, not acceptance of the current replacement. Current
 acceptance must identify the exact assembled artifact (including help and harness),
-build/configuration, unmodified native 2.0.29 host and producing state/run. Do not
+build/configuration, unmodified native host and producing state/run. Do not
 inherit old scenario counts or label a simulated ToolContext as installed proof.
 
 - **E1 durable/manual question:** real discovered/registered tools and genuine
@@ -48,14 +56,41 @@ restart, active integration or activation is authorized by this document.
 The existing Bun native suite uses a simulated host API. It proves callback
 behavior under that contract, not that the published OpenCode CLI can load Loom.
 `tests/installed_host_smoke.py` is a separate, no-inference boot probe using an
-already installed, exact OpenCode CLI version. CI installs
-`@opencode/cli@2.0.29` outside the plugin dependency tree, matching the reviewed
-SDK target. Loom dependencies use frozen installation in this job too. The external
-CLI has an exact top-level version, not a fully locked dependency graph. It does not upgrade the user's CLI or patch upstream source.
+exact npm-packed candidate artifact, exact installed `@opencode/plugin@2.0.32`,
+and a separately provisioned `@opencode/cli@2.0.32`. CI packs the checkout with
+`npm pack`, installs that tarball into its own prefix, and installs the CLI into a
+different prefix. The report records the artifact SHA-256, installed package and
+SDK versions, and installed path. The CLI has an exact top-level version, not a
+fully locked dependency graph. It does not upgrade the user's CLI or patch upstream
+source.
+
+The passing canonical `canonical-2.0.32` run used candidate `loom-plugin@2.0.0-alpha.1`
+with artifact SHA-256
+`67738270ea7d8fe0f55d5524c732c1913d4942822a09b06dd40dae5c59f29d91` and separate
+SDK/CLI versions `2.0.32`/`2.0.32`. The separate passing `compat-2.0.29` run used
+its copied-source artifact (SHA-256
+`d984373ec43823906ace9d9202bb2b37175ef7e36d84fdafad159c56463782de`) with separate
+SDK/CLI versions `2.0.29`/`2.0.29`. These are distinct artifacts and evidence
+records. Both runs prove only the isolated boot, restart/removal, native roster and
+intact equivalent empty-ledger checks described below; neither is model-driven
+acceptance. Exact top-level CLI versions were installed, but their transitive
+dependency graphs were not locked. The tests do not modify the user's CLI or
+configuration.
+
+The 2.0.29 compatibility qualification is a separate profile in
+`.github/workflows/installed-host-2.0.29.yml`. It copies the source tree to a
+temporary directory, changes only that copy's `@opencode/plugin` dependency to
+exactly `2.0.29`, packs and installs that distinct artifact, and installs
+`@opencode/cli@2.0.29` in another prefix. The smoke report labels it
+`compat-2.0.29` and records the exact artifact digest and installed SDK. The
+canonical `package.json`, `bun.lock`, and 2.0.32 artifact path remain separate;
+the canonical artifact is not claimed to work with a 2.0.29 host. The host CLI
+has an exact top-level version, not a fully locked transitive dependency graph.
 
 ## What this probe actually checks
 
-The probe creates a temporary Git project and isolated HOME, configuration,
+The candidate plugin and CLI are installed only into separate disposable CI
+prefixes. The probe creates a temporary Git project and isolated HOME, configuration,
 state, data, runtime and cache directories. Provider credentials, shared-server
 addresses and user configuration are not inherited. Two native agent fixtures
 are defined in the temporary OpenCode configuration, outside Loom. The same
@@ -103,7 +138,11 @@ they are not substitutes for the installed-host run.
 ```sh
 python3 tests/installed_host_smoke.py \
   --opencode /absolute/path/to/opencode \
-  --expect-version 2.0.29 \
+  --expect-version 2.0.32 \
+  --plugin /absolute/path/to/plugin-prefix/node_modules/loom-plugin \
+  --artifact /absolute/path/to/loom-plugin-candidate.tgz \
+  --expect-plugin-version 2.0.0-alpha.1 \
+  --expect-sdk-version 2.0.32 \
   --report-directory /absolute/path/to/new-report-directory
 ```
 

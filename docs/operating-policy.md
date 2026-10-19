@@ -1,3 +1,11 @@
+---
+type: Playbook
+title: "Alpha operating policy: useful context, honest history"
+description: Records current alpha operating policy and the bounded evidence and limitations that support it.
+tags: [operating-policy, alpha, evidence]
+timestamp: 2026-10-19T00:00:00Z
+---
+
 # Alpha operating policy: useful context, honest history
 
 Status: **scope revised after `504584b`; E remains partially open**.
@@ -87,8 +95,10 @@ replacement cannot retrospectively count work that was never registered.
 The former default-off sender has historical bounded evidence and is now retired,
 including its operations/views and startup/retry paths. Its acceptance does not
 qualify the replacement. Historical consent never authorizes current I/O.
-Current questions are stored without contacting recipients on pinned 2.0.29;
-manual native handling is required. Blocking is intent, not a gate or forced wait.
+In the separately qualified 2.0.29 compatibility profile, questions are stored
+without contacting recipients; manual native handling is required. The canonical
+2.0.32 host run proved boot only and did not exercise question behavior. Blocking
+is intent, not a gate or forced wait.
 Only the first committed new-format blocking answer qualifies for one immediate
 best-effort exact-asker resume. No retries, transfer, replay or consumption
 guarantee exists; crash after commit may permanently lose liveness. Current native

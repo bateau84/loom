@@ -22,6 +22,19 @@ jobs:
       - run: git diff --exit-code -- bun.lock
       - name: Mandatory COMPONENT SDK-get rejection, not installed ACL evidence
         run: bun test tests/question-host/get-rejection.test.ts
+      - name: Prepare isolated 2.0.29 question qualification profile
+        run: |
+          PROFILE="$RUNNER_TEMP/loom-question-profile"
+          mkdir -p "$PROFILE"
+          tar --exclude='./.git' --exclude='./node_modules' --exclude='./.bun' -cf - . | tar -xf - -C "$PROFILE"
+          PROFILE_PACKAGE="$PROFILE/package.json" node -e '
+            const fs = require("node:fs");
+            const path = process.env.PROFILE_PACKAGE;
+            const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
+            pkg.dependencies["@opencode/plugin"] = "2.0.29";
+            fs.writeFileSync(path, `${JSON.stringify(pkg, null, 2)}\n`);
+          '
+          bun install --cwd "$PROFILE"
       - name: Install exact isolated unmodified host
         run: npm install --prefix "$RUNNER_TEMP/loom-question-host" --no-audit --no-fund @opencode/cli@2.0.29
       # This is NOT the retired six-scenario handback/comparison experiment.
@@ -29,9 +42,10 @@ jobs:
       # NOT APPLICABLE entry is not an executed installed PASS.
       - name: Real production questions, resume, full_thread and native duplicate countercheck
         run: >-
-          python3 tests/installed_questions.py
+          python3 "$RUNNER_TEMP/loom-question-profile/tests/installed_questions.py"
           --opencode "$RUNNER_TEMP/loom-question-host/node_modules/.bin/opencode"
           --report-directory "$RUNNER_TEMP/loom-question-report"
+          --repository "$RUNNER_TEMP/loom-question-profile"
           --duplicate-input-control
       - uses: actions/upload-artifact@v4
         if: always()

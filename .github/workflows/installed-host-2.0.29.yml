@@ -1,0 +1,62 @@
+name: Installed OpenCode 2.0.29 compatibility profile
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  installed-host-2-0-29:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - run: git diff --exit-code -- bun.lock
+      - name: Build a separate 2.0.29 compatibility artifact
+        env:
+          npm_config_cache: ${{ runner.temp }}/loom-npm-cache
+        run: |
+          PROFILE="$RUNNER_TEMP/loom-compat-profile"
+          ARTIFACT_DIR="$RUNNER_TEMP/loom-plugin-2.0.29-artifact"
+          mkdir -p "$PROFILE" "$ARTIFACT_DIR"
+          tar --exclude='./.git' --exclude='./node_modules' --exclude='./.bun' -cf - . | tar -xf - -C "$PROFILE"
+          PROFILE_PACKAGE="$PROFILE/package.json" node -e '
+            const fs = require("node:fs");
+            const path = process.env.PROFILE_PACKAGE;
+            const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
+            pkg.dependencies["@opencode/plugin"] = "2.0.29";
+            fs.writeFileSync(path, `${JSON.stringify(pkg, null, 2)}\n`);
+          '
+          npm pack --json --pack-destination "$ARTIFACT_DIR" "$PROFILE" > "$ARTIFACT_DIR/pack.json"
+          ARTIFACT=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))[0].filename)' "$ARTIFACT_DIR/pack.json")
+          npm install --prefix "$RUNNER_TEMP/loom-plugin-2.0.29-install" --no-audit --no-fund "$ARTIFACT_DIR/$ARTIFACT"
+      - name: Install exact 2.0.29 external host separately
+        env:
+          npm_config_cache: ${{ runner.temp }}/loom-npm-cache
+        run: npm install --prefix "$RUNNER_TEMP/loom-opencode-2.0.29-host" --no-audit --no-fund @opencode/cli@2.0.29
+      - name: Boot the exact artifact with the isolated 2.0.29 host
+        run: >-
+          python3 tests/installed_host_smoke.py
+          --opencode "$RUNNER_TEMP/loom-opencode-2.0.29-host/node_modules/.bin/opencode"
+          --expect-version 2.0.29
+          --plugin "$RUNNER_TEMP/loom-plugin-2.0.29-install/node_modules/loom-plugin"
+          --artifact "$(find "$RUNNER_TEMP/loom-plugin-2.0.29-artifact" -maxdepth 1 -name 'loom-plugin-*.tgz' -print -quit)"
+          --expect-plugin-version "$(node -p 'require("./package.json").version')"
+          --expect-sdk-version 2.0.29
+          --profile compat-2.0.29
+          --report-directory "$RUNNER_TEMP/loom-host-2.0.29-report"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installed-host-compat-2.0.29-${{ github.sha }}
+          path: ${{ runner.temp }}/loom-host-2.0.29-report/
+          if-no-files-found: warn
+          retention-days: 7

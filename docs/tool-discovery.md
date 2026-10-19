@@ -7,8 +7,9 @@ as actual tool metadata, not a link requiring another file read. `docs/tools.md`
 remains an optional human-readable walkthrough; agents need not open it to learn
 how to call a discovered tool.
 
-The pinned OpenCode 2.0.29 Code Mode search returns the full description alongside
-the exact callable path and generated signature. For example, inside Code Mode:
+The separately installed OpenCode 2.0.29 Code Mode search fixture returns the
+full description alongside the exact callable path and generated signature. For
+example, inside Code Mode:
 
 ```js
 return await search({ namespace: "loom", query: "record" })
@@ -77,7 +78,9 @@ LOOM_CODEMODE_ROOT="$fixture" bun test tests/tool-search-codemode.test.ts
 Missing/wrong upstream dependency is an error, not a skipped passing check.
 This dependency is test-only and installed outside Loom's frozen package tree;
 its top-level version is exact, but the isolated test installation is not claimed
-to have a fully frozen transitive graph. No new runtime dependency is added.
+to have a fully frozen transitive graph. These fixture search tests passed for
+Code Mode 2.0.29 only; they do not establish compatibility with Code Mode 2.0.32.
+No new runtime dependency is added.
 The installed-host boot test and independent two-agent acceptance retain their
 existing, separate meanings. Tests of search behavior are not evidence of model
 quality or successful end-to-end delegation.

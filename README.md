@@ -59,9 +59,15 @@ interrupt an OpenCode session or certify successful delivery.
 
 ## Loading the plugin
 
-Target: **OpenCode 2.0.29**. The SDK, isolated Code Mode search fixture and installed
-CLI boot test use that exact version. This checkout does not upgrade your local
-OpenCode executable or change your model. See [the upgrade notes](docs/opencode-2.0.29.md).
+Canonical target: **OpenCode 2.0.32**, with `@opencode/plugin@2.0.32` in the
+source package and lockfile. A separate, distinctly packed **2.0.29 compatibility
+artifact** is also boot-proven; that does not establish that the canonical 2.0.32
+artifact works on a 2.0.29 host. The isolated Code Mode search fixture is 2.0.29
+only; no 2.0.32 Code Mode compatibility is claimed. Installed-host evidence is
+boot-only, with no model-driven acceptance. Neither profile upgrades your local
+OpenCode executable, changes your model, or edits your user CLI/configuration.
+See [the version and evidence notes](docs/opencode-2.0.29.md) and
+[installed-host validation](docs/installed-host-validation.md).
 **Bun support: `>=1.4.2 <2.0.0`. Use Bun 1.4.2 to reproduce validation.**
 The exact tested baseline is recorded in `.bun-version` and used by the CI jobs.
 This is a supported minimum based on that tested baseline, not a claim that
@@ -192,7 +198,8 @@ alias. Actual author/Session derive from the caller. Without reference/selection
 questions belong only to the asking Session; answers inherit original nullable
 association without selecting its work. Invalid explicit reference never falls back.
 
-Pinned OpenCode 2.0.29 question dispatch is fail-closed:
+In the separately tested OpenCode 2.0.29 compatibility profile, question dispatch
+is fail-closed:
 `not-attempted / policy-capability-unavailable`. The question is stored, recipient
 NOT contacted; arrange manual native handling. If arranged, a blocking asker may
 naturally yield, but blocking is intent, not a forced wait or gate.

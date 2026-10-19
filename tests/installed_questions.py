@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Real production Loom + unmodified 2.0.29 + local scripted model.
 
 No replacement tool registration, ToolContext, permission identity, dispatch or
@@ -8,20 +7,25 @@ from __future__ import annotations
 
 import argparse
 import base64
-from contextlib import closing
 import hashlib
 import json
 import re
-from pathlib import Path
 import secrets
 import shutil
 import sqlite3
 import subprocess
 import tempfile
 import time
+from contextlib import closing
+from pathlib import Path
 from urllib.request import Request
 
-from installed_host_smoke import PrivateHost, isolated_environment, require, source_inventory
+from installed_host_smoke import (
+    PrivateHost,
+    isolated_environment,
+    require,
+    source_inventory,
+)
 
 READ_DENIAL_APPLICABILITY = {
     'name': 'E2-selective-session-read-policy-denial', 'status': 'NOT APPLICABLE',
@@ -276,8 +280,20 @@ def run(executable, repo, output, disable_watcher=False, duplicate_control=False
     report['harness_sha256'] = {name: hashlib.sha256((repo / name).read_bytes()).hexdigest()
                                for name in ['server.ts', 'tests/installed_questions.py', 'tests/installed_host_smoke.py',
                                             'tests/question-host/server.ts', 'tests/question-host/provider.mjs']}
-    report['sdk_version'] = json.loads((repo / 'node_modules/@opencode/plugin/package.json').read_text())['version']
-    require(report['sdk_version'] == '2.0.29', 'Wrong installed production SDK')
+    report['expected_versions'] = {'sdk': '2.0.29', 'host': '2.0.29'}
+    report['observed_versions'] = {
+        'sdk': json.loads((repo / 'node_modules/@opencode/plugin/package.json').read_text())['version'],
+        'host': subprocess.check_output([executable, '--version'], text=True, timeout=15).strip(),
+    }
+    report['sdk_version'] = report['observed_versions']['sdk']
+    host_ok = report['observed_versions']['host'] in ('2.0.29', 'opencode v2.0.29')
+    if report['observed_versions']['sdk'] != report['expected_versions']['sdk'] or not host_ok:
+        report['status'] = 'FAIL'
+        report['error'] = ('Version profile mismatch: '
+                           f"expected SDK {report['expected_versions']['sdk']} and host {report['expected_versions']['host']}; "
+                           f"observed SDK {report['observed_versions']['sdk']} and host {report['observed_versions']['host']}")
+        (output / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
+        raise RuntimeError(report['error'])
     report['bun_baseline'] = (repo / '.bun-version').read_text().strip()
     report['owned_hosts'] = []
     host = None
@@ -431,7 +447,7 @@ def run(executable, repo, output, disable_watcher=False, duplicate_control=False
                     job, _ = s.begin(target, 'return "Local provider running boundary"', hold)
                 else:
                     job, offset = s.begin(target, call('record', question_input), hold)
-                s.await_event(lambda e: e['type'] == 'provider-held' and e['data']['job'] == job)
+                s.await_event(lambda e, job=job: e['type'] == 'provider-held' and e['data']['job'] == job)
                 require(target in request(host, 'GET', '/api/session/active'), 'Target not genuinely running at ' + variant)
                 if variant == 'preyield':
                     produced = [e for e in events(root)[offset:] if e['type'] == 'tool-after' and e['data']['tool'] == 'loom_record' and e['data']['status'] == 'completed']
@@ -444,7 +460,7 @@ def run(executable, repo, output, disable_watcher=False, duplicate_control=False
                     # production answer callback returns, not after the native
                     # respondent's entire agent loop becomes idle. Waiting for
                     # the latter can deadlock the fixture's held target loop.
-                    answered = s.await_event(lambda e: e['type'] == 'tool-after' and e['data']['sessionID'] == respondent
+                    answered = s.await_event(lambda e, question=question: e['type'] == 'tool-after' and e['data']['sessionID'] == respondent
                                              and e['data']['tool'] == 'loom_record' and e['data']['input'].get('question_id') == question['id'])
                     require(answered['data']['status'] == 'completed', 'Native answer callback failed at ' + variant)
                 finally:
@@ -564,7 +580,7 @@ def run(executable, repo, output, disable_watcher=False, duplicate_control=False
                                              'command': 'bun test tests/question-host/get-rejection.test.ts',
                                              'boundary': 'SDK session.get rejection through production registered answer/adapter after actual commit; never installed PASS evidence'}
             report['status'] = qualification_status(report['checks'], '2.0.29')
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 -- persist any failed qualification scenario in its report.
             report['status'] = 'FAIL'
             report['error'] = f'{type(error).__name__}: {error}'
         finally:
@@ -588,10 +604,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--opencode', type=Path, required=True)
     parser.add_argument('--report-directory', type=Path, required=True)
+    parser.add_argument('--repository', type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument('--disable-filewatcher', action='store_true', help='Owned disposable host only; watcher behavior not qualified')
     parser.add_argument('--duplicate-input-control', action='store_true', help='Inject one real extra native input and require the normal oracle to reject it')
     args = parser.parse_args()
-    report = run(str(args.opencode.resolve()), Path(__file__).resolve().parents[1], args.report_directory.resolve(), args.disable_filewatcher, args.duplicate_input_control)
+    report = run(str(args.opencode.resolve()), args.repository.resolve(), args.report_directory.resolve(), args.disable_filewatcher, args.duplicate_input_control)
     print(json.dumps(report, indent=2))
     if report['status'] != 'PASS':
         parser.exit(1, 'Installed question qualification incomplete or failed; inspect report.json\n')
