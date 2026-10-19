@@ -1,0 +1,817 @@
+{
+  "action": {
+    "id": "d3583cc2-04bc-40db-bf94-50276730303b",
+    "title": "SYNTHETIC preservation baseline",
+    "goal": "Only synthetic observations; not production or acceptance evidence",
+    "state": "active",
+    "revision": 1,
+    "created_at": "2026-10-17T08:11:11.602Z"
+  },
+  "current": {
+    "created_at": "2026-10-17T08:11:11.602Z",
+    "goal": "SYNTHETIC changed goal requires reconfirmation",
+    "id": "d3583cc2-04bc-40db-bf94-50276730303b",
+    "revision": 2,
+    "state": "active",
+    "title": "SYNTHETIC preservation baseline"
+  },
+  "other": {
+    "id": "0389d94d-afca-428d-b0d9-6b5637681215",
+    "title": "SYNTHETIC unrelated",
+    "goal": "Same agent is not Session membership",
+    "state": "active",
+    "revision": 1,
+    "created_at": "2026-10-17T08:11:11.603Z"
+  },
+  "noPlan": {
+    "id": "94c660a4-e0b7-4591-92d6-71b33a21b3d7",
+    "title": "SYNTHETIC no Plan",
+    "goal": "Optional Plan fixture",
+    "state": "active",
+    "revision": 1,
+    "created_at": "2026-10-17T08:11:11.603Z"
+  },
+  "plan1": {
+    "revision": 1,
+    "nodes": [
+      {
+        "id": "phase",
+        "kind": "phase",
+        "title": "Synthetic phase"
+      },
+      {
+        "id": "research",
+        "kind": "task",
+        "title": "Synthetic research",
+        "parent": "phase"
+      },
+      {
+        "id": "work",
+        "kind": "task",
+        "title": "Synthetic work",
+        "parent": "phase",
+        "depends_on": [
+          "research"
+        ]
+      },
+      {
+        "id": "removed",
+        "kind": "task",
+        "title": "Synthetic removed",
+        "parent": "phase"
+      },
+      {
+        "id": "reopened",
+        "kind": "task",
+        "title": "Synthetic reopened",
+        "parent": "phase"
+      }
+    ]
+  },
+  "plan2": {
+    "revision": 2,
+    "nodes": [
+      {
+        "id": "phase",
+        "kind": "phase",
+        "title": "Synthetic phase"
+      },
+      {
+        "id": "research",
+        "kind": "task",
+        "title": "Synthetic research",
+        "parent": "phase"
+      },
+      {
+        "id": "work",
+        "kind": "task",
+        "title": "Synthetic work",
+        "parent": "phase",
+        "depends_on": [
+          "research"
+        ]
+      },
+      {
+        "id": "removed",
+        "kind": "task",
+        "title": "Synthetic removed",
+        "parent": "phase"
+      },
+      {
+        "id": "reopened",
+        "kind": "task",
+        "title": "Unrelated synthetic rename",
+        "parent": "phase"
+      }
+    ]
+  },
+  "plan3": {
+    "revision": 3,
+    "nodes": [
+      {
+        "id": "phase",
+        "kind": "phase",
+        "title": "Synthetic phase"
+      },
+      {
+        "id": "research",
+        "kind": "task",
+        "title": "Synthetic research",
+        "parent": "phase"
+      },
+      {
+        "id": "work",
+        "kind": "task",
+        "title": "Synthetic work",
+        "parent": "phase",
+        "depends_on": [
+          "research"
+        ],
+        "criteria": [
+          "Changed synthetic contract"
+        ]
+      },
+      {
+        "id": "reopened",
+        "kind": "task",
+        "title": "Unrelated synthetic rename",
+        "parent": "phase"
+      }
+    ]
+  },
+  "ref": {
+    "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+    "node_id": "work",
+    "action_revision": 1,
+    "plan_revision": 1,
+    "hash": "b71b5fb30473e905ef0f1155b1b4bd5a8c191f933b4743a5a27b5b5778850ce4"
+  },
+  "focus": {
+    "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+    "node_id": "work"
+  },
+  "start": {
+    "session_id": "synthetic-worker",
+    "agent": "implementer",
+    "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+    "node_id": "work",
+    "fingerprint": "6b7a1ea1f835de509583e0c9e4528478e936bc0bf5106af9abc95a38093c81c8",
+    "kind": "observation",
+    "data": {
+      "tool": "synthetic-read",
+      "observer_epoch": "synthetic-epoch",
+      "input_digest": "synthetic-input",
+      "correlation_key": "synthetic-paired",
+      "phase": "started"
+    },
+    "id": "9677854e-ce91-4fba-a82f-35c5fb973102",
+    "created_at": "2026-10-17T08:11:11.605Z"
+  },
+  "finish": {
+    "session_id": "synthetic-worker",
+    "agent": "implementer",
+    "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+    "node_id": "work",
+    "fingerprint": "6b7a1ea1f835de509583e0c9e4528478e936bc0bf5106af9abc95a38093c81c8",
+    "kind": "observation",
+    "data": {
+      "tool": "synthetic-read",
+      "observer_epoch": "synthetic-epoch",
+      "input_digest": "synthetic-input",
+      "correlation_key": "synthetic-paired",
+      "phase": "finished",
+      "status": "completed",
+      "result_digest": "synthetic-output",
+      "start_id": "9677854e-ce91-4fba-a82f-35c5fb973102",
+      "attribution": "captured-at-start"
+    },
+    "id": "e6a819e4-a21b-4ded-852a-fffe3db65875",
+    "created_at": "2026-10-17T08:11:11.605Z"
+  },
+  "interrupted": {
+    "session_id": "synthetic-worker",
+    "agent": "implementer",
+    "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+    "node_id": "work",
+    "fingerprint": "6b7a1ea1f835de509583e0c9e4528478e936bc0bf5106af9abc95a38093c81c8",
+    "kind": "observation",
+    "data": {
+      "tool": "synthetic-read",
+      "observer_epoch": "synthetic-epoch",
+      "input_digest": "synthetic-input",
+      "correlation_key": "synthetic-interrupted",
+      "phase": "started"
+    },
+    "id": "504f6b6b-8cfc-4ead-bf05-cfcf05cf7486",
+    "created_at": "2026-10-17T08:11:11.606Z"
+  },
+  "ambiguous": [
+    {
+      "session_id": "synthetic-worker",
+      "agent": "implementer",
+      "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+      "node_id": "work",
+      "fingerprint": "6b7a1ea1f835de509583e0c9e4528478e936bc0bf5106af9abc95a38093c81c8",
+      "kind": "observation",
+      "data": {
+        "tool": "synthetic-read",
+        "observer_epoch": "synthetic-epoch",
+        "input_digest": "synthetic-input",
+        "correlation_key": "synthetic-reused",
+        "phase": "started"
+      },
+      "id": "efbbc2a2-7490-485d-9add-1c29cf16b982",
+      "created_at": "2026-10-17T08:11:11.606Z"
+    },
+    {
+      "session_id": "synthetic-worker",
+      "agent": "implementer",
+      "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+      "node_id": "work",
+      "fingerprint": "6b7a1ea1f835de509583e0c9e4528478e936bc0bf5106af9abc95a38093c81c8",
+      "kind": "observation",
+      "data": {
+        "tool": "synthetic-read",
+        "observer_epoch": "synthetic-epoch",
+        "input_digest": "synthetic-input",
+        "correlation_key": "synthetic-reused",
+        "phase": "started"
+      },
+      "id": "384a00ab-fdf6-42a6-ac40-a2449daa832c",
+      "created_at": "2026-10-17T08:11:11.606Z"
+    }
+  ],
+  "unpaired": {
+    "session_id": "synthetic-worker",
+    "agent": "implementer",
+    "kind": "observation",
+    "data": {
+      "tool": "synthetic-read",
+      "observer_epoch": "synthetic-epoch",
+      "input_digest": "synthetic-input",
+      "correlation_key": "synthetic-reused",
+      "phase": "finished",
+      "status": "completed",
+      "attribution": "ambiguous-host-call; not assigned to current work"
+    },
+    "id": "89eeac50-73cf-4be3-9f75-501e516e47bb",
+    "created_at": "2026-10-17T08:11:11.606Z"
+  },
+  "conclusions": [
+    {
+      "session_id": "synthetic-worker",
+      "agent": "implementer",
+      "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+      "node_id": "work",
+      "fingerprint": "6b7a1ea1f835de509583e0c9e4528478e936bc0bf5106af9abc95a38093c81c8",
+      "kind": "result",
+      "data": {
+        "statement": "result: SYNTHETIC only; NOT acceptance. Preserve <tags>, | pipes, Unicode 雪🙂 and qualifications.",
+        "evidence_ids": [
+          "e6a819e4-a21b-4ded-852a-fffe3db65875"
+        ],
+        "artifact_refs": [
+          "fixture://synthetic/evidence"
+        ],
+        "verification": "agent-reported; not independently validated by Loom"
+      },
+      "id": "02505d2b-cf69-4e15-8b0c-0fcb405dff13",
+      "created_at": "2026-10-17T08:11:11.607Z"
+    },
+    {
+      "session_id": "synthetic-worker",
+      "agent": "implementer",
+      "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+      "node_id": "work",
+      "fingerprint": "6b7a1ea1f835de509583e0c9e4528478e936bc0bf5106af9abc95a38093c81c8",
+      "kind": "claim",
+      "data": {
+        "statement": "claim: SYNTHETIC only; NOT acceptance. Preserve <tags>, | pipes, Unicode 雪🙂 and qualifications.",
+        "evidence_ids": [
+          "e6a819e4-a21b-4ded-852a-fffe3db65875"
+        ],
+        "artifact_refs": [
+          "fixture://synthetic/evidence"
+        ],
+        "verification": "agent-reported; not independently validated by Loom"
+      },
+      "id": "57e40ff2-70df-4439-91b7-40f3388c6b60",
+      "created_at": "2026-10-17T08:11:11.607Z"
+    },
+    {
+      "session_id": "synthetic-worker",
+      "agent": "implementer",
+      "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+      "node_id": "work",
+      "fingerprint": "6b7a1ea1f835de509583e0c9e4528478e936bc0bf5106af9abc95a38093c81c8",
+      "kind": "assessment",
+      "data": {
+        "statement": "assessment: SYNTHETIC only; NOT acceptance. Preserve <tags>, | pipes, Unicode 雪🙂 and qualifications.",
+        "evidence_ids": [
+          "e6a819e4-a21b-4ded-852a-fffe3db65875"
+        ],
+        "verdict": "inconclusive",
+        "artifact_refs": [
+          "fixture://synthetic/evidence"
+        ],
+        "verification": "agent-reported; not independently validated by Loom"
+      },
+      "id": "4b02b29f-2201-49eb-bbf0-90f289ec0998",
+      "created_at": "2026-10-17T08:11:11.607Z"
+    },
+    {
+      "session_id": "synthetic-worker",
+      "agent": "implementer",
+      "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+      "node_id": "work",
+      "fingerprint": "6b7a1ea1f835de509583e0c9e4528478e936bc0bf5106af9abc95a38093c81c8",
+      "kind": "qa",
+      "data": {
+        "statement": "qa: SYNTHETIC only; NOT acceptance. Preserve <tags>, | pipes, Unicode 雪🙂 and qualifications.",
+        "evidence_ids": [
+          "e6a819e4-a21b-4ded-852a-fffe3db65875"
+        ],
+        "verdict": "inconclusive",
+        "artifact_refs": [
+          "fixture://synthetic/evidence"
+        ],
+        "verification": "agent-reported; not independently validated by Loom"
+      },
+      "id": "f493b6ec-439c-4c09-b3db-b9a585ab71bc",
+      "created_at": "2026-10-17T08:11:11.607Z"
+    }
+  ],
+  "assignment": {
+    "session_id": "synthetic-primary",
+    "agent": "coordinator",
+    "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+    "node_id": "work",
+    "kind": "assignment",
+    "data": {
+      "assignment_id": "synthetic-assignment",
+      "primary_session_id": "synthetic-primary",
+      "worker_session_id": "synthetic-worker",
+      "work_ref": {
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "node_id": "work",
+        "action_revision": 1,
+        "plan_revision": 1,
+        "hash": "b71b5fb30473e905ef0f1155b1b4bd5a8c191f933b4743a5a27b5b5778850ce4"
+      },
+      "statement": "Explicit work association; does not dispatch or prove execution",
+      "automatic_continuation": false
+    },
+    "id": "4d21eafe-bf61-4b4f-bad9-7e9799c81c4a",
+    "created_at": "2026-10-17T08:11:11.609Z"
+  },
+  "question": {
+    "session_id": "synthetic-worker",
+    "agent": "implementer",
+    "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+    "node_id": "work",
+    "kind": "question",
+    "data": {
+      "statement": "SYNTHETIC: is this general approval?",
+      "respondent": "researcher",
+      "background": "No native recipient was contacted",
+      "artifact_refs": [
+        "fixture://synthetic/question"
+      ],
+      "assignment_id": "synthetic-assignment",
+      "work_ref": {
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "node_id": "work",
+        "action_revision": 1,
+        "plan_revision": 1,
+        "hash": "b71b5fb30473e905ef0f1155b1b4bd5a8c191f933b4743a5a27b5b5778850ce4"
+      },
+      "action_revision": 1,
+      "plan_revision": 1
+    },
+    "id": "63e0b013-886b-47d6-9bd3-c31e157df369",
+    "created_at": "2026-10-17T08:11:11.609Z"
+  },
+  "falseAnswer": {
+    "session_id": "synthetic-research-a",
+    "agent": "researcher",
+    "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+    "node_id": "work",
+    "kind": "answer",
+    "data": {
+      "question_id": "63e0b013-886b-47d6-9bd3-c31e157df369",
+      "statement": "SYNTHETIC preliminary; not approval",
+      "artifact_refs": [
+        "fixture://synthetic/answer-a"
+      ],
+      "assignment_id": "synthetic-assignment",
+      "verification": "Response only; not resolution, approval or execution permission"
+    },
+    "id": "3d917cfe-6482-4177-b6a7-6009e4a9d4cd",
+    "created_at": "2026-10-17T08:11:11.610Z",
+    "delivery": {
+      "state": "stored-for-session",
+      "transport": "not-attempted",
+      "reason": "automatic-continuation-not-authorized",
+      "intent_id": "1ea89975-7a7d-4543-815c-a76f69015816",
+      "destination_session_id": "synthetic-primary"
+    }
+  },
+  "missingAnswer": {
+    "session_id": "synthetic-research-b",
+    "agent": "researcher",
+    "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+    "node_id": "work",
+    "kind": "answer",
+    "data": {
+      "question_id": "63e0b013-886b-47d6-9bd3-c31e157df369",
+      "statement": "SYNTHETIC missing-flag compatibility specimen; not approval",
+      "artifact_refs": [],
+      "assignment_id": "synthetic-assignment",
+      "verification": "Response only; not resolution, approval or execution permission"
+    },
+    "id": "8425e925-4a61-4688-87af-5683708e872b",
+    "created_at": "2026-10-17T08:11:11.610Z",
+    "delivery": {
+      "state": "stored-for-session",
+      "transport": "not-attempted",
+      "reason": "automatic-continuation-not-authorized",
+      "intent_id": "77b66485-db09-41ee-9d3e-da506ccca0f6",
+      "destination_session_id": "synthetic-primary"
+    }
+  },
+  "authorization": {
+    "session_id": "synthetic-primary",
+    "agent": "coordinator",
+    "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+    "node_id": "work",
+    "kind": "continuation-authorization",
+    "data": {
+      "format": "loom-primary-continuation-authorization/v1",
+      "assignment_id": "synthetic-assignment",
+      "assignment_record_id": "4d21eafe-bf61-4b4f-bad9-7e9799c81c4a",
+      "mode": "primary-native/v1",
+      "primary_session_id": "synthetic-primary",
+      "worker_session_id": "synthetic-worker",
+      "work_ref": {
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "node_id": "work",
+        "action_revision": 1,
+        "plan_revision": 1,
+        "hash": "b71b5fb30473e905ef0f1155b1b4bd5a8c191f933b4743a5a27b5b5778850ce4"
+      }
+    },
+    "id": "14f659e5-a815-458b-83ad-8c7525659750",
+    "created_at": "2026-10-17T08:11:11.611Z",
+    "continuation": {
+      "state": "authorized",
+      "authorization_id": "14f659e5-a815-458b-83ad-8c7525659750",
+      "mode": "primary-native/v1"
+    }
+  },
+  "uncertainAnswer": {
+    "session_id": "synthetic-research-b",
+    "agent": "researcher",
+    "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+    "node_id": "work",
+    "kind": "answer",
+    "data": {
+      "question_id": "63e0b013-886b-47d6-9bd3-c31e157df369",
+      "statement": "SYNTHETIC qualified correction: only this fixture",
+      "artifact_refs": [
+        "fixture://synthetic/correction"
+      ],
+      "assignment_id": "synthetic-assignment",
+      "verification": "Response only; not resolution, approval or execution permission"
+    },
+    "id": "2d8425db-ec2c-434f-801b-f97bbb0f34df",
+    "created_at": "2026-10-17T08:11:11.611Z",
+    "delivery": {
+      "state": "stored-for-session",
+      "transport": "not-attempted",
+      "reason": "authorized-pending",
+      "intent_id": "233d448d-3257-4763-ba3c-362c1721e5e1",
+      "destination_session_id": "synthetic-primary"
+    }
+  },
+  "pendingAnswer": {
+    "session_id": "synthetic-research-a",
+    "agent": "researcher",
+    "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+    "node_id": "work",
+    "kind": "answer",
+    "data": {
+      "question_id": "63e0b013-886b-47d6-9bd3-c31e157df369",
+      "statement": "SYNTHETIC pending local intent; never dispatched",
+      "artifact_refs": [],
+      "assignment_id": "synthetic-assignment",
+      "verification": "Response only; not resolution, approval or execution permission"
+    },
+    "id": "b03d2805-a8db-4cd1-bcc9-a046d87e39c7",
+    "created_at": "2026-10-17T08:11:11.615Z",
+    "delivery": {
+      "state": "stored-for-session",
+      "transport": "not-attempted",
+      "reason": "authorized-pending",
+      "intent_id": "381c9b5e-5ec4-4f8e-bbbb-03084232aed3",
+      "destination_session_id": "synthetic-primary"
+    }
+  },
+  "withdrawal": {
+    "session_id": "synthetic-primary",
+    "agent": "coordinator",
+    "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+    "node_id": "work",
+    "kind": "continuation-withdrawal",
+    "data": {
+      "format": "loom-primary-continuation-withdrawal/v1",
+      "assignment_id": "synthetic-assignment",
+      "assignment_record_id": "4d21eafe-bf61-4b4f-bad9-7e9799c81c4a",
+      "primary_session_id": "synthetic-primary",
+      "authorization_id": "14f659e5-a815-458b-83ad-8c7525659750",
+      "statement": "SYNTHETIC withdrawal; no native execution"
+    },
+    "id": "b927d7e6-fbd3-4f85-8360-e4e759df7556",
+    "created_at": "2026-10-17T08:11:11.616Z",
+    "continuation": {
+      "state": "withdrawn",
+      "authorization_id": "14f659e5-a815-458b-83ad-8c7525659750",
+      "mode": "primary-native/v1",
+      "withdrawal_id": "b927d7e6-fbd3-4f85-8360-e4e759df7556"
+    },
+    "delivery_disposition": {
+      "admitted": 0,
+      "possibly_admitted": 1,
+      "suppressed_before_send": 1
+    },
+    "notice": "Withdrawal suppresses future local sends; in-flight input may already be admitted. It does not stop native work or retract input."
+  },
+  "withdrawnAnswer": {
+    "session_id": "synthetic-research-b",
+    "agent": "researcher",
+    "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+    "node_id": "work",
+    "kind": "answer",
+    "data": {
+      "question_id": "63e0b013-886b-47d6-9bd3-c31e157df369",
+      "statement": "SYNTHETIC after withdrawal",
+      "artifact_refs": [],
+      "assignment_id": "synthetic-assignment",
+      "verification": "Response only; not resolution, approval or execution permission"
+    },
+    "id": "f72ecb3e-5d83-445c-8750-54bd15cc6421",
+    "created_at": "2026-10-17T08:11:11.617Z",
+    "delivery": {
+      "state": "stored-for-session",
+      "transport": "not-attempted",
+      "reason": "continuation-withdrawn",
+      "intent_id": "6671213f-e265-489e-860d-1933e2f0a326",
+      "destination_session_id": "synthetic-primary"
+    }
+  },
+  "completion": {
+    "session_id": "synthetic-worker",
+    "agent": "implementer",
+    "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+    "node_id": "work",
+    "kind": "completion",
+    "data": {
+      "statement": "SYNTHETIC ORIGINAL work only; not acceptance",
+      "work_ref": {
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "node_id": "work",
+        "action_revision": 1,
+        "plan_revision": 1,
+        "hash": "b71b5fb30473e905ef0f1155b1b4bd5a8c191f933b4743a5a27b5b5778850ce4"
+      },
+      "assignment_id": "synthetic-assignment",
+      "work_goal": {
+        "title": "SYNTHETIC preservation baseline",
+        "goal": "Only synthetic observations; not production or acceptance evidence"
+      },
+      "artifact_refs": [
+        "fixture://synthetic/completion"
+      ],
+      "verification": "Performing agent reports work finished; not acceptance or proof"
+    },
+    "id": "186fb43d-e9e3-446f-b116-28a0cdea7642",
+    "created_at": "2026-10-17T08:11:11.618Z"
+  },
+  "removedCompletion": {
+    "session_id": "synthetic-worker",
+    "agent": "implementer",
+    "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+    "node_id": "removed",
+    "kind": "completion",
+    "data": {
+      "statement": "SYNTHETIC removed-node report",
+      "work_ref": {
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "node_id": "removed",
+        "action_revision": 1,
+        "plan_revision": 1,
+        "hash": "915460e35638d3c8b1a564d9e224789947ae9068d8d1bf5bdc46a42342f46f8a"
+      },
+      "work_goal": {
+        "title": "SYNTHETIC preservation baseline",
+        "goal": "Only synthetic observations; not production or acceptance evidence"
+      },
+      "artifact_refs": [],
+      "verification": "Performing agent reports work finished; not acceptance or proof"
+    },
+    "id": "830b1f79-b8e2-4050-a399-3d619d258177",
+    "created_at": "2026-10-17T08:11:11.618Z"
+  },
+  "reopenedCompletion": {
+    "session_id": "synthetic-worker",
+    "agent": "implementer",
+    "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+    "node_id": "reopened",
+    "kind": "completion",
+    "data": {
+      "statement": "SYNTHETIC before reopening",
+      "work_ref": {
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "node_id": "reopened",
+        "action_revision": 1,
+        "plan_revision": 1,
+        "hash": "43b62555684eeece7b2c12d5b028d30894032e52bce80e213fbd4c2fb9e8c5f4"
+      },
+      "work_goal": {
+        "title": "SYNTHETIC preservation baseline",
+        "goal": "Only synthetic observations; not production or acceptance evidence"
+      },
+      "artifact_refs": [],
+      "verification": "Performing agent reports work finished; not acceptance or proof"
+    },
+    "id": "cf32b6db-896e-4c2a-bbd3-3bbcdf61266c",
+    "created_at": "2026-10-17T08:11:11.618Z"
+  },
+  "reopen": {
+    "session_id": "synthetic-primary",
+    "agent": "coordinator",
+    "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+    "node_id": "reopened",
+    "kind": "reopen",
+    "data": {
+      "statement": "SYNTHETIC explicitly reopened, no acceptance cascade",
+      "previous_report_id": "cf32b6db-896e-4c2a-bbd3-3bbcdf61266c",
+      "plan_revision": 1
+    },
+    "id": "dc88aac5-cbc5-4673-aa25-a9a6794bdb6e",
+    "created_at": "2026-10-17T08:11:11.619Z"
+  },
+  "lateAnswer": {
+    "session_id": "synthetic-late",
+    "agent": "other-author",
+    "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+    "node_id": "work",
+    "kind": "answer",
+    "data": {
+      "question_id": "63e0b013-886b-47d6-9bd3-c31e157df369",
+      "statement": "SYNTHETIC late author retains original association",
+      "artifact_refs": [],
+      "assignment_id": "synthetic-assignment",
+      "verification": "Response only; not resolution, approval or execution permission"
+    },
+    "id": "b006098a-a450-4d9e-9e26-22ba39441f23",
+    "created_at": "2026-10-17T08:11:11.620Z",
+    "delivery": {
+      "state": "stored-for-session",
+      "transport": "not-attempted",
+      "reason": "continuation-withdrawn",
+      "intent_id": "cdfbc7c7-b24f-4e60-b9bc-eab52645438f",
+      "destination_session_id": "synthetic-primary"
+    }
+  },
+  "noPlanQuestion": {
+    "session_id": "synthetic-primary",
+    "agent": "coordinator",
+    "action_id": "94c660a4-e0b7-4591-92d6-71b33a21b3d7",
+    "kind": "question",
+    "data": {
+      "statement": "SYNTHETIC action-only question",
+      "respondent": "researcher",
+      "artifact_refs": [],
+      "action_revision": 1,
+      "plan_revision": 0
+    },
+    "id": "041816f6-a357-4f93-9f99-a37390838cb3",
+    "created_at": "2026-10-17T08:11:11.620Z"
+  },
+  "unrelatedProgress": {
+    "items": [
+      {
+        "node_id": "work",
+        "state": "reported-complete",
+        "current_node": true,
+        "report_id": "186fb43d-e9e3-446f-b116-28a0cdea7642",
+        "reported_by": "implementer",
+        "session_id": "synthetic-worker",
+        "reported_at": "2026-10-17T08:11:11.618Z",
+        "work_ref": {
+          "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+          "action_revision": 1,
+          "hash": "b71b5fb30473e905ef0f1155b1b4bd5a8c191f933b4743a5a27b5b5778850ce4",
+          "node_id": "work",
+          "plan_revision": 1
+        }
+      }
+    ],
+    "next_offset": null,
+    "plan_revision": 2,
+    "note": "Agent-reported, not independent acceptance. Answered means a response exists, not resolution, approval or permission."
+  },
+  "pendingAssignment": {
+    "session_id": "synthetic-primary",
+    "agent": "coordinator",
+    "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+    "node_id": "research",
+    "kind": "assignment",
+    "data": {
+      "assignment_id": "synthetic-pending-assignment",
+      "primary_session_id": "synthetic-primary",
+      "worker_session_id": "synthetic-worker",
+      "work_ref": {
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "node_id": "research",
+        "action_revision": 2,
+        "plan_revision": 3,
+        "hash": "2ed05f9263c7c123f7395aaea073747f3da080a89fdaba79c8dbe1b20049ffe1"
+      },
+      "statement": "Explicit work association; does not dispatch or prove execution",
+      "automatic_continuation": false
+    },
+    "id": "b11abbad-fd2b-4864-80aa-2312f54a7fe3",
+    "created_at": "2026-10-17T08:11:11.621Z"
+  },
+  "pendingQuestion": {
+    "session_id": "synthetic-worker",
+    "agent": "implementer",
+    "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+    "node_id": "research",
+    "kind": "question",
+    "data": {
+      "statement": "SYNTHETIC pending assignment; never send from this fixture",
+      "respondent": "researcher",
+      "artifact_refs": [],
+      "assignment_id": "synthetic-pending-assignment",
+      "work_ref": {
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "node_id": "research",
+        "action_revision": 2,
+        "plan_revision": 3,
+        "hash": "2ed05f9263c7c123f7395aaea073747f3da080a89fdaba79c8dbe1b20049ffe1"
+      },
+      "action_revision": 2,
+      "plan_revision": 3
+    },
+    "id": "ba340889-47b6-44b1-ac65-ea226a09e8d8",
+    "created_at": "2026-10-17T08:11:11.621Z"
+  },
+  "activeUncertain": {
+    "session_id": "synthetic-research-a",
+    "agent": "researcher",
+    "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+    "node_id": "research",
+    "kind": "answer",
+    "data": {
+      "question_id": "ba340889-47b6-44b1-ac65-ea226a09e8d8",
+      "statement": "SYNTHETIC local uncertain fence, NOT native admission",
+      "artifact_refs": [],
+      "assignment_id": "synthetic-pending-assignment",
+      "verification": "Response only; not resolution, approval or execution permission"
+    },
+    "id": "1826b1b8-ec58-4ded-b948-cd09e7b5d21b",
+    "created_at": "2026-10-17T08:11:11.622Z",
+    "delivery": {
+      "state": "stored-for-session",
+      "transport": "not-attempted",
+      "reason": "authorized-pending",
+      "intent_id": "bc88e7dd-679e-439d-89c4-2add7d1502c7",
+      "destination_session_id": "synthetic-primary"
+    }
+  },
+  "activePending": {
+    "session_id": "synthetic-research-b",
+    "agent": "researcher",
+    "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+    "node_id": "research",
+    "kind": "answer",
+    "data": {
+      "question_id": "ba340889-47b6-44b1-ac65-ea226a09e8d8",
+      "statement": "SYNTHETIC active pending row; no native send",
+      "artifact_refs": [],
+      "assignment_id": "synthetic-pending-assignment",
+      "verification": "Response only; not resolution, approval or execution permission"
+    },
+    "id": "838caf8b-d1e7-45bd-8b81-98dcea81800c",
+    "created_at": "2026-10-17T08:11:11.624Z",
+    "delivery": {
+      "state": "stored-for-session",
+      "transport": "not-attempted",
+      "reason": "authorized-pending",
+      "intent_id": "df1d4fc7-e159-47bf-b1e8-996ab2e70f67",
+      "destination_session_id": "synthetic-primary"
+    }
+  }
+}

@@ -1,0 +1,703 @@
+{
+  "user_version": 1,
+  "schema": [
+    {
+      "type": "index",
+      "name": "ledger_action",
+      "tbl_name": "ledger",
+      "sql": "CREATE INDEX ledger_action ON ledger(action_id, seq)"
+    },
+    {
+      "type": "index",
+      "name": "ledger_action_node",
+      "tbl_name": "ledger",
+      "sql": "CREATE INDEX ledger_action_node ON ledger(action_id, json_extract(data,'$.node_id'), seq)"
+    },
+    {
+      "type": "index",
+      "name": "ledger_answers",
+      "tbl_name": "ledger",
+      "sql": "CREATE INDEX ledger_answers ON ledger(action_id,json_extract(data,'$.data.question_id'),seq) WHERE kind='answer'"
+    },
+    {
+      "type": "index",
+      "name": "ledger_assignment_id",
+      "tbl_name": "ledger",
+      "sql": "CREATE UNIQUE INDEX ledger_assignment_id ON ledger(json_extract(data,'$.data.assignment_id')) WHERE kind='assignment'"
+    },
+    {
+      "type": "index",
+      "name": "ledger_assignment_primary",
+      "tbl_name": "ledger",
+      "sql": "CREATE INDEX ledger_assignment_primary ON ledger(session_id,seq) WHERE kind='assignment'"
+    },
+    {
+      "type": "index",
+      "name": "ledger_assignment_question",
+      "tbl_name": "ledger",
+      "sql": "CREATE UNIQUE INDEX ledger_assignment_question ON ledger(json_extract(data,'$.data.question_id')) WHERE kind='assignment'"
+    },
+    {
+      "type": "index",
+      "name": "ledger_assignment_worker",
+      "tbl_name": "ledger",
+      "sql": "CREATE INDEX ledger_assignment_worker ON ledger(json_extract(data,'$.data.worker_session_id'),seq) WHERE kind='assignment'"
+    },
+    {
+      "type": "index",
+      "name": "ledger_context_kind",
+      "tbl_name": "ledger",
+      "sql": "CREATE INDEX ledger_context_kind ON ledger(action_id, kind, seq)\n        WHERE kind<>'observation'"
+    },
+    {
+      "type": "index",
+      "name": "ledger_context_scope",
+      "tbl_name": "ledger",
+      "sql": "CREATE INDEX ledger_context_scope ON ledger(action_id, json_extract(data,'$.node_id'), kind, seq)\n        WHERE kind<>'observation'"
+    },
+    {
+      "type": "index",
+      "name": "ledger_continuation_authorization",
+      "tbl_name": "ledger",
+      "sql": "CREATE UNIQUE INDEX ledger_continuation_authorization ON ledger(json_extract(data,'$.data.assignment_id')) WHERE kind='continuation-authorization'"
+    },
+    {
+      "type": "index",
+      "name": "ledger_continuation_withdrawal",
+      "tbl_name": "ledger",
+      "sql": "CREATE UNIQUE INDEX ledger_continuation_withdrawal ON ledger(json_extract(data,'$.data.assignment_id')) WHERE kind='continuation-withdrawal'"
+    },
+    {
+      "type": "index",
+      "name": "ledger_delivery_session",
+      "tbl_name": "ledger",
+      "sql": "CREATE INDEX ledger_delivery_session ON ledger(json_extract(data,'$.data.destination_session_id'),seq) WHERE kind='delivery-intent'"
+    },
+    {
+      "type": "index",
+      "name": "ledger_observation_action",
+      "tbl_name": "ledger",
+      "sql": "CREATE INDEX ledger_observation_action ON ledger(action_id, seq) WHERE kind='observation'"
+    },
+    {
+      "type": "index",
+      "name": "ledger_observation_boundary",
+      "tbl_name": "ledger",
+      "sql": "CREATE INDEX ledger_observation_boundary ON ledger(\n        json_extract(data,'$.data.correlation_key'), json_extract(data,'$.data.phase'), seq\n      ) WHERE kind='observation'"
+    },
+    {
+      "type": "index",
+      "name": "ledger_observation_scope",
+      "tbl_name": "ledger",
+      "sql": "CREATE INDEX ledger_observation_scope ON ledger(action_id, json_extract(data,'$.node_id'), seq) WHERE kind='observation'"
+    },
+    {
+      "type": "index",
+      "name": "ledger_progress",
+      "tbl_name": "ledger",
+      "sql": "CREATE INDEX ledger_progress ON ledger(action_id,json_extract(data,'$.node_id'),seq)\n        WHERE kind IN ('completion','reopen')"
+    },
+    {
+      "type": "index",
+      "name": "ledger_questions",
+      "tbl_name": "ledger",
+      "sql": "CREATE INDEX ledger_questions ON ledger(action_id,seq) WHERE kind='question'"
+    },
+    {
+      "type": "index",
+      "name": "ledger_session",
+      "tbl_name": "ledger",
+      "sql": "CREATE INDEX ledger_session ON ledger(session_id, seq)"
+    },
+    {
+      "type": "index",
+      "name": "ledger_session_node",
+      "tbl_name": "ledger",
+      "sql": "CREATE INDEX ledger_session_node ON ledger(session_id, json_extract(data,'$.node_id'), seq)"
+    },
+    {
+      "type": "index",
+      "name": "primary_delivery_assignment",
+      "tbl_name": "primary_deliveries",
+      "sql": "CREATE INDEX primary_delivery_assignment ON primary_deliveries(assignment_id,intent_seq)"
+    },
+    {
+      "type": "index",
+      "name": "primary_delivery_binding",
+      "tbl_name": "ledger",
+      "sql": "CREATE UNIQUE INDEX primary_delivery_binding ON ledger(json_extract(data,'$.data.intent_id'))\n        WHERE kind='delivery-event' AND json_extract(data,'$.data.phase')='bound'"
+    },
+    {
+      "type": "index",
+      "name": "primary_delivery_bucket",
+      "tbl_name": "primary_deliveries",
+      "sql": "CREATE INDEX primary_delivery_bucket ON primary_deliveries(bucket,intent_seq)"
+    },
+    {
+      "type": "index",
+      "name": "primary_delivery_events",
+      "tbl_name": "ledger",
+      "sql": "CREATE INDEX primary_delivery_events ON ledger(json_extract(data,'$.data.intent_id'),seq) WHERE kind='delivery-event'"
+    },
+    {
+      "type": "index",
+      "name": "primary_delivery_native",
+      "tbl_name": "ledger",
+      "sql": "CREATE UNIQUE INDEX primary_delivery_native ON ledger(json_extract(data,'$.data.native_request.id'))\n        WHERE kind='delivery-event' AND json_extract(data,'$.data.phase')='bound'"
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_action_versions_1",
+      "tbl_name": "action_versions",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_actions_1",
+      "tbl_name": "actions",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_focus_1",
+      "tbl_name": "focus",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_ledger_1",
+      "tbl_name": "ledger",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_plans_1",
+      "tbl_name": "plans",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_primary_deliveries_1",
+      "tbl_name": "primary_deliveries",
+      "sql": null
+    },
+    {
+      "type": "table",
+      "name": "action_versions",
+      "tbl_name": "action_versions",
+      "sql": "CREATE TABLE action_versions (\n      action_id TEXT NOT NULL REFERENCES actions(id), revision INTEGER NOT NULL, data TEXT NOT NULL,\n      PRIMARY KEY(action_id, revision))"
+    },
+    {
+      "type": "table",
+      "name": "actions",
+      "tbl_name": "actions",
+      "sql": "CREATE TABLE actions (id TEXT PRIMARY KEY, data TEXT NOT NULL)"
+    },
+    {
+      "type": "table",
+      "name": "focus",
+      "tbl_name": "focus",
+      "sql": "CREATE TABLE focus (session_id TEXT PRIMARY KEY, data TEXT NOT NULL)"
+    },
+    {
+      "type": "table",
+      "name": "ledger",
+      "tbl_name": "ledger",
+      "sql": "CREATE TABLE ledger (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, action_id TEXT, session_id TEXT NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL)"
+    },
+    {
+      "type": "table",
+      "name": "plans",
+      "tbl_name": "plans",
+      "sql": "CREATE TABLE plans (action_id TEXT NOT NULL REFERENCES actions(id), revision INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(action_id, revision))"
+    },
+    {
+      "type": "table",
+      "name": "primary_deliveries",
+      "tbl_name": "primary_deliveries",
+      "sql": "CREATE TABLE primary_deliveries (intent_id TEXT PRIMARY KEY REFERENCES ledger(id), intent_seq INTEGER NOT NULL, assignment_id TEXT NOT NULL, bucket TEXT NOT NULL,\n  version INTEGER NOT NULL DEFAULT 0, phase TEXT NOT NULL DEFAULT 'pending', attempt_id TEXT,\n  binding_record_id TEXT, latest_event_id TEXT, receipt_id TEXT, started INTEGER NOT NULL DEFAULT 0, native_cancel_event_id TEXT)"
+    },
+    {
+      "type": "table",
+      "name": "sqlite_sequence",
+      "tbl_name": "sqlite_sequence",
+      "sql": "CREATE TABLE sqlite_sequence(name,seq)"
+    }
+  ],
+  "tables": {
+    "action_versions": [
+      {
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "revision": 1,
+        "data": "{\"created_at\":\"2026-10-17T08:11:11.602Z\",\"goal\":\"Only synthetic observations; not production or acceptance evidence\",\"id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"revision\":1,\"state\":\"active\",\"title\":\"SYNTHETIC preservation baseline\"}"
+      }
+    ],
+    "actions": [
+      {
+        "id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "data": "{\"created_at\":\"2026-10-17T08:11:11.602Z\",\"goal\":\"SYNTHETIC changed goal requires reconfirmation\",\"id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"revision\":2,\"state\":\"active\",\"title\":\"SYNTHETIC preservation baseline\"}"
+      },
+      {
+        "id": "0389d94d-afca-428d-b0d9-6b5637681215",
+        "data": "{\"created_at\":\"2026-10-17T08:11:11.603Z\",\"goal\":\"Same agent is not Session membership\",\"id\":\"0389d94d-afca-428d-b0d9-6b5637681215\",\"revision\":1,\"state\":\"active\",\"title\":\"SYNTHETIC unrelated\"}"
+      },
+      {
+        "id": "94c660a4-e0b7-4591-92d6-71b33a21b3d7",
+        "data": "{\"created_at\":\"2026-10-17T08:11:11.603Z\",\"goal\":\"Optional Plan fixture\",\"id\":\"94c660a4-e0b7-4591-92d6-71b33a21b3d7\",\"revision\":1,\"state\":\"active\",\"title\":\"SYNTHETIC no Plan\"}"
+      }
+    ],
+    "focus": [
+      {
+        "session_id": "synthetic-primary",
+        "data": "{\"action_id\":\"94c660a4-e0b7-4591-92d6-71b33a21b3d7\"}"
+      },
+      {
+        "session_id": "synthetic-unrelated",
+        "data": "{\"action_id\":\"0389d94d-afca-428d-b0d9-6b5637681215\"}"
+      },
+      {
+        "session_id": "synthetic-worker",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"node_id\":\"work\"}"
+      },
+      {
+        "session_id": "synthetic-removed-selection",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"node_id\":\"removed\"}"
+      }
+    ],
+    "ledger": [
+      {
+        "seq": 1,
+        "id": "9677854e-ce91-4fba-a82f-35c5fb973102",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-worker",
+        "kind": "observation",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"implementer\",\"created_at\":\"2026-10-17T08:11:11.605Z\",\"data\":{\"correlation_key\":\"synthetic-paired\",\"input_digest\":\"synthetic-input\",\"observer_epoch\":\"synthetic-epoch\",\"phase\":\"started\",\"tool\":\"synthetic-read\"},\"fingerprint\":\"6b7a1ea1f835de509583e0c9e4528478e936bc0bf5106af9abc95a38093c81c8\",\"id\":\"9677854e-ce91-4fba-a82f-35c5fb973102\",\"kind\":\"observation\",\"node_id\":\"work\",\"session_id\":\"synthetic-worker\"}"
+      },
+      {
+        "seq": 2,
+        "id": "e6a819e4-a21b-4ded-852a-fffe3db65875",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-worker",
+        "kind": "observation",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"implementer\",\"created_at\":\"2026-10-17T08:11:11.605Z\",\"data\":{\"attribution\":\"captured-at-start\",\"correlation_key\":\"synthetic-paired\",\"input_digest\":\"synthetic-input\",\"observer_epoch\":\"synthetic-epoch\",\"phase\":\"finished\",\"result_digest\":\"synthetic-output\",\"start_id\":\"9677854e-ce91-4fba-a82f-35c5fb973102\",\"status\":\"completed\",\"tool\":\"synthetic-read\"},\"fingerprint\":\"6b7a1ea1f835de509583e0c9e4528478e936bc0bf5106af9abc95a38093c81c8\",\"id\":\"e6a819e4-a21b-4ded-852a-fffe3db65875\",\"kind\":\"observation\",\"node_id\":\"work\",\"session_id\":\"synthetic-worker\"}"
+      },
+      {
+        "seq": 3,
+        "id": "504f6b6b-8cfc-4ead-bf05-cfcf05cf7486",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-worker",
+        "kind": "observation",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"implementer\",\"created_at\":\"2026-10-17T08:11:11.606Z\",\"data\":{\"correlation_key\":\"synthetic-interrupted\",\"input_digest\":\"synthetic-input\",\"observer_epoch\":\"synthetic-epoch\",\"phase\":\"started\",\"tool\":\"synthetic-read\"},\"fingerprint\":\"6b7a1ea1f835de509583e0c9e4528478e936bc0bf5106af9abc95a38093c81c8\",\"id\":\"504f6b6b-8cfc-4ead-bf05-cfcf05cf7486\",\"kind\":\"observation\",\"node_id\":\"work\",\"session_id\":\"synthetic-worker\"}"
+      },
+      {
+        "seq": 4,
+        "id": "efbbc2a2-7490-485d-9add-1c29cf16b982",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-worker",
+        "kind": "observation",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"implementer\",\"created_at\":\"2026-10-17T08:11:11.606Z\",\"data\":{\"correlation_key\":\"synthetic-reused\",\"input_digest\":\"synthetic-input\",\"observer_epoch\":\"synthetic-epoch\",\"phase\":\"started\",\"tool\":\"synthetic-read\"},\"fingerprint\":\"6b7a1ea1f835de509583e0c9e4528478e936bc0bf5106af9abc95a38093c81c8\",\"id\":\"efbbc2a2-7490-485d-9add-1c29cf16b982\",\"kind\":\"observation\",\"node_id\":\"work\",\"session_id\":\"synthetic-worker\"}"
+      },
+      {
+        "seq": 5,
+        "id": "384a00ab-fdf6-42a6-ac40-a2449daa832c",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-worker",
+        "kind": "observation",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"implementer\",\"created_at\":\"2026-10-17T08:11:11.606Z\",\"data\":{\"correlation_key\":\"synthetic-reused\",\"input_digest\":\"synthetic-input\",\"observer_epoch\":\"synthetic-epoch\",\"phase\":\"started\",\"tool\":\"synthetic-read\"},\"fingerprint\":\"6b7a1ea1f835de509583e0c9e4528478e936bc0bf5106af9abc95a38093c81c8\",\"id\":\"384a00ab-fdf6-42a6-ac40-a2449daa832c\",\"kind\":\"observation\",\"node_id\":\"work\",\"session_id\":\"synthetic-worker\"}"
+      },
+      {
+        "seq": 6,
+        "id": "89eeac50-73cf-4be3-9f75-501e516e47bb",
+        "action_id": null,
+        "session_id": "synthetic-worker",
+        "kind": "observation",
+        "data": "{\"agent\":\"implementer\",\"created_at\":\"2026-10-17T08:11:11.606Z\",\"data\":{\"attribution\":\"ambiguous-host-call; not assigned to current work\",\"correlation_key\":\"synthetic-reused\",\"input_digest\":\"synthetic-input\",\"observer_epoch\":\"synthetic-epoch\",\"phase\":\"finished\",\"status\":\"completed\",\"tool\":\"synthetic-read\"},\"id\":\"89eeac50-73cf-4be3-9f75-501e516e47bb\",\"kind\":\"observation\",\"session_id\":\"synthetic-worker\"}"
+      },
+      {
+        "seq": 7,
+        "id": "02505d2b-cf69-4e15-8b0c-0fcb405dff13",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-worker",
+        "kind": "result",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"implementer\",\"created_at\":\"2026-10-17T08:11:11.607Z\",\"data\":{\"artifact_refs\":[\"fixture://synthetic/evidence\"],\"evidence_ids\":[\"e6a819e4-a21b-4ded-852a-fffe3db65875\"],\"statement\":\"result: SYNTHETIC only; NOT acceptance. Preserve <tags>, | pipes, Unicode 雪🙂 and qualifications.\",\"verification\":\"agent-reported; not independently validated by Loom\"},\"fingerprint\":\"6b7a1ea1f835de509583e0c9e4528478e936bc0bf5106af9abc95a38093c81c8\",\"id\":\"02505d2b-cf69-4e15-8b0c-0fcb405dff13\",\"kind\":\"result\",\"node_id\":\"work\",\"session_id\":\"synthetic-worker\"}"
+      },
+      {
+        "seq": 8,
+        "id": "57e40ff2-70df-4439-91b7-40f3388c6b60",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-worker",
+        "kind": "claim",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"implementer\",\"created_at\":\"2026-10-17T08:11:11.607Z\",\"data\":{\"artifact_refs\":[\"fixture://synthetic/evidence\"],\"evidence_ids\":[\"e6a819e4-a21b-4ded-852a-fffe3db65875\"],\"statement\":\"claim: SYNTHETIC only; NOT acceptance. Preserve <tags>, | pipes, Unicode 雪🙂 and qualifications.\",\"verification\":\"agent-reported; not independently validated by Loom\"},\"fingerprint\":\"6b7a1ea1f835de509583e0c9e4528478e936bc0bf5106af9abc95a38093c81c8\",\"id\":\"57e40ff2-70df-4439-91b7-40f3388c6b60\",\"kind\":\"claim\",\"node_id\":\"work\",\"session_id\":\"synthetic-worker\"}"
+      },
+      {
+        "seq": 9,
+        "id": "4b02b29f-2201-49eb-bbf0-90f289ec0998",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-worker",
+        "kind": "assessment",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"implementer\",\"created_at\":\"2026-10-17T08:11:11.607Z\",\"data\":{\"artifact_refs\":[\"fixture://synthetic/evidence\"],\"evidence_ids\":[\"e6a819e4-a21b-4ded-852a-fffe3db65875\"],\"statement\":\"assessment: SYNTHETIC only; NOT acceptance. Preserve <tags>, | pipes, Unicode 雪🙂 and qualifications.\",\"verdict\":\"inconclusive\",\"verification\":\"agent-reported; not independently validated by Loom\"},\"fingerprint\":\"6b7a1ea1f835de509583e0c9e4528478e936bc0bf5106af9abc95a38093c81c8\",\"id\":\"4b02b29f-2201-49eb-bbf0-90f289ec0998\",\"kind\":\"assessment\",\"node_id\":\"work\",\"session_id\":\"synthetic-worker\"}"
+      },
+      {
+        "seq": 10,
+        "id": "f493b6ec-439c-4c09-b3db-b9a585ab71bc",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-worker",
+        "kind": "qa",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"implementer\",\"created_at\":\"2026-10-17T08:11:11.607Z\",\"data\":{\"artifact_refs\":[\"fixture://synthetic/evidence\"],\"evidence_ids\":[\"e6a819e4-a21b-4ded-852a-fffe3db65875\"],\"statement\":\"qa: SYNTHETIC only; NOT acceptance. Preserve <tags>, | pipes, Unicode 雪🙂 and qualifications.\",\"verdict\":\"inconclusive\",\"verification\":\"agent-reported; not independently validated by Loom\"},\"fingerprint\":\"6b7a1ea1f835de509583e0c9e4528478e936bc0bf5106af9abc95a38093c81c8\",\"id\":\"f493b6ec-439c-4c09-b3db-b9a585ab71bc\",\"kind\":\"qa\",\"node_id\":\"work\",\"session_id\":\"synthetic-worker\"}"
+      },
+      {
+        "seq": 11,
+        "id": "4d21eafe-bf61-4b4f-bad9-7e9799c81c4a",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-primary",
+        "kind": "assignment",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"coordinator\",\"created_at\":\"2026-10-17T08:11:11.609Z\",\"data\":{\"assignment_id\":\"synthetic-assignment\",\"automatic_continuation\":false,\"primary_session_id\":\"synthetic-primary\",\"statement\":\"Explicit work association; does not dispatch or prove execution\",\"work_ref\":{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"action_revision\":1,\"hash\":\"b71b5fb30473e905ef0f1155b1b4bd5a8c191f933b4743a5a27b5b5778850ce4\",\"node_id\":\"work\",\"plan_revision\":1},\"worker_session_id\":\"synthetic-worker\"},\"id\":\"4d21eafe-bf61-4b4f-bad9-7e9799c81c4a\",\"kind\":\"assignment\",\"node_id\":\"work\",\"session_id\":\"synthetic-primary\"}"
+      },
+      {
+        "seq": 12,
+        "id": "63e0b013-886b-47d6-9bd3-c31e157df369",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-worker",
+        "kind": "question",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"implementer\",\"created_at\":\"2026-10-17T08:11:11.609Z\",\"data\":{\"action_revision\":1,\"artifact_refs\":[\"fixture://synthetic/question\"],\"assignment_id\":\"synthetic-assignment\",\"background\":\"No native recipient was contacted\",\"plan_revision\":1,\"respondent\":\"researcher\",\"statement\":\"SYNTHETIC: is this general approval?\",\"work_ref\":{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"action_revision\":1,\"hash\":\"b71b5fb30473e905ef0f1155b1b4bd5a8c191f933b4743a5a27b5b5778850ce4\",\"node_id\":\"work\",\"plan_revision\":1}},\"id\":\"63e0b013-886b-47d6-9bd3-c31e157df369\",\"kind\":\"question\",\"node_id\":\"work\",\"session_id\":\"synthetic-worker\"}"
+      },
+      {
+        "seq": 13,
+        "id": "3d917cfe-6482-4177-b6a7-6009e4a9d4cd",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-research-a",
+        "kind": "answer",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"researcher\",\"created_at\":\"2026-10-17T08:11:11.610Z\",\"data\":{\"artifact_refs\":[\"fixture://synthetic/answer-a\"],\"assignment_id\":\"synthetic-assignment\",\"question_id\":\"63e0b013-886b-47d6-9bd3-c31e157df369\",\"statement\":\"SYNTHETIC preliminary; not approval\",\"verification\":\"Response only; not resolution, approval or execution permission\"},\"id\":\"3d917cfe-6482-4177-b6a7-6009e4a9d4cd\",\"kind\":\"answer\",\"node_id\":\"work\",\"session_id\":\"synthetic-research-a\"}"
+      },
+      {
+        "seq": 14,
+        "id": "1ea89975-7a7d-4543-815c-a76f69015816",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-research-a",
+        "kind": "delivery-intent",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"researcher\",\"created_at\":\"2026-10-17T08:11:11.610Z\",\"data\":{\"answer_id\":\"3d917cfe-6482-4177-b6a7-6009e4a9d4cd\",\"assignment_id\":\"synthetic-assignment\",\"automatic_continuation\":false,\"destination_session_id\":\"synthetic-primary\",\"payload\":{\"answer_id\":\"3d917cfe-6482-4177-b6a7-6009e4a9d4cd\",\"assignment_id\":\"synthetic-assignment\",\"format\":\"loom-answer-notice/v1\",\"primary_session_id\":\"synthetic-primary\",\"question_id\":\"63e0b013-886b-47d6-9bd3-c31e157df369\",\"thread_query\":{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"operation\":\"query\",\"question_id\":\"63e0b013-886b-47d6-9bd3-c31e157df369\",\"view\":\"thread\"},\"work_ref\":{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"action_revision\":1,\"hash\":\"b71b5fb30473e905ef0f1155b1b4bd5a8c191f933b4743a5a27b5b5778850ce4\",\"node_id\":\"work\",\"plan_revision\":1},\"worker_session_id\":\"synthetic-worker\"},\"question_id\":\"63e0b013-886b-47d6-9bd3-c31e157df369\",\"reason\":\"automatic-continuation-not-authorized\",\"state\":\"stored-for-session\",\"transport\":\"not-attempted\"},\"id\":\"1ea89975-7a7d-4543-815c-a76f69015816\",\"kind\":\"delivery-intent\",\"node_id\":\"work\",\"session_id\":\"synthetic-research-a\"}"
+      },
+      {
+        "seq": 15,
+        "id": "8425e925-4a61-4688-87af-5683708e872b",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-research-b",
+        "kind": "answer",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"researcher\",\"created_at\":\"2026-10-17T08:11:11.610Z\",\"data\":{\"artifact_refs\":[],\"assignment_id\":\"synthetic-assignment\",\"question_id\":\"63e0b013-886b-47d6-9bd3-c31e157df369\",\"statement\":\"SYNTHETIC missing-flag compatibility specimen; not approval\",\"verification\":\"Response only; not resolution, approval or execution permission\"},\"id\":\"8425e925-4a61-4688-87af-5683708e872b\",\"kind\":\"answer\",\"node_id\":\"work\",\"session_id\":\"synthetic-research-b\"}"
+      },
+      {
+        "seq": 16,
+        "id": "77b66485-db09-41ee-9d3e-da506ccca0f6",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-research-b",
+        "kind": "delivery-intent",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"researcher\",\"created_at\":\"2026-10-17T08:11:11.610Z\",\"data\":{\"answer_id\":\"8425e925-4a61-4688-87af-5683708e872b\",\"assignment_id\":\"synthetic-assignment\",\"destination_session_id\":\"synthetic-primary\",\"payload\":{\"answer_id\":\"8425e925-4a61-4688-87af-5683708e872b\",\"assignment_id\":\"synthetic-assignment\",\"format\":\"loom-answer-notice/v1\",\"primary_session_id\":\"synthetic-primary\",\"question_id\":\"63e0b013-886b-47d6-9bd3-c31e157df369\",\"thread_query\":{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"operation\":\"query\",\"question_id\":\"63e0b013-886b-47d6-9bd3-c31e157df369\",\"view\":\"thread\"},\"work_ref\":{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"action_revision\":1,\"hash\":\"b71b5fb30473e905ef0f1155b1b4bd5a8c191f933b4743a5a27b5b5778850ce4\",\"node_id\":\"work\",\"plan_revision\":1},\"worker_session_id\":\"synthetic-worker\"},\"question_id\":\"63e0b013-886b-47d6-9bd3-c31e157df369\",\"reason\":\"automatic-continuation-not-authorized\",\"state\":\"stored-for-session\",\"transport\":\"not-attempted\"},\"id\":\"77b66485-db09-41ee-9d3e-da506ccca0f6\",\"kind\":\"delivery-intent\",\"node_id\":\"work\",\"session_id\":\"synthetic-research-b\"}"
+      },
+      {
+        "seq": 17,
+        "id": "14f659e5-a815-458b-83ad-8c7525659750",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-primary",
+        "kind": "continuation-authorization",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"coordinator\",\"created_at\":\"2026-10-17T08:11:11.611Z\",\"data\":{\"assignment_id\":\"synthetic-assignment\",\"assignment_record_id\":\"4d21eafe-bf61-4b4f-bad9-7e9799c81c4a\",\"format\":\"loom-primary-continuation-authorization/v1\",\"mode\":\"primary-native/v1\",\"primary_session_id\":\"synthetic-primary\",\"work_ref\":{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"action_revision\":1,\"hash\":\"b71b5fb30473e905ef0f1155b1b4bd5a8c191f933b4743a5a27b5b5778850ce4\",\"node_id\":\"work\",\"plan_revision\":1},\"worker_session_id\":\"synthetic-worker\"},\"id\":\"14f659e5-a815-458b-83ad-8c7525659750\",\"kind\":\"continuation-authorization\",\"node_id\":\"work\",\"session_id\":\"synthetic-primary\"}"
+      },
+      {
+        "seq": 18,
+        "id": "2d8425db-ec2c-434f-801b-f97bbb0f34df",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-research-b",
+        "kind": "answer",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"researcher\",\"created_at\":\"2026-10-17T08:11:11.611Z\",\"data\":{\"artifact_refs\":[\"fixture://synthetic/correction\"],\"assignment_id\":\"synthetic-assignment\",\"question_id\":\"63e0b013-886b-47d6-9bd3-c31e157df369\",\"statement\":\"SYNTHETIC qualified correction: only this fixture\",\"verification\":\"Response only; not resolution, approval or execution permission\"},\"id\":\"2d8425db-ec2c-434f-801b-f97bbb0f34df\",\"kind\":\"answer\",\"node_id\":\"work\",\"session_id\":\"synthetic-research-b\"}"
+      },
+      {
+        "seq": 19,
+        "id": "233d448d-3257-4763-ba3c-362c1721e5e1",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-research-b",
+        "kind": "delivery-intent",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"researcher\",\"created_at\":\"2026-10-17T08:11:11.612Z\",\"data\":{\"answer_id\":\"2d8425db-ec2c-434f-801b-f97bbb0f34df\",\"assignment_id\":\"synthetic-assignment\",\"authorization_id\":\"14f659e5-a815-458b-83ad-8c7525659750\",\"automatic_continuation\":true,\"destination_session_id\":\"synthetic-primary\",\"payload\":{\"answer_id\":\"2d8425db-ec2c-434f-801b-f97bbb0f34df\",\"assignment_id\":\"synthetic-assignment\",\"format\":\"loom-answer-notice/v1\",\"primary_session_id\":\"synthetic-primary\",\"question_id\":\"63e0b013-886b-47d6-9bd3-c31e157df369\",\"thread_query\":{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"operation\":\"query\",\"question_id\":\"63e0b013-886b-47d6-9bd3-c31e157df369\",\"view\":\"thread\"},\"work_ref\":{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"action_revision\":1,\"hash\":\"b71b5fb30473e905ef0f1155b1b4bd5a8c191f933b4743a5a27b5b5778850ce4\",\"node_id\":\"work\",\"plan_revision\":1},\"worker_session_id\":\"synthetic-worker\"},\"question_id\":\"63e0b013-886b-47d6-9bd3-c31e157df369\",\"reason\":\"authorized-pending\",\"sender_policy\":\"loom-primary-native-sender/v1\",\"state\":\"stored-for-session\",\"transport\":\"not-attempted\"},\"id\":\"233d448d-3257-4763-ba3c-362c1721e5e1\",\"kind\":\"delivery-intent\",\"node_id\":\"work\",\"session_id\":\"synthetic-research-b\"}"
+      },
+      {
+        "seq": 20,
+        "id": "f407260a-bcfd-4421-9509-bd864b2444ef",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-primary",
+        "kind": "delivery-event",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"loom-primary-sender\",\"created_at\":\"2026-10-17T08:11:11.613Z\",\"data\":{\"assignment_id\":\"synthetic-assignment\",\"authorization_id\":\"14f659e5-a815-458b-83ad-8c7525659750\",\"envelope_digest\":\"7d630915cedf394655e7332e6019f385d2a8bbb478e1b5708e28ca18cd763743\",\"format\":\"loom-primary-delivery-event/v1\",\"intent_id\":\"233d448d-3257-4763-ba3c-362c1721e5e1\",\"native_request\":{\"delivery\":\"steer\",\"description\":\"Loom answer available\",\"id\":\"msg_loom_87cb82791c5aac034a8251c46cd1b6725126489a\",\"metadata\":{\"assignment_id\":\"synthetic-assignment\",\"authorization_id\":\"14f659e5-a815-458b-83ad-8c7525659750\",\"delivery_id\":\"233d448d-3257-4763-ba3c-362c1721e5e1\",\"format\":\"loom-primary-answer-input/v1\",\"payload_digest\":\"e0aa7807af9f943c640d2830bdadbb9383473d0f16e624180837a75006123c21\",\"source\":\"loom\"},\"resume\":true,\"sessionID\":\"synthetic-primary\",\"text\":\"[Loom primary-native/v1]\\n{\\\"authorization_id\\\":\\\"14f659e5-a815-458b-83ad-8c7525659750\\\",\\\"delivery_id\\\":\\\"233d448d-3257-4763-ba3c-362c1721e5e1\\\",\\\"intent_payload\\\":{\\\"answer_id\\\":\\\"2d8425db-ec2c-434f-801b-f97bbb0f34df\\\",\\\"assignment_id\\\":\\\"synthetic-assignment\\\",\\\"format\\\":\\\"loom-answer-notice/v1\\\",\\\"primary_session_id\\\":\\\"synthetic-primary\\\",\\\"question_id\\\":\\\"63e0b013-886b-47d6-9bd3-c31e157df369\\\",\\\"thread_query\\\":{\\\"action_id\\\":\\\"d3583cc2-04bc-40db-bf94-50276730303b\\\",\\\"operation\\\":\\\"query\\\",\\\"question_id\\\":\\\"63e0b013-886b-47d6-9bd3-c31e157df369\\\",\\\"view\\\":\\\"thread\\\"},\\\"work_ref\\\":{\\\"action_id\\\":\\\"d3583cc2-04bc-40db-bf94-50276730303b\\\",\\\"action_revision\\\":1,\\\"hash\\\":\\\"b71b5fb30473e905ef0f1155b1b4bd5a8c191f933b4743a5a27b5b5778850ce4\\\",\\\"node_id\\\":\\\"work\\\",\\\"plan_revision\\\":1},\\\"worker_session_id\\\":\\\"synthetic-worker\\\"}}\\nRead the exact assignment and delivery through loom_record query views assignments and deliveries, then the full authoritative question thread, following next_after pages. Check whether continuation was withdrawn or this assignment already completed or is already running. An answer is a response, not approval. If continuation is still appropriate, use native subagent delegation to the exact recorded Worker Session with the retained original work_ref. Do not directly resume Worker, recreate the answer to retry delivery, duplicate ongoing work, or treat a native run ending as assignment completion. Recheck withdrawal before re-delegation. Retrieve the exact explicit completion and its results before the next coordinating action.\"},\"payload_digest\":\"e0aa7807af9f943c640d2830bdadbb9383473d0f16e624180837a75006123c21\",\"phase\":\"bound\",\"renderer_version\":\"loom-primary-answer-input/v1\"},\"id\":\"f407260a-bcfd-4421-9509-bd864b2444ef\",\"kind\":\"delivery-event\",\"node_id\":\"work\",\"session_id\":\"synthetic-primary\"}"
+      },
+      {
+        "seq": 21,
+        "id": "13bf2de4-1c33-4948-a9db-07cfe30e85a0",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-primary",
+        "kind": "delivery-event",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"loom-primary-sender\",\"created_at\":\"2026-10-17T08:11:11.613Z\",\"data\":{\"assignment_id\":\"synthetic-assignment\",\"attempt_id\":\"7f55a2c9-e824-4dca-b2c3-54b06cb037d5\",\"binding_record_id\":\"f407260a-bcfd-4421-9509-bd864b2444ef\",\"format\":\"loom-primary-delivery-event/v1\",\"intent_id\":\"233d448d-3257-4763-ba3c-362c1721e5e1\",\"phase\":\"preparing\"},\"id\":\"13bf2de4-1c33-4948-a9db-07cfe30e85a0\",\"kind\":\"delivery-event\",\"node_id\":\"work\",\"session_id\":\"synthetic-primary\"}"
+      },
+      {
+        "seq": 22,
+        "id": "e576ac11-ce1f-47a1-b1a4-54fe9f9d8a62",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-primary",
+        "kind": "delivery-event",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"loom-primary-sender\",\"created_at\":\"2026-10-17T08:11:11.614Z\",\"data\":{\"assignment_id\":\"synthetic-assignment\",\"attempt_id\":\"7f55a2c9-e824-4dca-b2c3-54b06cb037d5\",\"binding_record_id\":\"f407260a-bcfd-4421-9509-bd864b2444ef\",\"format\":\"loom-primary-delivery-event/v1\",\"intent_id\":\"233d448d-3257-4763-ba3c-362c1721e5e1\",\"phase\":\"send-started\"},\"id\":\"e576ac11-ce1f-47a1-b1a4-54fe9f9d8a62\",\"kind\":\"delivery-event\",\"node_id\":\"work\",\"session_id\":\"synthetic-primary\"}"
+      },
+      {
+        "seq": 23,
+        "id": "b03d2805-a8db-4cd1-bcc9-a046d87e39c7",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-research-a",
+        "kind": "answer",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"researcher\",\"created_at\":\"2026-10-17T08:11:11.615Z\",\"data\":{\"artifact_refs\":[],\"assignment_id\":\"synthetic-assignment\",\"question_id\":\"63e0b013-886b-47d6-9bd3-c31e157df369\",\"statement\":\"SYNTHETIC pending local intent; never dispatched\",\"verification\":\"Response only; not resolution, approval or execution permission\"},\"id\":\"b03d2805-a8db-4cd1-bcc9-a046d87e39c7\",\"kind\":\"answer\",\"node_id\":\"work\",\"session_id\":\"synthetic-research-a\"}"
+      },
+      {
+        "seq": 24,
+        "id": "381c9b5e-5ec4-4f8e-bbbb-03084232aed3",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-research-a",
+        "kind": "delivery-intent",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"researcher\",\"created_at\":\"2026-10-17T08:11:11.615Z\",\"data\":{\"answer_id\":\"b03d2805-a8db-4cd1-bcc9-a046d87e39c7\",\"assignment_id\":\"synthetic-assignment\",\"authorization_id\":\"14f659e5-a815-458b-83ad-8c7525659750\",\"automatic_continuation\":true,\"destination_session_id\":\"synthetic-primary\",\"payload\":{\"answer_id\":\"b03d2805-a8db-4cd1-bcc9-a046d87e39c7\",\"assignment_id\":\"synthetic-assignment\",\"format\":\"loom-answer-notice/v1\",\"primary_session_id\":\"synthetic-primary\",\"question_id\":\"63e0b013-886b-47d6-9bd3-c31e157df369\",\"thread_query\":{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"operation\":\"query\",\"question_id\":\"63e0b013-886b-47d6-9bd3-c31e157df369\",\"view\":\"thread\"},\"work_ref\":{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"action_revision\":1,\"hash\":\"b71b5fb30473e905ef0f1155b1b4bd5a8c191f933b4743a5a27b5b5778850ce4\",\"node_id\":\"work\",\"plan_revision\":1},\"worker_session_id\":\"synthetic-worker\"},\"question_id\":\"63e0b013-886b-47d6-9bd3-c31e157df369\",\"reason\":\"authorized-pending\",\"sender_policy\":\"loom-primary-native-sender/v1\",\"state\":\"stored-for-session\",\"transport\":\"not-attempted\"},\"id\":\"381c9b5e-5ec4-4f8e-bbbb-03084232aed3\",\"kind\":\"delivery-intent\",\"node_id\":\"work\",\"session_id\":\"synthetic-research-a\"}"
+      },
+      {
+        "seq": 25,
+        "id": "b927d7e6-fbd3-4f85-8360-e4e759df7556",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-primary",
+        "kind": "continuation-withdrawal",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"coordinator\",\"created_at\":\"2026-10-17T08:11:11.616Z\",\"data\":{\"assignment_id\":\"synthetic-assignment\",\"assignment_record_id\":\"4d21eafe-bf61-4b4f-bad9-7e9799c81c4a\",\"authorization_id\":\"14f659e5-a815-458b-83ad-8c7525659750\",\"format\":\"loom-primary-continuation-withdrawal/v1\",\"primary_session_id\":\"synthetic-primary\",\"statement\":\"SYNTHETIC withdrawal; no native execution\"},\"id\":\"b927d7e6-fbd3-4f85-8360-e4e759df7556\",\"kind\":\"continuation-withdrawal\",\"node_id\":\"work\",\"session_id\":\"synthetic-primary\"}"
+      },
+      {
+        "seq": 26,
+        "id": "f72ecb3e-5d83-445c-8750-54bd15cc6421",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-research-b",
+        "kind": "answer",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"researcher\",\"created_at\":\"2026-10-17T08:11:11.617Z\",\"data\":{\"artifact_refs\":[],\"assignment_id\":\"synthetic-assignment\",\"question_id\":\"63e0b013-886b-47d6-9bd3-c31e157df369\",\"statement\":\"SYNTHETIC after withdrawal\",\"verification\":\"Response only; not resolution, approval or execution permission\"},\"id\":\"f72ecb3e-5d83-445c-8750-54bd15cc6421\",\"kind\":\"answer\",\"node_id\":\"work\",\"session_id\":\"synthetic-research-b\"}"
+      },
+      {
+        "seq": 27,
+        "id": "6671213f-e265-489e-860d-1933e2f0a326",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-research-b",
+        "kind": "delivery-intent",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"researcher\",\"created_at\":\"2026-10-17T08:11:11.617Z\",\"data\":{\"answer_id\":\"f72ecb3e-5d83-445c-8750-54bd15cc6421\",\"assignment_id\":\"synthetic-assignment\",\"automatic_continuation\":false,\"destination_session_id\":\"synthetic-primary\",\"payload\":{\"answer_id\":\"f72ecb3e-5d83-445c-8750-54bd15cc6421\",\"assignment_id\":\"synthetic-assignment\",\"format\":\"loom-answer-notice/v1\",\"primary_session_id\":\"synthetic-primary\",\"question_id\":\"63e0b013-886b-47d6-9bd3-c31e157df369\",\"thread_query\":{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"operation\":\"query\",\"question_id\":\"63e0b013-886b-47d6-9bd3-c31e157df369\",\"view\":\"thread\"},\"work_ref\":{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"action_revision\":1,\"hash\":\"b71b5fb30473e905ef0f1155b1b4bd5a8c191f933b4743a5a27b5b5778850ce4\",\"node_id\":\"work\",\"plan_revision\":1},\"worker_session_id\":\"synthetic-worker\"},\"question_id\":\"63e0b013-886b-47d6-9bd3-c31e157df369\",\"reason\":\"continuation-withdrawn\",\"state\":\"stored-for-session\",\"transport\":\"not-attempted\"},\"id\":\"6671213f-e265-489e-860d-1933e2f0a326\",\"kind\":\"delivery-intent\",\"node_id\":\"work\",\"session_id\":\"synthetic-research-b\"}"
+      },
+      {
+        "seq": 28,
+        "id": "186fb43d-e9e3-446f-b116-28a0cdea7642",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-worker",
+        "kind": "completion",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"implementer\",\"created_at\":\"2026-10-17T08:11:11.618Z\",\"data\":{\"artifact_refs\":[\"fixture://synthetic/completion\"],\"assignment_id\":\"synthetic-assignment\",\"statement\":\"SYNTHETIC ORIGINAL work only; not acceptance\",\"verification\":\"Performing agent reports work finished; not acceptance or proof\",\"work_goal\":{\"goal\":\"Only synthetic observations; not production or acceptance evidence\",\"title\":\"SYNTHETIC preservation baseline\"},\"work_ref\":{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"action_revision\":1,\"hash\":\"b71b5fb30473e905ef0f1155b1b4bd5a8c191f933b4743a5a27b5b5778850ce4\",\"node_id\":\"work\",\"plan_revision\":1}},\"id\":\"186fb43d-e9e3-446f-b116-28a0cdea7642\",\"kind\":\"completion\",\"node_id\":\"work\",\"session_id\":\"synthetic-worker\"}"
+      },
+      {
+        "seq": 29,
+        "id": "830b1f79-b8e2-4050-a399-3d619d258177",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-worker",
+        "kind": "completion",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"implementer\",\"created_at\":\"2026-10-17T08:11:11.618Z\",\"data\":{\"artifact_refs\":[],\"statement\":\"SYNTHETIC removed-node report\",\"verification\":\"Performing agent reports work finished; not acceptance or proof\",\"work_goal\":{\"goal\":\"Only synthetic observations; not production or acceptance evidence\",\"title\":\"SYNTHETIC preservation baseline\"},\"work_ref\":{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"action_revision\":1,\"hash\":\"915460e35638d3c8b1a564d9e224789947ae9068d8d1bf5bdc46a42342f46f8a\",\"node_id\":\"removed\",\"plan_revision\":1}},\"id\":\"830b1f79-b8e2-4050-a399-3d619d258177\",\"kind\":\"completion\",\"node_id\":\"removed\",\"session_id\":\"synthetic-worker\"}"
+      },
+      {
+        "seq": 30,
+        "id": "cf32b6db-896e-4c2a-bbd3-3bbcdf61266c",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-worker",
+        "kind": "completion",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"implementer\",\"created_at\":\"2026-10-17T08:11:11.618Z\",\"data\":{\"artifact_refs\":[],\"statement\":\"SYNTHETIC before reopening\",\"verification\":\"Performing agent reports work finished; not acceptance or proof\",\"work_goal\":{\"goal\":\"Only synthetic observations; not production or acceptance evidence\",\"title\":\"SYNTHETIC preservation baseline\"},\"work_ref\":{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"action_revision\":1,\"hash\":\"43b62555684eeece7b2c12d5b028d30894032e52bce80e213fbd4c2fb9e8c5f4\",\"node_id\":\"reopened\",\"plan_revision\":1}},\"id\":\"cf32b6db-896e-4c2a-bbd3-3bbcdf61266c\",\"kind\":\"completion\",\"node_id\":\"reopened\",\"session_id\":\"synthetic-worker\"}"
+      },
+      {
+        "seq": 31,
+        "id": "dc88aac5-cbc5-4673-aa25-a9a6794bdb6e",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-primary",
+        "kind": "reopen",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"coordinator\",\"created_at\":\"2026-10-17T08:11:11.619Z\",\"data\":{\"plan_revision\":1,\"previous_report_id\":\"cf32b6db-896e-4c2a-bbd3-3bbcdf61266c\",\"statement\":\"SYNTHETIC explicitly reopened, no acceptance cascade\"},\"id\":\"dc88aac5-cbc5-4673-aa25-a9a6794bdb6e\",\"kind\":\"reopen\",\"node_id\":\"reopened\",\"session_id\":\"synthetic-primary\"}"
+      },
+      {
+        "seq": 32,
+        "id": "b006098a-a450-4d9e-9e26-22ba39441f23",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-late",
+        "kind": "answer",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"other-author\",\"created_at\":\"2026-10-17T08:11:11.620Z\",\"data\":{\"artifact_refs\":[],\"assignment_id\":\"synthetic-assignment\",\"question_id\":\"63e0b013-886b-47d6-9bd3-c31e157df369\",\"statement\":\"SYNTHETIC late author retains original association\",\"verification\":\"Response only; not resolution, approval or execution permission\"},\"id\":\"b006098a-a450-4d9e-9e26-22ba39441f23\",\"kind\":\"answer\",\"node_id\":\"work\",\"session_id\":\"synthetic-late\"}"
+      },
+      {
+        "seq": 33,
+        "id": "cdfbc7c7-b24f-4e60-b9bc-eab52645438f",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-late",
+        "kind": "delivery-intent",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"other-author\",\"created_at\":\"2026-10-17T08:11:11.620Z\",\"data\":{\"answer_id\":\"b006098a-a450-4d9e-9e26-22ba39441f23\",\"assignment_id\":\"synthetic-assignment\",\"automatic_continuation\":false,\"destination_session_id\":\"synthetic-primary\",\"payload\":{\"answer_id\":\"b006098a-a450-4d9e-9e26-22ba39441f23\",\"assignment_id\":\"synthetic-assignment\",\"format\":\"loom-answer-notice/v1\",\"primary_session_id\":\"synthetic-primary\",\"question_id\":\"63e0b013-886b-47d6-9bd3-c31e157df369\",\"thread_query\":{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"operation\":\"query\",\"question_id\":\"63e0b013-886b-47d6-9bd3-c31e157df369\",\"view\":\"thread\"},\"work_ref\":{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"action_revision\":1,\"hash\":\"b71b5fb30473e905ef0f1155b1b4bd5a8c191f933b4743a5a27b5b5778850ce4\",\"node_id\":\"work\",\"plan_revision\":1},\"worker_session_id\":\"synthetic-worker\"},\"question_id\":\"63e0b013-886b-47d6-9bd3-c31e157df369\",\"reason\":\"continuation-withdrawn\",\"state\":\"stored-for-session\",\"transport\":\"not-attempted\"},\"id\":\"cdfbc7c7-b24f-4e60-b9bc-eab52645438f\",\"kind\":\"delivery-intent\",\"node_id\":\"work\",\"session_id\":\"synthetic-late\"}"
+      },
+      {
+        "seq": 34,
+        "id": "041816f6-a357-4f93-9f99-a37390838cb3",
+        "action_id": "94c660a4-e0b7-4591-92d6-71b33a21b3d7",
+        "session_id": "synthetic-primary",
+        "kind": "question",
+        "data": "{\"action_id\":\"94c660a4-e0b7-4591-92d6-71b33a21b3d7\",\"agent\":\"coordinator\",\"created_at\":\"2026-10-17T08:11:11.620Z\",\"data\":{\"action_revision\":1,\"artifact_refs\":[],\"plan_revision\":0,\"respondent\":\"researcher\",\"statement\":\"SYNTHETIC action-only question\"},\"id\":\"041816f6-a357-4f93-9f99-a37390838cb3\",\"kind\":\"question\",\"session_id\":\"synthetic-primary\"}"
+      },
+      {
+        "seq": 35,
+        "id": "b11abbad-fd2b-4864-80aa-2312f54a7fe3",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-primary",
+        "kind": "assignment",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"coordinator\",\"created_at\":\"2026-10-17T08:11:11.621Z\",\"data\":{\"assignment_id\":\"synthetic-pending-assignment\",\"automatic_continuation\":false,\"primary_session_id\":\"synthetic-primary\",\"statement\":\"Explicit work association; does not dispatch or prove execution\",\"work_ref\":{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"action_revision\":2,\"hash\":\"2ed05f9263c7c123f7395aaea073747f3da080a89fdaba79c8dbe1b20049ffe1\",\"node_id\":\"research\",\"plan_revision\":3},\"worker_session_id\":\"synthetic-worker\"},\"id\":\"b11abbad-fd2b-4864-80aa-2312f54a7fe3\",\"kind\":\"assignment\",\"node_id\":\"research\",\"session_id\":\"synthetic-primary\"}"
+      },
+      {
+        "seq": 36,
+        "id": "ba340889-47b6-44b1-ac65-ea226a09e8d8",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-worker",
+        "kind": "question",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"implementer\",\"created_at\":\"2026-10-17T08:11:11.621Z\",\"data\":{\"action_revision\":2,\"artifact_refs\":[],\"assignment_id\":\"synthetic-pending-assignment\",\"plan_revision\":3,\"respondent\":\"researcher\",\"statement\":\"SYNTHETIC pending assignment; never send from this fixture\",\"work_ref\":{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"action_revision\":2,\"hash\":\"2ed05f9263c7c123f7395aaea073747f3da080a89fdaba79c8dbe1b20049ffe1\",\"node_id\":\"research\",\"plan_revision\":3}},\"id\":\"ba340889-47b6-44b1-ac65-ea226a09e8d8\",\"kind\":\"question\",\"node_id\":\"research\",\"session_id\":\"synthetic-worker\"}"
+      },
+      {
+        "seq": 37,
+        "id": "7548d5b9-9865-4ed8-a80a-926382e4e1e3",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-primary",
+        "kind": "continuation-authorization",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"coordinator\",\"created_at\":\"2026-10-17T08:11:11.621Z\",\"data\":{\"assignment_id\":\"synthetic-pending-assignment\",\"assignment_record_id\":\"b11abbad-fd2b-4864-80aa-2312f54a7fe3\",\"format\":\"loom-primary-continuation-authorization/v1\",\"mode\":\"primary-native/v1\",\"primary_session_id\":\"synthetic-primary\",\"work_ref\":{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"action_revision\":2,\"hash\":\"2ed05f9263c7c123f7395aaea073747f3da080a89fdaba79c8dbe1b20049ffe1\",\"node_id\":\"research\",\"plan_revision\":3},\"worker_session_id\":\"synthetic-worker\"},\"id\":\"7548d5b9-9865-4ed8-a80a-926382e4e1e3\",\"kind\":\"continuation-authorization\",\"node_id\":\"research\",\"session_id\":\"synthetic-primary\"}"
+      },
+      {
+        "seq": 38,
+        "id": "1826b1b8-ec58-4ded-b948-cd09e7b5d21b",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-research-a",
+        "kind": "answer",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"researcher\",\"created_at\":\"2026-10-17T08:11:11.622Z\",\"data\":{\"artifact_refs\":[],\"assignment_id\":\"synthetic-pending-assignment\",\"question_id\":\"ba340889-47b6-44b1-ac65-ea226a09e8d8\",\"statement\":\"SYNTHETIC local uncertain fence, NOT native admission\",\"verification\":\"Response only; not resolution, approval or execution permission\"},\"id\":\"1826b1b8-ec58-4ded-b948-cd09e7b5d21b\",\"kind\":\"answer\",\"node_id\":\"research\",\"session_id\":\"synthetic-research-a\"}"
+      },
+      {
+        "seq": 39,
+        "id": "bc88e7dd-679e-439d-89c4-2add7d1502c7",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-research-a",
+        "kind": "delivery-intent",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"researcher\",\"created_at\":\"2026-10-17T08:11:11.622Z\",\"data\":{\"answer_id\":\"1826b1b8-ec58-4ded-b948-cd09e7b5d21b\",\"assignment_id\":\"synthetic-pending-assignment\",\"authorization_id\":\"7548d5b9-9865-4ed8-a80a-926382e4e1e3\",\"automatic_continuation\":true,\"destination_session_id\":\"synthetic-primary\",\"payload\":{\"answer_id\":\"1826b1b8-ec58-4ded-b948-cd09e7b5d21b\",\"assignment_id\":\"synthetic-pending-assignment\",\"format\":\"loom-answer-notice/v1\",\"primary_session_id\":\"synthetic-primary\",\"question_id\":\"ba340889-47b6-44b1-ac65-ea226a09e8d8\",\"thread_query\":{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"operation\":\"query\",\"question_id\":\"ba340889-47b6-44b1-ac65-ea226a09e8d8\",\"view\":\"thread\"},\"work_ref\":{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"action_revision\":2,\"hash\":\"2ed05f9263c7c123f7395aaea073747f3da080a89fdaba79c8dbe1b20049ffe1\",\"node_id\":\"research\",\"plan_revision\":3},\"worker_session_id\":\"synthetic-worker\"},\"question_id\":\"ba340889-47b6-44b1-ac65-ea226a09e8d8\",\"reason\":\"authorized-pending\",\"sender_policy\":\"loom-primary-native-sender/v1\",\"state\":\"stored-for-session\",\"transport\":\"not-attempted\"},\"id\":\"bc88e7dd-679e-439d-89c4-2add7d1502c7\",\"kind\":\"delivery-intent\",\"node_id\":\"research\",\"session_id\":\"synthetic-research-a\"}"
+      },
+      {
+        "seq": 40,
+        "id": "6620903a-f02f-4555-9b75-36b95878f44c",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-primary",
+        "kind": "delivery-event",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"loom-primary-sender\",\"created_at\":\"2026-10-17T08:11:11.622Z\",\"data\":{\"assignment_id\":\"synthetic-pending-assignment\",\"authorization_id\":\"7548d5b9-9865-4ed8-a80a-926382e4e1e3\",\"envelope_digest\":\"badbdf9400a19bbdc42fd0a44b0b32a7aede1573c76f8f6a0ba3ff106075683e\",\"format\":\"loom-primary-delivery-event/v1\",\"intent_id\":\"bc88e7dd-679e-439d-89c4-2add7d1502c7\",\"native_request\":{\"delivery\":\"steer\",\"description\":\"Loom answer available\",\"id\":\"msg_loom_a585a04e8dbb5bde201fc0c77389e422b62c1dfd\",\"metadata\":{\"assignment_id\":\"synthetic-pending-assignment\",\"authorization_id\":\"7548d5b9-9865-4ed8-a80a-926382e4e1e3\",\"delivery_id\":\"bc88e7dd-679e-439d-89c4-2add7d1502c7\",\"format\":\"loom-primary-answer-input/v1\",\"payload_digest\":\"f4b9989adedd5e663e0768386ad333c9088e26410abbae73098f90c38ca2b4ec\",\"source\":\"loom\"},\"resume\":true,\"sessionID\":\"synthetic-primary\",\"text\":\"[Loom primary-native/v1]\\n{\\\"authorization_id\\\":\\\"7548d5b9-9865-4ed8-a80a-926382e4e1e3\\\",\\\"delivery_id\\\":\\\"bc88e7dd-679e-439d-89c4-2add7d1502c7\\\",\\\"intent_payload\\\":{\\\"answer_id\\\":\\\"1826b1b8-ec58-4ded-b948-cd09e7b5d21b\\\",\\\"assignment_id\\\":\\\"synthetic-pending-assignment\\\",\\\"format\\\":\\\"loom-answer-notice/v1\\\",\\\"primary_session_id\\\":\\\"synthetic-primary\\\",\\\"question_id\\\":\\\"ba340889-47b6-44b1-ac65-ea226a09e8d8\\\",\\\"thread_query\\\":{\\\"action_id\\\":\\\"d3583cc2-04bc-40db-bf94-50276730303b\\\",\\\"operation\\\":\\\"query\\\",\\\"question_id\\\":\\\"ba340889-47b6-44b1-ac65-ea226a09e8d8\\\",\\\"view\\\":\\\"thread\\\"},\\\"work_ref\\\":{\\\"action_id\\\":\\\"d3583cc2-04bc-40db-bf94-50276730303b\\\",\\\"action_revision\\\":2,\\\"hash\\\":\\\"2ed05f9263c7c123f7395aaea073747f3da080a89fdaba79c8dbe1b20049ffe1\\\",\\\"node_id\\\":\\\"research\\\",\\\"plan_revision\\\":3},\\\"worker_session_id\\\":\\\"synthetic-worker\\\"}}\\nRead the exact assignment and delivery through loom_record query views assignments and deliveries, then the full authoritative question thread, following next_after pages. Check whether continuation was withdrawn or this assignment already completed or is already running. An answer is a response, not approval. If continuation is still appropriate, use native subagent delegation to the exact recorded Worker Session with the retained original work_ref. Do not directly resume Worker, recreate the answer to retry delivery, duplicate ongoing work, or treat a native run ending as assignment completion. Recheck withdrawal before re-delegation. Retrieve the exact explicit completion and its results before the next coordinating action.\"},\"payload_digest\":\"f4b9989adedd5e663e0768386ad333c9088e26410abbae73098f90c38ca2b4ec\",\"phase\":\"bound\",\"renderer_version\":\"loom-primary-answer-input/v1\"},\"id\":\"6620903a-f02f-4555-9b75-36b95878f44c\",\"kind\":\"delivery-event\",\"node_id\":\"research\",\"session_id\":\"synthetic-primary\"}"
+      },
+      {
+        "seq": 41,
+        "id": "0b05883a-e2dd-4427-862d-d8b5d45fa864",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-primary",
+        "kind": "delivery-event",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"loom-primary-sender\",\"created_at\":\"2026-10-17T08:11:11.623Z\",\"data\":{\"assignment_id\":\"synthetic-pending-assignment\",\"attempt_id\":\"000ca34c-1776-4995-8f58-35772d0b4063\",\"binding_record_id\":\"6620903a-f02f-4555-9b75-36b95878f44c\",\"format\":\"loom-primary-delivery-event/v1\",\"intent_id\":\"bc88e7dd-679e-439d-89c4-2add7d1502c7\",\"phase\":\"preparing\"},\"id\":\"0b05883a-e2dd-4427-862d-d8b5d45fa864\",\"kind\":\"delivery-event\",\"node_id\":\"research\",\"session_id\":\"synthetic-primary\"}"
+      },
+      {
+        "seq": 42,
+        "id": "869d0da1-06e2-4a38-ae51-ddcd78b272d2",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-primary",
+        "kind": "delivery-event",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"loom-primary-sender\",\"created_at\":\"2026-10-17T08:11:11.623Z\",\"data\":{\"assignment_id\":\"synthetic-pending-assignment\",\"attempt_id\":\"000ca34c-1776-4995-8f58-35772d0b4063\",\"binding_record_id\":\"6620903a-f02f-4555-9b75-36b95878f44c\",\"format\":\"loom-primary-delivery-event/v1\",\"intent_id\":\"bc88e7dd-679e-439d-89c4-2add7d1502c7\",\"phase\":\"send-started\"},\"id\":\"869d0da1-06e2-4a38-ae51-ddcd78b272d2\",\"kind\":\"delivery-event\",\"node_id\":\"research\",\"session_id\":\"synthetic-primary\"}"
+      },
+      {
+        "seq": 43,
+        "id": "838caf8b-d1e7-45bd-8b81-98dcea81800c",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-research-b",
+        "kind": "answer",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"researcher\",\"created_at\":\"2026-10-17T08:11:11.624Z\",\"data\":{\"artifact_refs\":[],\"assignment_id\":\"synthetic-pending-assignment\",\"question_id\":\"ba340889-47b6-44b1-ac65-ea226a09e8d8\",\"statement\":\"SYNTHETIC active pending row; no native send\",\"verification\":\"Response only; not resolution, approval or execution permission\"},\"id\":\"838caf8b-d1e7-45bd-8b81-98dcea81800c\",\"kind\":\"answer\",\"node_id\":\"research\",\"session_id\":\"synthetic-research-b\"}"
+      },
+      {
+        "seq": 44,
+        "id": "df1d4fc7-e159-47bf-b1e8-996ab2e70f67",
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "session_id": "synthetic-research-b",
+        "kind": "delivery-intent",
+        "data": "{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"agent\":\"researcher\",\"created_at\":\"2026-10-17T08:11:11.624Z\",\"data\":{\"answer_id\":\"838caf8b-d1e7-45bd-8b81-98dcea81800c\",\"assignment_id\":\"synthetic-pending-assignment\",\"authorization_id\":\"7548d5b9-9865-4ed8-a80a-926382e4e1e3\",\"automatic_continuation\":true,\"destination_session_id\":\"synthetic-primary\",\"payload\":{\"answer_id\":\"838caf8b-d1e7-45bd-8b81-98dcea81800c\",\"assignment_id\":\"synthetic-pending-assignment\",\"format\":\"loom-answer-notice/v1\",\"primary_session_id\":\"synthetic-primary\",\"question_id\":\"ba340889-47b6-44b1-ac65-ea226a09e8d8\",\"thread_query\":{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"operation\":\"query\",\"question_id\":\"ba340889-47b6-44b1-ac65-ea226a09e8d8\",\"view\":\"thread\"},\"work_ref\":{\"action_id\":\"d3583cc2-04bc-40db-bf94-50276730303b\",\"action_revision\":2,\"hash\":\"2ed05f9263c7c123f7395aaea073747f3da080a89fdaba79c8dbe1b20049ffe1\",\"node_id\":\"research\",\"plan_revision\":3},\"worker_session_id\":\"synthetic-worker\"},\"question_id\":\"ba340889-47b6-44b1-ac65-ea226a09e8d8\",\"reason\":\"authorized-pending\",\"sender_policy\":\"loom-primary-native-sender/v1\",\"state\":\"stored-for-session\",\"transport\":\"not-attempted\"},\"id\":\"df1d4fc7-e159-47bf-b1e8-996ab2e70f67\",\"kind\":\"delivery-intent\",\"node_id\":\"research\",\"session_id\":\"synthetic-research-b\"}"
+      }
+    ],
+    "plans": [
+      {
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "revision": 1,
+        "data": "{\"nodes\":[{\"id\":\"phase\",\"kind\":\"phase\",\"title\":\"Synthetic phase\"},{\"id\":\"research\",\"kind\":\"task\",\"parent\":\"phase\",\"title\":\"Synthetic research\"},{\"depends_on\":[\"research\"],\"id\":\"work\",\"kind\":\"task\",\"parent\":\"phase\",\"title\":\"Synthetic work\"},{\"id\":\"removed\",\"kind\":\"task\",\"parent\":\"phase\",\"title\":\"Synthetic removed\"},{\"id\":\"reopened\",\"kind\":\"task\",\"parent\":\"phase\",\"title\":\"Synthetic reopened\"}],\"revision\":1}"
+      },
+      {
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "revision": 2,
+        "data": "{\"nodes\":[{\"id\":\"phase\",\"kind\":\"phase\",\"title\":\"Synthetic phase\"},{\"id\":\"research\",\"kind\":\"task\",\"parent\":\"phase\",\"title\":\"Synthetic research\"},{\"depends_on\":[\"research\"],\"id\":\"work\",\"kind\":\"task\",\"parent\":\"phase\",\"title\":\"Synthetic work\"},{\"id\":\"removed\",\"kind\":\"task\",\"parent\":\"phase\",\"title\":\"Synthetic removed\"},{\"id\":\"reopened\",\"kind\":\"task\",\"parent\":\"phase\",\"title\":\"Unrelated synthetic rename\"}],\"revision\":2}"
+      },
+      {
+        "action_id": "d3583cc2-04bc-40db-bf94-50276730303b",
+        "revision": 3,
+        "data": "{\"nodes\":[{\"id\":\"phase\",\"kind\":\"phase\",\"title\":\"Synthetic phase\"},{\"id\":\"research\",\"kind\":\"task\",\"parent\":\"phase\",\"title\":\"Synthetic research\"},{\"criteria\":[\"Changed synthetic contract\"],\"depends_on\":[\"research\"],\"id\":\"work\",\"kind\":\"task\",\"parent\":\"phase\",\"title\":\"Synthetic work\"},{\"id\":\"reopened\",\"kind\":\"task\",\"parent\":\"phase\",\"title\":\"Unrelated synthetic rename\"}],\"revision\":3}"
+      }
+    ],
+    "primary_deliveries": [
+      {
+        "intent_id": "233d448d-3257-4763-ba3c-362c1721e5e1",
+        "intent_seq": 19,
+        "assignment_id": "synthetic-assignment",
+        "bucket": "suppressed",
+        "version": 3,
+        "phase": "send-started",
+        "attempt_id": "7f55a2c9-e824-4dca-b2c3-54b06cb037d5",
+        "binding_record_id": "f407260a-bcfd-4421-9509-bd864b2444ef",
+        "latest_event_id": "e576ac11-ce1f-47a1-b1a4-54fe9f9d8a62",
+        "receipt_id": null,
+        "started": 1,
+        "native_cancel_event_id": null
+      },
+      {
+        "intent_id": "381c9b5e-5ec4-4f8e-bbbb-03084232aed3",
+        "intent_seq": 24,
+        "assignment_id": "synthetic-assignment",
+        "bucket": "suppressed",
+        "version": 1,
+        "phase": "pending",
+        "attempt_id": null,
+        "binding_record_id": null,
+        "latest_event_id": null,
+        "receipt_id": null,
+        "started": 0,
+        "native_cancel_event_id": null
+      },
+      {
+        "intent_id": "bc88e7dd-679e-439d-89c4-2add7d1502c7",
+        "intent_seq": 39,
+        "assignment_id": "synthetic-pending-assignment",
+        "bucket": "uncertain",
+        "version": 2,
+        "phase": "send-started",
+        "attempt_id": "000ca34c-1776-4995-8f58-35772d0b4063",
+        "binding_record_id": "6620903a-f02f-4555-9b75-36b95878f44c",
+        "latest_event_id": "869d0da1-06e2-4a38-ae51-ddcd78b272d2",
+        "receipt_id": null,
+        "started": 1,
+        "native_cancel_event_id": null
+      },
+      {
+        "intent_id": "df1d4fc7-e159-47bf-b1e8-996ab2e70f67",
+        "intent_seq": 44,
+        "assignment_id": "synthetic-pending-assignment",
+        "bucket": "pending",
+        "version": 0,
+        "phase": "pending",
+        "attempt_id": null,
+        "binding_record_id": null,
+        "latest_event_id": null,
+        "receipt_id": null,
+        "started": 0,
+        "native_cancel_event_id": null
+      }
+    ],
+    "sqlite_sequence": [
+      {
+        "name": "ledger",
+        "seq": 44
+      }
+    ]
+  }
+}

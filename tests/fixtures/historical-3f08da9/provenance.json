@@ -1,0 +1,23 @@
+{
+  "commit": "3f08da989c6c64aa94f797732201441119f88180",
+  "files": [
+    {
+      "path": "store.ts",
+      "source": "src/store.ts",
+      "git_blob": "6baada18ab28593132d67bafb2c7fca8309fbca4",
+      "sha256": "7eb771fd6617b1ebdb0b2ab425c56e3bec2ffcce57517432cedd6985ecebadc0"
+    },
+    {
+      "path": "collaboration.ts",
+      "source": "src/collaboration.ts",
+      "git_blob": "a7b730fc437672fd89187d730519b6f962fc841a",
+      "sha256": "863892878fc9e98e09739567806d4e84d3d72c9391620d489e41aef362eef41b"
+    },
+    {
+      "path": "model.ts",
+      "source": "src/model.ts",
+      "git_blob": "11f0a775b525633001e5b053b13884695606c605",
+      "sha256": "668856877ede9ebe697ae2fb229448b497945c745bad047be23fceded72bc53e"
+    }
+  ]
+}

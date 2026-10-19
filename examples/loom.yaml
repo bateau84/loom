@@ -1,0 +1,25 @@
+# Copy to your OpenCode configuration directory as .loom.yaml.
+# Agent names must already exist in OpenCode. This does not create agents.
+version: 1
+instructions:
+  enabled: true
+  max_chars: 6000
+context:
+  max_chars: 16000
+ledger:
+  capture: automatic
+agents:
+  lead:
+    description: Coordinates actions and investigates unknowns
+    roles: [coordination, exploration]
+  planner:
+    roles: [planning]
+  engineer:
+    roles: [implementation]
+  inspector:
+    roles: [assessment, qa]
+# Optional custom role guidance; this grants no permissions.
+roles:
+  incident-analysis:
+    description: Reconstructs incident timelines
+    instructions: Record what was observed, what is inferred, and what remains unknown.

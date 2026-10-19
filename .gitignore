@@ -1,22 +1,8 @@
-ephemeral-reports/
-.loom-evals/
 node_modules/
+.test-build/
+.loom.yaml
+.loom.local.yaml
+*.sqlite*
+
 __pycache__/
 *.pyc
-/.skill-authoring/
-/.aos-evals/
-
-## Ignore opencoode.json.
-cli*.json
-config*.json
-service*.json
-tsconfigi*.json
-tui*.json
-opencode*.json
-opencode*.jsonc
-profiles/**
-cli/**
-tui/**
-
-## ignore AGENTS.md
-AGENTS.md

@@ -1,0 +1,42 @@
+name: Installed question production-path qualification
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  questions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - run: git diff --exit-code -- bun.lock
+      - name: Mandatory COMPONENT SDK-get rejection, not installed ACL evidence
+        run: bun test tests/question-host/get-rejection.test.ts
+      - name: Install exact isolated unmodified host
+        run: npm install --prefix "$RUNNER_TEMP/loom-question-host" --no-audit --no-fund @opencode/cli@2.0.29
+      # This is NOT the retired six-scenario handback/comparison experiment.
+      # UNPROVEN mandatory variants fail; the sole source-qualified Plan4
+      # NOT APPLICABLE entry is not an executed installed PASS.
+      - name: Real production questions, resume, full_thread and native duplicate countercheck
+        run: >-
+          python3 tests/installed_questions.py
+          --opencode "$RUNNER_TEMP/loom-question-host/node_modules/.bin/opencode"
+          --report-directory "$RUNNER_TEMP/loom-question-report"
+          --duplicate-input-control
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installed-question-qualification-${{ github.sha }}
+          path: ${{ runner.temp }}/loom-question-report/
+          if-no-files-found: warn
+          retention-days: 7
