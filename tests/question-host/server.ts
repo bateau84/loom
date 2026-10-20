@@ -21,7 +21,7 @@ export default Plugin.define({
     const observer = (async () => {
       try {
         for await (const event of ctx.event.subscribe({ signal: stop.signal })) {
-          if (event.type.startsWith("session.inbox.") || event.type === "session.synthetic" || event.type.startsWith("permission.")) audit("native-event", event)
+          if (event.type.startsWith("session.inbox.") || event.type.startsWith("session.compaction.") || event.type === "session.synthetic" || event.type.startsWith("permission.")) audit("native-event", event)
         }
       } catch (error) { if (!stop.signal.aborted) audit("observer-failure", String(error)) }
     })()
@@ -61,7 +61,14 @@ export default Plugin.define({
         const args = code ? { code } : { command: "printf NATIVE_POLICY_MUST_DENY", description: "Harmless native deny countercheck" }
         const events: any[] = [{ type: "stream-start", warnings: [] }]
         if (tool) events.push({ type: "tool-call", toolCallId: randomUUID(), toolName: tool, input: JSON.stringify(args) })
-        else events.push({ type: "text-start", id: "text" }, { type: "text-delta", id: "text", delta: "HARNESS_IDLE" }, { type: "text-end", id: "text" })
+        else {
+          const summary = text.includes("You MUST use this format for your response") && text.includes("## Objective")
+          events.push({ type: "text-start", id: "text" },
+            { type: "text-delta", id: "text", delta: summary
+              ? "## Objective\n- Verify context continuity across a native compaction.\n\n## Work State\n### Completed\n- Captured tool evidence.\n\n## Next Move\n1. Check the current Action selection and ledger."
+              : "HARNESS_IDLE" },
+            { type: "text-end", id: "text" })
+        }
         events.push({ type: "finish", finishReason: { unified: tool ? "tool-calls" : "stop", raw: tool ? "tool_calls" : "stop" }, usage })
         return { stream: new ReadableStream({ start(c) { for (const e of events) c.enqueue(e); c.close() } }) }
       },

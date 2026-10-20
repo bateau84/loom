@@ -1,4 +1,4 @@
-"""Real packed OpenCode 2.0.32 candidate + local scripted model.
+"""Real packed OpenCode 2.1.1 candidate + local scripted model.
 
 No replacement tool registration, ToolContext, permission identity, dispatch or
 resume implementation. Final assembled-candidate acceptance is a separate run.
@@ -30,13 +30,13 @@ from installed_host_smoke import (
 
 READ_DENIAL_APPLICABILITY = {
     'name': 'E2-selective-session-read-policy-denial', 'status': 'NOT APPLICABLE',
-    'qualification': 'NOT APPLICABLE ON PINNED HOST 2.0.32; reassess on host/API change',
-    'host_version': '2.0.32', 'executed': False, 'evidence_kind': 'tagged source/version analysis, not installed execution',
-    'sources': ['v2.0.32 packages/plugin/src/promise/adapter.ts: context2.session.get adapts host.session.get',
-                'v2.0.32 packages/core/src/session.ts: get delegates to sessions.forSession(sessionID).get()',
-                'v2.0.32 packages/core/src/session/session.ts: Session.get calls store.get and returns NotFoundError when absent'],
-    'rationale': 'In tagged v2.0.32, session.get delegates to direct lookup by ID and returns an existing Session or not-found; that path has no selective session-read ACL. permission.assert is a separate API and is not evidence that session.get enforces a read policy. This says nothing about synthetic execution permission.',
-    'authority': 'Approved tagged v2.0.32 source analysis for PR #182; source-specific rationale, not installed execution or permission.assert evidence.',
+    'qualification': 'NOT APPLICABLE ON PINNED HOST 2.1.1; reassess on host/API change',
+    'host_version': '2.1.1', 'executed': False, 'evidence_kind': 'tagged source/version analysis, not installed execution',
+    'sources': ['v2.1.1 packages/plugin/src/promise/adapter.ts: context2.session.get adapts host.session.get',
+                'v2.1.1 packages/core/src/session.ts: get delegates to sessions.forSession(sessionID).get()',
+                'v2.1.1 packages/core/src/session/session.ts: Session.get calls store.get and returns NotFoundError when absent'],
+    'rationale': 'In tagged v2.1.1, session.get delegates to direct lookup by ID and returns an existing Session or not-found; that path has no selective session-read ACL. permission.assert is a separate API and is not evidence that session.get enforces a read policy. This says nothing about synthetic execution permission.',
+    'authority': 'Tagged v2.1.1 source inspection for this upgrade; PR #182 only qualifies the historical 2.0.32 host. This is not installed execution or permission.assert evidence.',
 }
 REQUIRED_INSTALLED_CHECKS = {
     'E1-no-plan-manual-question', 'E1-storage-failure-zero-contact', 'E2-idle-switched-native-resume',
@@ -44,6 +44,8 @@ REQUIRED_INSTALLED_CHECKS = {
     'E3-new-unicode-relational-parts', 'E3-old-action-full-content-oracle',
     'E3-node-session-oracles-cursor-corrupt-no-advance', 'E3-populated-startup-raw-preservation',
     'E2-E3-restart-no-reconstruction',
+    'E4-native-session-discovery', 'E4-native-archive-status',
+    'E5-compaction-context-and-observation',
 }
 
 
@@ -54,7 +56,7 @@ def qualification_status(checks, version):
     if any(by_name[name]['status'] != 'PASS' for name in REQUIRED_INSTALLED_CHECKS):
         return 'UNPROVEN'
     applicability = by_name.get(READ_DENIAL_APPLICABILITY['name'])
-    if version != '2.0.32' or applicability != READ_DENIAL_APPLICABILITY:
+    if version != '2.1.1' or applicability != READ_DENIAL_APPLICABILITY:
         return 'UNPROVEN'
     return 'PASS' if all(row['status'] == 'PASS' or row == applicability for row in checks) else 'UNPROVEN'
 
@@ -271,7 +273,7 @@ def unchanged_rows(path, saved):
                 require(row in current, f'Historical raw row changed: {table}: {row}')
 
 
-def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sdk='2.0.32',
+def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sdk='2.1.1',
         disable_watcher=False, duplicate_control=False):
     output.mkdir(parents=True, exist_ok=False)
     report = {'status': 'UNPROVEN', 'kind': 'installed-question-production-path', 'checks': [],
@@ -290,13 +292,13 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
     report['harness_sha256'] = {name: hashlib.sha256((repo / name).read_bytes()).hexdigest()
                                for name in ['server.ts', 'tests/installed_questions.py', 'tests/installed_host_smoke.py',
                                             'tests/question-host/server.ts', 'tests/question-host/provider.mjs']}
-    report['expected_versions'] = {'sdk': expected_sdk, 'host': '2.0.32'}
+    report['expected_versions'] = {'sdk': expected_sdk, 'host': '2.1.1'}
     report['observed_versions'] = {
         'sdk': report['candidate_artifact']['sdk_version'],
         'host': subprocess.check_output([executable, '--version'], text=True, timeout=15).strip(),
     }
     report['sdk_version'] = report['observed_versions']['sdk']
-    host_ok = report['observed_versions']['host'] in ('2.0.32', 'opencode v2.0.32')
+    host_ok = report['observed_versions']['host'] in ('2.1.1', 'opencode v2.1.1')
     if report['observed_versions']['sdk'] != report['expected_versions']['sdk'] or not host_ok:
         report['status'] = 'FAIL'
         report['error'] = ('Version profile mismatch: '
@@ -320,7 +322,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
         report['private_root'] = str(root)
         report['versions'] = {name: subprocess.check_output(cmd, env=env, text=True, timeout=15).strip()
                               for name, cmd in [('host', [executable, '--version']), ('bun', ['bun', '--version']), ('node', ['node', '--version'])]}
-        require(report['versions']['host'] in ('2.0.32', 'opencode v2.0.32'), 'Requires exact unmodified host 2.0.32')
+        require(report['versions']['host'] in ('2.1.1', 'opencode v2.1.1'), 'Requires exact unmodified host 2.1.1')
         subprocess.run(['git', 'init', '-q', str(project)], env=env, check=True)
         roles = ['asker', 'respondent', 'reader', 'switched']
         agents = {'question-' + role: {'description': role + ' fixture', 'mode': 'primary', 'model': 'question-fixture/' + role,
@@ -338,7 +340,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
                 owned_hosts.append(owned)
                 report['owned_hosts'].append({'pid': owned.proc.pid, 'label': label, 'url': owned.url})
                 try:
-                    require(json.loads(owned.get('/api/info', 'info'))['version'] == '2.0.32', 'Wrong actual server')
+                    require(json.loads(owned.get('/api/info', 'info'))['version'] == '2.1.1', 'Wrong actual server')
                     owned.wait_roster('/api/plugin', 'plugins', lambda xs: all(any(p['id'] == name and p.get('state', {}).get('status') == 'active' for p in xs)
                                      for name in ['loom', 'loom.question.fixture']))
                     return owned
@@ -398,6 +400,24 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             s.invoke(asker, 'plan', {'operation': 'save', 'action_id': action['id'], 'expected_revision': 0,
                      'nodes': [{'id': 'work', 'kind': 'task', 'title': 'Question scope'}]})
             s.invoke(asker, 'context', {'action_id': action['id'], 'node_id': 'work'})
+            discovered = s.invoke(asker, 'action', {'operation': 'sessions', 'action_id': action['id'], 'limit': 50})
+            matching = [row for row in discovered['sessions'] if row['id'] == asker]
+            require(len(matching) == 1 and matching[0]['selection']['action_id'] == action['id'],
+                    'Installed native Session inventory did not recover current Action selection')
+            require(discovered['scanned'] <= 50 and
+                    (discovered['next_cursor'] is None or isinstance(discovered['next_cursor'], str)),
+                    'Invalid bounded native Session page')
+            report['checks'].append({'name': 'E4-native-session-discovery', 'status': 'PASS',
+                                     'match': matching[0]['id'], 'scanned': discovered['scanned']})
+            request(host, 'PATCH', f'/api/session/{reader}', {'archived': True})
+            try:
+                archived = s.invoke(asker, 'action', {'operation': 'sessions', 'archived': True, 'limit': 50})
+                require(any(row['id'] == reader and row['archived'] for row in archived['sessions']),
+                        'Native archive flag was not presented by read-only Loom inventory')
+                report['checks'].append({'name': 'E4-native-archive-status', 'status': 'PASS',
+                                         'qualification': 'Host archive changed only through native API; Loom read only'})
+            finally:
+                request(host, 'PATCH', f'/api/session/{reader}', {'archived': False})
             ask_start = len(events(root))
             q2 = s.invoke(asker, 'record', {'operation': 'ask', 'question': 'Blocking question, manual handling arranged',
                           'to_agent': 'question-respondent', 'blocking': True, 'context_attachments': ['fixture://blocking']})
@@ -549,6 +569,58 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             unchanged_rows(ledger, saved)
             report['checks'].append({'name': 'E3-populated-startup-raw-preservation', 'status': 'PASS'})
             verify_provider_inputs(events(root))
+            # Assembled OpenCode 2.1.1 context/compaction regression using the
+            # real native runner and real tool observer; only the model is scripted.
+            # Earlier E1-E3 ran capture=off; the observer correctly remembers that
+            # uncertainty for this process lifetime. Start a fresh owned host
+            # with capture enabled before testing positive pairing.
+            admission_before = len(synthetic_events(root))
+            model_before = sum(e['type'] == 'model-request' for e in events(root))
+            host.close(); host = None
+            (project / '.loom.yaml').write_text(
+                'agents:\n  question-reader:\n    roles: [implementation]\n'
+                'ledger:\n  capture: automatic\n')
+            host = start('compaction-fresh-capture')
+            require(len(synthetic_events(root)) == admission_before and
+                    sum(e['type'] == 'model-request' for e in events(root)) == model_before,
+                    'Fresh capture host replayed native work during restart')
+            s = Scenario(host, root)
+            compaction_session = s.session('reader')
+            compaction_action = s.invoke(compaction_session, 'action', {
+                'operation': 'create', 'title': 'Compaction qualification', 'goal': 'Preserve Action context and tool evidence'
+            })
+            s.invoke(compaction_session, 'context', {'action_id': compaction_action['id']})
+            s.invoke(compaction_session, 'record', {'operation': 'add', 'kind': 'claim',
+                                                    'statement': 'Context should survive native compaction'})
+            pre_compaction = [e for e in events(root) if e['type'] == 'provider-request' and e['data']['role'] == 'reader']
+            require(any(compaction_action['id'] in json.dumps(e['data']['prompt']) and
+                        'loom:context:v2' in json.dumps(e['data']['prompt']) for e in pre_compaction),
+                    'Live model request did not contain current Loom Action context before compaction')
+            compact_from = len(events(root))
+            request(host, 'POST', f'/api/session/{compaction_session}/compact', {})
+            idle(host, [compaction_session])
+            time.sleep(.2)
+            compaction_events = [e for e in events(root)[compact_from:]
+                                 if e['type'] == 'native-event' and e['data']['type'] == 'session.compaction.ended'
+                                 and e['data']['data']['sessionID'] == compaction_session]
+            require(compaction_events, 'Native compaction did not complete on the installed 2.1.1 host')
+            s.invoke(compaction_session, 'record', {'operation': 'add', 'kind': 'result',
+                                                    'statement': 'Postcompaction native tool completed'})
+            after_compaction = [e for e in events(root)[compact_from:]
+                                if e['type'] == 'provider-request' and e['data']['role'] == 'reader'
+                                and compaction_action['id'] in json.dumps(e['data']['prompt'])
+                                and 'loom:context:v2' in json.dumps(e['data']['prompt'])]
+            require(after_compaction, 'Action context was not injected after native compaction')
+            with closing(sqlite3.connect(ledger)) as db:
+                observed = [json.loads(row[0]) for row in db.execute(
+                    "SELECT data FROM ledger WHERE action_id=? AND kind='observation'", (compaction_action['id'],))]
+            require(any(row['data'].get('phase') == 'started' for row in observed) and
+                    any(row['data'].get('phase') == 'finished' and row['data'].get('attribution') == 'captured-at-start'
+                        for row in observed),
+                    'Real tool observations were missing or unpaired around compaction')
+            report['checks'].append({'name': 'E5-compaction-context-and-observation', 'status': 'PASS',
+                                     'session': compaction_session, 'observation_count': len(observed),
+                                     'qualification': 'Native compaction and postcompaction context on scripted local model; not production provider coverage'})
             if duplicate_control:
                 # A genuine EXTRA native input, never another answer or product
                 # callback. The same normal-run assertion must detect it even
@@ -589,7 +661,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             report['component_obligation'] = {'status': 'SEPARATE COMPONENT PROOF REQUIRED',
                                              'command': 'bun test tests/question-host/get-rejection.test.ts',
                                              'boundary': 'SDK session.get rejection through production registered answer/adapter after actual commit; never installed PASS evidence'}
-            report['status'] = qualification_status(report['checks'], '2.0.32')
+            report['status'] = qualification_status(report['checks'], '2.1.1')
         except Exception as error:  # noqa: BLE001 -- persist any failed qualification scenario in its report.
             report['status'] = 'FAIL'
             report['error'] = f'{type(error).__name__}: {error}'
@@ -618,7 +690,7 @@ def main():
     parser.add_argument('--artifact', type=Path, required=True, help='Exact npm candidate tarball installed at --plugin')
     parser.add_argument('--plugin', type=Path, required=True, help='Installed candidate plugin directory')
     parser.add_argument('--expect-plugin-version', required=True)
-    parser.add_argument('--expect-sdk-version', default='2.0.32')
+    parser.add_argument('--expect-sdk-version', default='2.1.1')
     parser.add_argument('--disable-filewatcher', action='store_true', help='Owned disposable host only; watcher behavior not qualified')
     parser.add_argument('--duplicate-input-control', action='store_true', help='Inject one real extra native input and require the normal oracle to reject it')
     args = parser.parse_args()

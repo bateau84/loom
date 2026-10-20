@@ -128,6 +128,11 @@ export class Store {
     return row ? parse<Focus | null>(row) ?? undefined : undefined
   }
   hasSelection(session: string): boolean { return !!this.db.prepare("SELECT 1 FROM focus WHERE session_id=?").get(session) }
+  /** Read-only activity hint. A recorded contribution does not mean that a Session is running. */
+  hasActionActivity(actionID: string, sessionID: string): boolean {
+    return !!this.db.prepare("SELECT 1 FROM ledger WHERE action_id=? AND session_id=? LIMIT 1")
+      .get(uid(actionID, "action_id"), uid(sessionID, "session_id"))
+  }
   /** Validate and save the reference atomically; later plan edits may invalidate it. */
   select(session: string, focus?: Focus) {
     return this.transaction(() => {

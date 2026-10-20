@@ -16,30 +16,32 @@ an execution/permission gate. Do not invent mandatory stages or legacy tools.
 | Tool | Purpose and boundary |
 | --- | --- |
 | `loom_agents` | Discover native IDs, roles, diagnostics; no creation/permission grants. |
-| `loom_action` | List/create/update goals; creation selects. State labels do not interrupt or certify success. |
+| `loom_action` | List/create/update goals, or browse native Sessions (read-only). Creation selects. State labels do not interrupt or certify success. |
 | `loom_plan` | Read/replace optional nodes; no dispatch or skill loading. |
 | `loom_context` | Read/select Action/task context. Fresh Sessions start unselected. |
 | `loom_record` | Store/query concerns, claims, results, reviews, progress, questions/answers and history; not delivery/acceptance proof. |
 
-Tool search supplies authoritative installed schemas/help/examples. Exactly five
-tools return JSON with `result`, sometimes `config_errors`; check outcomes.
-Await writes before using IDs or ending Code Mode. Sequence dependent calls;
-use Promise.allSettled for independent calls and inspect every outcome.
+Tool search supplies installed schemas/help. Five tools return JSON with `result`
+and optional `config_errors`. Await writes before using IDs or ending Code Mode.
+Sequence dependent calls; use Promise.allSettled for independent calls
+and inspect outcomes.
 
 ## Start or resume work
 
 Use `loom_agents` with `{}` for the real roster, not assumed role-name IDs.
 Load applicable external skills natively.
 
-For existing work, recover its actual Action ID from the handoff or `loom_action`
-list. Do not create a duplicate merely because this Session has no selection.
+For existing work, recover its Action ID from the handoff or `loom_action`
+list; an unselected Session is not a reason to duplicate it.
 For new work worth retaining, create a goal:
 
 ```json
 {"operation":"create","title":"Explain a setting","goal":"Produce a source-backed explanation with its limitations."}
 ```
 
-Replace placeholders with actual returned IDs; `result.id` is the Action ID.
+Replace placeholders with actual returned IDs; `result.id` is the Action ID.\n\nUse `loom_action` operation `sessions` to list local Sessions, optionally filtered
+by `action_id`. Follow `next_cursor`. Archive state is read-only;
+no execution or delivery is proven.
 
 Read the current optional Plan before changing it:
 
@@ -78,12 +80,10 @@ To retrieve a dependency record, name the Action without a node filter:
 {"operation":"query","action_id":"ACTION_ID","record_id":"RECORD_ID"}
 ```
 
-A record ID alone may inherit the selected task filter and return no match.
-Empty filtered results do not prove the record never existed. Follow ledger
-`next_after` as `after`, stopping at null. Action lists use `next_offset`.
-Use exact record reads for full statements within the tool's read limits.
-`contract_match` is about the saved work definition, not code freshness;
-`contract_match:null` means unknown, not success.
+A record ID may inherit a task filter; empty results prove no absence.
+Follow ledger `next_after` as `after` until null; Action lists use `next_offset`.
+Read exact records for full statements. `contract_match:null` means unknown;
+matching work definitions do not prove code correctness.
 
 Use `add`: `result` describes actual work; `claim` states a supported conclusion
 and uncertainty. Include checks, sources and untested limits, not activity logs.
@@ -142,7 +142,7 @@ must match.
 {"operation":"ask","question":"Which limit applies here?","to_agent":"research","blocking":false,"context_attachments":["SOURCE_REFERENCE"]}
 ```
 
-On pinned OpenCode 2.0.32 the question is saved, but the recipient is NOT contacted.
+On pinned OpenCode 2.1.1 the question is saved, but the recipient is NOT contacted.
 Inspect `dispatch:{status:not-attempted,reason:policy-capability-unavailable}`.
 Arrange manual handling outside ask; a blocking asker may yield after it is
 arranged. Blocking is intent, not a wait, approval or gate; nonblocking work continues.
