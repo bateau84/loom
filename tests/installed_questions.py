@@ -44,6 +44,7 @@ REQUIRED_INSTALLED_CHECKS = {
     'E3-new-unicode-relational-parts', 'E3-old-action-full-content-oracle',
     'E3-node-session-oracles-cursor-corrupt-no-advance', 'E3-populated-startup-raw-preservation',
     'E2-E3-restart-no-reconstruction',
+    'E4-native-session-discovery', 'E4-native-archive-status',
 }
 
 
@@ -398,6 +399,23 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             s.invoke(asker, 'plan', {'operation': 'save', 'action_id': action['id'], 'expected_revision': 0,
                      'nodes': [{'id': 'work', 'kind': 'task', 'title': 'Question scope'}]})
             s.invoke(asker, 'context', {'action_id': action['id'], 'node_id': 'work'})
+            discovered = s.invoke(asker, 'action', {'operation': 'sessions', 'action_id': action['id'], 'limit': 50})
+            matching = [row for row in discovered['sessions'] if row['id'] == asker]
+            require(len(matching) == 1 and matching[0]['selection']['action_id'] == action['id'],
+                    'Installed native Session inventory did not recover current Action selection')
+            require(discovered['scanned'] <= 50 and discovered['next_cursor'] is None,
+                    'Unexpected native Session inventory pagination in isolated fixture')
+            report['checks'].append({'name': 'E4-native-session-discovery', 'status': 'PASS',
+                                     'match': matching[0]['id'], 'scanned': discovered['scanned']})
+            request(host, 'PATCH', f'/api/session/{reader}', {'archived': True})
+            try:
+                archived = s.invoke(asker, 'action', {'operation': 'sessions', 'archived': True, 'limit': 50})
+                require(any(row['id'] == reader and row['archived'] for row in archived['sessions']),
+                        'Native archive flag was not presented by read-only Loom inventory')
+                report['checks'].append({'name': 'E4-native-archive-status', 'status': 'PASS',
+                                         'qualification': 'Host archive changed only through native API; Loom read only'})
+            finally:
+                request(host, 'PATCH', f'/api/session/{reader}', {'archived': False})
             ask_start = len(events(root))
             q2 = s.invoke(asker, 'record', {'operation': 'ask', 'question': 'Blocking question, manual handling arranged',
                           'to_agent': 'question-respondent', 'blocking': True, 'context_attachments': ['fixture://blocking']})

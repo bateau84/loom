@@ -186,6 +186,14 @@ test("plugin integration: configured roles, five tools, reload, scoping, capture
     await hooks.get("context")(event)
     expect(event.system).toHaveLength(3)
     expect(event.system[2].text).toContain(action.id)
+    // Simulate a new context assembly after compaction, preserving the host's
+    // system parts. This is a hook regression, NOT installed-host compaction proof.
+    const rebuilt = { ...event, system: [...event.system], messages: [] }
+    await hooks.get("context")(rebuilt)
+    expect(rebuilt.system).toHaveLength(3)
+    expect(rebuilt.system[0]).toBe(nativePart)
+    expect(rebuilt.system.filter((p: any) => p.text.startsWith("<!-- loom:context:v2 -->"))).toHaveLength(1)
+    expect(rebuilt.system.filter((p: any) => p.text.startsWith("<!-- loom:runtime:v2 -->"))).toHaveLength(1)
     const toolEvent = { sessionID: "s", agent: "external", messageID: "m", id: "c", tool: "read", input: { path: "file" } }
     await hooks.get("execute.before")(toolEvent)
     // Complete an already captured call even when capture is disabled during execution.

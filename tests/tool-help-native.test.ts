@@ -224,3 +224,54 @@ test("Loom context injection preserves host generation options and native tool d
     expect(event.system.some(part => part.text.includes(action.id))).toBe(true)
   } finally { await f.close() }
 })
+
+
+test("native Session discovery is scoped, paged, read-only, and includes archive state", async () => {
+  const f = await registeredLoom()
+  try {
+    const action = (await f.invoke("action", { operation: "create", title: "Browse", goal: "See local participants" }, "owner")).result
+    await f.invoke("context", { action_id: action.id }, "worker")
+    await f.invoke("record", { operation: "add", kind: "result", statement: "Worker contributed" }, "worker")
+    await f.invoke("context", { clear: true }, "worker")
+    const local = (id: string, extra: any = {}) => ({
+      id, projectID: "tool-help", location: { directory: f.directory },
+      time: { created: 1, ...extra.time }, title: id, ...extra,
+    })
+    f.nativePages.set("", {
+      data: [
+        local("owner"), local("outsider", { projectID: "another-project" }),
+        local("moved", { location: { directory: f.directory + "/other" } }),
+      ],
+      cursor: { next: "next-page", previous: null },
+    })
+    f.nativePages.set("next-page", {
+      data: [local("worker", { time: { archived: 100 } }), local("unlinked")],
+      cursor: { next: null, previous: "previous-page" },
+    })
+    const first = (await f.invoke("action", { operation: "sessions", action_id: action.id, limit: 3 })).result
+    expect(first.sessions.map((s: any) => s.id)).toEqual(["owner"])
+    expect(first.scanned).toBe(3)
+    expect(first.next_cursor).toBe("next-page")
+    expect(first.sessions[0].selection.action_id).toBe(action.id)
+    expect(first.sessions[0].has_recorded_activity).toBe(false)
+    const next = (await f.invoke("action", {
+      operation: "sessions", action_id: action.id, cursor: first.next_cursor, limit: 3, archived: true,
+    })).result
+    expect(next.sessions.map((s: any) => s.id)).toEqual(["worker"])
+    expect(next.sessions[0].selection).toBeUndefined()
+    expect(next.sessions[0].has_recorded_activity).toBe(true)
+    expect(next.sessions[0].archived).toBe(true)
+    expect(next.next_cursor).toBeNull()
+    expect(f.nativeListRequests).toEqual([
+      { project: "tool-help", directory: f.directory, limit: 3 },
+      { project: "tool-help", directory: f.directory, limit: 3, cursor: "next-page", archived: true },
+    ])
+    expect((await f.invoke("context", {}, "worker")).result.selected).toBeNull()
+    expect((await f.invoke("context", {}, "owner")).result.action.id).toBe(action.id)
+    expect(f.nativeInputs).toHaveLength(0)
+    await expect(f.invoke("action", { operation: "sessions", action_id: "nonexistent" })).rejects.toThrow("Unknown Action")
+    expect(f.nativeListRequests).toHaveLength(2)
+    f.nativePages.set("broken", { data: "not-an-array", cursor: { next: null } })
+    await expect(f.invoke("action", { operation: "sessions", cursor: "broken" })).rejects.toThrow("data array")
+  } finally { await f.close() }
+})
