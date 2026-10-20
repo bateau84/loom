@@ -58,7 +58,7 @@ const askInput = { question: str, to_agent: str, blocking: { type: "boolean" }, 
 const answerInput = { question_id: str, answer: str, context_attachments: contextAttachments }
 const specs = [
   { name: "agents", description: TOOL_HELP.agents, input: obj({}) },
-  { name: "action", description: TOOL_HELP.action, input: obj({ operation: choice("list", "create", "update"), action_id: str, title: str, goal: str, state: choice("active", "paused", "completed", "cancelled"), expected_revision: num, offset: num }, ["operation"]) },
+  { name: "action", description: TOOL_HELP.action, input: obj({ operation: choice("list", "create", "update", "sessions"), action_id: str, title: str, goal: str, state: choice("active", "paused", "completed", "cancelled"), expected_revision: num, offset: num, archived: { type: "boolean" }, cursor: { type: "string", minLength: 1, maxLength: 4096 }, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
   { name: "plan", description: TOOL_HELP.plan, input: obj({ operation: choice("read", "save"), action_id: str, revision: num, expected_revision: num, nodes: { type: "array", maxItems: 300, items: obj({ id: str, kind: choice("phase", "wave", "task", "subtask"), title: str, parent: str, depends_on: list, outcome: str, context: str, criteria: list, skills: list, roles: list, agent: str }, ["id", "kind", "title"]) } }, ["operation", "action_id"]) },
   { name: "context", description: TOOL_HELP.context, input: obj({ action_id: str, node_id: str, clear: { type: "boolean" } }) },
   { name: "record", description: TOOL_HELP.record, input: { ...obj({ operation: choice("add", "query", "complete", "reopen", "ask", "answer"), view: choice("ledger", "progress", "questions", "thread", "full_thread"), session_id: str, cursor: str, work_ref: workRefInput, ...askInput, ...answerInput, respondent: str, question_state: choice("open", "answered", "all"), offset: num, action_id: str, node_id: str, kind: choice("claim", "result", "concern", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]),
@@ -150,6 +150,44 @@ export default Plugin.define({
                 if (input.operation === "list") result = store.list(input.offset as number | undefined)
                 else if (input.operation === "create") result = store.create(input.title as string, input.goal as string, actor)
                 else if (input.operation === "update") result = store.update(String(input.action_id), Number(input.expected_revision), { title: input.title as string | undefined, goal: input.goal as string | undefined, state: input.state as Parameters<Store["update"]>[2]["state"] })
+                else if (input.operation === "sessions") {
+                  // The native inventory is a read-only, bounded page. It is not
+                  // authorization to dispatch, attach, interrupt or archive Sessions.
+                  const actionID = input.action_id === undefined ? undefined : String(input.action_id)
+                  if (actionID !== undefined) store.action(actionID)
+                  const native = payload(await ctx.session.list({
+                    project: ctx.location.project.id,
+                    directory,
+                    limit: input.limit as number | undefined ?? 20,
+                    ...(input.cursor !== undefined ? { cursor: String(input.cursor) } : {}),
+                    ...(input.archived !== undefined ? { archived: input.archived as boolean } : {}),
+                  }))
+                  if (!Array.isArray(native.data)) throw new Error("Native Session list did not return a data array")
+                  const cursors = payload(native.cursor)
+                  const sessions: Array<Record<string, unknown>> = []
+                  for (const raw of native.data) {
+                    const session = payload(raw)
+                    if (typeof session.id !== "string" || !await sessionIsLocal(session)) continue
+                    const selected = store.selected(session.id)
+                    const hasRecordedActivity = actionID === undefined ? false : store.hasActionActivity(actionID, session.id)
+                    if (actionID !== undefined && selected?.action_id !== actionID && !hasRecordedActivity) continue
+                    const time = session.time && typeof session.time === "object" && !Array.isArray(session.time)
+                      ? session.time as Record<string, unknown> : {}
+                    sessions.push({
+                      id: session.id,
+                      ...(typeof session.title === "string" ? { title: session.title } : {}),
+                      ...(typeof session.parentID === "string" ? { parent_id: session.parentID } : {}),
+                      archived: time.archived !== undefined && time.archived !== null,
+                      ...(selected ? { selection: selected } : {}),
+                      ...(actionID !== undefined ? { has_recorded_activity: hasRecordedActivity } : {}),
+                    })
+                  }
+                  result = {
+                    sessions, scanned: native.data.length, matched: sessions.length,
+                    next_cursor: typeof cursors.next === "string" ? cursors.next : null,
+                    note: "Read-only native Session inventory page. A selection or ledger record does not prove execution, task completion, or recipient contact. Follow next_cursor; filtered/empty pages do not prove absence.",
+                  }
+                }
                 else throw new Error("Unknown Action operation")
                 break
               case "plan":

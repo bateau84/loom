@@ -4,6 +4,7 @@ export const TOOL_EXAMPLES = {
   action: [
     { operation: "create", title: "Explain a setting", goal: "Record a source-backed explanation and its qualifications." },
     { operation: "list", offset: 0 },
+    { operation: "sessions", action_id: "ACTION_ID", limit: 20 },
     { operation: "update", action_id: "ACTION_ID", expected_revision: 1, title: "Explain the investigated setting" },
   ],
   plan: [
@@ -39,10 +40,10 @@ const entries: Record<LoomToolName, { summary: string; usage: string; returns: s
     caution: "Does not create or dispatch agents, load skills or grant authority. Configuration errors disable Loom injection and new capture, not native work. Queue length is bounded, waiting time is not; a diagnostic request can itself wait. Use native OpenCode delegation with the Action/task IDs and retrieve work through loom_context.",
   },
   action: {
-    summary: "Create, list or update an Action: a persistent goal shared across agents and Sessions.",
-    usage: "operation=create requires title and goal; it selects the new Action for this Session. operation=list accepts offset (default 0), returns at most 50 Actions; follow next_offset until null. operation=update requires action_id and the current Action expected_revision, plus title, goal or state to change. Get the current Action revision from list or loom_context; it is not a Plan revision.",
-    returns: "Create/update return result with id, title, goal, state, revision and created_at. List returns result.items and next_offset. Save result.id for subsequent Action/task requests and native handoff messages.",
-    caution: "Ordinary conversation needs no Action; a Plan is optional. active, paused, completed and cancelled are progress labels, not process controls or proof of delivery. Update changes metadata, not current selection. A stale revision or failed write throws: reread and reconcile rather than retrying with a guessed revision. Use loom_plan for a Plan and loom_context for an existing Action.",
+    summary: "Create, list or update Actions, or list native Sessions associated with local work.",
+    usage: "operation=create requires title and goal; it selects the new Action for this Session. operation=list accepts offset (default 0), returns at most 50 Actions; follow next_offset until null. operation=update requires action_id and the current Action expected_revision, plus title, goal or state to change. Get the current Action revision from list or loom_context; it is not a Plan revision. operation=sessions is a read-only native inventory; optional action_id filters by recorded participation or current selection, archived filters native archives, limit=1-50 (default 20), cursor follows next_cursor. An empty filtered page does not mean no Sessions exist.",
+    returns: "Create/update return result with id, title, goal, state, revision and created_at. List returns result.items and next_offset. sessions returns sessions, scanned, matched and next_cursor; each local Session may have selection, has_recorded_activity (when filtered), and archived status. Save result.id for subsequent Action/task requests and native handoff messages.",
+    caution: "Ordinary conversation needs no Action; a Plan is optional. active, paused, completed and cancelled are progress labels, not process controls or proof of delivery. Update changes metadata, not current selection. A stale revision or failed write throws: reread and reconcile rather than retrying with a guessed revision. Use loom_plan for a Plan and loom_context for an existing Action. Native Session discovery is limited to this plugin location; no cross-process aggregation, authority, receipt, execution status, or automatic archival is implied.",
   },
   plan: {
     summary: "Read or save intended work and its relationships under an Action; a Plan is not a scheduler.",

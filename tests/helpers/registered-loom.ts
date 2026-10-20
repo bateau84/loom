@@ -10,7 +10,8 @@ export async function registeredLoom(initialSkills: any[] = []) {
   process.env.XDG_STATE_HOME = join(directory, "state")
   process.env.OPENCODE_CONFIG_DIR = join(directory, "config")
   const sessions = new Map<string, any>()
-  const nativeInputs: unknown[] = [], sessionReads: string[] = []
+  const nativeInputs: unknown[] = [], sessionReads: string[] = [], nativeListRequests: any[] = []
+  const nativePages = new Map<string, any>()
   const tools = new Map<string, any>(), namespaces = new Map<string, any>()
   const hooks = new Map<string, any>()
   const skills = new Map<string, any>(), skillTransforms = new Set<(editor: any) => void>()
@@ -39,6 +40,7 @@ export async function registeredLoom(initialSkills: any[] = []) {
       hook: async (name: string, fn: any) => { hooks.set(name, fn); return registration() },
     },
     session: {
+      list: async (query: any) => { nativeListRequests.push(query); return nativePages.get(query.cursor ?? "") ?? { data: [], cursor: { next: null, previous: null } } },
       synthetic: async (r:any) => { nativeInputs.push(r); return {id:r.id,sessionID:r.sessionID,type:"synthetic",delivery:r.delivery,payload:{text:r.text,description:r.description,metadata:r.metadata}} },
       context: async () => [],
       get: async ({ sessionID }: { sessionID: string }) => {
@@ -67,7 +69,7 @@ export async function registeredLoom(initialSkills: any[] = []) {
     await writeFile(join(directory, ".loom.yaml"), "agents: {}\ninstructions: {enabled: false}\nledger: {capture: off}\n")
     dispose = await (plugin as any).setup(ctx)
     return {
-      tools, namespaces, close, directory, hooks, sessions, skills, reloadSkills, nativeInputs, sessionReads,
+      tools, namespaces, close, directory, hooks, sessions, skills, reloadSkills, nativeInputs, sessionReads, nativeListRequests, nativePages,
       context: async (sessionID: string, agent: string) => {
         const event = { sessionID, agent, system: [] as Array<{ type: string; text: string }>, messages: [], tools: {}, options: {} }
         await hooks.get("context")(event)

@@ -16,7 +16,7 @@ an execution/permission gate. Do not invent mandatory stages or legacy tools.
 | Tool | Purpose and boundary |
 | --- | --- |
 | `loom_agents` | Discover native IDs, roles, diagnostics; no creation/permission grants. |
-| `loom_action` | List/create/update goals; creation selects. State labels do not interrupt or certify success. |
+| `loom_action` | List/create/update goals, or browse native Sessions (read-only). Creation selects. State labels do not interrupt or certify success. |
 | `loom_plan` | Read/replace optional nodes; no dispatch or skill loading. |
 | `loom_context` | Read/select Action/task context. Fresh Sessions start unselected. |
 | `loom_record` | Store/query concerns, claims, results, reviews, progress, questions/answers and history; not delivery/acceptance proof. |
@@ -39,7 +39,7 @@ For new work worth retaining, create a goal:
 {"operation":"create","title":"Explain a setting","goal":"Produce a source-backed explanation with its limitations."}
 ```
 
-Replace placeholders with actual returned IDs; `result.id` is the Action ID.
+Replace placeholders with actual returned IDs; `result.id` is the Action ID.\n\nUse `loom_action` with `{ "operation": "sessions", "action_id": "ACTION_ID" }`\nto list bounded native Sessions associated with this Action through selection or\nrecorded activity. Follow `next_cursor`, even after an empty filtered page.\n`archived` is a native archive flag, not a Loom Action state. This is read-only:\nno native execution status, recipient delivery, cross-process inventory, or automatic\nSession archiving is promised.
 
 Read the current optional Plan before changing it:
 
@@ -142,7 +142,7 @@ must match.
 {"operation":"ask","question":"Which limit applies here?","to_agent":"research","blocking":false,"context_attachments":["SOURCE_REFERENCE"]}
 ```
 
-On pinned OpenCode 2.0.32 the question is saved, but the recipient is NOT contacted.
+On pinned OpenCode 2.1.1 the question is saved, but the recipient is NOT contacted.
 Inspect `dispatch:{status:not-attempted,reason:policy-capability-unavailable}`.
 Arrange manual handling outside ask; a blocking asker may yield after it is
 arranged. Blocking is intent, not a wait, approval or gate; nonblocking work continues.
