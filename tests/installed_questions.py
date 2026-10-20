@@ -45,6 +45,7 @@ REQUIRED_INSTALLED_CHECKS = {
     'E3-node-session-oracles-cursor-corrupt-no-advance', 'E3-populated-startup-raw-preservation',
     'E2-E3-restart-no-reconstruction',
     'E4-native-session-discovery', 'E4-native-archive-status',
+    'E5-compaction-context-and-observation',
 }
 
 
@@ -567,6 +568,47 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             unchanged_rows(ledger, saved)
             report['checks'].append({'name': 'E3-populated-startup-raw-preservation', 'status': 'PASS'})
             verify_provider_inputs(events(root))
+            # Assembled OpenCode 2.1.1 context/compaction regression using the
+            # real native runner and real tool observer; only the model is scripted.
+            (project / '.loom.yaml').write_text(
+                'agents:\\n  question-reader:\\n    roles: [implementation]\\n'
+                'ledger:\\n  capture: automatic\\n')
+            compaction_session = s.session('reader')
+            compaction_action = s.invoke(compaction_session, 'action', {
+                'operation': 'create', 'title': 'Compaction qualification', 'goal': 'Preserve Action context and tool evidence'
+            })
+            s.invoke(compaction_session, 'context', {'action_id': compaction_action['id']})
+            s.invoke(compaction_session, 'record', {'operation': 'add', 'kind': 'claim',
+                                                    'statement': 'Context should survive native compaction'})
+            pre_compaction = [e for e in events(root) if e['type'] == 'provider-request' and e['data']['role'] == 'reader']
+            require(any(compaction_action['id'] in json.dumps(e['data']['prompt']) and
+                        'loom:context:v2' in json.dumps(e['data']['prompt']) for e in pre_compaction),
+                    'Live model request did not contain current Loom Action context before compaction')
+            compact_from = len(events(root))
+            request(host, 'POST', f'/api/session/{compaction_session}/compact', {})
+            idle(host, [compaction_session])
+            time.sleep(.2)
+            compaction_events = [e for e in events(root)[compact_from:]
+                                 if e['type'] == 'native-event' and e['data']['type'] == 'session.compaction.ended'
+                                 and e['data']['data']['sessionID'] == compaction_session]
+            require(compaction_events, 'Native compaction did not complete on the installed 2.1.1 host')
+            s.invoke(compaction_session, 'record', {'operation': 'add', 'kind': 'result',
+                                                    'statement': 'Postcompaction native tool completed'})
+            after_compaction = [e for e in events(root)[compact_from:]
+                                if e['type'] == 'provider-request' and e['data']['role'] == 'reader'
+                                and compaction_action['id'] in json.dumps(e['data']['prompt'])
+                                and 'loom:context:v2' in json.dumps(e['data']['prompt'])]
+            require(after_compaction, 'Action context was not injected after native compaction')
+            with closing(sqlite3.connect(ledger)) as db:
+                observed = [json.loads(row[0]) for row in db.execute(
+                    "SELECT data FROM ledger WHERE action_id=? AND kind='observation'", (compaction_action['id'],))]
+            require(any(row['data'].get('phase') == 'started' for row in observed) and
+                    any(row['data'].get('phase') == 'finished' and row['data'].get('attribution') == 'captured-at-start'
+                        for row in observed),
+                    'Real tool observations were missing or unpaired around compaction')
+            report['checks'].append({'name': 'E5-compaction-context-and-observation', 'status': 'PASS',
+                                     'session': compaction_session, 'observation_count': len(observed),
+                                     'qualification': 'Native compaction and postcompaction context on scripted local model; not production provider coverage'})
             if duplicate_control:
                 # A genuine EXTRA native input, never another answer or product
                 # callback. The same normal-run assertion must detect it even
