@@ -216,8 +216,8 @@ def installed_plugin_inventory(artifact: Path, plugin: Path, expected_version: s
 
 def run_probe(executable: str, repo: Path, output: Path, expected: str, disable_watcher: bool = False,
               plugin: Path | None = None, artifact: Path | None = None,
-              expected_plugin: str | None = None, expected_sdk: str = "2.0.32",
-              profile: str = "canonical-2.0.32") -> dict:
+              expected_plugin: str | None = None, expected_sdk: str = "2.1.1",
+              profile: str = "canonical-2.1.1") -> dict:
     require(os.name == "posix", "This isolated process-group probe currently supports POSIX only")
     output.mkdir(parents=True, exist_ok=True)
     report = {"status": "running", "kind": "installed-host-boot-only", "profile": profile, "expected_version": expected,
@@ -296,12 +296,12 @@ if __name__ == "__main__":
     parser.add_argument("--opencode", required=True, type=Path, help="Already installed CLI; nothing is installed by this script")
     parser.add_argument("--repository", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--report-directory", required=True, type=Path)
-    parser.add_argument("--expect-version", default="2.0.32")
+    parser.add_argument("--expect-version", default="2.1.1")
     parser.add_argument("--plugin", required=True, type=Path, help="Installed candidate package directory")
     parser.add_argument("--artifact", required=True, type=Path, help="Exact npm package tarball installed at --plugin")
     parser.add_argument("--expect-plugin-version", required=True)
-    parser.add_argument("--expect-sdk-version", default="2.0.32")
-    parser.add_argument("--profile", default="canonical-2.0.32", help="Explicit compatibility profile identity for the report")
+    parser.add_argument("--expect-sdk-version", default="2.1.1")
+    parser.add_argument("--profile", default="canonical-2.1.1", help="Explicit compatibility profile identity for the report")
     parser.add_argument("--disable-filewatcher", action="store_true", help="Owned disposable hosts only; does not qualify watcher behavior")
     args = parser.parse_args()
     try:

@@ -31,16 +31,16 @@ jobs:
       - name: Install exact external host separately from plugin dependencies
         env:
           npm_config_cache: ${{ runner.temp }}/loom-npm-cache
-        run: npm install --prefix "$RUNNER_TEMP/loom-opencode-host" --no-audit --no-fund @opencode/cli@2.0.32
+        run: npm install --prefix "$RUNNER_TEMP/loom-opencode-host" --no-audit --no-fund @opencode/cli@2.1.1
       - name: Native agent preservation, empty boot, restart and removal; no model requests
         run: >-
           python3 tests/installed_host_smoke.py
           --opencode "$RUNNER_TEMP/loom-opencode-host/node_modules/.bin/opencode"
-          --expect-version 2.0.32
+          --expect-version 2.1.1
           --plugin "$RUNNER_TEMP/loom-plugin-install/node_modules/loom-plugin"
           --artifact "$(find "$RUNNER_TEMP/loom-plugin-artifact" -maxdepth 1 -name 'loom-plugin-*.tgz' -print -quit)"
           --expect-plugin-version "$(node -p 'require("./package.json").version')"
-          --expect-sdk-version 2.0.32
+          --expect-sdk-version 2.1.1
           --report-directory "$RUNNER_TEMP/loom-host-report"
       - uses: actions/upload-artifact@v4
         if: always()
