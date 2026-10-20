@@ -36,7 +36,7 @@ READ_DENIAL_APPLICABILITY = {
                 'v2.1.1 packages/core/src/session.ts: get delegates to sessions.forSession(sessionID).get()',
                 'v2.1.1 packages/core/src/session/session.ts: Session.get calls store.get and returns NotFoundError when absent'],
     'rationale': 'In tagged v2.1.1, session.get delegates to direct lookup by ID and returns an existing Session or not-found; that path has no selective session-read ACL. permission.assert is a separate API and is not evidence that session.get enforces a read policy. This says nothing about synthetic execution permission.',
-    'authority': 'Approved tagged v2.1.1 source analysis for PR #182; source-specific rationale, not installed execution or permission.assert evidence.',
+    'authority': 'Tagged v2.1.1 source inspection for this upgrade; PR #182 only qualifies the historical 2.0.32 host. This is not installed execution or permission.assert evidence.',
 }
 REQUIRED_INSTALLED_CHECKS = {
     'E1-no-plan-manual-question', 'E1-storage-failure-zero-contact', 'E2-idle-switched-native-resume',
