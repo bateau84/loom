@@ -571,9 +571,20 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             verify_provider_inputs(events(root))
             # Assembled OpenCode 2.1.1 context/compaction regression using the
             # real native runner and real tool observer; only the model is scripted.
+            # Earlier E1-E3 ran capture=off; the observer correctly remembers that
+            # uncertainty for this process lifetime. Start a fresh owned host
+            # with capture enabled before testing positive pairing.
+            admission_before = len(synthetic_events(root))
+            model_before = sum(e['type'] == 'model-request' for e in events(root))
+            host.close(); host = None
             (project / '.loom.yaml').write_text(
                 'agents:\n  question-reader:\n    roles: [implementation]\n'
                 'ledger:\n  capture: automatic\n')
+            host = start('compaction-fresh-capture')
+            require(len(synthetic_events(root)) == admission_before and
+                    sum(e['type'] == 'model-request' for e in events(root)) == model_before,
+                    'Fresh capture host replayed native work during restart')
+            s = Scenario(host, root)
             compaction_session = s.session('reader')
             compaction_action = s.invoke(compaction_session, 'action', {
                 'operation': 'create', 'title': 'Compaction qualification', 'goal': 'Preserve Action context and tool evidence'
