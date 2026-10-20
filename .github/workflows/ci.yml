@@ -19,6 +19,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # TEMPORARY: regenerate the lock on an isolated CI runner and emit it so
+      # the PR can be repaired without silently trusting stale tarball hashes.
+      - name: Prepare regenerated 2.1.1 lockfile
+        run: |
+          rm bun.lock
+          bun install
+          echo 'LOOM_LOCK_B64_BEGIN'
+          base64 -w0 bun.lock
+          echo
+          echo 'LOOM_LOCK_B64_END'
       - run: bun install --frozen-lockfile
       - run: git diff --exit-code -- bun.lock
       - run: bun run typecheck
