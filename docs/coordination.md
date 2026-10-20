@@ -7,7 +7,7 @@ Plan are optional; neither assignment registration nor a workflow engine is
 required to ask a question.
 
 Use [the five-tool walkthrough](tools.md), live tool search for exact schemas,
-and [collaboration semantics](collaboration.md). On the supported OpenCode 2.0.32
+and [collaboration semantics](collaboration.md). On the OpenCode 2.1.1 upgrade candidate
 host, a saved ask
 does **not** contact its recipient: dispatch is
 `not-attempted / policy-capability-unavailable`. Arrange manual native handling.

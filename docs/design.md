@@ -45,7 +45,7 @@ references validate Action/node identity and kind; invalid references never fall
 back. Without reference/selection, questions belong only to the asking Session.
 Answers inherit original nullable association without selecting another's work.
 
-On the supported OpenCode 2.0.32 host, question dispatch is
+On the OpenCode 2.1.1 upgrade candidate, question dispatch is
 fail-closed: stored, recipient NOT contacted,
 `not-attempted / policy-capability-unavailable`; manual native handling required.
 Blocking is intent, not a forced wait. After manual handling is arranged, the

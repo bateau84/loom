@@ -21,6 +21,8 @@ configuration example, documentation and migration helper.
 - Usage documentation returned directly by tool search.
 - A bundled native `loom` skill, discoverable and loaded on demand.
 - Five tools: `loom_agents`, `loom_action`, `loom_plan`, `loom_context`, `loom_record`.
+- Read-only, paginated OpenCode 2.1.1 native Session discovery via `loom_action sessions`,
+  optionally filtered by Action; includes native archive status, without changing Sessions.
 
 A conversation needs no Action. An Action needs no plan. A task does not need to
 pass through fixed review stages. Revision checks prevent lost edits; they are
@@ -59,19 +61,22 @@ interrupt an OpenCode session or certify successful delivery.
 
 ## Loading the plugin
 
-Supported target: **OpenCode 2.0.32**, with `@opencode/plugin@2.0.32` in the
-source package and lockfile. OpenCode 2.0.29 is not a supported host or SDK.
-The isolated Code Mode search fixture is separately pinned to 2.0.29; this fixture
-does not provide host compatibility evidence. The boot probe covers isolated
-loading and empty-ledger checks only. Separately, installed-question qualification
-passed E1-E3, restart, and the duplicate-input control on packed candidate
-`loom-plugin@2.0.0-alpha.1` (SHA-256
-`ef7dad9a30ade952cd055fe5c637ff19d1b7b75ef8da590cde07fad58e7efd15`) with
-SDK/CLI 2.0.32/2.0.32. This used scripted local-model traffic and does not claim
-live-provider or external-MCP coverage. Selective session-read was not run and is
-source-qualified N/A (`executed:false`), not a PASS. Neither workflow upgrades your
-local OpenCode executable, changes your model, or edits your user CLI/configuration. See
-[historical 2.0.29 analysis](docs/opencode-2.0.29.md) and
+Upgrade candidate: **OpenCode 2.1.1**, with `@opencode/plugin@2.1.1`
+pinned in the source package and lockfile. This branch adds 2.1.1-specific
+installed boot, scripted-question and compaction checks; **do not count it as
+qualified until the assembled candidate's 2.1.1 checks pass**. The older
+2.0.32 qualification (PR #182) passed E1-E3 and its negative control using
+the packed alpha candidate (SHA-256
+`ef7dad9a30ade952cd055fe5c637ff19d1b7b75ef8da590cde07fad58e7efd15`);
+that is *historical evidence only*, not 2.1.1 approval. No test claims
+live-provider or external-MCP coverage.
+
+The separately pinned Code Mode search fixture remains 2.0.29; it cannot
+qualify the new host, and 2.0.29 is not a supported SDK/host target. Selective
+session-read remains a version-specific source-qualified N/A, never proof of
+authorization. Neither workflow upgrades your personal CLI or changes
+your active configuration. See
+[2.1.1 migration and native features](docs/opencode-2.1.1.md) and
 [installed-host validation](docs/installed-host-validation.md).
 **Bun support: `>=1.4.2 <2.0.0`. Use Bun 1.4.2 to reproduce validation.**
 The exact tested baseline is recorded in `.bun-version` and used by the CI jobs.

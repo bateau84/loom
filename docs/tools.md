@@ -8,7 +8,7 @@ native `loom` guide teaches use without requiring this document to be fetched.
 | Tool | Purpose |
 | --- | --- |
 | `loom_agents` | Existing native roster, roles, configuration/capture diagnostics |
-| `loom_action` | Create/list/update a goal and its progress label |
+| `loom_action` | Create/list/update a goal, or read native Session inventory and archive status |
 | `loom_plan` | Read/replace optional intended work and relationships |
 | `loom_context` | Read selection, explicitly select work or clear selection |
 | `loom_record` | Concerns, results, claims, Assessment/QA, completion/reopen, questions/answers and history |
@@ -31,6 +31,22 @@ For a new persistent goal:
 Action creation selects it. `list` uses `offset`/`next_offset` (50 per page).
 Updates require the Action's current `expected_revision`, not a Plan revision.
 State labels active/paused/completed/cancelled do not stop execution or certify success.
+
+With OpenCode 2.1.1, use the same tool to browse **read-only native Sessions**:
+
+```json
+{"operation":"sessions","action_id":"ACTION_ID","limit":20}
+```
+
+The optional Action ID filters for a current Session selection or authored
+Action ledger activity; omit it to list local native Sessions without an Action
+filter. The result contains `sessions`, `scanned`, `matched`, and
+`next_cursor`. Follow the opaque `next_cursor` with `cursor` until null,
+including when a filtered page is empty. An optional `archived:true/false`
+filters OpenCode's native archive state. Each entry may contain `selection`,
+`has_recorded_activity`, and `archived`. This page is bounded (1–50, default 20),
+location-scoped and **does not** retrieve other processes, dispatch work,
+archive/unarchive Sessions, prove execution, or change Loom selection.
 
 Read the optional Plan:
 
