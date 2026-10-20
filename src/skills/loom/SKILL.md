@@ -21,25 +21,27 @@ an execution/permission gate. Do not invent mandatory stages or legacy tools.
 | `loom_context` | Read/select Action/task context. Fresh Sessions start unselected. |
 | `loom_record` | Store/query concerns, claims, results, reviews, progress, questions/answers and history; not delivery/acceptance proof. |
 
-Tool search supplies authoritative installed schemas/help/examples. Exactly five
-tools return JSON with `result`, sometimes `config_errors`; check outcomes.
-Await writes before using IDs or ending Code Mode. Sequence dependent calls;
-use Promise.allSettled for independent calls and inspect every outcome.
+Tool search supplies installed schemas/help. Five tools return JSON with `result`
+and optional `config_errors`. Await writes before using IDs or ending Code Mode.
+Sequence dependent calls; use Promise.allSettled for independent calls
+and inspect outcomes.
 
 ## Start or resume work
 
 Use `loom_agents` with `{}` for the real roster, not assumed role-name IDs.
 Load applicable external skills natively.
 
-For existing work, recover its actual Action ID from the handoff or `loom_action`
-list. Do not create a duplicate merely because this Session has no selection.
+For existing work, recover its Action ID from the handoff or `loom_action`
+list; an unselected Session is not a reason to duplicate it.
 For new work worth retaining, create a goal:
 
 ```json
 {"operation":"create","title":"Explain a setting","goal":"Produce a source-backed explanation with its limitations."}
 ```
 
-Replace placeholders with actual returned IDs; `result.id` is the Action ID.\n\nUse `loom_action` with `{ "operation": "sessions", "action_id": "ACTION_ID" }`\nto list bounded native Sessions associated with this Action through selection or\nrecorded activity. Follow `next_cursor`, even after an empty filtered page.\n`archived` is a native archive flag, not a Loom Action state. This is read-only:\nno native execution status, recipient delivery, cross-process inventory, or automatic\nSession archiving is promised.
+Replace placeholders with actual returned IDs; `result.id` is the Action ID.\n\nUse `loom_action` operation `sessions` to list local Sessions, optionally filtered
+by `action_id`. Follow `next_cursor`. Archive state is read-only;
+no execution or delivery is proven.
 
 Read the current optional Plan before changing it:
 
@@ -78,12 +80,10 @@ To retrieve a dependency record, name the Action without a node filter:
 {"operation":"query","action_id":"ACTION_ID","record_id":"RECORD_ID"}
 ```
 
-A record ID alone may inherit the selected task filter and return no match.
-Empty filtered results do not prove the record never existed. Follow ledger
-`next_after` as `after`, stopping at null. Action lists use `next_offset`.
-Use exact record reads for full statements within the tool's read limits.
-`contract_match` is about the saved work definition, not code freshness;
-`contract_match:null` means unknown, not success.
+A record ID may inherit a task filter; empty results prove no absence.
+Follow ledger `next_after` as `after` until null; Action lists use `next_offset`.
+Read exact records for full statements. `contract_match:null` means unknown;
+matching work definitions do not prove code correctness.
 
 Use `add`: `result` describes actual work; `claim` states a supported conclusion
 and uncertainty. Include checks, sources and untested limits, not activity logs.

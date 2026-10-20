@@ -34,9 +34,7 @@ State labels active/paused/completed/cancelled do not stop execution or certify 
 
 With OpenCode 2.1.1, use the same tool to browse **read-only native Sessions**:
 
-```json
-{"operation":"sessions","action_id":"ACTION_ID","limit":20}
-```
+`{"operation":"sessions","action_id":"ACTION_ID","limit":20}`
 
 The optional Action ID filters for a current Session selection or authored
 Action ledger activity; omit it to list local native Sessions without an Action

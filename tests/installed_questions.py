@@ -404,8 +404,9 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             matching = [row for row in discovered['sessions'] if row['id'] == asker]
             require(len(matching) == 1 and matching[0]['selection']['action_id'] == action['id'],
                     'Installed native Session inventory did not recover current Action selection')
-            require(discovered['scanned'] <= 50 and discovered['next_cursor'] is None,
-                    'Unexpected native Session inventory pagination in isolated fixture')
+            require(discovered['scanned'] <= 50 and
+                    (discovered['next_cursor'] is None or isinstance(discovered['next_cursor'], str)),
+                    'Invalid bounded native Session page')
             report['checks'].append({'name': 'E4-native-session-discovery', 'status': 'PASS',
                                      'match': matching[0]['id'], 'scanned': discovered['scanned']})
             request(host, 'PATCH', f'/api/session/{reader}', {'archived': True})

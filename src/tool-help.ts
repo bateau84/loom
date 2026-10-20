@@ -4,8 +4,8 @@ export const TOOL_EXAMPLES = {
   action: [
     { operation: "create", title: "Explain a setting", goal: "Record a source-backed explanation and its qualifications." },
     { operation: "list", offset: 0 },
-    { operation: "sessions", action_id: "ACTION_ID", limit: 20 },
     { operation: "update", action_id: "ACTION_ID", expected_revision: 1, title: "Explain the investigated setting" },
+    { operation: "sessions", action_id: "ACTION_ID", limit: 20 },
   ],
   plan: [
     { operation: "read", action_id: "ACTION_ID" },

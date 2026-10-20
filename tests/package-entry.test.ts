@@ -46,7 +46,7 @@ test("pinned host loads the server with optional TUI and RPC entrypoints absent"
 test("SDK pin and separately versioned host fixtures are explicit", async () => {
   const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"))
   const sdkVersion = pkg.dependencies["@opencode/plugin"]
-  expect(sdkVersion).toBe("2.0.32")
+  expect(sdkVersion).toBe("2.1.1")
   const lock = await readFile(new URL("../bun.lock", import.meta.url), "utf8")
   expect(lock).toContain(`"@opencode/plugin": "${sdkVersion}"`)
   expect(lock).toContain(`"@opencode/plugin": ["@opencode/plugin@${sdkVersion}"`)
@@ -56,13 +56,13 @@ test("SDK pin and separately versioned host fixtures are explicit", async () => 
   const host = await readFile(new URL("../.github/workflows/installed-host.yml", import.meta.url), "utf8")
   const smoke = await readFile(new URL("./installed_host_smoke.py", import.meta.url), "utf8")
   expect(ci).toContain("@opencode/codemode@2.0.29")
-  expect(host).toContain("@opencode/cli@2.0.32")
-  expect(host).toContain("--expect-version 2.0.32")
+  expect(host).toContain("@opencode/cli@2.1.1")
+  expect(host).toContain("--expect-version 2.1.1")
   expect(host).toContain("npm pack --json")
   expect(host).toContain("--plugin \"$RUNNER_TEMP/loom-plugin-install/node_modules/loom-plugin\"")
   expect(host).toContain("--artifact")
-  expect(host).toContain("--expect-sdk-version 2.0.32")
-  expect(smoke).toContain('--expect-version", default="2.0.32"')
+  expect(host).toContain("--expect-sdk-version 2.1.1")
+  expect(smoke).toContain('--expect-version", default="2.1.1"')
   for (const workflow of [ci, host]) {
     expect(workflow).toContain("bun install --frozen-lockfile")
     expect(workflow).toContain("git diff --exit-code -- bun.lock")
@@ -70,33 +70,33 @@ test("SDK pin and separately versioned host fixtures are explicit", async () => 
   }
 })
 
-test("2.0.32 is the sole installed host and SDK profile", async () => {
+test("2.1.1 is the sole installed host and SDK profile", async () => {
   const hostWorkflow = await readFile(new URL("../.github/workflows/installed-host.yml", import.meta.url), "utf8")
   const compatPath = new URL("../.github/workflows/installed-host-2.0.29.yml", import.meta.url)
   const smoke = await readFile(new URL("./installed_host_smoke.py", import.meta.url), "utf8")
-  expect(hostWorkflow).toContain("@opencode/cli@2.0.32")
-  expect(hostWorkflow).toContain("--expect-sdk-version 2.0.32")
+  expect(hostWorkflow).toContain("@opencode/cli@2.1.1")
+  expect(hostWorkflow).toContain("--expect-sdk-version 2.1.1")
   expect(hostWorkflow).toContain("npm pack --json")
   expect(hostWorkflow).toContain("npm install --prefix")
   expect(smoke).toContain('"profile": profile')
   await expect(readFile(compatPath, "utf8")).rejects.toThrow()
 })
 
-test("installed questions qualifies the exact packed 2.0.32 candidate", async () => {
+test("installed questions qualifies the exact packed 2.1.1 candidate", async () => {
   const workflow = await readFile(new URL("../.github/workflows/installed-questions.yml", import.meta.url), "utf8")
   const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"))
   const lock = await readFile(new URL("../bun.lock", import.meta.url), "utf8")
   const harness = await readFile(new URL("./installed_questions.py", import.meta.url), "utf8")
   const smoke = await readFile(new URL("./installed_host_smoke.py", import.meta.url), "utf8")
 
-  expect(pkg.dependencies["@opencode/plugin"]).toBe("2.0.32")
-  expect(lock).toContain('"@opencode/plugin": "2.0.32"')
+  expect(pkg.dependencies["@opencode/plugin"]).toBe("2.1.1")
+  expect(lock).toContain('"@opencode/plugin": "2.1.1"')
   expect(workflow).toContain("bun install --frozen-lockfile")
   expect(workflow).toContain("npm pack --json")
-  expect(workflow).toContain("@opencode/cli@2.0.32")
+  expect(workflow).toContain("@opencode/cli@2.1.1")
   expect(workflow).toContain("$RUNNER_TEMP/loom-question-install/node_modules/loom-plugin")
   expect(workflow).toContain("--artifact")
-  expect(workflow).toContain("--expect-sdk-version 2.0.32")
+  expect(workflow).toContain("--expect-sdk-version 2.1.1")
   expect(workflow).toContain("tests/installed_questions.py")
   expect(workflow).toContain("--opencode \"$RUNNER_TEMP/loom-question-host/node_modules/.bin/opencode\"")
   expect(workflow).not.toContain("PROFILE_PACKAGE")
