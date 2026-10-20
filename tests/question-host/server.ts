@@ -65,7 +65,7 @@ export default Plugin.define({
           const summary = text.includes("You MUST use this format for your response") && text.includes("## Objective")
           events.push({ type: "text-start", id: "text" },
             { type: "text-delta", id: "text", delta: summary
-              ? "## Objective\\n- Verify context continuity across a native compaction.\\n\\n## Work State\\n### Completed\\n- Captured tool evidence.\\n\\n## Next Move\\n1. Check the current Action selection and ledger."
+              ? "## Objective\n- Verify context continuity across a native compaction.\n\n## Work State\n### Completed\n- Captured tool evidence.\n\n## Next Move\n1. Check the current Action selection and ledger."
               : "HARNESS_IDLE" },
             { type: "text-end", id: "text" })
         }

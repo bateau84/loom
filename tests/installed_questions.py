@@ -571,8 +571,8 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             # Assembled OpenCode 2.1.1 context/compaction regression using the
             # real native runner and real tool observer; only the model is scripted.
             (project / '.loom.yaml').write_text(
-                'agents:\\n  question-reader:\\n    roles: [implementation]\\n'
-                'ledger:\\n  capture: automatic\\n')
+                'agents:\n  question-reader:\n    roles: [implementation]\n'
+                'ledger:\n  capture: automatic\n')
             compaction_session = s.session('reader')
             compaction_action = s.invoke(compaction_session, 'action', {
                 'operation': 'create', 'title': 'Compaction qualification', 'goal': 'Preserve Action context and tool evidence'
