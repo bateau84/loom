@@ -28,11 +28,8 @@ and inspect outcomes.
 
 ## Start or resume work
 
-Use `loom_agents` with `{}` for the real roster, not assumed role-name IDs.
-Compare `result.agents[].roles` with `result.role_descriptions` (when configured)
-to understand responsibilities; check `available` and `enabled`. Descriptions
-are coordination hints, not automatic routing or permissions.
-Load applicable external skills natively.
+Use `loom_agents {}`: match `agents[].roles` to `role_descriptions`.
+Check `available`/`enabled`; delegate natively.
 
 For existing work, recover its Action ID from the handoff or `loom_action`
 list; an unselected Session is not a reason to duplicate it.
