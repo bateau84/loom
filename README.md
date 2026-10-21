@@ -136,6 +136,13 @@ Mappings merge, lists replace. `agents.<name>: null` removes an inherited entry;
 are the default; the Loom description is a coordination-only override. A role can
 belong to many agents and an agent can have many roles. Missing configured agents
 are reported by `loom_agents`; no placeholder agents or permissions are created.
+`roles.<role>.description` is returned as
+`loom_agents.result.role_descriptions[role]` for role discovery and native delegation.
+The shared map also includes described roles not currently assigned to an agent;
+roles without a configured description have no entry. Cross-reference it with
+`agents[].roles` and the agent's availability. Descriptions are coordination
+metadata, not injected instructions, automatic matching or permissions.
+`roles.<role>.instructions` remains the additional injected role guidance.
 
 Supported sections are `version`, `agents`, `roles`, `instructions`, `context`,
 and `ledger`. Unknown settings fail validation. Model/permission definitions

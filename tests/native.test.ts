@@ -136,6 +136,7 @@ test("published config example parses with the real YAML decoder", async () => {
   const snapshot = await loadConfig([new URL("../examples/loom.yaml", import.meta.url).pathname], s => YAML.parse(s))
   expect(snapshot.errors).toEqual([])
   expect(snapshot.config.agents.lead.roles).toContain("coordination")
+  expect(snapshot.config.roles.planning.description).toContain("Breaks complex work")
 })
 
 test("plugin integration: configured roles, five tools, reload, scoping, capture opt-out and cleanup", async () => {
@@ -167,17 +168,20 @@ test("plugin integration: configured roles, five tools, reload, scoping, capture
     return JSON.parse(response.content).result
   }
   try {
-    await writeFile(path, "version: 1\nagents:\n  external:\n    roles: [planning]\n")
+    await writeFile(path, "version: 1\nagents:\n  external:\n    roles: [planning]\nroles:\n  planning:\n    description: Plans and delegates work\n  unassigned:\n    description: Future specialization\n")
     cleanup = await (plugin as any).setup(ctx)
     expect([...tools.keys()].sort()).toEqual(["action", "agents", "context", "plan", "record"])
     const roster = await invoke("agents", {})
     expect(roster.agents[0].roles).toEqual(["planning"])
+    expect(roster.agents[0].description).toBe("Native description")
+    expect(roster.role_descriptions).toEqual({ planning: "Plans and delegates work", unassigned: "Future specialization" })
     const nativePart = { type: "text", text: "Keep my native instructions" }
     const event = { sessionID: "s", agent: "external", system: [nativePart], messages: [], options: {}, tools: {} }
     await hooks.get("context")(event)
     expect(event.system).toHaveLength(2)
     expect(event.system[0]).toBe(nativePart)
     expect(event.system[1].text).toContain("loom_plan")
+    expect(event.system[1].text).not.toContain("Plans and delegates work")
     await hooks.get("context")(event)
     expect(event.system).toHaveLength(2)
     const action = await invoke("action", { operation: "create", title: "A", goal: "Goal" })
@@ -197,7 +201,9 @@ test("plugin integration: configured roles, five tools, reload, scoping, capture
     const toolEvent = { sessionID: "s", agent: "external", messageID: "m", id: "c", tool: "read", input: { path: "file" } }
     await hooks.get("execute.before")(toolEvent)
     // Complete an already captured call even when capture is disabled during execution.
-    await writeFile(path, "ledger:\n  capture: off\ninstructions:\n  enabled: false\nagents:\n  external:\n    roles: [qa]\n")
+    await writeFile(path, "ledger:\n  capture: off\ninstructions:\n  enabled: false\nagents:\n  external:\n    roles: [qa]\nroles:\n  qa:\n    description: Probes failures and regressions\n")
+    expect((await invoke("agents", {})).role_descriptions).toEqual({ qa: "Probes failures and regressions" })
+    expect((await invoke("agents", {})).agents[0].roles).toEqual(["qa"])
     await hooks.get("execute.after")({ ...toolEvent, status: "completed", result: { content: "private output" } })
     expect((await invoke("record", { operation: "query", action_id: action.id })).items).toHaveLength(2)
     await hooks.get("execute.before")({ ...toolEvent, id: "off" })

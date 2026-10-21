@@ -35,8 +35,8 @@ export type LoomToolName = keyof typeof TOOL_EXAMPLES
 const entries: Record<LoomToolName, { summary: string; usage: string; returns: string; caution: string }> = {
   agents: {
     summary: "Discover native agents and Loom roles; inspect configuration, capture and load-queue diagnostics.",
-    usage: "Use {} to find the actual roster before native delegation. Choose by available=true, enabled=true and relevant roles; configured=true alone does not establish availability. Agent descriptions guide coordination, not permissions. Agents and skills are defined outside Loom.",
-    returns: "result.agents contains id, description when present, roles, configured, available and enabled. Also returns config_sources, errors, warnings, evidence.capture/pairing and config_loads (active, waiting and limits).",
+    usage: "Use {} to find the actual roster before native delegation. Choose by available=true, enabled=true and relevant roles; configured=true alone does not establish availability. Match agents[].roles with role_descriptions by role ID. Agent and role descriptions are coordination hints, not permissions or automatic matching. Agents and skills are defined outside Loom.",
+    returns: "result.agents contains id, description when present, roles, configured, available and enabled. result.role_descriptions maps configured role IDs to their descriptions when provided; roles without a description have no entry, and unassigned roles may appear. Also returns config_sources, errors, warnings, evidence.capture/pairing and config_loads (active, waiting and limits).",
     caution: "Does not create or dispatch agents, load skills or grant authority. Configuration errors disable Loom injection and new capture, not native work. Queue length is bounded, waiting time is not; a diagnostic request can itself wait. Use native OpenCode delegation with the Action/task IDs and retrieve work through loom_context.",
   },
   action: {
