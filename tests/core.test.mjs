@@ -5,7 +5,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { defaults, mergeConfig, loadConfig, configPaths } from '../.test-build/config.js'
-import { registry, guidance, injectInstructions } from '../.test-build/agents.js'
+import { registry, roleDescriptions, guidance, injectInstructions } from '../.test-build/agents.js'
 import { Store } from '../.test-build/store.js'
 import { validatePlan, canonical, subject } from '../.test-build/model.js'
 import { taskContext, Observer } from '../.test-build/context.js'
@@ -30,6 +30,24 @@ test('prototype pollution keys are rejected', () => { assert.throws(() => mergeC
 test('custom roles extend the guidance without requiring special agent names', () => {
  const c = mergeConfig(defaults(), { agents: { analyst: { roles: ['incident'] } }, roles: { incident: { instructions: 'Record the known timeline.' } } })
  assert.match(guidance(c, 'analyst'), /known timeline/)
+})
+test('role descriptions are discoverable metadata, not injected instructions', () => {
+ const c = mergeConfig(defaults(), {
+  agents: { planner: { roles: ['planning', 'custom'] } },
+  roles: {
+   planning: { description: 'Plans the deliverables' },
+   custom: { description: 'Investigates outages', instructions: 'Record a timeline.' },
+   unassigned: { description: 'Future specialization' },
+   qa: { instructions: 'Test regressions.' },
+  },
+ })
+ assert.deepEqual(roleDescriptions(c), { planning: 'Plans the deliverables', custom: 'Investigates outages', unassigned: 'Future specialization' })
+ assert.deepEqual(registry(c, [{ id: 'planner', description: 'Native planner' }])[0].roles, ['planning', 'custom'])
+ assert.doesNotMatch(guidance(c, 'planner'), /Plans the deliverables|Investigates outages/)
+ assert.match(guidance(c, 'planner'), /Record a timeline/)
+ const revised = mergeConfig(c, { roles: { planning: null, custom: { description: 'Explores failures' } } })
+ assert.deepEqual(roleDescriptions(revised), { custom: 'Explores failures', unassigned: 'Future specialization' })
+ assert.deepEqual(roleDescriptions(defaults()), {})
 })
 test('discovery reports missing configured agents but retains native agents', () => {
  const entries = registry(config(), [{ id: 'native', description: 'external' }])

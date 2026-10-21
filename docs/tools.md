@@ -21,6 +21,11 @@ this is not an atomic multi-write transaction. Use the exact callable search pat
 ## Recover or define work
 
 Discover the actual roster with `loom_agents {}`; role names are not guaranteed IDs.
+The response includes `result.role_descriptions`, a map from role IDs to descriptions
+declared in `.loom.yaml` (only where a description was set). Match keys against
+`result.agents[].roles` and check `available` and `enabled` before native delegation.
+The map can include roles no agent currently has. Descriptions guide selection;
+they do not automatically assign work or grant permissions.
 For existing work use its actual Action ID rather than creating a duplicate.
 For a new persistent goal:
 

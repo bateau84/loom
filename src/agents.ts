@@ -1,6 +1,14 @@
 import type { Config } from "./config.js"
 export type NativeAgent = { id: string; description?: string }
 export type AgentEntry = NativeAgent & { roles: string[]; configured: boolean; available: boolean; enabled: boolean }
+/** Share role descriptions once in the roster rather than repeating them per agent. */
+export function roleDescriptions(config: Config): Record<string, string> {
+  const descriptions: Record<string, string> = {}
+  for (const [id, role] of Object.entries(config.roles)) {
+    if (role.description !== undefined) descriptions[id] = role.description
+  }
+  return descriptions
+}
 export function registry(config: Config, native: readonly NativeAgent[]): AgentEntry[] {
   const found = new Map(native.map(a => [a.id, a]))
   return [...new Set([...found.keys(), ...Object.keys(config.agents)])].sort().map(id => {

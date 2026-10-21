@@ -31,6 +31,7 @@ test("registered help examples run against the actual callbacks and explain depe
     const roster = await f.invoke("agents", TOOL_EXAMPLES.agents[0])
     expect(roster.result.agents).toHaveLength(2)
     expect(roster.result.agents.every((a: any) => !a.configured)).toBe(true)
+    expect(roster.result.role_descriptions).toEqual({})
     const { result: action } = await f.invoke("action", TOOL_EXAMPLES.action[0])
     const replace = (input: unknown) => JSON.parse(JSON.stringify(input).replaceAll("ACTION_ID", action.id))
     expect((await f.invoke("action", TOOL_EXAMPLES.action[1])).result.items[0].id).toBe(action.id)
@@ -55,6 +56,8 @@ test("registered help examples run against the actual callbacks and explain depe
 })
 
 test("discovery help keeps truthful current errors and scope boundaries visible", () => {
+  expect(TOOL_HELP.agents).toContain("role_descriptions")
+  expect(TOOL_HELP.agents).toContain("automatic matching")
   expect(TOOL_HELP.context).toContain("selection.status=save-failed")
   expect(TOOL_HELP.context).toContain('persisted="unknown"')
   expect(TOOL_HELP.context).toContain("Failed clear still throws")

@@ -20,6 +20,8 @@ agents:
     roles: [assessment, qa]
 # Optional custom role guidance; this grants no permissions.
 roles:
+  planning:
+    description: Breaks complex work into tasks and identifies dependencies
   incident-analysis:
     description: Reconstructs incident timelines
     instructions: Record what was observed, what is inferred, and what remains unknown.

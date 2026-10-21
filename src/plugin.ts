@@ -6,7 +6,7 @@ import { homedir } from "node:os"
 import { isAbsolute, join } from "node:path"
 import { configPaths, loadConfig } from "./config.js"
 import { configLoadStatus } from "./config-admission.js"
-import { injectInstructions, registry, type NativeAgent } from "./agents.js"
+import { injectInstructions, registry, roleDescriptions, type NativeAgent } from "./agents.js"
 import { taskContextOrRecovery, Observer } from "./context.js"
 import { digest, PROCESSING_LIMITS, type Actor, type Focus } from "./model.js"
 import { renderFullHistory } from "./history-renderer.js"
@@ -144,7 +144,7 @@ export default Plugin.define({
             switch (spec.name) {
               case "agents": {
                 const entries = registry(snapshot.config, agents(await ctx.agent.list()))
-                result = { agents: entries, config_loads: configLoadStatus(), evidence: { capture: snapshot.config.ledger.capture, ...observer.status() }, config_sources: snapshot.sources, errors: snapshot.errors, warnings: entries.filter(a => a.configured && !a.available).map(a => `Configured agent is unavailable: ${a.id}`) }; break
+                result = { agents: entries, role_descriptions: roleDescriptions(snapshot.config), config_loads: configLoadStatus(), evidence: { capture: snapshot.config.ledger.capture, ...observer.status() }, config_sources: snapshot.sources, errors: snapshot.errors, warnings: entries.filter(a => a.configured && !a.available).map(a => `Configured agent is unavailable: ${a.id}`) }; break
               }
               case "action":
                 if (input.operation === "list") result = store.list(input.offset as number | undefined)
