@@ -91,6 +91,11 @@ Load practitioner guidance natively when useful; no prior load receipt is requir
 No Action or Plan is required. Loading a file is not performing a review, proving
 independence, completing a task, or producing a verdict. Record actual findings
 separately with `loom_record` using `kind:assessment` or `kind:qa`.
+Without an Action/selection, these verdicts are stored under the calling
+Session. If the Session has another Action selected, add `"session_only":true`
+to avoid attaching the review to that Action. Use `loom_context` with
+`{"mode":"independent"}` to request an independent view even when no Action
+exists. It does not erase prior conversation or prove reviewer independence.
 
 ## Verification
 

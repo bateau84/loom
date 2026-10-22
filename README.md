@@ -250,7 +250,12 @@ between flat skills. The bundled `loom` skill has no companions, so its result
 is `available:false`, not a path error.
 See [Assessment and QA companions](docs/review-companions.md) for configuration,
 examples and limits. Loading instructions and recording findings are separate;
-neither guarantees independent review.
+neither guarantees independent review. Assessment/QA verdicts can now be
+recorded under the calling Session without an Action. `session_only:true` on
+`loom_record add` explicitly keeps a review Session-scoped even if work is
+selected; existing Action-linked records are unchanged. `loom_context` with
+`{"mode":"independent"}` works without an Action and reads no Loom work
+history, but does not save a selection or erase prior native conversation.
 
 ## Evidence and privacy
 

@@ -81,6 +81,8 @@ pointers, not proof of correctness, currency or completion.
 
 For an independent first assessment, start a fresh Session and select
 `loom_context` with `mode:"independent"` **before reading prior opinions**.
+Without an Action, this returns an independent Session view with no inherited
+Loom history and no saved selection; it is not necessary to create an Action.
 This hides Loom ledger/review/progress/question history from both context reads
 and automatic injection; it cannot erase native messages or task text. After
 recording original findings, switch to `mode:"continuation"` and reconcile
@@ -110,8 +112,10 @@ conclusion with its limits. Keep checks and sources, not activity logs.
 are pointers, not proof. Missing evidence stays missing.
 
 Observations hold identity/digests, not raw input/output. Missing or unpaired
-observations prove neither success nor failure. `session_only:true` reads
-Session history without selection and cannot combine with work IDs.
+observations prove neither success nor failure. `session_only:true` on a query
+reads the caller's Session history, including Action-linked records. On an
+`add`, it forces Session-only scope for Assessment/QA, even with an Action
+selected. Neither use can combine with work IDs.
 Do not record credentials or secrets: explicit text is not redacted.
 
 ## Preserve and route concerns
@@ -142,6 +146,11 @@ permission; no Action, Plan or prior load receipt is required. Load practitioner
 guidance natively when useful. Missing companions return `available:false`, not
 SKILL.md. Loading a lens or storing PASS does not prove independent review or
 Action-wide success. Record actual findings separately with `loom_record`.
+For a review without an Action, `add` with `kind:"assessment"` or `kind:"qa"`,
+a verdict and statement stores the result under the actual calling Session.
+If another Action is selected, use `session_only:true` to keep the review
+separate; its evidence IDs must refer to unscoped observations in that Session.
+No review gate or new workflow requirement is introduced.
 
 `reopen` appends a reason without erasing history or undoing native side effects.
 Update Action state separately; paused/cancelled labels do not stop execution.

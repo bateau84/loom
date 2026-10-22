@@ -48,7 +48,9 @@ test('bad options are rejected and explicit navigation can recover corrupt selec
   for (const input of [{ mode: 'blind' }, { mode: null }, { handoff_id: 2 }, { node_id: 'work' }, { action_id: null }])
     assert.throws(() => resolveContextSelection(input, () => focus))
   assert.throws(() => contextSelection({ ...focus, context_mode: 'unknown' }))
-  assert.throws(() => resolveContextSelection({ mode: 'independent' }, () => undefined), /Select work/)
+  assert.equal(resolveContextSelection({ mode: 'independent' }, () => undefined), undefined)
+  for (const input of [{ mode: 'continuation' }, { handoff_id: null }, { mode: 'independent', handoff_id: 'result' }])
+    assert.throws(() => resolveContextSelection(input, () => undefined), /Select work/)
   assert.equal(resolveContextSelection({}, () => undefined), undefined)
   const broken = () => { throw new Error('corrupt selection') }
   assert.throws(() => resolveContextSelection({}, broken), /corrupt/)
