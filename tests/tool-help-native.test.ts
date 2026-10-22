@@ -60,6 +60,7 @@ test("discovery help keeps truthful current errors and scope boundaries visible"
   expect(TOOL_HELP.agents).toContain("automatic matching")
   expect(TOOL_HELP.context).toContain("selection.status=save-failed")
   expect(TOOL_HELP.context).toContain('persisted="unknown"')
+  expect(TOOL_HELP.context).toContain("Failed clear still throws")
   expect(TOOL_HELP.context).not.toContain("CURRENT LIMITATION")
   expect(TOOL_HELP.context).toContain("contract_match:null is unknown")
   expect(TOOL_HELP.record).toContain("explicit action_id without node_id searches the whole Action")
