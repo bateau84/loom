@@ -122,9 +122,7 @@ a matching contract is not code freshness or independent validation.
 `statement`; Assessment/QA require `verdict:pass|fail|inconclusive`. They may
 also be recorded without an Action, under the actual calling Session:
 
-```json
-{"operation":"add","kind":"qa","verdict":"pass","statement":"Checked the changed behavior and stated its limits."}
-```
+`{"operation":"add","kind":"qa","verdict":"pass","statement":"Checked the changed behavior and stated its limits."}`
 
 When an Action is selected but the review must remain separate, add
 `"session_only":true`. It does not change the saved selection. Session-only
