@@ -1,30 +1,30 @@
 # Loom usage guide
 
-Use for Loom coordination/resumption. Load engineering skills separately with
-OpenCode's native skill tool; this guide teaches Loom, not general engineering.
+Use for Loom coordination/resumption. Load engineering skills separately.
 
 ## Keep Loom optional
 
-A conversation needs no Action. An Action needs no Plan. Use the smallest amount
-of structure that helps another agent or a later Session recover useful work.
-OpenCode owns Sessions, execution, native delegation, skill loading, models and
-permissions. Loom records intent, context and history; it is not a scheduler or
-an execution/permission gate. Do not invent mandatory stages or legacy tools.
+A conversation needs no Action. An Action needs no Plan. Use only structure
+that helps recover useful work. OpenCode owns Sessions, execution, delegation,
+skills, models and permissions. Loom records intent, context and history; it is
+not a scheduler. Do not invent mandatory stages or legacy tools. Role checks
+restrict only the companion loaders, not native execution.
 
 ## Find the right tool
 
 | Tool | Purpose and boundary |
 | --- | --- |
-| `loom_agents` | Discover native IDs, roles, diagnostics; no creation/permission grants. |
-| `loom_action` | List/create/update goals, or browse native Sessions (read-only). Creation selects. State labels do not interrupt or certify success. |
+| `loom_agents` | Native IDs, roles and diagnostics; no permission grants. |
+| `loom_action` | Goals and read-only Session inventory. Creation selects; state labels do not stop execution or certify success. |
 | `loom_plan` | Read/replace optional nodes; no dispatch or skill loading. |
-| `loom_context` | Read/select Action/task context. Fresh Sessions start unselected. |
-| `loom_record` | Store/query concerns, claims, results, reviews, progress, questions/answers and history; not delivery/acceptance proof. |
+| `loom_context` | Read/select work. Fresh Sessions start unselected. |
+| `loom_record` | Store/query concerns, claims, results, reviews, progress, questions and history. |
+| `loom_assessment` | Load ASSESSMENT.md; requires configured assessment role. |
+| `loom_qa` | Load QA.md; requires configured qa role. |
 
-Tool search supplies installed schemas/help. Five tools return JSON with `result`
-and optional `config_errors`. Await writes before using IDs or ending Code Mode.
-Sequence dependent calls; use Promise.allSettled for independent calls
-and inspect outcomes.
+Tool search supplies schemas/help. Tools return JSON with `result` and optional
+`config_errors`. Await writes before using IDs or ending Code Mode. Sequence
+dependent calls; use Promise.allSettled for independent calls and inspect outcomes.
 
 ## Start or resume work
 
@@ -39,7 +39,8 @@ For new work worth retaining, create a goal:
 {"operation":"create","title":"Explain a setting","goal":"Produce a source-backed explanation with its limitations."}
 ```
 
-Replace placeholders with actual returned IDs; `result.id` is the Action ID.\n\nUse `loom_action` operation `sessions` to list local Sessions, optionally filtered
+Replace placeholders with returned IDs; `result.id` is the Action ID.
+Use `loom_action` operation `sessions` for local Sessions, optionally filtered
 by `action_id`. Follow `next_cursor`. Archive state is read-only;
 no execution or delivery is proven.
 
@@ -49,11 +50,11 @@ Read the current optional Plan before changing it:
 {"operation":"read","action_id":"ACTION_ID"}
 ```
 
-A Plan is the intended work, not an activity log. Nodes have `id`, `kind` and
-`title`; optional fields are `outcome`, `criteria`, `context`, `depends_on`,
-`parent`, `agent`, `roles` and `skills`. Kinds are phase, wave, task and subtask.
-Use hierarchy only when helpful. Siblings do not implicitly depend on each other.
-`depends_on` also helps select relevant context; it does not enforce execution.
+A Plan is intended work, not an activity log. Nodes have `id`, `kind` and `title`;
+optional fields are `outcome`, `criteria`, `context`, `depends_on`, `parent`,
+`agent`, `roles` and `skills`. Kinds are phase, wave, task and subtask.
+Hierarchy is optional. Siblings do not implicitly depend on each other.
+`depends_on` helps select relevant context; it does not enforce execution.
 
 Save the complete node list using the returned Plan revision as
 `expected_revision`. Preserve unchanged IDs. Revision 0 is only for an unsaved
@@ -115,17 +116,21 @@ structured links, automatic escalation or gates.
 
 ## Complete, review and reopen honestly
 
-Report task completion with `loom_record` operation `complete`, the original
-`work_ref`, and a statement describing the actual outcome. Do not fetch a newer
-reference just to make an old result look current. A `result` alone is not a
-completion report. Read `query` with `view:progress` to inspect reported progress
-and whether it still matches current work. Changed contracts may require fresh
-work or reconfirmation; unrelated replanning must not be treated as lost history.
+Report completion with `loom_record complete`, the original `work_ref`, and the
+actual outcome. Do not fetch a newer reference to make old work look current.
+A `result` alone is not completion. Query `view:progress` for reported progress
+and contract matching. Changed contracts may need fresh work or reconfirmation;
+unrelated replanning does not erase history.
 
 Completion does not complete parents or the Action and does not establish
 independent acceptance. Assessment/QA verdicts are `pass`, `fail`, `inconclusive`.
-Use independent reviewers where required and external ASSESSMENT.md / QA.md
-companions; a stored PASS does not prove independence or Action-wide success.
+Choose relevant skills independently of the producer's list. Call
+`loom_assessment {"skill":"SKILL_ID"}` for ASSESSMENT.md or `loom_qa` for QA.md.
+The enabled caller needs the corresponding configured role and native skill
+permission; no Action, Plan or prior load receipt is required. Load practitioner
+guidance natively when useful. Missing companions return `available:false`, not
+SKILL.md. Loading a lens or storing PASS does not prove independent review or
+Action-wide success. Record actual findings separately with `loom_record`.
 
 `reopen` appends a reason without erasing history or undoing native side effects.
 Update Action state separately; paused/cancelled labels do not stop execution.

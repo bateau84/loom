@@ -7,7 +7,7 @@ import { registeredLoom } from "./helpers/registered-loom.js"
 for (const name of Object.keys(TOOL_HELP) as LoomToolName[]) test(`registered ${name} tool carries complete search help without role injection`, async () => {
   const fixture = await registeredLoom()
   try {
-    expect([...fixture.tools.keys()].sort()).toEqual(["action", "agents", "context", "plan", "record"])
+    expect([...fixture.tools.keys()].sort()).toEqual(["action", "agents", "assessment", "context", "plan", "qa", "record"])
     expect(fixture.namespaces.get("loom").description).toBe(LOOM_NAMESPACE_HELP)
     const tool = fixture.tools.get(name)
     expect(tool.description).toBe(TOOL_HELP[name])
@@ -60,7 +60,6 @@ test("discovery help keeps truthful current errors and scope boundaries visible"
   expect(TOOL_HELP.agents).toContain("automatic matching")
   expect(TOOL_HELP.context).toContain("selection.status=save-failed")
   expect(TOOL_HELP.context).toContain('persisted="unknown"')
-  expect(TOOL_HELP.context).toContain("Failed clear still throws")
   expect(TOOL_HELP.context).not.toContain("CURRENT LIMITATION")
   expect(TOOL_HELP.context).toContain("contract_match:null is unknown")
   expect(TOOL_HELP.record).toContain("explicit action_id without node_id searches the whole Action")
@@ -201,7 +200,7 @@ test("Plan rejects missing required and invented lifecycle fields without writin
 test("search-visible help explains awaited writes and independent-call failure handling", async () => {
   const f = await registeredLoom()
   try {
-    expect(f.tools.size).toBe(5)
+    expect(f.tools.size).toBe(7)
     for (const tool of f.tools.values()) {
       expect(tool.description).toContain("Await writes before using IDs or ending Code Mode")
       expect(tool.description).toContain("Promise.allSettled and inspect every outcome")

@@ -24,12 +24,12 @@ test("packaged Loom guide has a real path, bounded body and discoverable native 
   expect(pkg.exports["./server"]).toBe("./server.ts")
 })
 
-test("public plugin advertises the skill without a role, Action, sixth tool or eager guide injection", async () => {
+test("public plugin advertises the skill without a role, Action or eager guide injection", async () => {
   const f = await registeredLoom()
   try {
     expect([...f.skills.keys()]).toEqual([LOOM_SKILL_ID])
     expect(f.skills.get(LOOM_SKILL_ID)).toEqual(await loomSkill())
-    expect([...f.tools.keys()].sort()).toEqual(["action", "agents", "context", "plan", "record"])
+    expect([...f.tools.keys()].sort()).toEqual(["action", "agents", "assessment", "context", "plan", "qa", "record"])
     expect((await f.invoke("action", { operation: "list" })).result.items).toEqual([])
     expect((await f.invoke("context", {})).result.selected).toBeNull()
     const event = { sessionID: "s", agent: "author", system: [] as any[], messages: [], tools: {}, options: {} }
@@ -89,7 +89,7 @@ test("core setup failure disposes the already registered skill and preserves the
 test("skill guidance retains current evidence, coordination and recovery boundaries", async () => {
   const { content } = await loomSkill()
   for (const text of [
-    "loom_agents", "loom_action", "loom_plan", "loom_context", "loom_record",
+    "loom_agents", "loom_action", "loom_plan", "loom_context", "loom_record", "loom_assessment", "loom_qa",
     "A conversation needs no Action", "An Action needs no Plan", "not a scheduler",
     "complete node list", "Action's separate current revision", "original",
     "work_ref", "contract_match:null", "next_after", "session_only:true",
@@ -129,7 +129,7 @@ test("bundled JSON examples execute with real returned identities against regist
   } finally { await f.close() }
 })
 
-test("human five-tool walkthrough examples use canonical collaboration and real stored history", async () => {
+test("human core-tool walkthrough examples use canonical collaboration and real stored history", async () => {
   const f = await registeredLoom()
   try {
     const doc = await readFile(new URL("../docs/tools.md", import.meta.url), "utf8")
