@@ -17,7 +17,7 @@ restrict only the companion loaders, not native execution.
 | `loom_agents` | Native IDs, roles and diagnostics; no permission grants. |
 | `loom_action` | Goals and read-only Session inventory. Creation selects; state labels do not stop execution or certify success. |
 | `loom_plan` | Read/replace optional nodes; no dispatch or skill loading. |
-| `loom_context` | Read/select work. Fresh Sessions start unselected. |
+| `loom_context` | Select work, pin a result handoff or limit prior opinions during independent review. |
 | `loom_record` | Store/query concerns, claims, results, reviews, progress, questions and history. |
 | `loom_assessment` | Load ASSESSMENT.md; requires configured assessment role. |
 | `loom_qa` | Load QA.md; requires configured qa role. |
@@ -71,6 +71,26 @@ Retain `work_ref`, the definition actually worked against. Give native delegates
 the Action/task IDs, goal, constraints, record IDs and original reference.
 Each child selects its own work; selection is not inherited.
 
+### Handoffs and independent first review
+
+At a useful stopping point, write one ordinary `kind:result` with the goal,
+source revision, decisions, evidence and limits, unfinished work and next step.
+Pass its exact record ID, not the whole conversation. A continuation can select
+`loom_context` with `handoff_id:"RESULT_ID"` and the destination Action/task;
+this pins a same-Action result, even from a dependency. Read it in full using
+`loom_record` with `action_id` and `record_id` **without `node_id`**. Pins are
+pointers, not proof of correctness, currency or completion.
+
+For an independent first assessment, start a fresh Session and select
+`loom_context` with `mode:"independent"` **before reading prior opinions**.
+This hides Loom ledger/review/progress/question history from both context reads
+and automatic injection; it cannot erase native messages or task text. After
+recording original findings, switch to `mode:"continuation"` and reconcile
+unresolved earlier findings before the final verdict. A follow-up review may
+start with prior findings. Saved mode persists; default remains continuation.
+Selection-save failure means the old view may still inject. See
+[handoff limits and recovery](../../../docs/handoffs.md).
+
 ## Read evidence before using conclusions
 
 Context is bounded and may contain excerpts. Read full material records before
@@ -86,33 +106,26 @@ Follow ledger `next_after` as `after` until null; Action lists use `next_offset`
 Read exact records for full statements. `contract_match:null` means unknown;
 matching work definitions do not prove code correctness.
 
-Use `add`: `result` describes actual work; `claim` states a supported conclusion
-and uncertainty. Include checks, sources and untested limits, not activity logs.
-`evidence_ids` must be real host observation IDs from the same Action, not invented
-IDs or other conclusion records. Omit unavailable evidence and explain the gap.
-Artifact references are pointers, not proof that Loom read or verified them.
+Use `add`: `result` describes observed work; `claim` records a supported
+conclusion with its limits. Keep checks and sources, not activity logs.
+`evidence_ids` must be real same-Action host observation IDs; `artifact_refs`
+are pointers, not proof. Missing evidence stays missing.
 
-Observations store identity/digests, not raw arguments/output. Missing/unpaired
-observations prove neither success nor failure. `session_only:true` reads Session
-ledger history without selection; it cannot combine with work IDs.
-Never put credentials or other secrets in records or artifact references:
-explicitly recorded text is not redacted.
+Observations hold identity/digests, not raw input/output. Missing or unpaired
+observations prove neither success nor failure. `session_only:true` reads
+Session history without selection and cannot combine with work IDs.
+Do not record credentials or secrets: explicit text is not redacted.
 
 ## Preserve and route concerns
 
-Every agent records its own task-related concerns with `add`, `kind:concern`,
-`statement`, not only handoffs. Existing scope/evidence rules apply; no task or
-verdict required. Distinguish suspected from confirmed; state support or unknowns.
-Documented, outside-task or handed-off is not resolved.
-
-General routes blockers natively; critic consolidates patterns. These are duties,
-not native IDs: use the roster (coordination/qa guidance respectively).
-Cite sources in later result/claim/assessment text: `Suspected: Action ACTION_ID
-record CONCERN_ID; confirmed: Action ACTION_ID record OTHER_ID; not resolved.`
-Retrieve each with explicit `action_id` plus `record_id`, no `node_id`, as above.
-Concern IDs are not observation `evidence_ids`. Append commentary; originals and
-origin stay unchanged. Context is sampled, full history paged. No lifecycle,
-structured links, automatic escalation or gates.
+Every agent records task concerns with `kind:concern` and a factual `statement`.
+Distinguish suspected from confirmed and give its sources or unknowns.
+Documented, outside-task or handed-off is not resolved. General routes
+blockers; critic compares patterns without pretending to dispatch agents.
+Use actual configured roles. Cite immutable Action and concern record IDs;
+retrieve sources with explicit `action_id` and `record_id`, no `node_id`.
+Concern IDs are not observation `evidence_ids`. Append follow-ups rather
+than altering history. No automatic escalation or execution gates.
 
 ## Complete, review and reopen honestly
 
@@ -161,24 +174,20 @@ old statement/respondent/background/artifact_refs are not ask/answer inputs.
 {"operation":"answer","question_id":"QUESTION_ID","answer":"Read the source and its limitations.","context_attachments":["SOURCE_REFERENCE"]}
 ```
 
-Only the FIRST committed answer to a new-format blocking question qualifies for
-one immediate postcommit best-effort resume of the exact stored asking Session.
-Later, nonblocking and legacy answers never submit asker input. Missing, moved or
-inaccessible targets fail visibly without retargeting. Current native target
-agent/model/permissions remain unchanged. Target validation is not an atomic lease.
-The 5000ms deadline bounds waiting, not cancellation of already-started native I/O.
-Admission is not processing, consumption or completion; timeout can leave an
-unknown outcome. No retries, transfer, recovery replay or reconstruction on reads
-or restart: a crash after answer commit may permanently lose resume. Do not repeat an
+Only the FIRST committed answer to a new-format blocking question qualifies
+for one immediate best-effort resume of its exact asking Session. Later,
+nonblocking and legacy answers never retry input or transfer eligibility.
+Missing or moved targets fail without retargeting; native agent/model/permissions
+remain unchanged. Validation is not an atomic lease; the 5000ms deadline only
+bounds waiting, not cancellation of already-started native I/O. Admission is
+not processing or completion; timeout can leave outcome unknown. No retries,
+replay or startup reconstruction; a crash can permanently lose resume. Do not repeat an
 answer to try delivery.
 
-The answer remains durable separately from transport. Eligible responses include
-`resume` with source IDs, `status`, `reason`, `attempted`, `qualification` and
-`annotation`. Status is `admission-observed`, `failed`, `outcome-unknown` or
-`not-attempted`. A separate SYSTEM result annotation links the IDs and outcome;
-annotation failure is visible and cannot erase the answer or undo native I/O.
-Retrieve the authoritative paginated `view:thread` before using a notice. Answered
-means response, not resolution, approval or permission.
+The answer remains durable independently. An eligible response includes `resume`
+status/IDs/qualification and a separate SYSTEM annotation; annotation failure
+does not erase the answer. Read `view:thread` for authoritative answers.
+Answered means response, not resolution, approval or permission.
 
 Assignment/delivery operations AND views are retired. Historical records stay
 readable/inert, not current consent. No startup sender or retry engine exists.
@@ -189,23 +198,20 @@ readable/inert, not current consent. No startup sender or retry engine exists.
 {"operation":"query","view":"full_thread","action_id":"ACTION_ID","node_id":"TASK_ID","limit":20}
 ```
 
-Alternatively use explicit `session_id`, never with Action/node. No inherited
-selection. Reads current authorized Loom Store only, not native Session bodies or
-cross-project databases. Membership follows authorship/direct question-answer
-relations (including later answers), not notices, admission, assignments or agent
-names. Fail-closed ask does not invent receipt.
+Alternatively use `session_id`, never alongside Action/node; there is no
+selected-scope fallback. Reads the current authorized Loom Store, not native
+Session bodies or cross-project databases. Membership uses authorship and direct
+question/answer relations, not notices, assumed agent identity or delivery.
 
-The result contains `format:loom-full-thread/v1`, `scope`, `markdown`, `next_cursor`.
-Follow `next_cursor` as `cursor` with the SAME explicit scope until null. Default
-limit is 20, maximum 50. Stored records are deduplicated and ordered by sequence.
-Escaped Markdown includes full stored content, actual authors/Sessions/times,
-IDs, links, verdicts, observation metadata and historical Plan/work_ref information.
-References are not recursively expanded; unavailable raw tool bodies are never
-invented. Labelled oversized-record parts repeat identity and advance the record
-only on its final part. A page below limit may still be incomplete. Cursors are
-scope/location/version-bound, not a perpetual or concurrent-snapshot guarantee.
-Corrupt/unsupported data fails without advancing; existing read limits still
-apply. Smaller pages do not make an individually inadmissible record readable.
+The response is `format:loom-full-thread/v1` with escaped `markdown` and
+`next_cursor`. Follow `next_cursor` as `cursor` with the same scope until null.
+Pages may be partial even below limit 20 (maximum 50). Record identity, sequence,
+authors, links, verdicts, evidence metadata and historical work references are
+retained. Oversized records repeat their identity; advance only on the final
+part. No recursive source expansion or invented raw tool output. Cursors depend
+on scope/location/version and do not promise a concurrent snapshot. Invalid
+history fails without advancing; reducing page size cannot admit an invalid
+individual record.
 
 ## Recover without guessing
 
@@ -214,13 +220,11 @@ and retained history. Explicitly select a current task, select Action-only conte
 or call `loom_context` with `{"clear":true}`. Do not infer a replacement task from
 a similar title. `loom_context` with `{}` reads this Session's existing selection.
 
-Successful context reads survive a selection-save failure: inspect the separate
-`selection.status:"save-failed"` outcome. `persisted` is the saved reference,
-null if absent, or "unknown" if readback failed; it is not the unsaved request.
-Later automatic context follows persisted selection. Do not assume the
-selection changed after an error, or that a failed clear succeeded: clear still
-fails on a write error. Unreadable context still fails, not a missing-task notice.
-Explicit Plan and ledger queries are alternative reads that do not save selection.
-Role/context injection is optional; tools and this guide remain usable without
-it. Respect native denials. Hand off results, IDs, remaining work and test limits,
-not unsupported delivery/readiness claims.
+Successful reads survive selection-save failures. Inspect
+`selection.status:"save-failed"` and `persisted` (saved reference, null or
+"unknown"), not the unsaved request. Automatic context still uses the persisted
+selection; do not assume the selection changed after an error. Failed clear
+also fails; unreadable context is not a missing-task recovery. Explicit Plan
+and ledger reads do not change selection. Injection is optional; obey native
+denials. Pass useful references and actual verification limits, not delivery or
+readiness claims. See [handoff recovery](../../../docs/handoffs.md).

@@ -4,6 +4,14 @@ type: Log
 
 # Update Log
 
+## 2026-10-22
+
+**Creation**: `handoffs.md` — Documented exact result handoffs, independent review context, limits and recovery; it remains outside the four-source OKF bundle without OKF frontmatter or typed relationships — [Useful handoffs and independent review](/docs/handoffs.md).
+
+**Update**: `index.md` — Added the handoff guide to the supporting-document inventory without treating it as an OKF source document — [bundle index](/docs/index.md).
+
+**Update**: `log.md` — Recorded the new supporting handoff guide and its index entry — [change log](/docs/log.md).
+
 ## 2026-10-19
 
 **Update**: `README.md` — Reconciled installed-question status with the passed packed-candidate 2.0.32 qualification and stated its scope and limits — [Loading the plugin](../README.md#loading-the-plugin).
