@@ -29,8 +29,11 @@ async function fixture() {
   }
   let dispose = await (plugin as any).setup(ctx)
   const db = new Database(join(root, "state", "loom", "actions-v1", digest({ project: project.id, canonical: root }), "ledger.sqlite"))
-  const invoke = async (input: unknown, sessionID = "asker", signal = new AbortController().signal) =>
-    JSON.parse((await tools.get("record").execute(input, { sessionID, agent: sessionID === "asker" ? "original" : "respondent", signal })).content).result
+  const invoke = async (input: unknown, sessionID = "asker", signal = new AbortController().signal) => {
+    const args = input && typeof input === "object" && (input as any).view === "full_thread"
+      ? { ...input, response_format: "json" } : input
+    return JSON.parse((await tools.get("record").execute(args, { sessionID, agent: sessionID === "asker" ? "original" : "respondent", signal })).content).result
+  }
   return { root, db, calls, lookups, target, invoke,
     lookup: (fn: typeof lookup) => { lookup = fn }, send: (fn: typeof send) => { send = fn },
     ask: (blocking = true) => invoke({ operation: "ask", question: "Stored question", to_agent: "recipient", blocking }),

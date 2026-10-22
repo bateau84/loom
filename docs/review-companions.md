@@ -42,7 +42,7 @@ Call `loom_assessment` with:
 ```
 
 Call `loom_qa` with the same input to obtain the QA lens. In Code Mode, search for
-the tool and use the exact callable path returned by search. Parse its JSON text
+the tool and use the exact callable path returned by search. Request `response_format:"json"` and parse its JSON text
 once; the payload is under `result`.
 
 Use an exact ID from OpenCode's current native skill registry. OpenCode 2.1.1

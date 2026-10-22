@@ -11,6 +11,7 @@ import { Observer } from "./context.js"
 import { resolveContextSelection, workContext } from "./work-context.js"
 import { digest, PROCESSING_LIMITS, type Actor, type Focus } from "./model.js"
 import { renderFullHistory } from "./history-renderer.js"
+import { fullThreadMarkdown } from "./response-format.js"
 import { Store } from "./store.js"
 import { QUESTION_DISPATCH } from "./collaboration.js"
 import { resumeAnswer } from "./answer-resume.js"
@@ -62,12 +63,12 @@ const specs = [
   { name: "action", description: TOOL_HELP.action, input: obj({ operation: choice("list", "create", "update", "sessions"), action_id: str, title: str, goal: str, state: choice("active", "paused", "completed", "cancelled"), expected_revision: num, offset: num, archived: { type: "boolean" }, cursor: { type: "string", minLength: 1, maxLength: 4096 }, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
   { name: "plan", description: TOOL_HELP.plan, input: obj({ operation: choice("read", "save"), action_id: str, revision: num, expected_revision: num, nodes: { type: "array", maxItems: 300, items: obj({ id: str, kind: choice("phase", "wave", "task", "subtask"), title: str, parent: str, depends_on: list, outcome: str, context: str, criteria: list, skills: list, roles: list, agent: str }, ["id", "kind", "title"]) } }, ["operation", "action_id"]) },
   { name: "context", description: TOOL_HELP.context, input: obj({ action_id: str, node_id: str, clear: { type: "boolean" }, mode: choice("continuation", "independent"), handoff_id: { type: ["string", "null"] } }) },
-  { name: "record", description: TOOL_HELP.record, input: { ...obj({ operation: choice("add", "query", "complete", "reopen", "ask", "answer"), view: choice("ledger", "progress", "questions", "thread", "full_thread"), session_id: str, cursor: str, work_ref: workRefInput, ...askInput, ...answerInput, respondent: str, question_state: choice("open", "answered", "all"), offset: num, action_id: str, node_id: str, kind: choice("claim", "result", "concern", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]),
+  { name: "record", description: TOOL_HELP.record, input: { ...obj({ operation: choice("add", "query", "complete", "reopen", "ask", "answer"), view: choice("ledger", "progress", "questions", "thread", "full_thread"), response_format: choice("markdown", "json"), session_id: str, cursor: str, work_ref: workRefInput, ...askInput, ...answerInput, respondent: str, question_state: choice("open", "answered", "all"), offset: num, action_id: str, node_id: str, kind: choice("claim", "result", "concern", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]),
     allOf: [
       { if: { properties: { operation: { const: "ask" } } }, then: obj({ operation: { const: "ask" }, ...askInput }, ["operation", "question", "to_agent", "blocking"]) },
       { if: { properties: { operation: { const: "answer" } } }, then: obj({ operation: { const: "answer" }, ...answerInput }, ["operation", "question_id", "answer"]) },
       { if: { properties: { view: { const: "full_thread" } }, required: ["view"] }, then: {
-        ...obj({ operation: { const: "query" }, view: { const: "full_thread" }, action_id: str, node_id: str, session_id: str, cursor: str,
+        ...obj({ operation: { const: "query" }, view: { const: "full_thread" }, action_id: str, node_id: str, session_id: str, cursor: str, response_format: choice("markdown", "json"),
           limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation", "view"]),
         oneOf: [{ required: ["action_id"], not: { required: ["session_id"] } }, { required: ["session_id"], not: { anyOf: [{ required: ["action_id"] }, { required: ["node_id"] }] } }],
       } },
@@ -216,6 +217,10 @@ export default Plugin.define({
                 break
               }
               case "record": {
+                if (input.response_format !== undefined) {
+                  if (input.response_format !== "markdown" && input.response_format !== "json") throw new Error("response_format must be markdown or json")
+                  if (input.operation !== "query" || input.view !== "full_thread") throw new Error("response_format is only supported for full_thread queries")
+                }
                 // Reject retired protocol fields even when a caller bypasses schema validation.
                 if (["assign", "authorize-continuation", "withdraw-continuation", "retry-delivery"].includes(String(input.operation))
                   || ["assignments", "deliveries"].includes(String(input.view))) throw new Error("Assignment/delivery operation or view is retired; history remains in the ledger")
@@ -223,7 +228,7 @@ export default Plugin.define({
                   if (field in input) throw new Error(`${field} is not supported; assignment/delivery protocol is retired`)
                 if (input.view === "full_thread") {
                   if (input.operation !== "query") throw new Error("full_thread requires query")
-                  const { operation: _operation, view: _view, ...query } = input
+                  const { operation: _operation, view: _view, response_format: _responseFormat, ...query } = input
                   result = renderFullHistory(store.history.read(query))
                   break
                 }
@@ -268,8 +273,16 @@ export default Plugin.define({
                 ? { ...r.data, statement: r.data.statement.slice(0,600), truncated: true, read_full: "Pass this record_id to loom_record query" } : r.data })) }
             }
             const content = JSON.stringify({ result, ...diagnostics })
-            if (spec.name === "record" && input.view === "full_thread" && content.length > PROCESSING_LIMITS.valueChars)
-              throw new Error("Full thread serialized response exceeds processing limit; cursor not advanced; reduce limit")
+            if (spec.name === "record" && input.view === "full_thread") {
+              if (content.length > PROCESSING_LIMITS.valueChars)
+                throw new Error("Full thread serialized response exceeds processing limit; cursor not advanced; reduce limit")
+              if (input.response_format !== "json") {
+                const markdown = fullThreadMarkdown(result as ReturnType<typeof renderFullHistory>, snapshot.errors)
+                if (markdown.length > PROCESSING_LIMITS.valueChars)
+                  throw new Error("Full thread Markdown response exceeds processing limit; cursor not advanced; reduce limit")
+                return { content: markdown }
+              }
+            }
             return { content }
           },
         })

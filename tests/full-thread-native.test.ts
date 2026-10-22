@@ -112,7 +112,7 @@ test("registered scope/schema validation rejects retired and unrelated fields wi
     const full = schema.allOf.find((s: any) => s.if.properties.view?.const === "full_thread").then
     expect(full.additionalProperties).toBe(false)
     expect(full.properties.operation.const).toBe("query")
-    expect(Object.keys(full.properties).sort()).toEqual(["action_id", "cursor", "limit", "node_id", "operation", "session_id", "view"])
+    expect(Object.keys(full.properties).sort()).toEqual(["action_id", "cursor", "limit", "node_id", "operation", "response_format", "session_id", "view"])
     for (const op of schema.allOf.slice(0, 2)) {
       expect(op.then.properties.context_attachments).toBeDefined()
       expect(op.then.properties.attachments).toBeUndefined()
@@ -248,7 +248,10 @@ test("full_thread registered reads use only caller ownership lookup, no target n
     process.env.XDG_STATE_HOME = join(directory, "state"); process.env.OPENCODE_CONFIG_DIR = join(directory, "config")
     await writeFile(join(directory, ".loom.yaml"), "agents: {}\ninstructions: {enabled: false}\nledger: {capture: off}\n")
     dispose = await (plugin as any).setup(ctx)
-    const invoke = async (input: any) => JSON.parse((await tools.get("record").execute(input, { sessionID: "reader", agent: "author", signal: new AbortController().signal })).content)
+    const invoke = async (input: any) => JSON.parse((await tools.get("record").execute(
+      input.view === "full_thread" ? { ...input, response_format: "json" } : input,
+      { sessionID: "reader", agent: "author", signal: new AbortController().signal },
+    )).content)
     for (let restart = 0; restart < 2; restart++) {
       await invoke({ operation: "query", view: "full_thread", session_id: "other-session" })
       await expect(invoke({ operation: "query", view: "full_thread", session_id: "other-session", cursor: "invalid" })).rejects.toThrow()

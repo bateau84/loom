@@ -1,6 +1,6 @@
 # Tool help is part of discovery
 
-Each of Loom's five registered tool descriptions now contains its own usage,
+Each of Loom's seven registered tool descriptions contains its own usage,
 operation-specific inputs, returned fields, side effects, error caveats and JSON
 examples. `src/tool-help.ts` is the source for that text. The plugin registers it
 as actual tool metadata, not a link requiring another file read. `docs/tools.md`
@@ -20,7 +20,7 @@ use the returned callable path, not guess names from underscore labels. A query
 can return more tools than intended; use its returned path/signature and paging.
 The initial compact catalog uses only the first description line, limited by the
 host to 120 characters. Each Loom summary fits that boundary. Detailed help is
-therefore available at discovery without putting all five manuals into every
+therefore available at discovery without putting all seven manuals into every
 role's initial instructions. Descriptions are at most 3,600 characters, except
 `loom_record` (10,000) which also teaches completion, questions and full_thread;
 this is a tested metadata size convention, not a tokenizer-independent limit or

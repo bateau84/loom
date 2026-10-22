@@ -2,11 +2,10 @@
 
 ## Keep Loom optional
 
-A conversation needs no Action. An Action needs no Plan. Use only structure
-that helps recover useful work. OpenCode owns Sessions, execution, delegation,
-skills, models and permissions. Loom records intent, context and history; it is
-not a scheduler. Do not invent mandatory stages or legacy tools. Role checks
-restrict only the companion loaders, not native execution.
+A conversation needs no Action. An Action needs no Plan. OpenCode owns
+Sessions, execution, delegation, skills, models and permissions. Loom records
+intent, context and history; it is not a scheduler. Role checks restrict only
+companion loaders, not native execution.
 
 ## Find the right tool
 
@@ -20,7 +19,10 @@ restrict only the companion loaders, not native execution.
 | `loom_assessment` | Load ASSESSMENT.md; requires configured assessment role. |
 | `loom_qa` | Load QA.md; requires configured qa role. |
 
-Tool search provides syntax; results contain `result` and optional `config_errors`. Await writes; sequence dependent calls. Use Promise.allSettled for independent calls and inspect outcomes.
+Tool search provides syntax. Structured outputs use JSON with `result` and optional `config_errors`.
+Assessment/QA and `full_thread` return Markdown by default; pass `response_format:"json"` for scripts.
+Only JSON outputs should be passed to JSON.parse. Await writes; sequence dependent calls.
+Use Promise.allSettled for independent calls and inspect outcomes.
 
 ## Start or resume work
 
@@ -159,7 +161,13 @@ selected-scope fallback. Reads the current authorized Loom Store, not native
 Session bodies or cross-project databases. Membership uses authorship and direct
 question/answer relations, not notices, assumed agent identity or delivery.
 
-`full_thread` returns escaped `markdown` and `next_cursor`. Follow the same scope to null; a short page can be incomplete (limit 20, max 50). Records include identity, authors, sequence, verdicts, evidence and old work references; oversized records advance only on their final part. No recursive source expansion or invented raw output. Cursors depend on scope/location/version, not a concurrent snapshot. Invalid data fails without advancing.
+`full_thread` returns Markdown by default, with scope and `next_cursor` at the top. Use
+`response_format:"json"` for `result.format`, `markdown`, `scope` and `next_cursor`.
+Follow the same scope to null; a short page can be incomplete (limit 20, max 50).
+Records include identity, authors, sequence, verdicts, evidence and old work references;
+oversized records advance only on their final part. No recursive source expansion or
+invented raw output. Cursors depend on scope/location/version, not a concurrent
+snapshot. Invalid data fails without advancing.
 
 ## Recover without guessing
 
