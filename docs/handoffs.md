@@ -85,9 +85,10 @@ retain the saved mode; explicit mode/pin changes also save without repeated IDs.
 Creating an Action or clearing selection resets the preferences. Clear cannot
 combine with work IDs, mode or pin.
 
-Unreadable saved selection still permits explicit navigation. With no explicit
-mode, recovery uses independent context rather than assuming old history was
-allowed. Invalid modes fail visibly. Selection write failures are reported;
+Unreadable saved selection still permits explicit navigation. Without a readable saved preference,
+explicit navigation keeps the legacy continuation default. A fresh independent
+assessment must explicitly choose `mode:"independent"` before reading history;
+explicit selection does not prove that earlier opinions are absent. Invalid modes fail visibly. Selection write failures are reported;
 `persisted` identifies the old selection, null, or unknown. Later automatic
 context follows that persisted state, not the failed request. Retry in a fresh
 session before claiming isolation. A removed task is not silently replaced.

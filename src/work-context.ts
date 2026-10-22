@@ -33,15 +33,13 @@ export function resolveContextSelection(input: ContextInput, selected: () => Foc
   if (input.handoff_id !== undefined && input.handoff_id !== null) uid(input.handoff_id, "handoff_id")
   const explicit = input.action_id !== undefined
   let previous: ContextSelection | undefined
-  let unreadable = false
   try {
     const saved = selected()
     previous = saved === undefined ? undefined : contextSelection(saved)
   } catch (error) {
     if (!explicit) throw error
-    // Explicit navigation still recovers broken saved selection. Do not guess that
-    // an unreadable old view allowed prior opinions; use the smaller view instead.
-    unreadable = true
+    // Explicit navigation preserves legacy continuation behavior when no mode
+    // is requested. Independent assessment must request its mode explicitly.
   }
   const focus = explicit
     ? { action_id: uid(input.action_id, "action_id"), ...(input.node_id === undefined ? {} : { node_id: uid(input.node_id, "node_id") }) }
@@ -51,7 +49,7 @@ export function resolveContextSelection(input: ContextInput, selected: () => Foc
     return undefined
   }
   const same = previous?.action_id === focus.action_id && previous?.node_id === focus.node_id
-  const mode = input.mode ?? previous?.context_mode ?? (unreadable ? "independent" : undefined)
+  const mode = input.mode ?? previous?.context_mode
   const pin = input.handoff_id === null ? undefined : input.handoff_id ?? (same ? previous?.handoff_id : undefined)
   if (mode === "independent" && typeof input.handoff_id === "string")
     throw new Error("Independent context cannot include a handoff; use continuation for prior results")

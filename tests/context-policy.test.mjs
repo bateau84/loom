@@ -52,7 +52,8 @@ test('bad options are rejected and explicit navigation can recover corrupt selec
   assert.equal(resolveContextSelection({}, () => undefined), undefined)
   const broken = () => { throw new Error('corrupt selection') }
   assert.throws(() => resolveContextSelection({}, broken), /corrupt/)
-  assert.equal(resolveContextSelection(focus, broken).context_mode, 'independent')
+  assert.equal(resolveContextSelection(focus, broken).context_mode, undefined)
+  assert.equal(resolveContextSelection({ ...focus, mode: 'independent' }, broken).context_mode, 'independent')
   assert.equal(resolveContextSelection({ ...focus, mode: 'continuation' }, broken).context_mode, 'continuation')
 })
 
