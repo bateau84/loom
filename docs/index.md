@@ -25,4 +25,5 @@ relationships.
 - [Implementation boundaries](/docs/design.md)
 - [Historical handback experiment](/docs/handback-experiment.md)
 - [Tool help is part of discovery](/docs/tool-discovery.md)
-- [Five tools, optional structure](/docs/tools.md)
+- [Seven tools, optional structure](/docs/tools.md)
+- [Assessment and QA skill companions](/docs/review-companions.md): optional role-scoped loaders for installed review instructions.

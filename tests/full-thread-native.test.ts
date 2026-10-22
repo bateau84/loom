@@ -41,7 +41,7 @@ test("registered full_thread reads explicit other-Session conversations without 
     expect(text).toContain("response, not resolution")
     expect(text).not.toMatch(/^# <script>/m)
     expect((await f.invoke("context", {}, "reader")).result).toEqual(before)
-    expect(f.tools.size).toBe(5)
+    expect(f.tools.size).toBe(7)
     expect(f.tools.get("record").input.properties.view.enum).toContain("full_thread")
   } finally { await f.close() }
 })

@@ -20,7 +20,8 @@ configuration example, documentation and migration helper.
   relational `full_thread` history with explicit part/cursor continuation.
 - Usage documentation returned directly by tool search.
 - A bundled native `loom` skill, discoverable and loaded on demand.
-- Five tools: `loom_agents`, `loom_action`, `loom_plan`, `loom_context`, `loom_record`.
+- Seven tools: `loom_agents`, `loom_action`, `loom_plan`, `loom_context`, `loom_record`,
+  `loom_assessment`, and `loom_qa`.
 - Read-only, paginated OpenCode 2.1.1 native Session discovery via `loom_action sessions`,
   optionally filtered by Action; includes native archive status, without changing Sessions.
 
@@ -132,7 +133,7 @@ Precedence, from low to high:
 3. `<project-working-directory>/.loom.local.yaml`.
 
 Mappings merge, lists replace. `agents.<name>: null` removes an inherited entry;
-`enabled: false` disables Loom guidance for that agent. Native agent descriptions
+`enabled: false` disables Loom guidance and companion-loader access for that agent. Native agent descriptions
 are the default; the Loom description is a coordination-only override. A role can
 belong to many agents and an agent can have many roles. Missing configured agents
 are reported by `loom_agents`; no placeholder agents or permissions are created.
@@ -171,7 +172,7 @@ this skill; `src/plugin.ts` remains the internal core implementation.
 Only metadata is advertised until OpenCode loads the skill. The V2 `autoinvoke`
 flag is enabled for discovery; it does **not** inject the full guide at startup.
 Native skill permissions still apply, and Loom does not force loading, rewrite
-agents, add a sixth tool or change role/context injection. The guide is available
+agents or eagerly inject the guide. Companion loaders are separate tools with role checks. The guide is available
 without an Action or configured role, including when `instructions.enabled` is
 false. General engineering and review skills remain external.
 
@@ -189,7 +190,7 @@ remain inert; guide loading or configuration cannot authorize/replay old intents
 
 ## Agent experience
 
-Start with the [five-tool guide and Research → Worker example](docs/tools.md).
+Start with the [tool guide and Research → Worker example](docs/tools.md).
 It covers operation inputs, side effects, exact dependency-record retrieval,
 replanning, review records and fresh-session resumption. Usage is also registered
 directly in tool descriptions and returned by tool search; agents do not need to
@@ -238,9 +239,18 @@ No recursive evidence expansion, invented raw bodies, cross-project/native Sessi
 reads, frozen concurrent snapshot or perpetual-cursor guarantee is provided.
 
 Use `loom_record` to record useful results, claims, Assessment or QA findings.
-Load external skills and their `ASSESSMENT.md`/`QA.md` companions with native tools.
-Loom does not require a special companion-loader ceremony. These are stored
-review results, not an automatic guarantee of reviewer independence.
+Choose relevant skills independently. Use `loom_assessment` to load `ASSESSMENT.md`
+and `loom_qa` to load `QA.md` from the installed skill. The enabled caller needs
+the corresponding existing `assessment` or `qa` role in `.loom.yaml`; native
+skill permissions still apply. No Action, Plan, prior skill receipt or mandatory
+review stage is required. Missing companions are reported, never substituted.
+OpenCode's flat `<skill-id>.md` entries are supported too: any companion lives
+under a separate `<skill-id>/` sibling directory to avoid mixing review lenses
+between flat skills. The bundled `loom` skill has no companions, so its result
+is `available:false`, not a path error.
+See [Assessment and QA companions](docs/review-companions.md) for configuration,
+examples and limits. Loading instructions and recording findings are separate;
+neither guarantees independent review.
 
 ## Evidence and privacy
 

@@ -15,6 +15,9 @@ export async function registeredLoom(initialSkills: any[] = []) {
   const tools = new Map<string, any>(), namespaces = new Map<string, any>()
   const hooks = new Map<string, any>()
   const skills = new Map<string, any>(), skillTransforms = new Set<(editor: any) => void>()
+  const permissionRequests: any[] = []
+  const permission = { error: undefined as unknown, beforeReturn: undefined as (() => Promise<void>) | undefined }
+  const skillRequests: number[] = []
   const reloadSkills = () => {
     skills.clear()
     for (const skill of initialSkills) skills.set(skill.id, { ...skill })
@@ -27,9 +30,17 @@ export async function registeredLoom(initialSkills: any[] = []) {
   const ctx = {
     location: { directory, project: { id: "tool-help", canonical: directory, directory } },
     agent: { list: async () => [{ id: "investigator" }, { id: "author" }], transform: () => { throw new Error("No agent rewriting") } },
-    permission: { hook: () => { throw new Error("No new permission hooks") } },
+    permission: {
+      hook: () => { throw new Error("No new permission hooks") },
+      assert: async (request: unknown) => {
+        permissionRequests.push(request)
+        await permission.beforeReturn?.()
+        if (permission.error !== undefined) throw permission.error
+      },
+    },
     event: {subscribe: async function* () {}},
     skill: {
+      list: async () => { skillRequests.push(1); return { data: [...skills.values()] } },
       transform: async (fn: (editor: any) => void) => {
         skillTransforms.add(fn); reloadSkills()
         return { dispose: async () => { skillTransforms.delete(fn); reloadSkills() } }
@@ -70,6 +81,7 @@ export async function registeredLoom(initialSkills: any[] = []) {
     dispose = await (plugin as any).setup(ctx)
     return {
       tools, namespaces, close, directory, hooks, sessions, skills, reloadSkills, nativeInputs, sessionReads, nativeListRequests, nativePages,
+      permission, permissionRequests, skillRequests,
       context: async (sessionID: string, agent: string) => {
         const event = { sessionID, agent, system: [] as Array<{ type: string; text: string }>, messages: [], tools: {}, options: {} }
         await hooks.get("context")(event)

@@ -12,7 +12,7 @@ import { digest } from "../src/model.js"
 import { legacyFixture, legacyDeliveryDDL, savedRows } from "./helpers/legacy-delivery.js"
 
 for (const scenario of ["missing-column", "unsupported-version", "healthy", "empty-legacy", "nonempty-legacy", "masked-index"] as const) test(scenario !== "unsupported-version"
-  ? `${scenario} startup still registers five tools and closes its private database on disposal`
+  ? `${scenario} startup still registers seven tools and closes its private database on disposal`
   : `startup ${scenario} identifies the resolved database and known stage, preserves cause and closes before tools`, async () => {
   const healthy = scenario !== "unsupported-version"
   await mkdir(new URL("../.test-build/", import.meta.url), { recursive: true })
@@ -74,8 +74,8 @@ for (const scenario of ["missing-column", "unsupported-version", "healthy", "emp
     catch (error) { failure = error }
     if (healthy) {
       expect(failure).toBeUndefined()
-      expect(tools.sort()).toEqual(["action", "agents", "context", "plan", "record"])
-       expect(registrations.sort()).toEqual(["skill", "tool"])
+      expect(tools.sort()).toEqual(["action", "agents", "assessment", "context", "plan", "qa", "record"])
+       expect(registrations.sort()).toEqual(["skill", "tool", "tool"])
       expect(closed).toHaveLength(0)
       if (!cleanup) throw new Error("Healthy startup must return cleanup")
       await cleanup(); cleanup = undefined

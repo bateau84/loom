@@ -7,7 +7,7 @@ import { registeredLoom } from "./helpers/registered-loom.js"
 for (const name of Object.keys(TOOL_HELP) as LoomToolName[]) test(`registered ${name} tool carries complete search help without role injection`, async () => {
   const fixture = await registeredLoom()
   try {
-    expect([...fixture.tools.keys()].sort()).toEqual(["action", "agents", "context", "plan", "record"])
+    expect([...fixture.tools.keys()].sort()).toEqual(["action", "agents", "assessment", "context", "plan", "qa", "record"])
     expect(fixture.namespaces.get("loom").description).toBe(LOOM_NAMESPACE_HELP)
     const tool = fixture.tools.get(name)
     expect(tool.description).toBe(TOOL_HELP[name])
@@ -201,7 +201,7 @@ test("Plan rejects missing required and invented lifecycle fields without writin
 test("search-visible help explains awaited writes and independent-call failure handling", async () => {
   const f = await registeredLoom()
   try {
-    expect(f.tools.size).toBe(5)
+    expect(f.tools.size).toBe(7)
     for (const tool of f.tools.values()) {
       expect(tool.description).toContain("Await writes before using IDs or ending Code Mode")
       expect(tool.description).toContain("Promise.allSettled and inspect every outcome")

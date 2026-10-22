@@ -1,8 +1,9 @@
 import { Plugin, Skill } from "@opencode/plugin"
 import core from "./src/plugin.js"
 import { loomSkill } from "./src/skill.js"
+import { registerReviewCompanions } from "./src/review-companions.js"
 
-// The public entrypoint composes the core with its on-demand usage guide.
+// The public entrypoint composes ledger tools, the usage guide and read-only review lenses.
 export default Plugin.define({
   id: "loom",
   async setup(ctx) {
@@ -17,14 +18,25 @@ export default Plugin.define({
       // Respect an existing user skill. Rebuilds get a fresh, unmodified definition.
       if (!editor.get(skill.id)) editor.add({ ...skill })
     })
+    let cleanup: Plugin.Cleanup | void
+    let companions: (() => Promise<void>) | undefined
     try {
-      const cleanup = await core.setup(ctx)
+      cleanup = await core.setup(ctx)
+      companions = await registerReviewCompanions(ctx)
       return async () => {
         try { await cleanup?.() }
-        finally { await registration.dispose() }
+        finally {
+          try { await companions?.() }
+          finally { await registration.dispose() }
+        }
       }
     } catch (error) {
-      await Promise.allSettled([registration.dispose()])
+      // Cleanup failures must not replace the activation error.
+      await Promise.allSettled([
+        Promise.resolve().then(() => companions?.()),
+        Promise.resolve().then(() => cleanup?.()),
+        Promise.resolve().then(() => registration.dispose()),
+      ])
       throw error
     }
   },
