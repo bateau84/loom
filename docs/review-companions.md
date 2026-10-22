@@ -96,6 +96,8 @@ Session. If the Session has another Action selected, add `"session_only":true`
 to avoid attaching the review to that Action. Use `loom_context` with
 `{"mode":"independent"}` to request an independent view even when no Action
 exists. It does not erase prior conversation or prove reviewer independence.
+Read the caller's Session records with `loom_record` operation `query` and
+`session_only:true` (or `full_thread` with an explicit `session_id`).
 
 ## Verification
 

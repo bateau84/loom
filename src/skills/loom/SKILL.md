@@ -85,9 +85,12 @@ Without an Action, this returns an independent Session view with no inherited
 Loom history and no saved selection; it is not necessary to create an Action.
 This hides Loom ledger/review/progress/question history from both context reads
 and automatic injection; it cannot erase native messages or task text. After
-recording original findings, switch to `mode:"continuation"` and reconcile
-unresolved earlier findings before the final verdict. A follow-up review may
-start with prior findings. Saved mode persists; default remains continuation.
+recording original findings, Action-linked reviews can switch to
+`mode:"continuation"` and reconcile unresolved earlier findings. Without an
+Action, use `loom_record query` with `session_only:true` to inspect Session
+history when needed; no mode is persisted without selected work. A follow-up
+review may start with prior findings. Saved Action modes persist; the default
+remains continuation.
 Selection-save failure means the old view may still inject. See
 [handoff limits and recovery](../../../docs/handoffs.md).
 

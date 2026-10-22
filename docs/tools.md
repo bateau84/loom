@@ -131,9 +131,11 @@ When an Action is selected but the review must remain separate, add
 reviews have no Action contract fingerprint and are not Action-wide verdicts.
 Action records may link same-Action host observations in `evidence_ids`;
 Session-only reviews may link only unscoped host observations from the **same**
-Session. `artifact_refs` are unverified pointers. Record actual checks,
-sources and limits. No raw tool bodies are captured, and explicit text is not
-redacted: never record credentials.
+Session. `artifact_refs` are unverified pointers. Read your Session-scoped
+reviews with `loom_record {"operation":"query","session_only":true}` or the
+explicit Session `full_thread` view. Record actual checks, sources and limits.
+No raw tool bodies are captured, and explicit text is not redacted: never
+record credentials.
 
 ### Concerns and follow-up
 

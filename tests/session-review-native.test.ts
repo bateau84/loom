@@ -31,6 +31,7 @@ test("fresh independent Session can record Assessment and QA without creating an
     expect((await f.invoke("action", { operation: "list" })).result.items).toEqual([])
     const own = (await f.invoke("record", { operation: "query", session_only: true }, "review-session")).result.items
     expect(own.map((r: any) => r.id)).toEqual([assessment.id, qa.id])
+    expect((await f.invoke("record", { operation: "query" }, "review-session")).result.items.map((r: any) => r.id)).toEqual([assessment.id, qa.id])
     expect((await f.invoke("record", { operation: "query", session_only: true }, "other-session")).result.items).toEqual([])
     const complete = (await f.invoke("record", {
       operation: "query", view: "full_thread", session_id: "review-session", limit: 20,
@@ -52,7 +53,7 @@ test("session_only add overrides a selected Action without clearing it or contam
       statement: "Different Session-only QA, unrelated to the selected Action.",
     })).result
     expect(linked.action_id).toBe(action.id)
-    expect(linked.fingerprint).toBeString()
+    expect(typeof linked.fingerprint).toBe("string")
     expect(unlinked.action_id).toBeUndefined()
     expect(unlinked.fingerprint).toBeUndefined()
     expect((await f.invoke("context", {})).result.action.id).toBe(action.id)
@@ -116,7 +117,7 @@ test("Session review evidence is restricted to unscoped observations from the sa
       kind: "assessment", verdict: "pass", statement: "Action-level observation is linked.", evidence_ids: [actionObservation.id],
     })
     expect(linked.action_id).toBe(action.id)
-    expect(linked.fingerprint).toBeString()
+    expect(typeof linked.fingerprint).toBe("string")
     expect(() => store.record(actor, { action_id: action.id }, {
       kind: "assessment", verdict: "pass", statement: "Cannot borrow Session observation.", evidence_ids: [own.id],
     })).toThrow("in this Action")
