@@ -21,6 +21,7 @@ relationships.
 - [Retired assignment/delivery protocol](/docs/assignment-delivery.md)
 - [Reported progress and contextual questions](/docs/collaboration.md)
 - [Simple collaboration, native execution](/docs/coordination.md)
+- [Useful handoffs and independent review](/docs/handoffs.md)
 - [Implementation boundaries](/docs/design.md)
 - [Historical handback experiment](/docs/handback-experiment.md)
 - [Tool help is part of discovery](/docs/tool-discovery.md)
