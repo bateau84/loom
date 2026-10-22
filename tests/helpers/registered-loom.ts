@@ -89,8 +89,14 @@ export async function registeredLoom(initialSkills: any[] = []) {
         const block = event.system.find(p => p.text.startsWith(prefix))
         return block ? JSON.parse(block.text.slice(prefix.length)) : undefined
       },
+      // Existing tests intentionally assert the JSON contract. Exercise the
+      // default Markdown views separately using the registered callback.
       invoke: async (name: string, input: unknown, sessionID = "s", agent = "author") => {
-        const output = await tools.get(name).execute(input, {
+        const markdownByDefault = name === "assessment" || name === "qa" ||
+          (name === "record" && !!input && typeof input === "object" && (input as any).view === "full_thread")
+        const request = markdownByDefault && input && typeof input === "object" && !Array.isArray(input) &&
+          !("response_format" in input) ? { ...input, response_format: "json" } : input
+        const output = await tools.get(name).execute(request, {
           sessionID, agent, messageID: "message", id: "tool-call", signal: new AbortController().signal,
         })
         return JSON.parse(output.content)

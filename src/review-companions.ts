@@ -6,6 +6,7 @@ import { basename, dirname, isAbsolute, join } from "node:path"
 import { TextDecoder } from "node:util"
 import { configPaths, loadConfig } from "./config.js"
 import { decodeConfigYaml } from "./config-parser.js"
+import { reviewCompanionMarkdown } from "./response-format.js"
 
 export type ReviewLens = "assessment" | "qa"
 export const COMPANION_MAX_BYTES = 65536
@@ -16,11 +17,11 @@ export function companionHelp(lens: ReviewLens): string {
   return [
     `Load an installed skill's ${file} review lens; requires the configured ${lens} role.`,
     `Usage: {"skill":"software-engineering"}. Use the exact native skill ID. The calling agent must be enabled in .loom.yaml with roles including ${lens}; its name is irrelevant. Choose relevant skills independently, not only the producer's choices. Load practitioner guidance with the native skill tool when useful. No prior skill-load receipt, Action or Plan is required.`,
-    `Returns: JSON text with result.skill, methodology, available and path. An available ${file} also has its full UTF-8 content and source-byte sha256. A missing companion returns available:false and reason:companion-not-found, never SKILL.md as a substitute.`,
+    `Returns: Renderable Markdown by default: source skill, path, SHA-256 and the full ${file} content. A missing companion is clearly labelled (never SKILL.md as a substitute). With response_format:"json", returns the original JSON result envelope containing skill, methodology, available, path, and content/sha256 or reason:companion-not-found.`,
     "Caution: Reads the current native skill registry, not GitHub or a fixed skills directory. Native skill permissions still apply, including ask/deny. Unknown skills, invalid configuration, missing roles, unreadable/oversized/non-UTF-8 files and cancellation fail visibly. A registered SKILL.md uses companions beside it; a registered <skill-id>.md uses a separate <skill-id>/ directory next to that entry. Shared-root companion files are never borrowed by flat skills. Companion files must be regular, non-symlink UTF-8, at most 64 KiB. Symlinked installation directories are supported. No dispatch, workflow stage, completion, verdict or proof of independence is created. Use loom_record separately for actual findings.",
     'Examples (JSON inputs, not shell commands):',
     '{"skill":"software-engineering"}',
-    'In Code Mode, use the exact callable path returned by search and parse the returned JSON text once.',
+    'In Code Mode, use the exact callable path returned by search. Request response_format:json and JSON.parse once only when structured fields are needed; default output is Markdown.',
     'Await writes before using IDs or ending Code Mode. For independent calls use Promise.allSettled and inspect every outcome; sequence dependent calls.',
   ].join("\n")
 }
@@ -34,9 +35,11 @@ function unwrapped(value: unknown): unknown {
 }
 function skillID(input: unknown): string {
   const value = record(input)
-  if (Object.keys(value).some(key => key !== "skill") || typeof value.skill !== "string" ||
+  if (Object.keys(value).some(key => key !== "skill" && key !== "response_format") ||
+      (value.response_format !== undefined && value.response_format !== "markdown" && value.response_format !== "json") ||
+      typeof value.skill !== "string" ||
       !value.skill.trim() || value.skill !== value.skill.trim() || value.skill.length > 200) {
-    throw new Error("Expected only skill: a non-empty, exact native skill ID of at most 200 characters")
+    throw new Error("Expected only skill and optional response_format: a non-empty, exact native skill ID of at most 200 characters")
   }
   return value.skill
 }
@@ -88,7 +91,7 @@ export async function registerReviewCompanions(ctx: Plugin.Context): Promise<() 
       name: lens,
       description: companionHelp(lens),
       options: { namespace: "loom", codemode: true },
-      input: { type: "object", properties: { skill: { type: "string", minLength: 1, maxLength: 200 } }, required: ["skill"], additionalProperties: false },
+      input: { type: "object", properties: { skill: { type: "string", minLength: 1, maxLength: 200 }, response_format: { type: "string", enum: ["markdown", "json"] } }, required: ["skill"], additionalProperties: false },
       execute: async (raw, tool) => {
         const signal = AbortSignal.any([tool.signal, lifetime.signal])
         const id = skillID(raw)
@@ -142,7 +145,7 @@ export async function registerReviewCompanions(ctx: Plugin.Context): Promise<() 
         const result = companion
           ? { skill: id, methodology: lens, available: true, path, ...companion }
           : { skill: id, methodology: lens, available: false, path, reason: "companion-not-found" }
-        return { content: JSON.stringify({ result }) }
+        return { content: record(raw).response_format === "json" ? JSON.stringify({ result }) : reviewCompanionMarkdown(result) }
       },
     })
   })

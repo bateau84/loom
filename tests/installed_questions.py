@@ -148,6 +148,9 @@ class Scenario:
         return observed
 
     def invoke(self, session, name, value):
+        # Native history returns Markdown by default; this harness checks JSON fields.
+        if name == 'record' and value.get('view') == 'full_thread':
+            value = {**value, 'response_format': 'json'}
         return self.command(session, call(name, value), name)
 
 

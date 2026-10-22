@@ -15,8 +15,12 @@ native `loom` guide teaches use without requiring this document to be fetched.
 | `loom_assessment` | Load an installed skill’s ASSESSMENT.md; requires the enabled caller’s assessment role |
 | `loom_qa` | Load an installed skill’s QA.md; requires the enabled caller’s qa role |
 
-Responses are JSON text with `result` and optional `config_errors`. In Code Mode,
-parse once; await writes before using IDs or ending the script. Sequence dependent
+Structured responses remain JSON text with `result` and optional `config_errors`.
+The Assessment/QA loaders and `loom_record` `view:full_thread` return
+**Markdown by default**, because they contain readable documents or history.
+Use `response_format:"json"` on those calls for the original JSON envelope,
+including exact metadata and cursors. In Code Mode, JSON.parse only JSON
+responses. Await writes before using IDs or ending the script. Sequence dependent
 calls. Use `Promise.allSettled` for independent calls and inspect every outcome;
 this is not an atomic multi-write transaction. Use the exact callable search path.
 
@@ -25,8 +29,9 @@ this is not an atomic multi-write transaction. Use the exact callable search pat
 Call either loader with `{"skill":"software-engineering"}` using an exact native
 skill ID. The existing `.loom.yaml` role mapping controls its use; agent names
 and Plan roles do not grant access. Native skill allow/ask/deny still applies.
-The tools return full companion content, its path and hash, or an explicit
-missing-companion result. They need no Action or Plan and do not record verdicts
+The loaders return full Markdown companion content, source path and hash, or an
+explicit missing-companion message. Set `response_format:"json"` to obtain the
+structured result instead. They need no Action or Plan and do not record verdicts
 or dispatch work. See [companion configuration and limits](review-companions.md).
 
 ## Recover or define work
@@ -219,8 +224,11 @@ Views other than ledger default to 20, max 50. For full stored relational histor
 {"operation":"query","view":"full_thread","action_id":"ACTION_ID","node_id":"TASK_ID","limit":20}
 ```
 
-Or use `session_id` instead of Action/node. Response: `format:loom-full-thread/v1`,
-`scope`, escaped `markdown`, `next_cursor`. Follow `next_cursor` as `cursor` with
+Or use `session_id` instead of Action/node. The default response is Markdown
+with the exact scope and `next_cursor` at the top. Set
+`response_format:"json"` to get `result.format:loom-full-thread/v1`,
+`scope`, escaped `markdown` and `next_cursor` as structured fields.
+Follow `next_cursor` as `cursor` with
 the same explicit scope until null. Do not combine scopes or pass ledger-only
 after/session_only/record_id options. It reads the authorized local Loom Store,
 not native Session bodies or cross-project databases. Session membership is
