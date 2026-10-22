@@ -1,4 +1,4 @@
-# Five tools, optional structure
+# Seven tools, optional structure
 
 Loom retains goals, context and attributed history. OpenCode owns execution,
 native delegation, skills, models and permissions. A conversation needs no Action;
@@ -12,11 +12,22 @@ native `loom` guide teaches use without requiring this document to be fetched.
 | `loom_plan` | Read/replace optional intended work and relationships |
 | `loom_context` | Read selection, explicitly select work or clear selection |
 | `loom_record` | Concerns, results, claims, Assessment/QA, completion/reopen, questions/answers and history |
+| `loom_assessment` | Load an installed skill’s ASSESSMENT.md; requires the enabled caller’s assessment role |
+| `loom_qa` | Load an installed skill’s QA.md; requires the enabled caller’s qa role |
 
 Responses are JSON text with `result` and optional `config_errors`. In Code Mode,
 parse once; await writes before using IDs or ending the script. Sequence dependent
 calls. Use `Promise.allSettled` for independent calls and inspect every outcome;
 this is not an atomic multi-write transaction. Use the exact callable search path.
+
+## Assessment and QA lenses
+
+Call either loader with `{"skill":"software-engineering"}` using an exact native
+skill ID. The existing `.loom.yaml` role mapping controls its use; agent names
+and Plan roles do not grant access. Native skill allow/ask/deny still applies.
+The tools return full companion content, its path and hash, or an explicit
+missing-companion result. They need no Action or Plan and do not record verdicts
+or dispatch work. See [companion configuration and limits](review-companions.md).
 
 ## Recover or define work
 

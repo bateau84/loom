@@ -6,6 +6,13 @@ type: Log
 
 ## 2026-10-22
 
+**Creation**: `review-companions.md` documents restored `loom_assessment` and
+`loom_qa`, existing role checks, native skill permissions and explicit missing
+companions. These are read-only instructions, not a restored workflow engine.
+
+**Update**: README, tool reference, documentation index and bundled guide describe
+the seven-tool interface while preserving handoff and independent-review guidance.
+
 **Creation**: `handoffs.md` — Documented exact result handoffs, independent review context, limits and recovery; it remains outside the four-source OKF bundle without OKF frontmatter or typed relationships — [Useful handoffs and independent review](/docs/handoffs.md).
 
 **Update**: `index.md` — Added the handoff guide to the supporting-document inventory without treating it as an OKF source document — [bundle index](/docs/index.md).

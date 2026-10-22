@@ -24,9 +24,9 @@ export default Plugin.define({
       cleanup = await core.setup(ctx)
       companions = await registerReviewCompanions(ctx)
       return async () => {
-        try { await companions?.() }
+        try { await cleanup?.() }
         finally {
-          try { await cleanup?.() }
+          try { await companions?.() }
           finally { await registration.dispose() }
         }
       }

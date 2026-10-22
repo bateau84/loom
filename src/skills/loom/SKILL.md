@@ -1,7 +1,5 @@
 # Loom usage guide
 
-Use for Loom coordination/resumption. Load engineering skills separately.
-
 ## Keep Loom optional
 
 A conversation needs no Action. An Action needs no Plan. Use only structure
@@ -15,14 +13,14 @@ restrict only the companion loaders, not native execution.
 | Tool | Purpose and boundary |
 | --- | --- |
 | `loom_agents` | Native IDs, roles and diagnostics; no permission grants. |
-| `loom_action` | Goals and read-only Session inventory. Creation selects; state labels do not stop execution or certify success. |
+| `loom_action` | Goals and Session inventory; state labels are not execution controls or proof. |
 | `loom_plan` | Read/replace optional nodes; no dispatch or skill loading. |
 | `loom_context` | Select work, pin a result handoff or limit prior opinions during independent review. |
 | `loom_record` | Store/query concerns, claims, results, reviews, progress, questions and history. |
 | `loom_assessment` | Load ASSESSMENT.md; requires configured assessment role. |
 | `loom_qa` | Load QA.md; requires configured qa role. |
 
-Tool search supplies schemas/help. Tools return JSON with `result` and optional
+Tool search supplies help. Tools return JSON with `result` and optional
 `config_errors`. Await writes before using IDs or ending Code Mode. Sequence
 dependent calls; use Promise.allSettled for independent calls and inspect outcomes.
 
