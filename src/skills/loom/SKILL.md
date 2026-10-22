@@ -119,10 +119,10 @@ Do not record credentials or secrets: explicit text is not redacted.
 
 ## Preserve and route concerns
 
-Record a task concern with `kind:concern` and a factual `statement`.
+Every agent records task concerns with `kind:concern` and a factual `statement`.
 Distinguish suspected from confirmed and give its sources or unknowns.
 Documented, outside-task or handed-off is not resolved. General routes
-blockers; Critic compares patterns without pretending to dispatch agents.
+blockers; critic compares patterns without pretending to dispatch agents.
 Use actual configured roles. Cite immutable Action and concern record IDs;
 retrieve sources with explicit `action_id` and `record_id`, no `node_id`.
 Concern IDs are not observation `evidence_ids`. Append follow-ups rather
