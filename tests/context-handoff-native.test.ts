@@ -15,10 +15,11 @@ async function fixture() {
     const result = (await f.invoke("record", { operation: "add", action_id: action.id, node_id: "research", kind: "result",
       statement: "PINNED-SOURCE: abc123. " + "Details. ".repeat(150) + "UNVERIFIED provider compatibility." }, "writer")).result
     await f.invoke("record", { operation: "add", action_id: action.id, node_id: "work", kind: "assessment", verdict: "pass", statement: "PRIOR-VERDICT-SENTINEL" }, "writer")
-    await f.invoke("record", { operation: "ask", question: "PRIOR-QUESTION-SENTINEL", to_agent: "investigator", blocking: false,
-      reference: { action_id: action.id, kind: "task", id: "work" } }, "writer")
+    const question = (await f.invoke("record", { operation: "ask", question: "PRIOR-QUESTION-SENTINEL", to_agent: "investigator", blocking: false,
+      reference: { action_id: action.id, kind: "task", id: "work" } }, "writer")).result
+    expect(question).toMatchObject({ action_id: action.id, kind: "question", data: { question: "PRIOR-QUESTION-SENTINEL" } })
     await writeFile(join(f.directory, ".loom.yaml"), "agents: {investigator: {enabled: true}}\ninstructions: {enabled: true}\ncontext: {max_chars: 2000}\nledger: {capture: off}\n")
-    return { ...f, action, result }
+    return { ...f, action, result, question }
   } catch (error) { await f.close(); throw error }
 }
 
@@ -48,8 +49,11 @@ test("registered context mode persists through reads, reselection and automatic 
     expect((await f.context("review", "investigator")).context_mode).toBe("continuation")
     const history = (await f.invoke("record", { operation: "query", action_id: f.action.id }, "review")).result.items
     expect(history.some((r: any) => r.data.statement === "PRIOR-VERDICT-SENTINEL")).toBe(true)
-    // The view is not an access restriction and does not certify reconciliation.
-    expect(history.some((r: any) => r.data.question === "PRIOR-QUESTION-SENTINEL")).toBe(true)
+    // Reconcile a known question by immutable ID rather than assuming it is on
+    // the first history page. The view neither deletes findings nor resolves them.
+    const thread = (await f.invoke("record", { operation: "query", view: "thread", action_id: f.action.id, question_id: f.question.id }, "review")).result
+    expect(thread.question).toMatchObject({ id: f.question.id, action_id: f.action.id, node_id: "work", kind: "question", data: { question: "PRIOR-QUESTION-SENTINEL" } })
+    expect(thread.answers).toEqual([])
   } finally { await f.close() }
 })
 
