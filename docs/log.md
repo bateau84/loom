@@ -6,6 +6,11 @@ type: Log
 
 ## 2026-10-22
 
+**Update**: `review-companions.md`, `README.md`, the companion loader and
+regression tests — Supported OpenCode's flat `<skill-id>.md` registry entries
+without shared-directory companion leakage; documented the per-ID companion
+folder and bundled Loom's explicit missing-companion result.
+
 **Creation**: `review-companions.md` documents restored `loom_assessment` and
 `loom_qa`, existing role checks, native skill permissions and explicit missing
 companions. These are read-only instructions, not a restored workflow engine.

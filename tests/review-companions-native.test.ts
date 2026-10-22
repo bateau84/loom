@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test"
 import { createHash } from "node:crypto"
 import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { COMPANION_MAX_BYTES, companionHelp, readCompanion } from "../src/review-companions.js"
 import { registeredLoom } from "./helpers/registered-loom.js"
 
@@ -128,7 +128,9 @@ test("unknown skills, forged arguments and non-file registry paths cannot become
       await expect(f.invoke("assessment", input, "s", "custom")).rejects.toThrow("Expected only skill")
     }
     f.skills.get("domain-skill").path = f.skillDirectory
-    await expect(f.invoke("assessment", { skill: "domain-skill" }, "s", "custom")).rejects.toThrow("registered local SKILL.md")
+    await expect(f.invoke("assessment", { skill: "domain-skill" }, "s", "custom")).rejects.toThrow("registered absolute")
+    f.skills.get("domain-skill").path = join(f.skillDirectory, "not-domain-skill.md")
+    await expect(f.invoke("assessment", { skill: "domain-skill" }, "s", "custom")).rejects.toThrow("matching <skill-id>.md")
     expect(f.permissionRequests).toEqual([])
   } finally { await f.close() }
 })
@@ -159,6 +161,61 @@ test("bounded reads reject oversized, non-UTF-8 and nonregular files without sil
     await expect(run()).rejects.toThrow("valid UTF-8")
     await rm(path); await mkdir(path)
     await expect(run()).rejects.toThrow("regular file")
+  } finally { await f.close() }
+})
+
+
+test("OpenCode 2.1.1 flat opencode.md uses an isolated companion directory, never a shared root lens", async () => {
+  const f = await fixture()
+  try {
+    const root = join(f.directory, "flat-native-skills")
+    await mkdir(root)
+    await writeFile(join(root, "opencode.md"), "# OpenCode native flat skill\n")
+    // Placing ASSESSMENT.md in a shared root would make it a separate native skill.
+    // This sentinel must never be returned as opencode's assessment lens.
+    await writeFile(join(root, "ASSESSMENT.md"), "Wrong shared root assessment\n")
+    f.skills.set("opencode", { id: "opencode", name: "OpenCode", path: join(root, "opencode.md"), content: "# OpenCode" })
+
+    const absent = (await f.invoke("assessment", { skill: "opencode" }, "review-session", "custom")).result
+    expect(absent).toEqual({
+      skill: "opencode", methodology: "assessment", available: false,
+      path: join(root, "opencode", "ASSESSMENT.md"), reason: "companion-not-found",
+    })
+
+    const isolated = join(root, "opencode")
+    await mkdir(isolated)
+    await writeFile(join(isolated, "ASSESSMENT.md"), "Actual OpenCode assessment\n")
+    await writeFile(join(isolated, "QA.md"), "Actual OpenCode adversarial QA\n")
+    for (const [lens, caller, name] of [["assessment", "custom", "ASSESSMENT.md"], ["qa", "challenger", "QA.md"]] as const) {
+      const target = join(isolated, name)
+      const bytes = await readFile(target)
+      expect((await f.invoke(lens, { skill: "opencode" }, "review-session", caller)).result).toEqual({
+        skill: "opencode", methodology: lens, available: true, path: target,
+        content: bytes.toString("utf8"), sha256: createHash("sha256").update(bytes).digest("hex"),
+      })
+    }
+    // A second flat native skill cannot inherit opencode's or the shared root's lens.
+    await writeFile(join(root, "another.md"), "# Another\n")
+    f.skills.set("another", { id: "another", name: "Another", path: join(root, "another.md"), content: "# Another" })
+    expect((await f.invoke("assessment", { skill: "another" }, "review-session", "custom")).result).toEqual({
+      skill: "another", methodology: "assessment", available: false,
+      path: join(root, "another", "ASSESSMENT.md"), reason: "companion-not-found",
+    })
+    expect(f.nativeInputs).toEqual([])
+  } finally { await f.close() }
+})
+
+test("Loom's packaged SKILL.md is supported and missing review companions are optional", async () => {
+  const f = await fixture()
+  try {
+    const bundled = f.skills.get("loom")
+    expect(bundled.path.endsWith("/SKILL.md")).toBe(true)
+    for (const [lens, name] of [["assessment", "ASSESSMENT.md"], ["qa", "QA.md"]] as const) {
+      expect((await f.invoke(lens, { skill: "loom" }, "s", "both")).result).toEqual({
+        skill: "loom", methodology: lens, available: false,
+        path: join(dirname(bundled.path), name), reason: "companion-not-found",
+      })
+    }
   } finally { await f.close() }
 })
 

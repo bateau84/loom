@@ -45,12 +45,26 @@ Call `loom_qa` with the same input to obtain the QA lens. In Code Mode, search f
 the tool and use the exact callable path returned by search. Parse its JSON text
 once; the payload is under `result`.
 
-Use an exact ID from OpenCode's current native skill registry. Loom uses that
-registry's selected local `SKILL.md` path, so native installation locations and
-precedence remain authoritative. It does not fetch from GitHub, scan a hard-coded
-`~/.agents/skills` directory, bundle engineering skills, or use caller-supplied
-paths. Symlinked installation directories are supported; the companion itself
-must be a regular non-symlink file beside `SKILL.md`.
+Use an exact ID from OpenCode's current native skill registry. OpenCode 2.1.1
+supports two local entry-file layouts, and Loom uses the selected native path:
+
+- Directory skills: `<skill-id>/SKILL.md` — companions live beside `SKILL.md`.
+- Flat skills: `<skill-id>.md` — companions live in the separate sibling
+  directory `<skill-id>/ASSESSMENT.md` or `<skill-id>/QA.md`. A flat skill without
+  that directory returns `available:false`, not an invalid-path error.
+
+The separate folder for flat skills matters: their parent is a shared native
+skill source and root-level `ASSESSMENT.md` or `QA.md` can be registered as
+independent skills. Loom never borrows such a shared-root file for `opencode.md`
+or another flat skill. Registry paths must match their native skill ID and use
+one of these two forms, not an arbitrary Markdown file.
+
+Native installation locations and precedence remain authoritative. Loom does
+not fetch from GitHub, scan a hard-coded `~/.agents/skills` directory, bundle
+engineering skills, or use caller-supplied paths. Symlinked installation
+directories are supported; the companion must be a regular non-symlink file.
+Loom's bundled `loom` skill uses `SKILL.md` and currently ships no Assessment or
+QA companion; both tools report `available:false` for that skill.
 
 The tool returns `skill`, `methodology`, `available`, and the resolved `path`.
 An available companion also includes full UTF-8 `content` and `sha256` of the

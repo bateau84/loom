@@ -244,6 +244,10 @@ and `loom_qa` to load `QA.md` from the installed skill. The enabled caller needs
 the corresponding existing `assessment` or `qa` role in `.loom.yaml`; native
 skill permissions still apply. No Action, Plan, prior skill receipt or mandatory
 review stage is required. Missing companions are reported, never substituted.
+OpenCode's flat `<skill-id>.md` entries are supported too: any companion lives
+under a separate `<skill-id>/` sibling directory to avoid mixing review lenses
+between flat skills. The bundled `loom` skill has no companions, so its result
+is `available:false`, not a path error.
 See [Assessment and QA companions](docs/review-companions.md) for configuration,
 examples and limits. Loading instructions and recording findings are separate;
 neither guarantees independent review.

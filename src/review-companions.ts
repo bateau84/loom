@@ -17,7 +17,7 @@ export function companionHelp(lens: ReviewLens): string {
     `Load an installed skill's ${file} review lens; requires the configured ${lens} role.`,
     `Usage: {"skill":"software-engineering"}. Use the exact native skill ID. The calling agent must be enabled in .loom.yaml with roles including ${lens}; its name is irrelevant. Choose relevant skills independently, not only the producer's choices. Load practitioner guidance with the native skill tool when useful. No prior skill-load receipt, Action or Plan is required.`,
     `Returns: JSON text with result.skill, methodology, available and path. An available ${file} also has its full UTF-8 content and source-byte sha256. A missing companion returns available:false and reason:companion-not-found, never SKILL.md as a substitute.`,
-    "Caution: Reads the current native skill registry, not GitHub or a fixed skills directory. Native skill permissions still apply, including ask/deny. Unknown skills, invalid configuration, missing roles, unreadable/oversized/non-UTF-8 files and cancellation fail visibly. Files must be regular, non-symlink companions of a registered SKILL.md, at most 64 KiB. Symlinked installation directories are supported. No dispatch, workflow stage, completion, verdict or proof of independence is created. Use loom_record separately for actual findings.",
+    "Caution: Reads the current native skill registry, not GitHub or a fixed skills directory. Native skill permissions still apply, including ask/deny. Unknown skills, invalid configuration, missing roles, unreadable/oversized/non-UTF-8 files and cancellation fail visibly. A registered SKILL.md uses companions beside it; a registered <skill-id>.md uses a separate <skill-id>/ directory next to that entry. Shared-root companion files are never borrowed by flat skills. Companion files must be regular, non-symlink UTF-8, at most 64 KiB. Symlinked installation directories are supported. No dispatch, workflow stage, completion, verdict or proof of independence is created. Use loom_record separately for actual findings.",
     'Examples (JSON inputs, not shell commands):',
     '{"skill":"software-engineering"}',
     'In Code Mode, use the exact callable path returned by search and parse the returned JSON text once.',
@@ -115,8 +115,16 @@ export async function registerReviewCompanions(ctx: Plugin.Context): Promise<() 
         const matches = listed.filter(value => record(value).id === id)
         if (matches.length !== 1) throw new Error(`Expected one registered native skill with ID ${id}; found ${matches.length}`)
         const skill = record(matches[0])
-        if (typeof skill.path !== "string" || !isAbsolute(skill.path) || basename(skill.path) !== "SKILL.md") {
-          throw new Error("Skill companion requires a registered local SKILL.md path")
+        if (typeof skill.path !== "string" || !isAbsolute(skill.path)) {
+          throw new Error("Skill companion requires a registered absolute SKILL.md or matching <skill-id>.md path")
+        }
+        const entry = basename(skill.path)
+        // OpenCode 2.1.1 recognizes both nested SKILL.md and root-level <id>.md.
+        // A flat source lives in a shared directory: never borrow another
+        // skill's ASSESSMENT.md or QA.md from that directory.
+        const flatEntry = entry === `${id}.md` && id !== "." && id !== ".." && !/[/\\\0]/.test(id)
+        if (entry !== "SKILL.md" && !flatEntry) {
+          throw new Error("Skill companion requires a registered absolute SKILL.md or matching <skill-id>.md path")
         }
         // Match the native skill tool's own permission action, resource and source.
         // Rejections must propagate, including the host's end-current-step rejection.
@@ -126,7 +134,8 @@ export async function registerReviewCompanions(ctx: Plugin.Context): Promise<() 
         })
         // Approval may have waited while the caller's role or Session location changed.
         await authorize()
-        const root = await realpath(dirname(skill.path))
+        const parent = await realpath(dirname(skill.path))
+        const root = entry === "SKILL.md" ? parent : join(parent, id)
         const path = join(root, filenames[lens])
         const companion = await readCompanion(path, signal)
         signal.throwIfAborted()
