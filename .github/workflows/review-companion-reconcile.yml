@@ -1,0 +1,73 @@
+name: Temporary review-companion reconciliation
+on:
+  push:
+    branches: [feat/role-scoped-review-companions-20261022]
+    paths: [.github/workflows/review-companion-reconcile.yml]
+permissions:
+  contents: write
+jobs:
+  reconcile:
+    if: github.repository == 'bateau84/loom'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/role-scoped-review-companions-20261022
+          fetch-depth: 2
+      - name: Apply bounded integration corrections
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD^)" = 8bf8a069384b003483d76a31a9826d6216c84257
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          changed = set()
+          def replace(path, old, new, count=1):
+              p = Path(path)
+              source = p.read_text()
+              actual = source.count(old)
+              if actual != count:
+                  raise RuntimeError(f'{path}: expected {count} occurrences of {old!r}, found {actual}')
+              p.write_text(source.replace(old, new))
+              changed.add(path)
+          for path, count in {
+              'tests/review-findings-native.test.ts': 3,
+              'tests/retired-protocol-native.test.ts': 1,
+              'tests/collaboration-native.test.ts': 2,
+              'tests/concerns-native.test.ts': 1,
+              'tests/full-thread-native.test.ts': 1,
+          }.items():
+              replace(path, 'expect(f.tools.size).toBe(5)', 'expect(f.tools.size).toBe(7)', count)
+          replace('tests/native.test.ts', 'expect(tools.sort()).toEqual(["action", "agents", "context", "plan", "record"])', 'expect(tools.sort()).toEqual(["action", "agents", "assessment", "context", "plan", "qa", "record"])')
+          replace('tests/native.test.ts', 'expect(registrations.sort()).toEqual(["skill", "tool"])', 'expect(registrations.sort()).toEqual(["skill", "tool", "tool"])')
+          replace('tests/native.test.ts', 'startup still registers five tools', 'startup still registers seven tools')
+          # Preserve core shutdown cancellation before awaiting any new registration cleanup.
+          replace('server.ts', 'try { await companions?.() }\n        finally {\n          try { await cleanup?.() }', 'try { await cleanup?.() }\n        finally {\n          try { await companions?.() }')
+          guide = 'src/skills/loom/SKILL.md'
+          replace(guide, 'Use for Loom coordination/resumption. Load engineering skills separately.\n\n', '')
+          replace(guide, '| `loom_action` | Goals and read-only Session inventory. Creation selects; state labels do not stop execution or certify success. |', '| `loom_action` | Goals and Session inventory; state labels are not execution controls or proof. |')
+          replace(guide, 'Tool search supplies schemas/help. Tools return JSON with `result` and optional', 'Tool search supplies help. Tools return JSON with `result` and optional')
+          assert len(Path(guide).read_text()) <= 12000
+          assert Path(guide).read_text().count('```json\n') == 7
+          # The assertion changes must be literal count/list updates, not test removal.
+          expected = {
+              'tests/review-findings-native.test.ts', 'tests/retired-protocol-native.test.ts',
+              'tests/collaboration-native.test.ts', 'tests/concerns-native.test.ts',
+              'tests/full-thread-native.test.ts', 'tests/native.test.ts',
+              'server.ts', guide,
+          }
+          assert changed == expected
+          actual = set(subprocess.check_output(['git', 'diff', '--name-only'], text=True).splitlines())
+          assert actual == expected, actual
+          subprocess.run(['git', 'diff', '--check'], check=True)
+          subprocess.run(['git', 'diff', '--stat'], check=True)
+          subprocess.run(['git', 'add', '--', *sorted(expected)], check=True)
+          PY
+      - name: Publish corrections to this draft only
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: preserve shutdown semantics and seven-tool integration checks'
+          git push origin HEAD:feat/role-scoped-review-companions-20261022
