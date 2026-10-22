@@ -18,7 +18,7 @@ an execution/permission gate. Do not invent mandatory stages or legacy tools.
 | `loom_agents` | Discover native IDs, roles, diagnostics; no creation/permission grants. |
 | `loom_action` | List/create/update goals, or browse native Sessions (read-only). Creation selects. State labels do not interrupt or certify success. |
 | `loom_plan` | Read/replace optional nodes; no dispatch or skill loading. |
-| `loom_context` | Read/select Action/task context. Fresh Sessions start unselected. |
+| `loom_context` | Select work, pin a result handoff, or withhold earlier opinions for independent review. |
 | `loom_record` | Store/query concerns, claims, results, reviews, progress, questions/answers and history; not delivery/acceptance proof. |
 
 Tool search supplies installed schemas/help. Five tools return JSON with `result`
@@ -39,7 +39,9 @@ For new work worth retaining, create a goal:
 {"operation":"create","title":"Explain a setting","goal":"Produce a source-backed explanation with its limitations."}
 ```
 
-Replace placeholders with actual returned IDs; `result.id` is the Action ID.\n\nUse `loom_action` operation `sessions` to list local Sessions, optionally filtered
+Replace placeholders with actual returned IDs; `result.id` is the Action ID.
+
+Use `loom_action` operation `sessions` to list local Sessions, optionally filtered
 by `action_id`. Follow `next_cursor`. Archive state is read-only;
 no execution or delivery is proven.
 
@@ -60,15 +62,70 @@ Save the complete node list using the returned Plan revision as
 Plan. Action updates require the Action's separate current revision. On a
 conflict, reread and reconcile; do not blindly overwrite or borrow a revision.
 
-Explicitly select the work before performing it:
+Choose the context purpose before selecting work. For ordinary continuation:
 
 ```json
-{"action_id":"ACTION_ID","node_id":"TASK_ID"}
+{"action_id":"ACTION_ID","node_id":"TASK_ID","mode":"continuation"}
 ```
 
-Retain `work_ref`, the definition actually worked against. Give native delegates
-the Action/task IDs, goal, constraints, record IDs and original reference.
-Each child selects its own work; selection is not inherited.
+Both views retain `work_ref`, the definition actually read before work. Each child
+selects its own work; selection is not inherited. Start fresh for a new bounded
+task. Resume useful same-task research, review or design when it avoids needless
+rereading; repeated resumes without progress call for narrowing the task, not a
+fixed count limit. Preserve valid work and split only what remains unfinished.
+
+## Handoffs without mandatory reports
+
+At a meaningful stopping point, use one ordinary `loom_record add kind:result`
+for the caller and next specialist. Include goal and code/document revision,
+decisions or changes, evidence and limits, remaining work and next useful step.
+Use `artifact_refs` for source documents/code. Return the exact result ID and
+Action/task IDs in the native handback; do not copy the whole conversation or
+create a report file solely for handover. A result is not a completion certificate.
+
+A continuation can pin that exact result, including one from a dependency:
+
+```json
+{"action_id":"ACTION_ID","node_id":"NEXT_TASK_ID","handoff_id":"RESULT_ID"}
+```
+
+The returned `handoff.record_id` survives sampling as a pointer, not automatic
+full text. Read it with explicit `action_id` and `record_id`, **without node_id**,
+and check its source revision and evidence limits. A pin must be an existing
+result in the same Action; invalid pins do not change selection. `handoff_id:null`
+clears it; selecting different work drops it. Unrelated newer results never
+silently replace it. Pins do not prove relevance, truth or freshness.
+
+## Independent first assessment, then reconciliation
+
+For a fresh independent review, give the goal, accepted requirements, current
+artifacts and source evidence, not earlier verdicts or producer conclusions.
+Before reading history, select:
+
+```json
+{"action_id":"ACTION_ID","node_id":"TASK_ID","mode":"independent"}
+```
+
+This withholds all Loom ledger history, results, reviews, progress and questions
+from `loom_context` and its automatic context block, including missing-task
+recovery. It still returns the current work definition and `work_ref`. It does
+not sanitize task text, block explicit history reads/native messages, erase a
+conversation, or guarantee independent reasoning. Start fresh if opinions have
+already been read. Independent mode rejects an explicit pin and clears an old one.
+
+Record your own observations first. Then set `{"mode":"continuation"}`, read the
+exact earlier findings and relevant paged history, and reconcile unresolved
+issues before the final verdict. Continuation context is still sampled; missing
+findings in an excerpt are not resolved findings. A targeted fix check gets the
+prior finding from the start and may resume; it is not independent rediscovery.
+
+The chosen mode and pin are saved with this Session's selection, including after
+restart. Omitted mode retains the choice. `clear:true` resets it and cannot be
+combined with IDs or options; creating an Action also resets selection preferences.
+Explicit navigation can recover unreadable saved selection; without an explicit
+mode it uses independent context rather than guessing that old opinions are safe.
+A failed save means the old view still controls later injection: do not assume
+isolation. Older Loom versions do not support this policy; check installed help.
 
 ## Read evidence before using conclusions
 
@@ -204,8 +261,9 @@ apply. Smaller pages do not make an individually inadmissible record readable.
 
 ## Recover without guessing
 
-When a task is removed, inspect the returned recovery information, current Plan
-and retained history. Explicitly select a current task, select Action-only context
+When a task is removed, inspect the recovery information and current Plan first.
+Read retained history for continuation or later finding reconciliation, not during
+an independent first assessment. Explicitly select a current task, select Action-only context
 or call `loom_context` with `{"clear":true}`. Do not infer a replacement task from
 a similar title. `loom_context` with `{}` reads this Session's existing selection.
 

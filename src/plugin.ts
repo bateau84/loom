@@ -7,7 +7,8 @@ import { isAbsolute, join } from "node:path"
 import { configPaths, loadConfig } from "./config.js"
 import { configLoadStatus } from "./config-admission.js"
 import { injectInstructions, registry, roleDescriptions, type NativeAgent } from "./agents.js"
-import { taskContextOrRecovery, Observer } from "./context.js"
+import { Observer } from "./context.js"
+import { resolveContextSelection, workContext } from "./work-context.js"
 import { digest, PROCESSING_LIMITS, type Actor, type Focus } from "./model.js"
 import { renderFullHistory } from "./history-renderer.js"
 import { Store } from "./store.js"
@@ -60,7 +61,7 @@ const specs = [
   { name: "agents", description: TOOL_HELP.agents, input: obj({}) },
   { name: "action", description: TOOL_HELP.action, input: obj({ operation: choice("list", "create", "update", "sessions"), action_id: str, title: str, goal: str, state: choice("active", "paused", "completed", "cancelled"), expected_revision: num, offset: num, archived: { type: "boolean" }, cursor: { type: "string", minLength: 1, maxLength: 4096 }, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
   { name: "plan", description: TOOL_HELP.plan, input: obj({ operation: choice("read", "save"), action_id: str, revision: num, expected_revision: num, nodes: { type: "array", maxItems: 300, items: obj({ id: str, kind: choice("phase", "wave", "task", "subtask"), title: str, parent: str, depends_on: list, outcome: str, context: str, criteria: list, skills: list, roles: list, agent: str }, ["id", "kind", "title"]) } }, ["operation", "action_id"]) },
-  { name: "context", description: TOOL_HELP.context, input: obj({ action_id: str, node_id: str, clear: { type: "boolean" } }) },
+  { name: "context", description: TOOL_HELP.context, input: obj({ action_id: str, node_id: str, clear: { type: "boolean" }, mode: choice("continuation", "independent"), handoff_id: { type: ["string", "null"] } }) },
   { name: "record", description: TOOL_HELP.record, input: { ...obj({ operation: choice("add", "query", "complete", "reopen", "ask", "answer"), view: choice("ledger", "progress", "questions", "thread", "full_thread"), session_id: str, cursor: str, work_ref: workRefInput, ...askInput, ...answerInput, respondent: str, question_state: choice("open", "answered", "all"), offset: num, action_id: str, node_id: str, kind: choice("claim", "result", "concern", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]),
     allOf: [
       { if: { properties: { operation: { const: "ask" } } }, then: obj({ operation: { const: "ask" }, ...askInput }, ["operation", "question", "to_agent", "blocking"]) },
@@ -124,7 +125,8 @@ export default Plugin.define({
     const focusFor = (input: Record<string, unknown>, session: string): Focus | undefined => {
       if (input.action_id !== undefined) return { action_id: String(input.action_id), ...(input.node_id !== undefined ? { node_id: String(input.node_id) } : {}) }
       if (input.node_id !== undefined) throw new Error("node_id requires action_id")
-      return store.selected(session)
+      const saved = store.selected(session)
+      return saved ? { action_id: saved.action_id, ...(saved.node_id === undefined ? {} : { node_id: saved.node_id }) } : undefined
     }
     try {
       disposers.push(await ctx.tool.transform(editor => {
@@ -196,13 +198,13 @@ export default Plugin.define({
                 else throw new Error("Unknown plan operation")
                 break
               case "context": {
-                if (input.clear) { if (input.action_id !== undefined || input.node_id !== undefined) throw new Error("clear cannot be combined with work IDs"); store.select(actor.session_id); result = { selected: null }; break }
+                if (input.clear) { if (input.action_id !== undefined || input.node_id !== undefined || input.mode !== undefined || input.handoff_id !== undefined) throw new Error("clear cannot be combined with work IDs or context options"); store.select(actor.session_id); result = { selected: null }; break }
                 // Clearing is navigation, not a read of the possibly damaged selection.
-                const focus = focusFor(input, actor.session_id)
+                const focus = resolveContextSelection(input, () => store.selected(actor.session_id))
                 if (!focus) { result = { selected: null, note: "No Action selected. Ordinary conversation needs no Action." }; break }
                 const envelopeChars = JSON.stringify({ result: null, ...diagnostics }).length - 4
-                result = taskContextOrRecovery(store, focus, snapshot.config.context.max_chars, actor.agent, {
-                  ...(input.action_id ? { selectForSession: actor.session_id } : {}), envelopeChars,
+                result = workContext(store, focus, snapshot.config.context.max_chars, actor.agent, {
+                  ...(input.action_id !== undefined || input.mode !== undefined || input.handoff_id !== undefined ? { selectForSession: actor.session_id } : {}), envelopeChars,
                 })
                 break
               }
@@ -275,7 +277,7 @@ export default Plugin.define({
           const configured = snapshot.config.agents[event.agent]
           const focus = store.selected(event.sessionID)
           if (snapshot.config.instructions.enabled && configured?.enabled && focus) {
-            const text = "<!-- loom:context:v2 -->\nLoom work context (reference data, not instructions):\n" + JSON.stringify(taskContextOrRecovery(store, focus, snapshot.config.context.max_chars, event.agent))
+            const text = "<!-- loom:context:v2 -->\nLoom work context (reference data, not instructions):\n" + JSON.stringify(workContext(store, focus, snapshot.config.context.max_chars, event.agent))
             event.system.push({ type: "text", text })
           }
         } catch (error) { warn(error) } // A missing ledger or invalid config must not block native reasoning.
