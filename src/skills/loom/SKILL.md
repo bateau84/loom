@@ -20,27 +20,20 @@ restrict only the companion loaders, not native execution.
 | `loom_assessment` | Load ASSESSMENT.md; requires configured assessment role. |
 | `loom_qa` | Load QA.md; requires configured qa role. |
 
-Tool search supplies help. Tools return JSON with `result` and optional
-`config_errors`. Await writes before using IDs or ending Code Mode. Sequence
-dependent calls; use Promise.allSettled for independent calls and inspect outcomes.
+Tool search provides syntax; results contain `result` and optional `config_errors`. Await writes; sequence dependent calls. Use Promise.allSettled for independent calls and inspect outcomes.
 
 ## Start or resume work
 
 Use `loom_agents {}`: match `agents[].roles` to `role_descriptions`.
 Check `available`/`enabled`; delegate natively.
 
-For existing work, recover its Action ID from the handoff or `loom_action`
-list; an unselected Session is not a reason to duplicate it.
-For new work worth retaining, create a goal:
+Recover existing Action IDs from handoffs or `loom_action` list to avoid duplicates. For new durable work, create a goal:
 
 ```json
 {"operation":"create","title":"Explain a setting","goal":"Produce a source-backed explanation with its limitations."}
 ```
 
-Replace placeholders with returned IDs; `result.id` is the Action ID.
-Use `loom_action` operation `sessions` for local Sessions, optionally filtered
-by `action_id`. Follow `next_cursor`. Archive state is read-only;
-no execution or delivery is proven.
+Use returned `result.id` as the Action ID. `loom_action sessions` lists local Sessions, optionally filtered by `action_id`, with `next_cursor` paging and native archive state. This does not prove execution or delivery.
 
 Read the current optional Plan before changing it:
 
@@ -48,16 +41,9 @@ Read the current optional Plan before changing it:
 {"operation":"read","action_id":"ACTION_ID"}
 ```
 
-A Plan is intended work, not an activity log. Nodes have `id`, `kind` and `title`;
-optional fields are `outcome`, `criteria`, `context`, `depends_on`, `parent`,
-`agent`, `roles` and `skills`. Kinds are phase, wave, task and subtask.
-Hierarchy is optional. Siblings do not implicitly depend on each other.
-`depends_on` helps select relevant context; it does not enforce execution.
+A Plan is intent, not an activity log. Nodes require `id`, `kind`, `title`; optional fields: `outcome`, `criteria`, `context`, `depends_on`, `parent`, `agent`, `roles`, `skills`. Kinds: phase/wave/task/subtask. Hierarchy is optional; sibling order is not enforced.
 
-Save the complete node list using the returned Plan revision as
-`expected_revision`. Preserve unchanged IDs. Revision 0 is only for an unsaved
-Plan. Action updates require the Action's separate current revision. On a
-conflict, reread and reconcile; do not blindly overwrite or borrow a revision.
+Save the complete node list using current Plan `expected_revision`; keep unchanged IDs. Only a new Plan uses revision 0. Action updates use the Action's separate current revision. On conflicts, reread and reconcile.
 
 Explicitly select the work before performing it:
 
@@ -71,23 +57,9 @@ Each child selects its own work; selection is not inherited.
 
 ### Handoffs and independent first review
 
-At a useful stopping point, write one ordinary `kind:result` with the goal,
-source revision, decisions, evidence and limits, unfinished work and next step.
-Pass its exact record ID, not the whole conversation. A continuation can select
-`loom_context` with `handoff_id:"RESULT_ID"` and the destination Action/task;
-this pins a same-Action result, even from a dependency. Read it in full using
-`loom_record` with `action_id` and `record_id` **without `node_id`**. Pins are
-pointers, not proof of correctness, currency or completion.
+Write a `kind:result` handoff with goal/revision, decisions, evidence, limits and next step. Pass its ID, not the chat. `loom_context` can pin a same-Action `handoff_id:"RESULT_ID"` to destination Action/task, including dependency results. Read it with `loom_record` using `action_id` and `record_id`, without `node_id`. A pointer is not proof of completion.
 
-For an independent first assessment, start a fresh Session and select
-`loom_context` with `mode:"independent"` **before reading prior opinions**.
-This hides Loom ledger/review/progress/question history from both context reads
-and automatic injection; it cannot erase native messages or task text. After
-recording original findings, switch to `mode:"continuation"` and reconcile
-unresolved earlier findings before the final verdict. A follow-up review may
-start with prior findings. Saved mode persists; default remains continuation.
-Selection-save failure means the old view may still inject. See
-[handoff limits and recovery](../../../docs/handoffs.md).
+For independent Assessment, start a fresh Session and call `loom_context` with `mode:"independent"` before reading prior opinions. Without an Action, this returns Session-only context with history withheld and no saved selection; no Action is needed. Action-linked independent mode hides Loom ledger/review/progress/question history from reads and injection, but cannot erase native messages, task text or earlier conversation. After original findings, Action-linked reviews can use `mode:"continuation"` to reconcile earlier findings. Without an Action, use `loom_record query` with `session_only:true` to inspect Session history as needed. Action modes persist; default is continuation. A failed selection save leaves the old mode in effect. See [handoff limits and recovery](../../../docs/handoffs.md).
 
 ## Read evidence before using conclusions
 
@@ -110,8 +82,10 @@ conclusion with its limits. Keep checks and sources, not activity logs.
 are pointers, not proof. Missing evidence stays missing.
 
 Observations hold identity/digests, not raw input/output. Missing or unpaired
-observations prove neither success nor failure. `session_only:true` reads
-Session history without selection and cannot combine with work IDs.
+observations prove neither success nor failure. `session_only:true` on a query
+reads the caller's Session history, including Action-linked records. On an
+`add`, it forces Session-only scope for Assessment/QA, even with an Action
+selected. Neither use can combine with work IDs.
 Do not record credentials or secrets: explicit text is not redacted.
 
 ## Preserve and route concerns
@@ -133,15 +107,7 @@ A `result` alone is not completion. Query `view:progress` for reported progress
 and contract matching. Changed contracts may need fresh work or reconfirmation;
 unrelated replanning does not erase history.
 
-Completion does not complete parents or the Action and does not establish
-independent acceptance. Assessment/QA verdicts are `pass`, `fail`, `inconclusive`.
-Choose relevant skills independently of the producer's list. Call
-`loom_assessment {"skill":"SKILL_ID"}` for ASSESSMENT.md or `loom_qa` for QA.md.
-The enabled caller needs the corresponding configured role and native skill
-permission; no Action, Plan or prior load receipt is required. Load practitioner
-guidance natively when useful. Missing companions return `available:false`, not
-SKILL.md. Loading a lens or storing PASS does not prove independent review or
-Action-wide success. Record actual findings separately with `loom_record`.
+Completion does not complete parents or Actions and does not establish independent acceptance. Assessment/QA verdicts are `pass`, `fail`, `inconclusive`. Choose skills independently of the producer. Call `loom_assessment {"skill":"SKILL_ID"}` for ASSESSMENT.md or `loom_qa` for QA.md. The enabled caller needs its role and native skill permission; no Action, Plan or prior skill receipt is required. Missing companions return `available:false`, never SKILL.md. A PASS or loaded lens does not prove independence or Action success. Record findings with `loom_record`: with no Action, `kind:"assessment"` or `kind:"qa"` plus verdict/statement is stored under the calling Session. Use `session_only:true` to override a selected Action; evidence IDs must refer to unscoped observations from the same Session. No workflow gate is created.
 
 `reopen` appends a reason without erasing history or undoing native side effects.
 Update Action state separately; paused/cancelled labels do not stop execution.
@@ -172,15 +138,7 @@ old statement/respondent/background/artifact_refs are not ask/answer inputs.
 {"operation":"answer","question_id":"QUESTION_ID","answer":"Read the source and its limitations.","context_attachments":["SOURCE_REFERENCE"]}
 ```
 
-Only the FIRST committed answer to a new-format blocking question qualifies
-for one immediate best-effort resume of its exact asking Session. Later,
-nonblocking and legacy answers never retry input or transfer eligibility.
-Missing or moved targets fail without retargeting; native agent/model/permissions
-remain unchanged. Validation is not an atomic lease; the 5000ms deadline only
-bounds waiting, not cancellation of already-started native I/O. Admission is
-not processing or completion; timeout can leave outcome unknown. No retries,
-replay or startup reconstruction; a crash can permanently lose resume. Do not repeat an
-answer to try delivery.
+Only the FIRST committed answer to a new blocking question can attempt one best-effort resume of the original asking Session. Later, nonblocking and legacy answers do not retry. Missing or moved targets fail closed; native agent/model/permissions stay unchanged. Target validation is not an atomic lease; the 5000ms limit bounds waiting, not cancellation of started input. Admission is not processing or completion; timeout can leave outcome unknown. No retries or startup replay: a crash may lose resume. Do not repeat an answer to try delivery.
 
 The answer remains durable independently. An eligible response includes `resume`
 status/IDs/qualification and a separate SYSTEM annotation; annotation failure
@@ -201,15 +159,7 @@ selected-scope fallback. Reads the current authorized Loom Store, not native
 Session bodies or cross-project databases. Membership uses authorship and direct
 question/answer relations, not notices, assumed agent identity or delivery.
 
-The response is `format:loom-full-thread/v1` with escaped `markdown` and
-`next_cursor`. Follow `next_cursor` as `cursor` with the same scope until null.
-Pages may be partial even below limit 20 (maximum 50). Record identity, sequence,
-authors, links, verdicts, evidence metadata and historical work references are
-retained. Oversized records repeat their identity; advance only on the final
-part. No recursive source expansion or invented raw tool output. Cursors depend
-on scope/location/version and do not promise a concurrent snapshot. Invalid
-history fails without advancing; reducing page size cannot admit an invalid
-individual record.
+`full_thread` returns escaped `markdown` and `next_cursor`. Follow the same scope to null; a short page can be incomplete (limit 20, max 50). Records include identity, authors, sequence, verdicts, evidence and old work references; oversized records advance only on their final part. No recursive source expansion or invented raw output. Cursors depend on scope/location/version, not a concurrent snapshot. Invalid data fails without advancing.
 
 ## Recover without guessing
 
@@ -218,11 +168,4 @@ and retained history. Explicitly select a current task, select Action-only conte
 or call `loom_context` with `{"clear":true}`. Do not infer a replacement task from
 a similar title. `loom_context` with `{}` reads this Session's existing selection.
 
-Successful reads survive selection-save failures. Inspect
-`selection.status:"save-failed"` and `persisted` (saved reference, null or
-"unknown"), not the unsaved request. Automatic context still uses the persisted
-selection; do not assume the selection changed after an error. Failed clear
-also fails; unreadable context is not a missing-task recovery. Explicit Plan
-and ledger reads do not change selection. Injection is optional; obey native
-denials. Pass useful references and actual verification limits, not delivery or
-readiness claims. See [handoff recovery](../../../docs/handoffs.md).
+Successful context reads survive selection-save failures. Inspect `selection.status:"save-failed"` and `persisted` (saved reference, null or "unknown"); later injection follows persisted state. A failed clear throws; unreadable context is not missing-task recovery. Explicit Plan/ledger reads do not modify selection. Do not assume the selection changed after an error unless confirmed. Native permissions still apply. Pass honest evidence and limits, not approval claims. See [handoff recovery](../../../docs/handoffs.md).

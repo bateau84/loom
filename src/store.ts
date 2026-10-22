@@ -215,9 +215,10 @@ export class Store {
     this.db.prepare("INSERT INTO ledger(id,action_id,session_id,kind,data) VALUES(?,?,?,?,?)").run(r.id, r.action_id ?? null, r.session_id, r.kind, encode(r))
     return r
   }
-  record(actor: Actor, focus: Focus, input: { kind: Exclude<RecordKind,"observation">; statement: string; evidence_ids?: string[]; verdict?: string; artifact_refs?: string[] }): LedgerRecord {
+  record(actor: Actor, focus: Focus | undefined, input: { kind: Exclude<RecordKind,"observation">; statement: string; evidence_ids?: string[]; verdict?: string; artifact_refs?: string[] }): LedgerRecord {
     canonical(input, new ProcessingBudget(PROCESSING_LIMITS.recordChars))
     if (!["claim", "result", "concern", "assessment", "qa"].includes(input.kind)) throw new Error("Only the host observer may record observations")
+    if (!focus && input.kind !== "assessment" && input.kind !== "qa") throw new Error("An Action is required for this record kind")
     const statement = nonempty(input.statement, "statement")
     const ids = input.evidence_ids ?? []
     if (!Array.isArray(ids) || ids.length > 100 || ids.some(x => typeof x !== "string")) throw new Error("evidence_ids must be a list of at most 100 IDs")
@@ -225,13 +226,19 @@ export class Store {
     const artifacts = input.artifact_refs ?? []
     if (!Array.isArray(artifacts) || artifacts.length > 50 || artifacts.some(x => typeof x !== "string" || x.length > 2000)) throw new Error("Invalid artifact_refs")
     return this.transaction(() => {
-      const fingerprint = subject(this.action(focus.action_id), this.plan(focus.action_id), focus.node_id)
+      const fingerprint = focus ? subject(this.action(focus.action_id), this.plan(focus.action_id), focus.node_id) : undefined
       for (const id of ids) {
         const row = this.db.prepare(`SELECT ${guardedData()} FROM ledger WHERE id=?`).get(id)
         const r = row ? parse<LedgerRecord>(row) : undefined
-        if (!r || r.kind !== "observation" || r.action_id !== focus.action_id) throw new Error(`Evidence must reference an existing observation in this Action: ${id}`)
+        // No cross-Action or cross-Session evidence borrowing. Unscoped review
+        // records may cite only unscoped observations from the calling Session.
+        const inScope = focus ? r?.action_id === focus.action_id
+          : r?.action_id === undefined && r?.session_id === actor.session_id
+        if (!r || r.kind !== "observation" || !inScope)
+          throw new Error(`Evidence must reference an existing observation in this ${focus ? "Action" : "Session"}: ${id}`)
       }
-      return this.append({ ...actor, ...focus, fingerprint, kind: input.kind, data: { statement, evidence_ids: ids, ...(input.verdict ? { verdict: input.verdict } : {}), artifact_refs: artifacts, verification: "agent-reported; not independently validated by Loom" } })
+      return this.append({ ...actor, ...(focus ?? {}), ...(fingerprint === undefined ? {} : { fingerprint }),
+        kind: input.kind, data: { statement, evidence_ids: ids, ...(input.verdict ? { verdict: input.verdict } : {}), artifact_refs: artifacts, verification: "agent-reported; not independently validated by Loom" } })
     })
   }
   records(query: { action_id?: string; session_id?: string; node_id?: string; record_id?: string; after?: number; limit?: number }) {

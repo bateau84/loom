@@ -201,7 +201,14 @@ export default Plugin.define({
                 if (input.clear) { if (input.action_id !== undefined || input.node_id !== undefined || input.mode !== undefined || input.handoff_id !== undefined) throw new Error("clear cannot be combined with work IDs or context options"); store.select(actor.session_id); result = { selected: null }; break }
                 // Clearing is navigation, not a read of the possibly damaged selection.
                 const focus = resolveContextSelection(input, () => store.selected(actor.session_id))
-                if (!focus) { result = { selected: null, note: "No Action selected. Ordinary conversation needs no Action." }; break }
+                if (!focus) {
+                  result = input.mode === "independent"
+                    ? { selected: null, context_mode: "independent", history_withheld: true, records: [], progress: [], questions: [],
+                      selection_unchanged: true,
+                      note: "No Action selected: no Loom work history was read and no work selection was saved. This Session-only independent view does not erase native messages, prior conversation, or explicitly queried history." }
+                    : { selected: null, note: "No Action selected. Ordinary conversation needs no Action." }
+                  break
+                }
                 const envelopeChars = JSON.stringify({ result: null, ...diagnostics }).length - 4
                 result = workContext(store, focus, snapshot.config.context.max_chars, actor.agent, {
                   ...(input.action_id !== undefined || input.mode !== undefined || input.handoff_id !== undefined ? { selectForSession: actor.session_id } : {}), envelopeChars,
@@ -221,6 +228,11 @@ export default Plugin.define({
                   break
                 }
                 if ("session_id" in input || "cursor" in input) throw new Error("session_id and cursor are full_thread query options only")
+                if (input.session_only && (input.action_id !== undefined || input.node_id !== undefined ||
+                    (input.operation !== "query" && input.operation !== "add")))
+                  throw new Error("session_only is a query option or Session-scoped review add option and cannot be combined with work IDs")
+                if (input.operation === "add" && input.session_only && !["assessment", "qa"].includes(String(input.kind)))
+                  throw new Error("session_only for add requires kind assessment or qa")
                 // Explicit work/thread identity must not depend on saved selection.
                 const identityScoped = ["complete", "answer"].includes(String(input.operation))
                   || (input.operation === "query" && input.view === "thread")
@@ -242,10 +254,9 @@ export default Plugin.define({
                       : "Recipient not contacted. Manual/native handling is required; continue your work and retrieve answers later." }
                   break
                 }
-                if (input.session_only && (input.operation !== "query" || input.action_id !== undefined || input.node_id !== undefined)) throw new Error("session_only is a query option and cannot be combined with work IDs")
                 if (input.operation === "query") result = store.records({ action_id: input.session_only ? undefined : focus?.action_id, session_id: actor.session_id, node_id: input.session_only ? undefined : focus?.node_id, record_id: input.record_id as string | undefined, after: input.after as number | undefined, limit: input.limit as number | undefined })
                 else if (input.operation === "add") {
-                  if (!focus) throw new Error("Provide action_id or select work before recording an Action result")
+                  if (!focus && input.kind !== "assessment" && input.kind !== "qa") throw new Error("Provide action_id or select work before recording an Action result")
                   result = store.record(actor, focus, { kind: input.kind as Parameters<Store["record"]>[2]["kind"], statement: input.statement as string, evidence_ids: input.evidence_ids as string[] | undefined, artifact_refs: input.artifact_refs as string[] | undefined, verdict: input.verdict as string | undefined })
                 } else throw new Error("Unknown record operation")
                 break

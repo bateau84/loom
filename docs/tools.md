@@ -87,6 +87,13 @@ constraints, useful record IDs and the original reference, then selects its own
 work. It does not inherit the parent's selection. `{}` reads current selection;
 `{"clear":true}` clears it. Selection is attribution, not permission to execute.
 
+For a fresh independent review with no Action, `loom_context`
+`{"mode":"independent"}` returns `selected:null`, `history_withheld:true`
+and no inherited Loom history. It creates no Action and saves no selection:
+there is no Action history to inject. It cannot erase earlier native messages
+or prevent explicit history queries. When an Action exists, select it with
+`mode:"independent"` to persist a withheld-history view for that work.
+
 Successful context reads survive selection-save failure with separate
 `selection.status:save-failed` diagnostics and `persisted` (saved reference,
 null, or `unknown` with read error). Later injection follows persisted selection,
@@ -105,15 +112,28 @@ Use explicit Action plus exact record ID, with no node filter, for a dependency:
 A record ID alone can inherit the selected task and miss a dependency. Ledger
 pages default to 30, max 50; follow `next_after` as `after`. Statements over 600
 characters are previews; exact record reads return full stored records within
-read limits. `session_only:true` is ledger-only and incompatible with work IDs.
+read limits. `session_only:true` on a ledger query reads the caller's Session,
+including records that may also be Action-scoped. On `add`, it instead forces
+Session scope for `assessment`/`qa` only. Neither use accepts Action/node IDs.
 Empty filtered results are not absence proof. `contract_match:null` means unknown;
 a matching contract is not code freshness or independent validation.
 
 `add` accepts Action/node or selection, `kind:result|claim|concern|assessment|qa` and
-`statement`; Assessment/QA require `verdict:pass|fail|inconclusive`. Record actual
-checks, sources and limits. `evidence_ids` reference existing same-Action host
-observations only; `artifact_refs` are unverified pointers. No raw tool bodies
-are captured, and explicit text is not redacted: never record credentials.
+`statement`; Assessment/QA require `verdict:pass|fail|inconclusive`. They may
+also be recorded without an Action, under the actual calling Session:
+
+`{"operation":"add","kind":"qa","verdict":"pass","statement":"Checked the changed behavior and stated its limits."}`
+
+When an Action is selected but the review must remain separate, add
+`"session_only":true`. It does not change the saved selection. Session-only
+reviews have no Action contract fingerprint and are not Action-wide verdicts.
+Action records may link same-Action host observations in `evidence_ids`;
+Session-only reviews may link only unscoped host observations from the **same**
+Session. `artifact_refs` are unverified pointers. Read your Session-scoped
+reviews with `loom_record {"operation":"query","session_only":true}` or the
+explicit Session `full_thread` view. Record actual checks, sources and limits.
+No raw tool bodies are captured, and explicit text is not redacted: never
+record credentials.
 
 ### Concerns and follow-up
 

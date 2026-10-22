@@ -45,7 +45,10 @@ export function resolveContextSelection(input: ContextInput, selected: () => Foc
     ? { action_id: uid(input.action_id, "action_id"), ...(input.node_id === undefined ? {} : { node_id: uid(input.node_id, "node_id") }) }
     : previous
   if (!focus) {
-    if (input.mode !== undefined || input.handoff_id !== undefined) throw new Error("Select work with action_id before setting context options")
+    // With no Action there is no inherited Loom work history to read. An
+    // independent Session view needs no persisted work selection.
+    if ((input.mode !== undefined && input.mode !== "independent") || input.handoff_id !== undefined)
+      throw new Error("Select work with action_id before setting context options")
     return undefined
   }
   const same = previous?.action_id === focus.action_id && previous?.node_id === focus.node_id
