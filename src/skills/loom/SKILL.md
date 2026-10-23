@@ -99,8 +99,9 @@ Every agent records task concerns with `kind:concern` and a factual `statement`.
 Distinguish suspected from confirmed and give its sources or unknowns.
 Documented, outside-task or handed-off is not resolved. General routes
 blockers; critic compares patterns without pretending to dispatch agents.
-Use actual configured roles. Cite immutable Action and concern record IDs;
-retrieve sources with explicit `action_id` and `record_id`, no `node_id`.
+Use actual configured roles. Cite Action and record IDs for Action-scoped concerns, or Session and record
+IDs for Session-scoped concerns. Read Action sources with `action_id` and
+`record_id` (no `node_id`); Session sources with `full_thread` and `session_id`.
 Concern IDs are not observation `evidence_ids`. Append follow-ups rather
 than altering history. No automatic escalation or execution gates.
 

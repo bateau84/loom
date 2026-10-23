@@ -235,7 +235,7 @@ export default Plugin.define({
                 if ("session_id" in input || "cursor" in input) throw new Error("session_id and cursor are full_thread query options only")
                 if (input.session_only && (input.action_id !== undefined || input.node_id !== undefined ||
                     (input.operation !== "query" && input.operation !== "add")))
-                  throw new Error("session_only is a ledger query or Session-scoped add option and cannot be combined with work IDs")
+                  throw new Error("session_only is a query option or Session-scoped add option and cannot be combined with work IDs")
                 // Explicit work/thread identity must not depend on saved selection.
                 const identityScoped = ["complete", "answer"].includes(String(input.operation))
                   || (input.operation === "query" && input.view === "thread")

@@ -231,7 +231,10 @@ test("plugin integration: configured roles, five tools, reload, scoping, capture
     expect((await invoke("record", { operation: "query" })).items).toHaveLength(4)
     expect((await invoke("context", {})).action.id).toBe(action.id)
     await expect(invoke("record", { operation: "query", session_only: true, action_id: action.id })).rejects.toThrow("session_only")
-    await expect(invoke("record", { operation: "add", session_only: true, kind: "claim", statement: "No" })).rejects.toThrow("session_only")
+    const sessionClaim = await invoke("record", { operation: "add", session_only: true, kind: "claim", statement: "No" })
+    expect(sessionClaim.action_id).toBeUndefined()
+    expect((await invoke("record", { operation: "query", action_id: action.id })).items).toHaveLength(4)
+    expect((await invoke("record", { operation: "query", session_only: true })).items.map((r: any) => r.id)).toContain(sessionClaim.id)
     // A disabled-before sibling must not consume the captured start, even with identical input.
     const gap = { ...toolEvent, id: "gap" }
     await hooks.get("execute.before")(gap)

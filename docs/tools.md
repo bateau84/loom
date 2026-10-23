@@ -153,7 +153,8 @@ Without an Action, concerns are stored under the calling Session. An Action
 or task association is optional; concerns need no verdict. State suspected versus confirmed with supporting checks or
 unknowns. Documented, outside-task and handed-off do not mean resolved. General
 routes blockers through existing native coordination; critic consolidates
-patterns with source Action and concern record IDs in later statement text.
+patterns with source Action and record IDs, or Session and record IDs for
+Session-scoped concerns. Read the latter via `full_thread` with `session_id`.
 Discover actual roster IDs; built-in coordination/qa guidance carries those
 responsibilities respectively, without creating or renaming agents.
 

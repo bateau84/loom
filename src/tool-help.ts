@@ -33,7 +33,7 @@ export const TOOL_EXAMPLES = {
     { operation: "add", action_id: "ACTION_ID", node_id: "research", kind: "concern", statement: "Suspected incompatibility; not confirmed. Record the support and what remains unknown." },
     { operation: "add", session_only: true, kind: "assessment", verdict: "inconclusive", statement: "REPLACE_WITH_INDEPENDENT_SESSION_FINDINGS_AND_LIMITS" },
     { operation: "add", kind: "qa", verdict: "fail", statement: "REPLACE_WITH_SESSION_QA_FINDINGS_AND_LIMITS" },
-    { operation: "add", kind: "concern", statement: "Confirmed local timeout; see artifact_refs for diagnostics. No Action selected." },
+    { operation: "add", kind: "concern", statement: "Suspected timeout; see attached log.", artifact_refs: ["LOG_PATH"] },
   ],
 } as const
 export type LoomToolName = keyof typeof TOOL_EXAMPLES
@@ -77,7 +77,7 @@ export const TOOL_HELP = Object.fromEntries(Object.entries(entries).map(([name, 
   `Usage: ${help.usage}`,
   `Returns: ${help.returns}`,
   `Caution: ${help.caution}`,
-  ...(name === "record" ? ["Concerns: add also accepts kind=concern with the same statement, scope, evidence and artifact rules; no Action, task or verdict is required. Every agent records its own task-related concerns, not only handoffs. State suspected versus confirmed and support or unknowns. Documented, outside-task or handed-off is not resolved. General routes blockers through native coordination; critic consolidates patterns citing source Action and concern record IDs in statement text. Use the actual roster/configured responsibilities (coordination/qa guidance), not assumed native IDs. Look up each source with explicit action_id plus record_id, no node_id, even when another task is selected. Concern IDs are not observation evidence_ids. Append follow-up commentary; originals remain unchanged. Context samples may omit concerns. No lifecycle, structured links, automatic escalation or execution gate is added."] : []),
+  ...(name === "record" ? ["Concerns: kind=concern needs a statement, no Action or verdict. Every agent records its own task-related concerns, not only handoffs. State suspected versus confirmed with support or unknowns. Documented, outside-task or handed-off is not resolved. General routes blockers natively; critic cites original Action or Session and concern record IDs. Read Action sources using action_id+record_id (no node_id), Session sources using full_thread session_id. Concern IDs are not observation evidence_ids. Append follow-ups; no automatic escalation, gate or lifecycle."] : []),
   'Examples (JSON inputs, not shell commands; replace ACTION_ID/RECORD_ID/QUESTION_ID; copy work_ref from worked-against context):',
   ...TOOL_EXAMPLES[name as LoomToolName].map(input => JSON.stringify(input)),
   name === "record"
