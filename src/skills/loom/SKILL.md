@@ -87,10 +87,9 @@ or unscoped observations from the same Session for Session-only records.
 Observations hold identity/digests, not raw input/output. Missing or unpaired
 observations prove neither success nor failure. `session_only:true` on a query
 reads the caller's Session history, including Action-linked records. On an
-`add`, it forces Session-only scope for all ordinary record kinds, even
-with an Action selected. Without an Action, `result`, `claim`, `concern`,
-Assessment and QA are Session-scoped by default. Neither use can combine
-with work IDs.
+`add`, it forces Session scope for all five record kinds, even with a
+selected Action; without selection, Session scope is the default. Neither
+use accepts work IDs.
 Do not record credentials or secrets: explicit text is not redacted.
 
 ## Preserve and route concerns
@@ -99,9 +98,9 @@ Every agent records task concerns with `kind:concern` and a factual `statement`.
 Distinguish suspected from confirmed and give its sources or unknowns.
 Documented, outside-task or handed-off is not resolved. General routes
 blockers; critic compares patterns without pretending to dispatch agents.
-Use actual configured roles. Cite Action and record IDs for Action-scoped concerns, or Session and record
-IDs for Session-scoped concerns. Read Action sources with `action_id` and
-`record_id` (no `node_id`); Session sources with `full_thread` and `session_id`.
+Use actual configured roles. Cite Action+record IDs, or Session+record IDs for unscoped concerns.
+Read Action records by `action_id`+`record_id` (no `node_id`);
+Session records by `full_thread`+`session_id`.
 Concern IDs are not observation `evidence_ids`. Append follow-ups rather
 than altering history. No automatic escalation or execution gates.
 
