@@ -119,23 +119,24 @@ pages default to 30, max 50; follow `next_after` as `after`. Statements over 600
 characters are previews; exact record reads return full stored records within
 read limits. `session_only:true` on a ledger query reads the caller's Session,
 including records that may also be Action-scoped. On `add`, it instead forces
-Session scope for `assessment`/`qa` only. Neither use accepts Action/node IDs.
+Session scope for any record kind. Neither use accepts Action/node IDs.
 Empty filtered results are not absence proof. `contract_match:null` means unknown;
 a matching contract is not code freshness or independent validation.
 
 `add` accepts Action/node or selection, `kind:result|claim|concern|assessment|qa` and
-`statement`; Assessment/QA require `verdict:pass|fail|inconclusive`. They may
-also be recorded without an Action, under the actual calling Session:
+`statement`; Assessment/QA require `verdict:pass|fail|inconclusive`. All five
+kinds can also be recorded without an Action, under the actual calling Session:
 
 `{"operation":"add","kind":"qa","verdict":"pass","statement":"Checked the changed behavior and stated its limits."}`
 
-When an Action is selected but the review must remain separate, add
+When an Action is selected but the record must remain separate, add
 `"session_only":true`. It does not change the saved selection. Session-only
-reviews have no Action contract fingerprint and are not Action-wide verdicts.
+records have no Action contract fingerprint and cannot be pinned as Action
+handoff results. Session-only review verdicts are not Action-wide verdicts.
 Action records may link same-Action host observations in `evidence_ids`;
-Session-only reviews may link only unscoped host observations from the **same**
+Session-only records may link only unscoped host observations from the **same**
 Session. `artifact_refs` are unverified pointers. Read your Session-scoped
-reviews with `loom_record {"operation":"query","session_only":true}` or the
+records with `loom_record {"operation":"query","session_only":true}` or the
 explicit Session `full_thread` view. Record actual checks, sources and limits.
 No raw tool bodies are captured, and explicit text is not redacted: never
 record credentials.
@@ -148,8 +149,8 @@ Every agent records its own task-related concerns, not only handoffs:
 {"operation":"add","action_id":"ACTION_ID","node_id":"TASK_ID","kind":"concern","statement":"Suspected incompatibility; no reproduction yet. Outside this task, not resolved."}
 ```
 
-An Action association is required under existing selection rules; a task and
-verdict are optional. State suspected versus confirmed with supporting checks or
+Without an Action, concerns are stored under the calling Session. An Action
+or task association is optional; concerns need no verdict. State suspected versus confirmed with supporting checks or
 unknowns. Documented, outside-task and handed-off do not mean resolved. General
 routes blockers through existing native coordination; critic consolidates
 patterns with source Action and concern record IDs in later statement text.

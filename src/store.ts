@@ -218,7 +218,6 @@ export class Store {
   record(actor: Actor, focus: Focus | undefined, input: { kind: Exclude<RecordKind,"observation">; statement: string; evidence_ids?: string[]; verdict?: string; artifact_refs?: string[] }): LedgerRecord {
     canonical(input, new ProcessingBudget(PROCESSING_LIMITS.recordChars))
     if (!["claim", "result", "concern", "assessment", "qa"].includes(input.kind)) throw new Error("Only the host observer may record observations")
-    if (!focus && input.kind !== "assessment" && input.kind !== "qa") throw new Error("An Action is required for this record kind")
     const statement = nonempty(input.statement, "statement")
     const ids = input.evidence_ids ?? []
     if (!Array.isArray(ids) || ids.length > 100 || ids.some(x => typeof x !== "string")) throw new Error("evidence_ids must be a list of at most 100 IDs")
@@ -230,7 +229,7 @@ export class Store {
       for (const id of ids) {
         const row = this.db.prepare(`SELECT ${guardedData()} FROM ledger WHERE id=?`).get(id)
         const r = row ? parse<LedgerRecord>(row) : undefined
-        // No cross-Action or cross-Session evidence borrowing. Unscoped review
+        // No cross-Action or cross-Session evidence borrowing. Session-only
         // records may cite only unscoped observations from the calling Session.
         const inScope = focus ? r?.action_id === focus.action_id
           : r?.action_id === undefined && r?.session_id === actor.session_id

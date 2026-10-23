@@ -64,7 +64,7 @@ test("discovery help keeps truthful current errors and scope boundaries visible"
   expect(TOOL_HELP.context).not.toContain("CURRENT LIMITATION")
   expect(TOOL_HELP.context).toContain("contract_match:null is unknown")
   expect(TOOL_HELP.record).toContain("explicit action_id without node_id searches the whole Action")
-  expect(TOOL_HELP.record).toContain("ledger query or assessment/qa add only, incompatible with work IDs")
+  expect(TOOL_HELP.record).toContain("ledger query or any add, incompatible with work IDs")
   expect(TOOL_HELP.record).toContain("session_only:true forces this scope")
   expect(TOOL_HELP.context).toContain("mode=independent returns a Session-only withheld-history view")
   expect(TOOL_HELP.record).toContain("next_after as after")

@@ -235,9 +235,7 @@ export default Plugin.define({
                 if ("session_id" in input || "cursor" in input) throw new Error("session_id and cursor are full_thread query options only")
                 if (input.session_only && (input.action_id !== undefined || input.node_id !== undefined ||
                     (input.operation !== "query" && input.operation !== "add")))
-                  throw new Error("session_only is a query option or Session-scoped review add option and cannot be combined with work IDs")
-                if (input.operation === "add" && input.session_only && !["assessment", "qa"].includes(String(input.kind)))
-                  throw new Error("session_only for add requires kind assessment or qa")
+                  throw new Error("session_only is a ledger query or Session-scoped add option and cannot be combined with work IDs")
                 // Explicit work/thread identity must not depend on saved selection.
                 const identityScoped = ["complete", "answer"].includes(String(input.operation))
                   || (input.operation === "query" && input.view === "thread")
@@ -261,7 +259,6 @@ export default Plugin.define({
                 }
                 if (input.operation === "query") result = store.records({ action_id: input.session_only ? undefined : focus?.action_id, session_id: actor.session_id, node_id: input.session_only ? undefined : focus?.node_id, record_id: input.record_id as string | undefined, after: input.after as number | undefined, limit: input.limit as number | undefined })
                 else if (input.operation === "add") {
-                  if (!focus && input.kind !== "assessment" && input.kind !== "qa") throw new Error("Provide action_id or select work before recording an Action result")
                   result = store.record(actor, focus, { kind: input.kind as Parameters<Store["record"]>[2]["kind"], statement: input.statement as string, evidence_ids: input.evidence_ids as string[] | undefined, artifact_refs: input.artifact_refs as string[] | undefined, verdict: input.verdict as string | undefined })
                 } else throw new Error("Unknown record operation")
                 break

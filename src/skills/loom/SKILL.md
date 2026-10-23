@@ -80,14 +80,17 @@ matching work definitions do not prove code correctness.
 
 Use `add`: `result` describes observed work; `claim` records a supported
 conclusion with its limits. Keep checks and sources, not activity logs.
-`evidence_ids` must be real same-Action host observation IDs; `artifact_refs`
-are pointers, not proof. Missing evidence stays missing.
+`evidence_ids` must cite same-Action host observations for Action records,
+or unscoped observations from the same Session for Session-only records.
+`artifact_refs` are pointers, not proof. Missing evidence stays missing.
 
 Observations hold identity/digests, not raw input/output. Missing or unpaired
 observations prove neither success nor failure. `session_only:true` on a query
 reads the caller's Session history, including Action-linked records. On an
-`add`, it forces Session-only scope for Assessment/QA, even with an Action
-selected. Neither use can combine with work IDs.
+`add`, it forces Session-only scope for all ordinary record kinds, even
+with an Action selected. Without an Action, `result`, `claim`, `concern`,
+Assessment and QA are Session-scoped by default. Neither use can combine
+with work IDs.
 Do not record credentials or secrets: explicit text is not redacted.
 
 ## Preserve and route concerns
@@ -109,7 +112,7 @@ A `result` alone is not completion. Query `view:progress` for reported progress
 and contract matching. Changed contracts may need fresh work or reconfirmation;
 unrelated replanning does not erase history.
 
-Completion does not complete parents or Actions and does not establish independent acceptance. Assessment/QA verdicts are `pass`, `fail`, `inconclusive`. Choose skills independently of the producer. Call `loom_assessment {"skill":"SKILL_ID"}` for ASSESSMENT.md or `loom_qa` for QA.md. The enabled caller needs its role and native skill permission; no Action, Plan or prior skill receipt is required. Missing companions return `available:false`, never SKILL.md. A PASS or loaded lens does not prove independence or Action success. Record findings with `loom_record`: with no Action, `kind:"assessment"` or `kind:"qa"` plus verdict/statement is stored under the calling Session. Use `session_only:true` to override a selected Action; evidence IDs must refer to unscoped observations from the same Session. No workflow gate is created.
+Completion does not complete parents or Actions and does not establish independent acceptance. Assessment/QA verdicts are `pass`, `fail`, `inconclusive`. Choose skills independently of the producer. Call `loom_assessment {"skill":"SKILL_ID"}` for ASSESSMENT.md or `loom_qa` for QA.md. The enabled caller needs its role and native skill permission; no Action, Plan or prior skill receipt is required. Missing companions return `available:false`, never SKILL.md. A PASS or loaded lens does not prove independence or Action success. Record findings with `loom_record`: with no Action, review verdicts are stored under the calling Session, as are results, claims and concerns. Use `session_only:true` to override a selected Action; Session-only evidence IDs must refer to unscoped observations from that Session. No workflow gate is created.
 
 `reopen` appends a reason without erasing history or undoing native side effects.
 Update Action state separately; paused/cancelled labels do not stop execution.

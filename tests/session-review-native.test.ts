@@ -74,13 +74,9 @@ test("session_only add overrides a selected Action without clearing it or contam
   } finally { await f.close() }
 })
 
-test("only unscoped review kinds are permitted; malformed verdicts and no-Action context options remain guarded", async () => {
+test("malformed review verdicts and no-Action context options remain guarded", async () => {
   const f = await registeredLoom()
   try {
-    for (const kind of ["result", "claim", "concern"]) {
-      await expect(f.invoke("record", { operation: "add", kind, statement: "No Action exists." }, "unselected")).rejects.toThrow("Provide action_id")
-      await expect(f.invoke("record", { operation: "add", session_only: true, kind, statement: "No Action exists." }, "unselected")).rejects.toThrow("session_only")
-    }
     await expect(f.invoke("record", { operation: "add", kind: "qa", statement: "Missing verdict." }, "unselected")).rejects.toThrow("Review verdict")
     await expect(f.invoke("record", {
       operation: "add", kind: "assessment", verdict: "pass", evidence_ids: ["missing"], statement: "Forged evidence.",
@@ -122,5 +118,91 @@ test("Session review evidence is restricted to unscoped observations from the sa
       kind: "assessment", verdict: "pass", statement: "Cannot borrow Session observation.", evidence_ids: [own.id],
     })).toThrow("in this Action")
     expect(store.records({ session_id: actor.session_id }).items.filter(r => r.kind === "assessment" || r.kind === "qa")).toHaveLength(2)
+  } finally { db.close() }
+})
+
+test("result, claim and concern work without an Action; selected Actions can be overridden explicitly", async () => {
+  const f = await registeredLoom()
+  try {
+    const records: any[] = []
+    for (const kind of ["result", "claim", "concern"] as const) {
+      for (const session_only of [false, true]) {
+        const entry = (await f.invoke("record", {
+          operation: "add", kind, ...(session_only ? { session_only: true } : {}),
+          statement: `Recorded ${kind} in a Session with no Action.`,
+          artifact_refs: ["/tmp/local-diagnostics.txt"],
+        }, "notes-session")).result
+        expect(entry.kind).toBe(kind)
+        expect(entry.session_id).toBe("notes-session")
+        expect(entry.action_id).toBeUndefined()
+        expect(entry.node_id).toBeUndefined()
+        expect(entry.fingerprint).toBeUndefined()
+        records.push(entry)
+      }
+    }
+    expect((await f.invoke("action", { operation: "list" })).result.items).toEqual([])
+    const own = (await f.invoke("record", { operation: "query", session_only: true }, "notes-session")).result.items
+    expect(own.map((r: any) => r.id)).toEqual(records.map(r => r.id))
+    expect((await f.invoke("record", { operation: "query" }, "notes-session")).result.items.map((r: any) => r.id)).toEqual(records.map(r => r.id))
+    expect((await f.invoke("record", { operation: "query", session_only: true }, "other-session")).result.items).toEqual([])
+    const thread = (await f.invoke("record", {
+      operation: "query", view: "full_thread", session_id: "notes-session",
+    }, "other-session")).result
+    for (const kind of ["result", "claim", "concern"]) expect(thread.markdown).toContain(`Recorded ${kind}`)
+
+    const action = (await f.invoke("action", {
+      operation: "create", title: "Selected work", goal: "Preserve scope boundaries",
+    }, "notes-session")).result
+    const linked = (await f.invoke("record", {
+      operation: "add", kind: "claim", statement: "This claim is about the Action.",
+    }, "notes-session")).result
+    const detached = (await f.invoke("record", {
+      operation: "add", kind: "concern", session_only: true, statement: "This concern is not about the Action.",
+    }, "notes-session")).result
+    expect(linked.action_id).toBe(action.id)
+    expect(typeof linked.fingerprint).toBe("string")
+    expect(detached.action_id).toBeUndefined()
+    expect(detached.fingerprint).toBeUndefined()
+    expect((await f.invoke("context", {}, "notes-session")).result.action.id).toBe(action.id)
+    expect((await f.invoke("record", { operation: "query", action_id: action.id }, "notes-session")).result.items.map((r: any) => r.id)).toEqual([linked.id])
+    expect((await f.invoke("record", { operation: "query", session_only: true }, "notes-session")).result.items.map((r: any) => r.id)).toEqual([...records.map(r => r.id), linked.id, detached.id])
+    await expect(f.invoke("record", {
+      operation: "add", action_id: action.id, kind: "concern", session_only: true, statement: "Invalid mixed scope",
+    }, "notes-session")).rejects.toThrow("session_only")
+    await expect(f.invoke("record", {
+      operation: "add", action_id: "missing-action", kind: "result", statement: "Invalid explicit Action must fail",
+    }, "notes-session")).rejects.toThrow("Unknown Action")
+  } finally { await f.close() }
+})
+
+test("Session-only results, claims and concerns may cite only unscoped observations from their own Session", () => {
+  const db = new Database(":memory:")
+  try {
+    const store = new Store(db)
+    const actor = { session_id: "evidence-session", agent: "general" }
+    const own = store.observe(actor, undefined, { source: "own host observation" })
+    const foreign = store.observe({ session_id: "another-session", agent: "general" }, undefined, { source: "foreign observation" })
+    const action = store.create("Other Action", "Keep work evidence separate", actor)
+    const scoped = store.observe(actor, { action_id: action.id }, { source: "Action observation" })
+    for (const kind of ["result", "claim", "concern"] as const) {
+      const record = store.record(actor, undefined, {
+        kind, statement: `Unscoped ${kind} with evidence.`, evidence_ids: [own.id],
+      })
+      expect(record.data.evidence_ids).toEqual([own.id])
+      expect(record.action_id).toBeUndefined()
+      expect(record.fingerprint).toBeUndefined()
+      for (const forbidden of [foreign.id, scoped.id, "unknown-record"]) {
+        expect(() => store.record(actor, undefined, {
+          kind, statement: "Evidence from wrong scope must fail.", evidence_ids: [forbidden],
+        })).toThrow("in this Session")
+      }
+      const linked = store.record(actor, { action_id: action.id }, {
+        kind, statement: "Action-linked evidence.", evidence_ids: [scoped.id],
+      })
+      expect(linked.action_id).toBe(action.id)
+      expect(() => store.record(actor, { action_id: action.id }, {
+        kind, statement: "Action cannot borrow Session evidence.", evidence_ids: [own.id],
+      })).toThrow("in this Action")
+    }
   } finally { db.close() }
 })
