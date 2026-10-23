@@ -78,7 +78,7 @@ test("concerns participate in dependency context and Action/Session full history
   } finally { await f.close() }
 })
 
-test("concerns retain ordinary rejection rules, including observation-only evidence", async () => {
+test("concerns reject bad inputs and invalid evidence while allowing Session-only records", async () => {
   const f = await fixture()
   try {
     const concern = (await f.add()).result
@@ -99,7 +99,9 @@ test("concerns retain ordinary rejection rules, including observation-only evide
       await expect(f.add(input)).rejects.toThrow()
       expect((await f.invoke("record", { operation: "query", action_id: f.action.id })).result).toEqual(before)
     }
-    await expect(f.invoke("record", { operation: "add", kind: "concern", statement: "No association" }, "unselected")).rejects.toThrow("Provide action_id")
+    const unscoped = (await f.invoke("record", { operation: "add", kind: "concern", statement: "No association" }, "unselected")).result
+    expect(unscoped.action_id).toBeUndefined()
+    expect((await f.invoke("record", { operation: "query", session_only: true }, "unselected")).result.items.map((r: any) => r.id)).toContain(unscoped.id)
     // Existing kinds reject concern IDs as evidence too, and still require review verdicts.
     await expect(f.add({ kind: "claim", evidence_ids: [concern.id] })).rejects.toThrow("existing observation")
     await expect(f.add({ kind: "assessment" })).rejects.toThrow("Review verdict")

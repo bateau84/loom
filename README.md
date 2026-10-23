@@ -250,10 +250,11 @@ between flat skills. The bundled `loom` skill has no companions, so its result
 is `available:false`, not a path error.
 See [Assessment and QA companions](docs/review-companions.md) for configuration,
 examples and limits. Loading instructions and recording findings are separate;
-neither guarantees independent review. Assessment/QA verdicts can now be
-recorded under the calling Session without an Action. `session_only:true` on
-`loom_record add` explicitly keeps a review Session-scoped even if work is
-selected; existing Action-linked records are unchanged. `loom_context` with
+neither guarantees independent review. `loom_record add` stores results,
+claims, concerns, Assessment and QA under the calling Session when no Action
+is selected. `session_only:true` forces Session scope even if another Action
+is selected; existing Action-linked records are unchanged. Reviews still
+require a verdict. `loom_context` with
 `{"mode":"independent"}` works without an Action and reads no Loom work
 history, but does not save a selection or erase prior native conversation.
 
@@ -266,7 +267,9 @@ use explicit result/claim records and artifact references for useful summaries.
 Missing starts stay unattributed; unfinished starts are not success. An in-flight
 call retains its original work association when the Session changes tasks.
 
-Claims can reference only existing observation IDs in the same Action. A link is
+Action-linked records may cite existing observations in that Action;
+Session-only records may cite unscoped observations from their own Session.
+Observations come from host capture, not `loom_record add`. A link is
 not proof that a statement is true. A stored review PASS is not an Action PASS.
 `contract_match` means that the plan/goal fingerprint matches, **not** that code,
 external facts or the evidence itself have been revalidated. Records remain
