@@ -74,6 +74,11 @@ automatically**: that would create two authors of progress and reintroduce a
 scheduler. Evaluate visual usefulness separately; the plugin does not alter
 OpenCode's `experimental.todo` setting or register a competing TODO tool.
 
+The [model-dispatch investigation](model-routing-v2-dispatch.md) separately
+shows why the existing V2 hooks do not yet prove safe live provider switching
+or per-account affinity. This is a source-only blocker, not installed-host
+model-routing acceptance.
+
 ## Qualification and limits
 
 `tests/installed_host_smoke.py` still proves only boot, restart/removal,
