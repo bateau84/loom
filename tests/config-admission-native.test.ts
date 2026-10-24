@@ -138,3 +138,28 @@ test("disposal cancels old queued hooks without resetting admission for a replac
     expect(event.system.length).toBe(2); expect(f.tools.size).toBe(5)
   } finally { hold?.release(); await hold?.promise; await f.close() }
 })
+
+
+test("enabled routing exposes a truthful, read-only policy preview without changing native agents", async () => {
+  const f = await fixture()
+  try {
+    await writeFile(join(f.directory, ".loom.yaml"), [
+      "model-routing:",
+      "  enabled: true",
+      "  default-class: balanced",
+      "  default-reasoning: low",
+      "model-classes:",
+      "  balanced: {models: [test-model]}",
+      "agents:",
+      "  external: {roles: [implementation]}",
+      "roles:",
+      "  implementation: {model-class: balanced, reasoning: high}",
+      "",
+    ].join("\n"))
+    const response = await f.invoke("agents", {})
+    expect(response.result.model_routing_runtime).toBe("not-connected")
+    expect(response.result.model_policy_preview.external).toEqual({ modelClass: "balanced", reasoning: "high" })
+    expect(response.result.model_routing_note).toContain("does not yet route")
+    expect(f.tools.size).toBe(5)
+  } finally { await f.close() }
+})
