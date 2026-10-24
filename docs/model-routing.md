@@ -8,19 +8,116 @@ timestamp: 2026-10-24T00:00:00Z
 
 # Draft: role model classes and provider-first subscription routing
 
-> **Not live failover yet.** This draft implements a bounded, opt-in
-> configuration contract and a pure, tested route planner. It does not yet
-> intercept or reroute OpenCode requests, inspect actual subscriptions, or
-> enforce billing. Do not turn it on expecting uninterrupted service.
+> **Initial routing only on OpenCode 2.1.4.** Loom can now assign a
+> verified eligible model and exact reasoning variant to a native agent using
+> `ctx.agent.transform`. A `model.request` guard stops unverified and
+> unexpected requests before provider transport. It does **not** rotate
+> providers after a quota failure or resume/replay a running stream.
 >
-> OpenCode's V2 session retry hook retries the *already selected* model; it
-> does not accept a different model/provider. Real seamless failover needs
-> a validated V2 virtual provider/SDK adapter or equivalent upstream support.
+> This plugin branch still pins the **2.1.1 SDK** for PR #190 compatibility.
+> The isolated **2.1.4 CLI** negative-control workflow proves a rejected
+> unverified request never reached the scripted provider and disabling routing
+> leaves native execution available. Actual paid/subscription provider
+> acceptance remains a separate unproven task.
+>
+> OpenCode's V2 retry hook still cannot safely change providers and does not
+> expose the host's internal output/tool-effect boundary.
 
-For the pinned host's exact dispatch and account-affinity blockers, see
-[OpenCode 2.1.1 model-dispatch investigation](model-routing-v2-dispatch.md).
-Its source-only result is **BLOCKED** for safe live fallback; no installed-host
-qualification is claimed.
+For pinned-host evidence, see the
+[2.1.1/2.1.4 model-dispatch investigation](model-routing-v2-dispatch.md).
+
+## Initial routing on OpenCode 2.1.4 (implemented, opt-in)
+
+At plugin startup, Loom reads the effective `.loom.yaml`, discovers actual
+models through the native `ctx.model.list()` and providers through
+`ctx.provider.list()`, and resolves current **opaque native connection IDs**.
+It asks the separate quota-attestation interface when available. The only
+native built-in included-use proof currently recognized is OpenCode 2.1.4's
+**ChatGPT OAuth integration**: an active native OAuth credential, the Codex
+backend URL, its native subscription headers, an enabled model and the native
+subscription-adjusted empty cost list must **all** agree. An OAuth provider
+name by itself, empty model pricing by itself, or a provider advertising a
+model does not authorize an included request.
+
+For each configured agent/role, the pre-existing planner chooses a logical
+model and provider in the configured order; Loom sets that existing native
+agent's `Agent.Info.model` to the exact `providerID/id#variant`. OpenCode
+2.1.4 consults this field when `Session.model` is unset. No `opencode.json`
+per-agent model assignment or new agent definitions are needed. Explicitly
+selected Session models still win inside OpenCode; for a **managed** agent,
+a different model is rejected by Loom's pre-transport guard rather than
+silently overriding or charging for that Session choice.
+
+**Reasoning:** A candidate needs a native `low`, `medium` or `high`
+variant with actual provider options. Missing, empty or incompatible
+reasoning variants are **not** replaced with default/lesser reasoning.
+Tool support and enabled status come from the native catalog. An exhausted
+route, in-force cooldown, missing native connection, unknown or unverified
+billing all make the route ineligible. `paid-fallback: true` can only enable
+a **verified metered** attestation; unknown billing never becomes eligible.
+The public native catalog alone is not a general subscription-billing
+authority. The future quota implementation owns billing confidence and
+cooldown storage; Loom does not inspect credential secrets or create a
+second quota database.
+
+**Dispatch guard:** Every managed primary request is checked against
+the planned model, the latest eligible native catalog/attestation and
+an in-process provider/model/account comparison across continuations.
+If native OpenCode would fall through to its global default because an
+agent route is unavailable, Loom rejects the request before provider
+transport. With routing enabled, auxiliary model requests also require a
+verified eligible route, so title/compaction cannot silently hit a paid
+global fallback. For an intentionally **disabled** policy the adapter
+registers no model or request hooks and OpenCode behaves as before.
+
+A changed routing policy requires a plugin restart; request-time checks
+reject changes since activation. An unavailable planned route does not
+silently switch to a lower model. The model policy reported by
+`loom_agents` includes `model_routing_runtime: initial-only`,
+`model_routing_selected` and `model_routing_unavailable_agents`
+when the full native host is available. A partial/older host shows
+`not-connected` and is not evidence of live routing.
+
+**Limits:** This is initial native agent selection, **not** per-request
+replanning or safe live provider fallback. An existing explicitly selected
+Session model is not overwritten. The pre-request connection check is
+not an atomic native connection lease: OpenCode can still resolve a
+different active account between model resolution and transport. Native
+account affinity during a stream, tool execution and auxiliary calls remains
+a host contract requirement. Invalid/overloaded config loaded at startup
+follows existing Loom fail-closed-guidance behavior and can leave routing
+disabled; operators must verify the runtime status before treating paid
+policy as enforced. The separate installed-host negative control establishes
+only rejection under *unverified* billing and the disabled native path.
+It does not prove actual ChatGPT billing, two-provider switching or live
+tool-affinity acceptance.
+
+### Example
+
+```yaml
+model-routing:
+  enabled: true
+  default-class: strong
+  default-reasoning: medium
+  provider-order: [openai, github-copilot]
+  paid-fallback: false
+model-classes:
+  strong:
+    # Replace these illustrative IDs with exact IDs from the native model list.
+    models: [gpt-6.1-sol, gpt-6-astra]
+agents:
+  architect:
+    roles: [architecture]
+roles:
+  architecture:
+    model-class: strong
+    reasoning: medium
+```
+
+No other provider is assumed included. The configured model must exist in
+the native catalog, the requested reasoning variant must be supported,
+and the current connection must have verified billing. If nothing
+qualifies, the managed request is blocked rather than silently spending.
 
 ## Intended behavior
 
@@ -140,7 +237,7 @@ config fails closed under the existing Loom configuration-read policy.
 - The pure planner needs a runtime-supplied inventory with `billing`,
   `quota`, `tools`, `enabled`, and optional supported reasoning levels.
 
-## Runtime adapter: outstanding work before enabling in production
+## Runtime adapter: remaining work for live fallback (initial routing is implemented)
 
 This feature is not complete until the following are independently verified.
 
