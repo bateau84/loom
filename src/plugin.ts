@@ -5,6 +5,7 @@ import { mkdir, open, realpath } from "node:fs/promises"
 import { homedir } from "node:os"
 import { isAbsolute, join } from "node:path"
 import { configPaths, loadConfig } from "./config.js"
+import { resolveModelPolicy } from "./model-routing.js"
 import { configLoadStatus } from "./config-admission.js"
 import { injectInstructions, registry, roleDescriptions, type NativeAgent } from "./agents.js"
 import { Observer } from "./context.js"
@@ -147,7 +148,20 @@ export default Plugin.define({
             switch (spec.name) {
               case "agents": {
                 const entries = registry(snapshot.config, agents(await ctx.agent.list()))
-                result = { agents: entries, role_descriptions: roleDescriptions(snapshot.config), config_loads: configLoadStatus(), evidence: { capture: snapshot.config.ledger.capture, ...observer.status() }, config_sources: snapshot.sources, errors: snapshot.errors, warnings: entries.filter(a => a.configured && !a.available).map(a => `Configured agent is unavailable: ${a.id}`) }; break
+                const modelPolicies = snapshot.config.modelRouting.enabled
+                  ? Object.fromEntries(entries.filter(a => a.configured && a.enabled).map(a => [a.id, resolveModelPolicy(snapshot.config, a.id)]))
+                  : undefined
+                result = {
+                  agents: entries, role_descriptions: roleDescriptions(snapshot.config), config_loads: configLoadStatus(),
+                  evidence: { capture: snapshot.config.ledger.capture, ...observer.status() },
+                  config_sources: snapshot.sources, errors: snapshot.errors,
+                  warnings: entries.filter(a => a.configured && !a.available).map(a => `Configured agent is unavailable: ${a.id}`),
+                  ...(modelPolicies ? {
+                    model_policy_preview: modelPolicies,
+                    model_routing_runtime: "not-connected",
+                    model_routing_note: "Policy preview only: Loom does not yet route provider requests or inspect subscription quota.",
+                  } : {}),
+                }; break
               }
               case "action":
                 if (input.operation === "list") result = store.list(input.offset as number | undefined)
