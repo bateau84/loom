@@ -6,6 +6,18 @@ type: Log
 
 ## 2026-10-24
 
+**Update**: [`design.md`](design.md) now links to the three indexed
+concern requirements rather than the reserved nested `index.md`.
+[`installed-host-validation.md`](installed-host-validation.md),
+[`manual-backup-restore.md`](manual-backup-restore.md),
+[`read-consistency.md`](read-consistency.md),
+[`retrieval-limits.md`](retrieval-limits.md), and
+[`tools.md`](tools.md) now link to indexed files while preserving intended
+section titles in prose. The backup guide refers to the repository `README.md`
+without treating it as an OKF concept. [`handoffs.md`](handoffs.md) and
+[`reviewer-corrections.md`](reviewer-corrections.md) gained grounded references
+to their existing implementation contracts. No new dependency obligations.
+
 **Creation**: [Repository OKF profile](../.okf-profile.yaml) — Declared
 the observed concept types and evidence-backed `references` and `depends-on`
 heading relationships. No unsupported cardinality obligations were added.

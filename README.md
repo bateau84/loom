@@ -168,6 +168,12 @@ directory. Explicit `--profile .okf-profile.yaml` loading fails if the
 profile is invalid; auto-discovery can instead fall back to untyped links.
 Restart `okf-mcp` after changing the profile.
 
+A separate `okf-mcp --validate` command checks document conformance in its own
+short-lived process; it does **not** prove the running MCP server has reloaded
+the profile. After restarting, inspect `graph_integrity.profile_loaded` and
+query real `depends-on`/`references` links. A false value means the graph
+is using a default or otherwise inactive profile.
+
 The profile maps observed document headings to `references` and `depends-on`
 links, with no mandatory relationship-count invariants. It does not establish
 runtime-model routing correctness or a validated live documentation graph.
