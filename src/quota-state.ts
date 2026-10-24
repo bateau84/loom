@@ -143,15 +143,35 @@ export async function openSharedQuotaState(options: { path?: string; now?: () =>
   if (!ds.isDirectory() || (ds.mode & 0o077) !== 0 || (process.getuid && ds.uid !== process.getuid())) {
     throw new Error("Shared quota directory must be private and owned by the current user")
   }
+  let created = false
   try {
     const f = await open(filename, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | (constants.O_NOFOLLOW ?? 0), 0o600)
+    created = true
     await f.close()
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e
   }
-  const fs = await lstat(filename)
+  let fs = await lstat(filename)
+  // Another process may observe the zero-byte file between O_EXCL and
+  // SQLite initialization. Wait briefly, but never silently repair an
+  // abandoned or corrupt empty DB from an earlier process.
+  for (let i = 0; !created && fs.size === 0 && i < 30; i++) {
+    await new Promise(resolve => setTimeout(resolve, 100))
+    fs = await lstat(filename)
+  }
   if (!fs.isFile() || (fs.mode & 0o077) !== 0 || (process.getuid && fs.uid !== process.getuid())) {
     throw new Error("Shared quota database must be a private regular file owned by the current user")
+  }
+  if (!created) {
+    if (fs.size < 100) throw new Error("Existing shared quota database is incomplete or corrupt")
+    const f = await open(filename, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+    try {
+      const header = Buffer.alloc(16)
+      const { bytesRead } = await f.read(header, 0, 16, 0)
+      if (bytesRead !== 16 || header.toString("utf8") !== "SQLite format 3\0") {
+        throw new Error("Existing shared quota database has an invalid SQLite header")
+      }
+    } finally { await f.close() }
   }
   const canonical = await realpath(filename)
   if (canonical !== filename) throw new Error("Shared quota database may not be a symlink")
@@ -164,6 +184,7 @@ export async function openSharedQuotaState(options: { path?: string; now?: () =>
     try {
       const row = db.prepare("PRAGMA user_version").get() as { user_version: number }
       if (row.user_version !== 0 && row.user_version !== 1) throw new Error("Unsupported shared quota schema version")
+      if (row.user_version === 0 && !created) throw new Error("Existing shared quota database was never initialized")
       db.exec(`CREATE TABLE IF NOT EXISTS quota (
         id TEXT PRIMARY KEY NOT NULL CHECK(length(id)=64),
         state TEXT NOT NULL CHECK(state IN ('available','unknown','exhausted','throttled','overloaded','authentication')),
