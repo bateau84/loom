@@ -7,7 +7,7 @@ timestamp: 2026-10-19T00:00:00Z
 ---
 # BR-001 — Record traceable concerns
 
-**Priority:** Must. **Status:** Implemented; registered-tool/SQLite evidence in [bundle overview](index.md), not live-host acceptance.
+**Priority:** Must. **Status:** Implemented; registered-tool/SQLite evidence summarized in the bundle's `index.md`; the [record tool contract](../../tools.md) documents the public behavior. This is not live-host acceptance.
 
 **Statement:** An agent shall be able to append a task-related concern through the record tool as a distinct concern record, retaining the existing ledger's identity, Action/task attribution, originating session attribution, and evidence/reference conventions.
 

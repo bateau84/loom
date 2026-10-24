@@ -106,7 +106,7 @@ constant-time proofs, peak-memory results, or guaranteed laptop performance.
 
 The following characterizes the `83de434` follow-up, not the current loader.
 Subsequent [bounded parser](configuration-parser.md), [file-read guards](configuration-limits.md)
-and [admission](operating-policy.md#existing-configuration-admission-stays-in-place)
+and [admission policy](operating-policy.md) (section **Existing configuration admission stays in place**)
 documentation describes the current boundaries; this historical probe is not a
 new claim that the old unbounded path remains in production.
 

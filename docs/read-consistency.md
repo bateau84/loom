@@ -76,7 +76,7 @@ read or recursive evidence expansion occurs. Scope/location/version-bound cursor
 continue labelled partial records, advancing only after their final part. Invalid,
 changed, corrupt or unsupported continuation fails without advancing. Pages are
 not a frozen concurrent snapshot and cursors are not promised perpetual validity.
-See [collaboration](collaboration.md#full-stored-relational-history).
+See [collaboration](collaboration.md) (section **Full stored relational history**).
 
 The explicit `loom_context` tool obtains a context snapshot and then revalidates
 selection when supplied IDs should be selected. Those are separate boundaries:

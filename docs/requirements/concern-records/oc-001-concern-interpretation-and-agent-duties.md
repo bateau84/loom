@@ -7,7 +7,7 @@ timestamp: 2026-10-19T00:00:00Z
 ---
 # OC-001 — Concern interpretation and agent duties
 
-**Priority:** Must. **Status:** Guidance implemented; source-lookup and guidance checks in [bundle overview](index.md), not proof of universal agent compliance.
+**Priority:** Must. **Status:** Guidance implemented; source-lookup and guidance checks summarized in the bundle's `index.md`; see the [implementation boundaries](../../design.md). This is not proof of universal agent compliance.
 
 **Participants:** Concern-writing agents; General as routing agent; critic as consolidator; ledger readers.
 

@@ -216,7 +216,7 @@ Target check is not an atomic lease. The 5000ms deadline bounds waiting, not
 cancellation of started native I/O. Admission is not consumption or completion.
 An eligible response's `resume` and separate SYSTEM annotation qualify the outcome;
 annotation failure cannot erase the answer or undo I/O. Never repeat an answer
-to try delivery. Read [full outcome details](collaboration.md#one-shot-first-answer-resume).
+to try delivery. Read [full outcome details](collaboration.md) (section **One-shot first-answer resume**).
 
 ## Query views and complete history
 
