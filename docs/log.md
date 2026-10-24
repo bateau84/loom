@@ -6,6 +6,22 @@ type: Log
 
 ## 2026-10-24
 
+**Creation**: [Repository OKF profile](../.okf-profile.yaml) — Declared
+the observed concept types and evidence-backed `references` and `depends-on`
+heading relationships. No unsupported cardinality obligations were added.
+
+**Update**: [`model-routing.md`](model-routing.md) — Linked the actual
+configuration decoder and OpenCode compatibility contracts under
+`Depends on`, establishing typed edges grounded in the draft implementation.
+
+**Update**: [`index.md`](index.md) and [README](../README.md) —
+Documented profile discovery at the repository scan root, restart semantics,
+and the distinction between local source checks and live graph verification.
+
+**Verification**: Extended `tests/okf-native.test.ts` with a profile
+vocabulary/alias and grounded-link regression check. Real `okf-mcp`
+profile loading and graph-integrity acceptance remain unverified.
+
 **Update**: Added OKF concept metadata (type, title, description, tags and
 timestamp) to 24 previously unindexed documents, in three groups:
 
