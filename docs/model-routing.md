@@ -65,10 +65,12 @@ the planned model, the latest eligible native catalog/attestation and
 an in-process provider/model/account comparison across continuations.
 If native OpenCode would fall through to its global default because an
 agent route is unavailable, Loom rejects the request before provider
-transport. With routing enabled, auxiliary model requests also require a
-verified eligible route, so title/compaction cannot silently hit a paid
-global fallback. For an intentionally **disabled** policy the adapter
-registers no model or request hooks and OpenCode behaves as before.
+transport. With routing enabled, auxiliary model requests
+for managed Sessions also require a verified eligible route, so title/
+compaction cannot silently hit a paid global fallback. Explicitly
+unmanaged Sessions retain native auxiliary behavior. For an intentionally
+**disabled** policy the adapter registers no model or request hooks and
+OpenCode behaves as before.
 
 A changed routing policy requires a plugin restart; request-time checks
 reject changes since activation. An unavailable planned route does not
