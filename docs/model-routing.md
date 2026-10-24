@@ -17,6 +17,11 @@ timestamp: 2026-10-24T00:00:00Z
 > does not accept a different model/provider. Real seamless failover needs
 > a validated V2 virtual provider/SDK adapter or equivalent upstream support.
 
+For the pinned host's exact dispatch and account-affinity blockers, see
+[OpenCode 2.1.1 model-dispatch investigation](model-routing-v2-dispatch.md).
+Its source-only result is **BLOCKED** for safe live fallback; no installed-host
+qualification is claimed.
+
 ## Intended behavior
 
 An agent chooses a **model class** and **reasoning level**, inherited from its
