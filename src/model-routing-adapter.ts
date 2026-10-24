@@ -171,7 +171,8 @@ export async function registerModelRouting(
     try {
       const response = await ctx.session.get({ sessionID })
       const info = "data" in response ? response.data : response
-      if (info.agent === undefined) return true
+      if (!info || typeof info !== "object" || !("agent" in info) || typeof info.agent !== "string")
+        return true
       const plan = initial.state.plan[info.agent]
       return plan !== undefined && plan.status !== "disabled" && plan.status !== "no-policy"
     } catch {
