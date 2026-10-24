@@ -1,3 +1,11 @@
+---
+type: Playbook
+title: "Useful handoffs and independent review"
+description: "Guides context handoffs, fresh-session recovery and independent review."
+tags: [loom, handoff, review]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Useful handoffs and independent review
 
 Keep the useful work outside the conversation so the next task can start fresh.

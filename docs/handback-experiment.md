@@ -1,3 +1,11 @@
+---
+type: Architecture
+title: "Historical handback experiment"
+description: "Records historical handback trial outcomes and verification boundaries."
+tags: [loom, historical, experiment]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Historical handback experiment
 
 The earlier direct-bridge handback experiment was a test-only feasibility probe,

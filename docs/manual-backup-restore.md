@@ -1,3 +1,11 @@
+---
+type: Playbook
+title: "Manual stopped-writers backup and restore"
+description: "Describes manual stopped-writer backup and restore of Loom state."
+tags: [loom, backup, recovery]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Manual stopped-writers backup and restore
 
 This is an offline, operator-initiated procedure for the Action Store, not the

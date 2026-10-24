@@ -1,3 +1,11 @@
+---
+type: Architecture
+title: "OpenCode 2.1.1 compatibility and native feature audit"
+description: "Audits OpenCode 2.1.1 host compatibility and available native features."
+tags: [loom, opencode, compatibility]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # OpenCode 2.1.1 compatibility and native feature audit
 
 Scope: Loom's Action-based plugin, migrating from the qualified OpenCode 2.0.32

@@ -1,3 +1,11 @@
+---
+type: Architecture
+title: "Draft: role model classes and provider-first subscription routing"
+description: "Draft model-class and provider-first route selection contract; live failover is not implemented."
+tags: [loom, routing, draft]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Draft: role model classes and provider-first subscription routing
 
 > **Not live failover yet.** This draft implements a bounded, opt-in
