@@ -18,6 +18,7 @@ listed here for discoverability; they remain without OKF frontmatter and typed
 relationships.
 
 - [OpenCode 2.1.1 migration and native opportunities](/docs/opencode-2.1.1.md)
+- [Draft: provider-first model routing](/docs/model-routing.md)
 - [Retired assignment/delivery protocol](/docs/assignment-delivery.md)
 - [Reported progress and contextual questions](/docs/collaboration.md)
 - [Simple collaboration, native execution](/docs/coordination.md)
