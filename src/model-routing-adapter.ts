@@ -96,7 +96,7 @@ function assertAllowedRequest(
 }
 
 export type ModelRoutingRuntime = {
-  status: "disabled" | "initial-only"
+  status: "disabled" | "not-connected" | "initial-only"
   selected: Record<string, { provider_id: string; model_id: string; reasoning: string; billing: string }>
   unavailable: string[]
 }
@@ -115,13 +115,18 @@ export async function registerModelRouting(
   source?: RouteEligibilitySource,
 ): Promise<ModelRoutingRuntime> {
   const snapshot = await getConfig()
-  if (snapshot.errors.length || !snapshot.config.modelRouting.enabled) {
-    if (snapshot.errors.length) {
-      // We cannot safely infer whether invalid YAML intended to enable paid
-      // routing. Do not attach a policy from partially decoded config.
-      throw new Error("Loom routing cannot verify .loom.yaml: " + snapshot.errors.join("; "))
-    }
+  // Existing Loom treats an invalid/overloaded config read as disabled. Do
+  // not make its native tool registry/ledger fail during a routing-disabled
+  // startup: that would regress existing multi-instance behavior.
+  if (!snapshot.config.modelRouting.enabled) {
     return { status: "disabled", selected: {}, unavailable: [] }
+  }
+  if (snapshot.errors.length) throw new Error("LOOM_MODEL_ROUTING_CONFIG_UNREADABLE")
+  // Some component and historical 2.1.1 host fakes have no model/provider
+  // catalogue surfaces. Preserve their existing preview instead of fabricating
+  // eligibility or changing agent definitions.
+  if (!ctx.model?.list || !ctx.provider?.list || !ctx.integration?.connection?.active) {
+    return { status: "not-connected", selected: {}, unavailable: [] }
   }
   const config = snapshot.config
   const policyVersion = fingerprint(config)
