@@ -8,6 +8,8 @@ import type { Config, Reasoning } from "./config.js"
 export type RouteInventory = {
   providerID: string
   modelID: string
+  /** Stable, non-secret OpenCode account key; absent for legacy pure callers. */
+  accountID?: string
   billing: "included" | "metered" | "unknown"
   quota: "available" | "unknown" | "exhausted"
   enabled: boolean
@@ -20,6 +22,7 @@ export type ModelRoute = {
   logicalModel: string
   providerID: string
   modelID: string
+  accountID?: string
   billing: "included" | "metered"
   quota: "available" | "unknown"
   reasoning: Reasoning
@@ -82,6 +85,7 @@ export function planModelRoutes(config: Config, agentID: string, inventory: read
     (!model.reasoning || model.reasoning.includes(policy.reasoning)))
     .sort((a, b) => providerRank(a.providerID) - providerRank(b.providerID)
       || a.providerID.localeCompare(b.providerID)
+      || (a.accountID ?? "").localeCompare(b.accountID ?? "")
       || a.modelID.localeCompare(b.modelID))
 
   const candidates: ModelRoute[] = []
@@ -93,11 +97,12 @@ export function planModelRoutes(config: Config, agentID: string, inventory: read
         if (model.billing !== billing || model.quota === "exhausted") continue
         const expectedID = config.modelAliases[logicalModel]?.[model.providerID] ?? logicalModel
         if (model.modelID !== expectedID) continue
-        const key = JSON.stringify([model.providerID, model.modelID])
+        const key = JSON.stringify([model.providerID, model.modelID, model.accountID ?? ""])
         if (seen.has(key)) continue
         seen.add(key)
         candidates.push({
           logicalModel, providerID: model.providerID, modelID: model.modelID,
+          ...(model.accountID ? { accountID: model.accountID } : {}),
           billing, quota: model.quota, reasoning: policy.reasoning,
         })
       }
