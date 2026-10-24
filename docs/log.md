@@ -4,6 +4,21 @@ type: Log
 
 # Update Log
 
+## 2026-10-24
+
+**Creation**: `model-routing.md` — Documented the draft role-based model
+classes, provider-first fallback policy, billing guardrails, and the separate
+runtime adapter work still required. This is supporting Markdown outside the
+four-source OKF bundle; it does not claim live OpenCode V2 quota failover —
+[Draft: provider-first model routing](/docs/model-routing.md).
+
+**Update**: `index.md` — Added the model-routing guide to the supporting-
+document inventory without adding it to the OKF source bundle —
+[bundle index](/docs/index.md).
+
+**Update**: `log.md` — Recorded the new supporting guide and index change —
+[change log](/docs/log.md).
+
 ## 2026-10-22
 
 **Update**: `review-companions.md`, `README.md`, the companion loader and
