@@ -1,3 +1,11 @@
+---
+type: Architecture
+title: "E follow-up: bounded retrieval, configuration audit, and closure boundary"
+description: "Explains bounded retrieval and configuration audit limits."
+tags: [loom, retrieval, resource-safety]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # E follow-up: bounded retrieval, configuration audit, and closure boundary
 
 Baseline: `83de434`. This follows [Processing limits](processing-limits.md).

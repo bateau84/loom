@@ -1,3 +1,11 @@
+---
+type: API Reference
+title: "Seven tools, optional structure"
+description: "Documents Loom tools, input contracts, scopes and failure semantics."
+tags: [loom, tools, api]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Seven tools, optional structure
 
 Loom retains goals, context and attributed history. OpenCode owns execution,

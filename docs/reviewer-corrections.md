@@ -1,3 +1,11 @@
+---
+type: Architecture
+title: "Corrections from the independent review of `5f51baf`"
+description: "Records independent review corrections and their verification boundaries."
+tags: [loom, review, corrections]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Corrections from the independent review of `5f51baf`
 
 The review reported two defects and three surviving mutations. These are different

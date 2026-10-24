@@ -1,3 +1,11 @@
+---
+type: Architecture
+title: "Read consistency: focused finding F audit"
+description: "Analyzes guarantees and known gaps in read consistency across Loom state."
+tags: [loom, storage, consistency]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Read consistency: focused finding F audit
 
 Audited input: `35254ea8a0b468490c202286e9932060b7765afc` (including the
