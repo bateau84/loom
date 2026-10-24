@@ -144,7 +144,7 @@ test("multiple simultaneous independent processes preserve every account's updat
 }))
 
 test("only one concurrent process can claim the expired route's probe", async () => fixture(async path => {
-  runWorker("exhaust", path)
+  runWorker("exhaust-short", path)
   await Bun.sleep(1300)
   const results = await parallelWorkers("probe", path, Array(6).fill("account-a"))
   expect(results.filter(r => r.eligible === true)).toHaveLength(1)
