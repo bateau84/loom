@@ -175,6 +175,15 @@ Do not enable paid routing based only on a string such as `openai`,
 mode independently of model discovery. Only verified included usage is
 eligible by default.
 
+## Depends on
+
+- [Bounded configuration decoding](configuration-parser.md) is the existing
+  parser for `.loom.yaml` layers, including the new routing policy fields.
+  Extending the schema must preserve its input and error-handling limits.
+- [OpenCode 2.1.1 compatibility](opencode-2.1.1.md) is the host contract that
+  any future runtime routing adapter must respect. It does not establish that
+  live model switching is supported today.
+
 ## Implementation references
 
 - [OpenCode V2 plugin transforms and hooks](https://dev.opencode.ai/v2/docs/build/plugins/)
