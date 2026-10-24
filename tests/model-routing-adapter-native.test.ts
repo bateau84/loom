@@ -32,6 +32,7 @@ function host(c = policy()) {
   let connection: any = { ...ACCOUNT }
   let modelReads = 0
   const ctx: any = {
+    app: { name: "opencode", version: "2.1.4", channel: "stable" },
     model: { list: async () => { modelReads++; return { data: models } } },
     provider: { list: async () => ({ data: providers }) },
     integration: { connection: { active: async () => connection } },
@@ -123,6 +124,15 @@ describe("native 2.1.4 adapter boundary (mocked host callbacks, not installed-ho
     expect(runtime.status).toBe("disabled")
     expect(f.agents.architect.model).toBeUndefined()
     expect(f.hooks.size).toBe(0)
+  })
+
+  test("host 2.1.1 does not falsely advertise native initial routing", async () => {
+    const f = host()
+    f.ctx.app.version = "2.1.1"
+    const runtime = await registerModelRouting(f.ctx, f.load, [], new AbortController().signal)
+    expect(runtime.status).toBe("not-connected")
+    await expect(f.hooks.get("model.request")!(dispatch("architect",
+      { providerID: "native-default", id: "other", variant: "medium" }))).rejects.toThrow("MISMATCH")
   })
 
   test("configuration change fails closed until plugin restart", async () => {
