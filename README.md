@@ -146,8 +146,12 @@ metadata, not injected instructions, automatic matching or permissions.
 `roles.<role>.instructions` remains the additional injected role guidance.
 
 Supported sections are `version`, `agents`, `roles`, `instructions`, `context`,
-and `ledger`. Unknown settings fail validation. Model/permission definitions
-belong to OpenCode, not this file. Invalid configuration disables guidance and new
+`ledger`, and optional `model-routing`, `model-classes`, and `model-aliases`.
+Unknown settings fail validation. OpenCode still owns provider credentials,
+installed model definitions, and native permissions. **Draft only:** the new
+opt-in model routing config and pure candidate planner do not yet switch live
+requests or enforce billing. See [model routing](docs/model-routing.md) before
+enabling it. Invalid configuration disables guidance and new
 automatic capture instead of applying a partial or stale role mapping. Diagnostics
 remain available through `loom_agents`; native tools remain usable.
 

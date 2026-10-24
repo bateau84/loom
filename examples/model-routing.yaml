@@ -1,0 +1,68 @@
+# Illustrative model routing extension for an existing .loom.yaml.
+# This is a DRAFT CONFIG CONTRACT ONLY. No live quota failover is implemented.
+# Merge these keys with your existing roles/instructions; do not replace them.
+# Model IDs and provider catalog entries are illustrative, not verified.
+model-routing:
+  enabled: true
+  default-class: balanced
+  default-reasoning: medium
+  provider-order: [opencode-go, openai, github-copilot]
+  paid-fallback: false
+
+agents:
+  architect:
+    roles: [architecture]
+  brainstorm:
+    roles: [exploration]
+  coder:
+    roles: [implementation, documentation]
+  critic:
+    roles: [qa, acceptance]
+  debugger:
+    roles: [exploration, research]
+    model-class: coding
+    reasoning: medium
+  designer:
+    roles: [design]
+  general:
+    roles: [coordination, exploration]
+  hacker:
+    roles: [security, exploration]
+  problem:
+    roles: [coordination, analysis, exploration]
+  researcher:
+    roles: [research]
+  reviewer:
+    roles: [assessment, qa]
+  specifier:
+    roles: [specification]
+  task-manager:
+    roles: [planning]
+
+roles:
+  architecture: { model-class: strong, reasoning: medium }
+  specification: { model-class: strong, reasoning: medium }
+  design: { model-class: strong, reasoning: medium }
+  implementation: { model-class: coding, reasoning: low }
+  assessment: { model-class: strong, reasoning: medium }
+  acceptance: { model-class: strong, reasoning: high }
+  security: { model-class: strong, reasoning: high }
+  analysis: { model-class: strong, reasoning: medium }
+  research: { model-class: efficient, reasoning: low }
+  planning: { model-class: balanced, reasoning: medium }
+
+model-classes:
+  strong:
+    models: [gpt-6.1-sol, gpt-6-astra, fable-5, kimi-k3]
+  coding:
+    models: [gpt-6.1-luna, sonnet-5.5, haiku-5.5, deepseek-4.1-flash]
+  balanced:
+    models: [gpt-6.1-luna, kimi-k3, sonnet-5.5]
+  efficient:
+    models: [deepseek-4.1-flash, haiku-5.5, gpt-6.1-luna]
+
+# Uncomment only for provider-specific differences in the OpenCode model ID.
+# model-aliases:
+#   gpt-6.1-sol:
+#     opencode-go: gpt-6.1-sol
+#     openai: gpt-6.1-sol
