@@ -117,6 +117,12 @@ export async function registerModelRouting(
   signal: AbortSignal,
   source?: RouteEligibilitySource,
 ): Promise<ModelRoutingRuntime> {
+  // Native 2.1.4 runtime routing is not present on old/partial host mocks.
+  // Check capability before consuming an admitted config I/O slot; legacy
+  // Loom tool tests intentionally saturate that separate admission boundary.
+  if (!ctx.model?.list || !ctx.provider?.list || !ctx.integration?.connection?.active) {
+    return { status: "not-connected", selected: {}, unavailable: [] }
+  }
   const snapshot = await getConfig()
   // Existing Loom treats an invalid/overloaded config read as disabled. Do
   // not make its native tool registry/ledger fail during a routing-disabled
@@ -125,12 +131,6 @@ export async function registerModelRouting(
     return { status: "disabled", selected: {}, unavailable: [] }
   }
   if (snapshot.errors.length) throw new Error("LOOM_MODEL_ROUTING_CONFIG_UNREADABLE")
-  // Some component and historical 2.1.1 host fakes have no model/provider
-  // catalogue surfaces. Preserve their existing preview instead of fabricating
-  // eligibility or changing agent definitions.
-  if (!ctx.model?.list || !ctx.provider?.list || !ctx.integration?.connection?.active) {
-    return { status: "not-connected", selected: {}, unavailable: [] }
-  }
   const config = snapshot.config
   const policyVersion = fingerprint(config)
   const initial = await catalog(ctx, config, source)
