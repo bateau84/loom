@@ -161,6 +161,23 @@ export async function registerModelRouting(
   const leases = new Map<string, string>()
   // Keep callback synchronous to dispatch: hook registration is a supported
   // pre-transport boundary, but thrown rejections need installed-host proof.
+  const managedSession = async (sessionID: string) => {
+    // Auxiliary title/compaction requests identify their own utility agent.
+    // Their parent Session's native agent determines whether Loom's policy
+    // applies. A missing Session read remains conservative (guarded), not a
+    // reason to authorize an unknown paid utility request.
+    if (leases.has(sessionID)) return true
+    if (!ctx.session.get) return true
+    try {
+      const response = await ctx.session.get({ sessionID })
+      const info = "data" in response ? response.data : response
+      if (info.agent === undefined) return true
+      const plan = initial.state.plan[info.agent]
+      return plan !== undefined && plan.status !== "disabled" && plan.status !== "no-policy"
+    } catch {
+      return true
+    }
+  }
   disposers.push(await ctx.session.hook("model.request", async event => {
     signal.throwIfAborted()
     const currentConfig = await getConfig()
@@ -181,9 +198,9 @@ export async function registerModelRouting(
       if (pinned && pinned !== lease)
         throw new Error("LOOM_MODEL_ROUTE_AFFINITY: native provider/model/account changed during a Session turn")
       leases.set(event.sessionID, lease)
-    } else if (event.kind !== "primary") {
-      // Title/compaction/generate are auxiliary native model calls, and can
-      // otherwise silently select a metered global default for a routed Session.
+    } else if (event.kind !== "primary" && await managedSession(event.sessionID)) {
+      // Guard title/compaction/generate for managed Sessions, without changing
+      // native utility behavior for *explicitly unconfigured* Session agents.
       assertAllowedRequest(fresh, event.model, config.modelRouting.paidFallback)
     }
   }))
