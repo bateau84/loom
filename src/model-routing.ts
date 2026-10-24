@@ -90,7 +90,7 @@ export function planModelRoutes(config: Config, agentID: string, inventory: read
   for (const billing of billingOrder) {
     for (const logicalModel of config.modelClasses[policy.modelClass].models) {
       for (const model of available) {
-        if (model.billing !== billing) continue
+        if (model.billing !== billing || model.quota === "exhausted") continue
         const expectedID = config.modelAliases[logicalModel]?.[model.providerID] ?? logicalModel
         if (model.modelID !== expectedID) continue
         const key = JSON.stringify([model.providerID, model.modelID])
