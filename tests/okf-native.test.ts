@@ -154,3 +154,36 @@ test("repository OKF profile matches current corpus types, headings and grounded
   await linkedUnder("configuration-parser.md", "Audited primary sources", "configuration-limits.md", "references")
   await linkedUnder("configuration-parser.md", "Audited primary sources", "processing-limits.md", "references")
 })
+
+
+test("indexed OKF concept prose links resolve to indexed files without unsupported fragments", async () => {
+  // This detects the common link shapes that caused the graph-integrity
+  // warnings. It is not a replacement for okf-mcp's Go Markdown extractor
+  // or an invariant that all concepts must have graph relationships.
+  const files = await corpus(root)
+  const indexed = new Set(files.filter(file => !["index.md", "log.md"].includes(basename(file))))
+  for (const file of indexed) {
+    let fence: string | null = null
+    const lines = (await readFile(file, "utf8")).split("\n")
+    for (const [number, line] of lines.entries()) {
+      const matchFence = line.match(/^\s*(\x60{3,}|~{3,})/)
+      if (matchFence) {
+        if (fence === null) fence = matchFence[1]
+        else if (matchFence[1][0] === fence[0] && matchFence[1].length >= fence.length) fence = null
+        continue
+      }
+      if (fence !== null) continue
+      const prose = line.replace(/\x60+[^\x60]*\x60+/g, "")
+      for (const match of prose.matchAll(/\]\(([^)\s]+)(?:\s+[^)]*)?\)/g)) {
+        const target = match[1]
+        if (/^(https?:|mailto:|#)/i.test(target) || !/\.md(?:#|$)/i.test(target)) continue
+        const location = file + ":" + (number + 1)
+        expect(target.includes("#"), location + " has an unsupported file fragment: " + target).toBe(false)
+        const absolute = target.startsWith("/")
+          ? resolve(root, "..", target.replace(/^\/+/, ""))
+          : resolve(dirname(file), target)
+        expect(indexed.has(absolute), location + " links to a non-indexed concept: " + target).toBe(true)
+      }
+    }
+  }
+})
