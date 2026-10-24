@@ -4,6 +4,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { defaults, mergeConfig, loadConfig } from "../.test-build/config.js"
+import { decodeConfigYaml } from "../.test-build/config-parser.js"
 import { planModelRoutes, resolveModelPolicy, validateModelRouting } from "../.test-build/model-routing.js"
 
 function configured() {
@@ -144,7 +145,7 @@ test("unknown model classes and invalid provider lists are rejected", () => {
   assert.throws(() => validateModelRouting(c), /unknown model-class/)
   assert.throws(() => mergeConfig(defaults(), { "model-routing": { "provider-order": ["openai", "openai"] } }), /duplicates/)
   assert.throws(() => mergeConfig(defaults(), { "model-classes": { x: { models: ["a", "a"] } } }), /duplicates/)
-  assert.throws(() => mergeConfig(defaults(), { "model-aliases": { sol: { "__proto__": "bad" } } }), /Invalid name|Unknown setting/)
+  assert.throws(() => mergeConfig(defaults(), { "model-aliases": { sol: { ["__proto__"]: "bad" } } }), /Invalid name|Unknown setting/)
 })
 
 test("layered model class lists replace; aliases merge; null removes inherited aliases", () => {
@@ -170,7 +171,7 @@ agents:
     roles: [architecture]
 `
   await writeFile(path, source)
-  const first = await loadConfig([path], text => JSON.parse(JSON.stringify(requireYamlSafeFixture(text))))
+  const first = await loadConfig([path], decodeConfigYaml)
   assert.equal(first.config.instructions.enabled, false)
   assert.equal(first.config.ledger.capture, "off")
   assert.match(first.errors[0], /unknown model-class|enabled without model-classes/)
@@ -179,16 +180,10 @@ agents:
     "model-classes": { balanced: { models: ["test-model"] } },
     agents: { architect: { roles: ["architecture"] } },
   }))
-  const second = await loadConfig([path], JSON.parse)
+  const second = await loadConfig([path], decodeConfigYaml)
   assert.deepEqual(second.errors, [])
   assert.deepEqual(resolveModelPolicy(second.config, "architect"), { modelClass: "balanced", reasoning: "medium" })
 })
-
-// The first invalid layer is JSON to keep this Node-only contract independent of YAML.
-function requireYamlSafeFixture(text) {
-  return { "model-routing": { enabled: true, "default-class": "does-not-exist" },
-    agents: { architect: { roles: ["architecture"] } } }
-}
 
 test("disabled routing preserves current Loom behavior", () => {
   const p = planModelRoutes(defaults(), "any", [route("opencode-go", "go-sol")])
