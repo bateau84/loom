@@ -6,6 +6,7 @@ import { homedir } from "node:os"
 import { isAbsolute, join } from "node:path"
 import { configPaths, loadConfig } from "./config.js"
 import { resolveModelPolicy } from "./model-routing.js"
+import { registerModelRouting } from "./model-routing-adapter.js"
 import { configLoadStatus } from "./config-admission.js"
 import { injectInstructions, registry, roleDescriptions, type NativeAgent } from "./agents.js"
 import { Observer } from "./context.js"
@@ -131,6 +132,7 @@ export default Plugin.define({
       return saved ? { action_id: saved.action_id, ...(saved.node_id === undefined ? {} : { node_id: saved.node_id }) } : undefined
     }
     try {
+      const routing = await registerModelRouting(ctx, () => getConfig(), disposers, lifetime.signal)
       disposers.push(await ctx.tool.transform(editor => {
         editor.namespace({ name: "loom", description: LOOM_NAMESPACE_HELP })
         for (const spec of specs) editor.add({
@@ -158,8 +160,12 @@ export default Plugin.define({
                   warnings: entries.filter(a => a.configured && !a.available).map(a => `Configured agent is unavailable: ${a.id}`),
                   ...(modelPolicies ? {
                     model_policy_preview: modelPolicies,
-                    model_routing_runtime: "not-connected",
-                    model_routing_note: "Policy preview only: Loom does not yet route provider requests or inspect subscription quota.",
+                    model_routing_runtime: routing.status,
+                    model_routing_selected: routing.selected,
+                    model_routing_unavailable_agents: routing.unavailable,
+                    model_routing_note: routing.status === "initial-only"
+                      ? "Native 2.1.4 agent selection only. Only verified included routes (or explicitly opted-in verified metered routes) are dispatched. No live provider failover; unavailable routes fail closed."
+                      : "No model-routing adapter is installed.",
                   } : {}),
                 }; break
               }
