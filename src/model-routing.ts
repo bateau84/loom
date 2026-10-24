@@ -86,7 +86,8 @@ export function planModelRoutes(config: Config, agentID: string, inventory: read
 
   const candidates: ModelRoute[] = []
   const seen = new Set<string>()
-  for (const billing of ["included", ...(config.modelRouting.paidFallback ? ["metered"] : [])] as const) {
+  const billingOrder: Array<"included" | "metered"> = config.modelRouting.paidFallback ? ["included", "metered"] : ["included"]
+  for (const billing of billingOrder) {
     for (const logicalModel of config.modelClasses[policy.modelClass].models) {
       for (const model of available) {
         if (model.billing !== billing) continue
