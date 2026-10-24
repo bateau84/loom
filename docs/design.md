@@ -1,3 +1,11 @@
+---
+type: Architecture
+title: "Implementation boundaries"
+description: "Records Loom plugin design boundaries, decisions and non-goals."
+tags: [loom, design, architecture]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Implementation boundaries
 
 ## Product and ownership

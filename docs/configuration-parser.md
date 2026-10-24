@@ -1,3 +1,11 @@
+---
+type: Configuration
+title: "Configuration decoding: limits during construction"
+description: "Explains bounded YAML parsing and configuration decoding behavior."
+tags: [loom, configuration, yaml]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Configuration decoding: limits during construction
 
 Follow-up to `3881ece` and finding E. The production plugin now passes
