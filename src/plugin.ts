@@ -165,7 +165,7 @@ export default Plugin.define({
                     model_routing_unavailable_agents: routing.unavailable,
                     model_routing_note: routing.status === "initial-only"
                       ? "Native 2.1.4 agent selection only. Only verified included routes (or explicitly opted-in verified metered routes) are dispatched. No live provider failover; unavailable routes fail closed."
-                      : "No model-routing adapter is installed.",
+                      : "Policy preview only: Loom does not yet route native provider requests in this host. No model-routing adapter is installed.",
                   } : {}),
                 }; break
               }
