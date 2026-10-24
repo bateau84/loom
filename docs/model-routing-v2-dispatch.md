@@ -57,7 +57,7 @@ model after a failed attempt by writing `session.switchModel` is unsafe.
   lease, tool-continuation routing or provider-stream replay acceptance has
   been established by these tests.
 
-See [initial-routing contract and limits](model-routing.md#initial-routing-on-opencode-214-implemented-opt-in)
+See [initial-routing contract and limits](model-routing.md)
 for current use and the external quota attestation boundary. In particular,
 OpenCode resolves the currently active connection when constructing a
 model, while the plugin checks the connection at the next request hook.
