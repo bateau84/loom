@@ -70,3 +70,87 @@ test("bundle logs preserve the target's Log metadata and newest-first ISO date h
     expect(headings).toEqual([...headings].sort().reverse())
   }
 })
+
+
+test("repository OKF profile matches current corpus types, headings and grounded links", async () => {
+  const raw: unknown = YAML.parse(await readFile(new URL("../.okf-profile.yaml", import.meta.url), "utf8"))
+  expect(raw && typeof raw === "object" && !Array.isArray(raw)).toBe(true)
+  const profile = raw as {
+    name: unknown
+    version: unknown
+    concept_types: Array<{ name: string }>
+    relationships: Array<{
+      name: string
+      heading_aliases: string[]
+      inverse: string
+      allowed_source_types?: string[]
+      allowed_target_types?: string[]
+    }>
+    invariants: unknown[]
+  }
+  expect(profile.name).toBe("loom")
+  expect(profile.version).toBe("1.0")
+  expect(Array.isArray(profile.concept_types)).toBe(true)
+  expect(Array.isArray(profile.relationships)).toBe(true)
+  expect(profile.relationships.length).toBeGreaterThan(0)
+  expect(Array.isArray(profile.invariants)).toBe(true)
+
+  const catalog = new Set(profile.concept_types.map(type => type.name))
+  for (const file of await corpus(root)) {
+    if (["index.md", "log.md"].includes(basename(file))) continue
+    const type = metadata(file, await readFile(file, "utf8")).type as string
+    expect(catalog.has(type), `Profile does not declare document type ${type} in ${file}`).toBe(true)
+  }
+
+  // Mirrors the heading normalization and duplicate rejection in okf-mcp's
+  // profile loader. This is a source-shape check, not server verification.
+  const normalize = (heading: string) => heading.trim().toLowerCase().replace(/\s+/g, " ")
+  const headings = new Map<string, string>()
+  const names = new Set<string>()
+  for (const relation of profile.relationships) {
+    expect(typeof relation.name).toBe("string")
+    expect(relation.name.length).toBeGreaterThan(0)
+    expect(names.has(relation.name), `Duplicate relationship: ${relation.name}`).toBe(false)
+    names.add(relation.name)
+    expect(typeof relation.inverse).toBe("string")
+    expect(relation.inverse.length).toBeGreaterThan(0)
+    expect(relation.heading_aliases.length).toBeGreaterThan(0)
+    for (const alias of relation.heading_aliases) {
+      const heading = normalize(alias)
+      expect(heading.length).toBeGreaterThan(0)
+      expect(headings.has(heading), `Duplicate heading alias: ${heading}`).toBe(false)
+      headings.set(heading, relation.name)
+    }
+    for (const list of [relation.allowed_source_types, relation.allowed_target_types]) {
+      if (list !== undefined) expect(Array.isArray(list)).toBe(true)
+    }
+  }
+  expect(headings.get("depends on")).toBe("depends-on")
+  expect(headings.get("audited primary sources")).toBe("references")
+
+  // Check the concrete links whose accepted meaning justifies each relation.
+  // The nearest section heading is used by the okf-mcp graph extractor.
+  const linkedUnder = async (file: string, heading: string, target: string, relation: string) => {
+    const doc = await readFile(join(root, file), "utf8")
+    const marker = `## ${heading}\n`
+    const start = doc.indexOf(marker)
+    expect(start, `Missing heading ${heading} in ${file}`).toBeGreaterThanOrEqual(0)
+    const rest = doc.slice(start + marker.length)
+    const end = rest.search(/\n#{1,6} /)
+    const section = end < 0 ? rest : rest.slice(0, end)
+    const targets = [...section.matchAll(/\]\(([^)]+)\)/g)].map(match => match[1])
+    expect(targets, `Missing ${target} under ${heading} in ${file}`).toContain(target)
+    expect(headings.get(normalize(heading))).toBe(relation)
+    const sourceType = metadata(file, doc).type as string
+    const targetFile = resolve(dirname(join(root, file)), target)
+    const targetType = metadata(targetFile, await readFile(targetFile, "utf8")).type as string
+    const spec = profile.relationships.find(item => item.name === relation)!
+    const allows = (values: string[] | undefined, type: string) => !values?.length || values.includes("*") || values.includes(type)
+    expect(allows(spec.allowed_source_types, sourceType)).toBe(true)
+    expect(allows(spec.allowed_target_types, targetType)).toBe(true)
+  }
+  await linkedUnder("model-routing.md", "Depends on", "configuration-parser.md", "depends-on")
+  await linkedUnder("model-routing.md", "Depends on", "opencode-2.1.1.md", "depends-on")
+  await linkedUnder("configuration-parser.md", "Audited primary sources", "configuration-limits.md", "references")
+  await linkedUnder("configuration-parser.md", "Audited primary sources", "processing-limits.md", "references")
+})
