@@ -42,7 +42,10 @@ async function catalog(
     }
   }
   const models = nativeModels.data
-    .filter(model => wanted.has(model.id))
+    .filter(model => wanted.has(model.id) ||
+      // Native ChatGPT utility/title models can be outside Loom model classes.
+      // They still require full native billing proof at model.request time.
+      (model.providerID === "openai" && model.cost.length === 0))
     .map(model => ({
       id: model.id, providerID: model.providerID,
       enabled: model.enabled, capabilities: { tools: model.capabilities.tools },
@@ -166,7 +169,10 @@ export async function registerModelRouting(
     }
     const fresh = await catalog(ctx, config, source)
     const agentPlan = initial.state.plan[event.agent]
-    if (event.kind === "primary" && agentPlan && agentPlan.status !== "no-policy") {
+    if (event.kind === "primary" &&
+        ((agentPlan && agentPlan.status !== "no-policy") || leases.has(event.sessionID))) {
+      if (!agentPlan || agentPlan.status === "no-policy")
+        throw new Error("LOOM_MODEL_ROUTE_AFFINITY: managed Session switched to an unconfigured agent")
       assertInitialRoute(agentPlan, event.model)
       // A newly exhausted or unverified route fails *before* calling the provider.
       const nativeID = assertAllowedRequest(fresh, event.model, config.modelRouting.paidFallback)
