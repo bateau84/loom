@@ -6,6 +6,19 @@ type: Log
 
 ## 2026-10-24
 
+**Implementation**: [Initial OpenCode 2.1.4 model routing](model-routing.md)
+added `src/model-routing-runtime.ts` and
+`src/model-routing-adapter.ts` to apply role-selected eligible native models
+with exact reasoning variants, opaque native connection and verified-billing
+checks, cooldown/attestation interface, and a pre-dispatch guard that rejects
+unexpected or ineligible provider calls. Added focused pure and mock V2
+adapter tests plus the isolated 2.1.4 installed-host negative-control workflow.
+Native stream/account leasing and live fallback remain unproven and are not
+implemented. [V2 dispatch investigation](model-routing-v2-dispatch.md)
+records the updated seam and restrictions; [README](../README.md) explains
+the host/SDK combination. Routing disabled preserves native behavior.
+
+
 **Creation**: [OpenCode 2.1.1 model-dispatch investigation](model-routing-v2-dispatch.md) —
 Audited the pinned V2 request, retry, model resolver and stream/tool boundaries.
 Recorded the absent atomic pre-output route-change seam, unproven account affinity,
