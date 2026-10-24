@@ -8,6 +8,11 @@ historical status does not imply current runtime support.
 The nested `requirements/` tree maintains its own index and history. Its
 concepts are inventoried in that bundle rather than duplicated here.
 
+The repository-root [OKF profile](../.okf-profile.yaml) defines a small,
+evidence-based relationship vocabulary. It is a scanner configuration asset,
+not a corpus concept document. Start `okf-mcp` with this repository as its
+scan root so the profile is discovered; it declares no mandatory link counts.
+
 ## Core architecture and tools
 
 - [Implementation boundaries](design.md) — Current plugin architecture and non-goals
