@@ -205,5 +205,8 @@ export async function registerModelRouting(
     }
   }
   void run()
-  return { status: "initial-only", selected, unavailable }
+  // OpenCode 2.1.1 exposes these plugin APIs but does not consume the
+  // agent model at native dispatch. Do not report operational initial routing
+  // on an unqualified host version merely because the transform registered.
+  return { status: ctx.app?.version === "2.1.4" ? "initial-only" : "not-connected", selected, unavailable }
 }
