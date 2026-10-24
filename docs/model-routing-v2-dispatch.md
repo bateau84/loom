@@ -9,10 +9,13 @@ timestamp: 2026-10-24T00:00:00Z
 # OpenCode 2.1.1 model-dispatch adapter investigation
 
 **Verdict: BLOCKED for safe automatic live fallback in the published V2 plugin contract.**
-This is a **source-only compatibility investigation**, not an installed-host
-acceptance result. No model-routing hook is enabled, no provider/authentication
-implementation is shipped, and [PR #190](https://github.com/bateau84/loom/pull/190)
-remains a policy preview. This investigation is based on its exact head
+This section documents the **historical 2.1.1 source audit**, before the
+2.1.4 initial-routing implementation. The audit alone is source-only, but
+the same draft PR now also includes a native agent model transform and
+a guarded dispatch path for **OpenCode 2.1.4**. Do not confuse initial model
+selection with live provider fallback. The original investigation starts
+from [PR #190](https://github.com/bateau84/loom/pull/190)
+at its exact head
 `1fc73f0091603b4e22777ab3385245257c586e1d` and the upstream
 OpenCode `v2.1.1` tag (commit
 `ba546ec1598a70db2570e9c6258028d955ba8f58`).
@@ -21,6 +24,49 @@ The constraint is not the route order. The existing pure planner already puts
 the **same logical model through the next eligible provider** ahead of the
 next logical model. The missing part is a host-owned, atomic model decision
 at a boundary proven free of streamed output and tool side effects.
+
+## OpenCode 2.1.4 update: initial selection now supported
+
+The exact [2.1.4 SessionRunnerModel.resolve](https://github.com/anomalyco/opencode/blob/v2.1.4/packages/core/src/session/runner/model.ts#L77-L98)
+**does** read `Agent.Info.model` if `Session.model` is absent; the 2.1.1
+host did not. Loom now supplies this model using the supported
+`ctx.agent.transform` API with an exact native reasoning variant. A
+`session.model.request`-stage guard (the public hook name is
+`session.hook("model.request")`) checks the chosen model, current billing
+attestation, cooldown, tools and reasoning before transport; it never
+changes the native request or asks the host to replay effects.
+
+The [2.1.4 Promise SessionRetry API](https://github.com/anomalyco/opencode/blob/v2.1.4/packages/plugin/src/promise/session.ts)
+and [host retry logic](https://github.com/anomalyco/opencode/blob/v2.1.4/packages/core/src/session/runner/retry.ts)
+remain unchanged: no `nextModel`, no `outputStarted`, no native account
+lease. The **live fallback blocker still applies**. Selecting another
+model after a failed attempt by writing `session.switchModel` is unsafe.
+
+### Separate evidence in this PR
+
+- Pure and mocked V2 adapter tests exercise same-logical-model provider order
+  and native `Agent.Info.model` selection, exact low/medium/high overlays,
+  included billing proofs, unknown-billing rejection and account mismatch.
+- The isolated `installed-model-routing-v214` CI workflow packs the **2.1.1
+  SDK** Loom candidate but launches the **unmodified 2.1.4 CLI**. A scripted
+  external model supplies a native request negative control: an unverified
+  route is rejected before provider execution; disabling routing permits
+  the ordinary native request. This is **not** live subscription acceptance
+  or a mixed-SDK general compatibility guarantee.
+- No real OAuth profile, two-provider quota exhaustion, native connection
+  lease, tool-continuation routing or provider-stream replay acceptance has
+  been established by these tests.
+
+See [initial-routing contract and limits](model-routing.md#initial-routing-on-opencode-214-implemented-opt-in)
+for current use and the external quota attestation boundary. In particular,
+OpenCode resolves the currently active connection when constructing a
+model, while the plugin checks the connection at the next request hook.
+These are **not one atomic connection lease**. The in-process Session
+comparison rejects observed changes between requests, but cannot promise
+that credentials have not changed between host resolution and transport.
+
+The source-only 2.1.1 findings below remain valid *for that version*.
+They do not negate the new agent-model selection support in 2.1.4.
 
 ## Observed dispatch path (pinned upstream source)
 
