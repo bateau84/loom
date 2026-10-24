@@ -30,6 +30,7 @@ function host(c = policy()) {
   let models = [structuredClone(MODEL)]
   let providers = [structuredClone(PROVIDER)]
   let connection: any = { ...ACCOUNT }
+  let sessionAgent = "architect"
   let modelReads = 0
   const ctx: any = {
     app: { name: "opencode", version: "2.1.4", channel: "stable" },
@@ -43,7 +44,8 @@ function host(c = policy()) {
       })
       return { dispose: async () => {} }
     } },
-    session: { hook: async (name: string, callback: any) => {
+    session: { get: async () => ({ data: { agent: sessionAgent } }),
+      hook: async (name: string, callback: any) => {
       hooks.set(name, callback)
       return { dispose: async () => hooks.delete(name) }
     } },
@@ -52,6 +54,7 @@ function host(c = policy()) {
   const load = async () => ({ config: c, errors: [], sources: [] })
   return { ctx, agents, hooks, load, setConnection: (value: any) => { connection = value },
     setModels: (value: any[]) => { models = value }, setProviders: (value: any[]) => { providers = value },
+    setSessionAgent: (value: string) => { sessionAgent = value },
     get modelReads() { return modelReads } }
 }
 const dispatch = (agent = "architect", model = { providerID: "openai", id: "test-sol", variant: "medium" },
@@ -115,6 +118,9 @@ describe("native 2.1.4 adapter boundary (mocked host callbacks, not installed-ho
     await expect(hook(dispatch("title", { providerID: "global-paid", id: "model", variant: "medium" }, "title")))
       .rejects.toThrow("UNAVAILABLE")
     await expect(hook(dispatch("title", { providerID: "openai", id: "test-sol", variant: "medium" }, "title")))
+      .resolves.toBeUndefined()
+    f.setSessionAgent("unmanaged")
+    await expect(hook(dispatch("title", { providerID: "global-paid", id: "model", variant: "medium" }, "title")))
       .resolves.toBeUndefined()
   })
 
