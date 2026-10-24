@@ -185,6 +185,9 @@ export async function openSharedQuotaState(options: { path?: string; now?: () =>
       const row = db.prepare("PRAGMA user_version").get() as { user_version: number }
       if (row.user_version !== 0 && row.user_version !== 1) throw new Error("Unsupported shared quota schema version")
       if (row.user_version === 0 && !created) throw new Error("Existing shared quota database was never initialized")
+      if (row.user_version === 1 && !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='quota'").get()) {
+        throw new Error("Existing shared quota database is missing the quota table")
+      }
       db.exec(`CREATE TABLE IF NOT EXISTS quota (
         id TEXT PRIMARY KEY NOT NULL CHECK(length(id)=64),
         state TEXT NOT NULL CHECK(state IN ('available','unknown','exhausted','throttled','overloaded','authentication')),

@@ -1,4 +1,5 @@
 import { test, expect } from "bun:test"
+import { Database } from "bun:sqlite"
 import { openSharedQuotaState, type QuotaIdentity, type QuotaScope } from "../src/quota-state.js"
 import { mkdtemp, readFile, rm, symlink, writeFile, chmod } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -164,6 +165,9 @@ test("restarts, corrupt DB, symlinks, unsafe permissions and invalid signals fai
   store.close()
   const bytes = await readFile(path)
   expect(bytes.includes(Buffer.from("account-person@example.test"))).toBe(false)
+  const tampered = new Database(path)
+  try { tampered.exec("DROP TABLE quota") } finally { tampered.close() }
+  await expect(openSharedQuotaState({ path })).rejects.toThrow(/missing the quota table/)
   await writeFile(path, "not-sqlite", { mode: 0o600 })
   await expect(openSharedQuotaState({ path })).rejects.toThrow()
   await rm(path)
