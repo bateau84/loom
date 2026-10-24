@@ -79,6 +79,15 @@ authorization. Neither workflow upgrades your personal CLI or changes
 your active configuration. See
 [2.1.1 migration and native features](docs/opencode-2.1.1.md) and
 [installed-host validation](docs/installed-host-validation.md).
+
+**Initial model routing requires the native OpenCode 2.1.4 host.** The
+separately stacked draft PR #191 uses the **2.1.1 SDK already pinned by #190**
+and qualifies an isolated unmodified **2.1.4 CLI** with a scripted
+unknown-billing negative control. The V2.1.4 host can honor
+`Agent.Info.model` configured by Loom, so no per-agent model assignment in
+`opencode.json` is necessary. This is not evidence of live subscription
+fallback or comprehensive mixed-version host qualification; the full
+installed-host suite remains separate.
 **Bun support: `>=1.4.2 <2.0.0`. Use Bun 1.4.2 to reproduce validation.**
 The exact tested baseline is recorded in `.bun-version` and used by the CI jobs.
 This is a supported minimum based on that tested baseline, not a claim that
@@ -148,12 +157,22 @@ metadata, not injected instructions, automatic matching or permissions.
 Supported sections are `version`, `agents`, `roles`, `instructions`, `context`,
 `ledger`, and optional `model-routing`, `model-classes`, and `model-aliases`.
 Unknown settings fail validation. OpenCode still owns provider credentials,
-installed model definitions, and native permissions. **Draft only:** the new
-opt-in model routing config and pure candidate planner do not yet switch live
-requests or enforce billing. See [model routing](docs/model-routing.md) before
-enabling it. Invalid configuration disables guidance and new
-automatic capture instead of applying a partial or stale role mapping. Diagnostics
-remain available through `loom_agents`; native tools remain usable.
+installed model definitions, and native permissions. **Opt-in, initial routing
+only on 2.1.4:** Loom assigns exact native models and reasoning variants from
+verified provider/connection evidence and guards against unknown or unapproved
+paid requests at provider dispatch. It never switches providers during
+a running native stream. The only automatic included-use classification
+currently recognized is native OpenCode ChatGPT OAuth with its known Codex
+integration evidence; other providers await the separate shared-quota
+attestation interface. With no verified eligible model, the managed request
+is rejected rather than silently choosing OpenCode's global default.
+`loom_agents` exposes `model_routing_runtime` and selected/unavailable
+agents. See [model routing](docs/model-routing.md) for exact limitations before
+enabling it. Invalid configuration continues to disable guidance and
+automatic capture instead of applying a partial or stale role mapping;
+do **not** treat an invalid-startup configuration as an enforced billing
+policy. Diagnostics remain available through `loom_agents`; native tools
+remain usable.
 
 Each file is limited to 64 KiB. Context budgets are **characters, not tokens**:
 there is no fabricated tokenizer-independent `max_tokens` guarantee. The schema
