@@ -159,6 +159,19 @@ Each file is limited to 64 KiB. Context budgets are **characters, not tokens**:
 there is no fabricated tokenizer-independent `max_tokens` guarantee. The schema
 is a first implementation, not an implementation of every earlier sketch.
 
+## OKF documentation profile
+
+The repository-root [`.okf-profile.yaml`](.okf-profile.yaml) configures
+`okf-mcp` document relationships; it is **not** a Loom agent, model or
+provider setting. Start `okf-mcp` with the repository root as its working
+directory. Explicit `--profile .okf-profile.yaml` loading fails if the
+profile is invalid; auto-discovery can instead fall back to untyped links.
+Restart `okf-mcp` after changing the profile.
+
+The profile maps observed document headings to `references` and `depends-on`
+links, with no mandatory relationship-count invariants. It does not establish
+runtime-model routing correctness or a validated live documentation graph.
+
 ## Bundled Loom skill
 
 Loading this plugin also registers the native skill **`loom`**. Agents can discover
