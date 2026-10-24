@@ -1,12 +1,16 @@
 import { open } from "node:fs/promises"
+import { validateModelRouting } from "./model-routing.js"
 import { admitConfigLoad, checkConfigCancellation } from "./config-admission.js"
 import { constants, type BigIntStats } from "node:fs"
 import { TextDecoder } from "node:util"
 import { homedir } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
 
-export type AgentConfig = { roles: string[]; description?: string; enabled: boolean }
-export type RoleConfig = { description?: string; instructions?: string }
+export type Reasoning = "low" | "medium" | "high"
+export type AgentConfig = { roles: string[]; description?: string; enabled: boolean; modelClass?: string; reasoning?: Reasoning }
+export type RoleConfig = { description?: string; instructions?: string; modelClass?: string; reasoning?: Reasoning }
+export type ModelClassConfig = { models: string[] }
+export type ModelRoutingConfig = { enabled: boolean; defaultClass?: string; defaultReasoning: Reasoning; paidFallback: boolean; providerOrder: string[] }
 export type Config = {
   version: 1
   agents: Record<string, AgentConfig>
@@ -14,12 +18,21 @@ export type Config = {
   instructions: { enabled: boolean; max_chars: number }
   context: { max_chars: number }
   ledger: { capture: "automatic" | "off" }
+  modelRouting: ModelRoutingConfig
+  modelClasses: Record<string, ModelClassConfig>
+  modelAliases: Record<string, Record<string, string>>
 }
 export type ConfigSnapshot = { config: Config; sources: string[]; errors: string[] }
 export type Decoder = (text: string) => unknown
 const forbidden = new Set(["__proto__", "prototype", "constructor"])
 const NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,99}$/
-export const defaults = (): Config => ({ version: 1, agents: {}, roles: {}, instructions: { enabled: true, max_chars: 6000 }, context: { max_chars: 16000 }, ledger: { capture: "automatic" } })
+export const defaults = (): Config => ({
+  version: 1, agents: {}, roles: {},
+  instructions: { enabled: true, max_chars: 6000 },
+  context: { max_chars: 16000 }, ledger: { capture: "automatic" },
+  modelRouting: { enabled: false, defaultReasoning: "medium", paidFallback: false, providerOrder: [] },
+  modelClasses: {}, modelAliases: {},
+})
 
 function object(value: unknown, path: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${path} must be a mapping`)
@@ -42,6 +55,15 @@ function integer(value: unknown, path: string, min: number, max: number): number
   if (!Number.isSafeInteger(value) || Number(value) < min || Number(value) > max) throw new Error(`${path} must be an integer from ${min} to ${max}`)
   return Number(value)
 }
+function reasoning(value: unknown, path: string): Reasoning {
+  if (value !== "low" && value !== "medium" && value !== "high") throw new Error(`${path} must be low, medium or high`)
+  return value
+}
+function modelID(value: unknown, path: string): string {
+  const id = text(value, path, 160)
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.:/@+-]*$/.test(id) || forbidden.has(id)) throw new Error(`Invalid model ID at ${path}`)
+  return id
+}
 function name(value: string, path: string) {
   if (!NAME.test(value) || forbidden.has(value)) throw new Error(`Invalid name at ${path}`)
   return value
@@ -52,7 +74,7 @@ export function mergeConfig(base: Config, input: unknown): Config {
   const out = structuredClone(base)
   if (input === null || input === undefined) return out
   const v = object(input, "loom")
-  keys(v, ["version", "agents", "roles", "instructions", "context", "ledger"], "loom")
+  keys(v, ["version", "agents", "roles", "instructions", "context", "ledger", "model-routing", "model-classes", "model-aliases"], "loom")
   if (v.version !== undefined && v.version !== 1) throw new Error("Unsupported .loom.yaml version (expected 1)")
   if (v.agents !== undefined) {
     const agents = object(v.agents, "agents")
@@ -61,14 +83,20 @@ export function mergeConfig(base: Config, input: unknown): Config {
       name(id, "agents")
       if (raw === null) { delete out.agents[id]; continue }
       const a = object(raw, `agents.${id}`)
-      keys(a, ["roles", "description", "enabled"], `agents.${id}`)
+      keys(a, ["roles", "description", "enabled", "model-class", "reasoning"], `agents.${id}`)
       const old = out.agents[id] ?? { roles: [], enabled: true }
       let roles = old.roles
       if (a.roles !== undefined) {
         if (!Array.isArray(a.roles) || a.roles.length > 20) throw new Error(`agents.${id}.roles must be a list of at most 20 roles`)
         roles = [...new Set(a.roles.map(r => name(text(r, "role", 100), "role")))]
       }
-      out.agents[id] = { ...old, roles, ...(a.description === undefined ? {} : { description: text(a.description, "description", 1000) }), ...(a.enabled === undefined ? {} : { enabled: bool(a.enabled, "enabled") }) }
+      out.agents[id] = {
+        ...old, roles,
+        ...(a.description === undefined ? {} : { description: text(a.description, "description", 1000) }),
+        ...(a.enabled === undefined ? {} : { enabled: bool(a.enabled, "enabled") }),
+        ...(a["model-class"] === undefined ? {} : { modelClass: name(text(a["model-class"], "model-class", 100), "model-class") }),
+        ...(a.reasoning === undefined ? {} : { reasoning: reasoning(a.reasoning, `agents.${id}.reasoning`) }),
+      }
     }
   }
   if (v.roles !== undefined) {
@@ -78,10 +106,67 @@ export function mergeConfig(base: Config, input: unknown): Config {
       name(id, "roles")
       if (raw === null) { delete out.roles[id]; continue }
       const r = object(raw, `roles.${id}`)
-      keys(r, ["description", "instructions"], `roles.${id}`)
+      keys(r, ["description", "instructions", "model-class", "reasoning"], `roles.${id}`)
       const previous = out.roles[id] ?? {}
-      out.roles[id] = { ...previous, ...(r.description === undefined ? {} : { description: text(r.description, "role description", 1000) }), ...(r.instructions === undefined ? {} : { instructions: text(r.instructions, "role instructions") }) }
+      out.roles[id] = {
+        ...previous,
+        ...(r.description === undefined ? {} : { description: text(r.description, "role description", 1000) }),
+        ...(r.instructions === undefined ? {} : { instructions: text(r.instructions, "role instructions") }),
+        ...(r["model-class"] === undefined ? {} : { modelClass: name(text(r["model-class"], "model-class", 100), "model-class") }),
+        ...(r.reasoning === undefined ? {} : { reasoning: reasoning(r.reasoning, `roles.${id}.reasoning`) }),
+      }
     }
+  }
+  if (v["model-routing"] !== undefined) {
+    const r = object(v["model-routing"], "model-routing")
+    keys(r, ["enabled", "default-class", "default-reasoning", "paid-fallback", "provider-order"], "model-routing")
+    if (r.enabled !== undefined) out.modelRouting.enabled = bool(r.enabled, "model-routing.enabled")
+    if (r["default-class"] !== undefined) out.modelRouting.defaultClass = name(text(r["default-class"], "default-class", 100), "default-class")
+    if (r["default-reasoning"] !== undefined) out.modelRouting.defaultReasoning = reasoning(r["default-reasoning"], "model-routing.default-reasoning")
+    if (r["paid-fallback"] !== undefined) out.modelRouting.paidFallback = bool(r["paid-fallback"], "model-routing.paid-fallback")
+    if (r["provider-order"] !== undefined) {
+      if (!Array.isArray(r["provider-order"]) || r["provider-order"].length > 32)
+        throw new Error("model-routing.provider-order must be a list of at most 32 providers")
+      const providers = r["provider-order"].map(value => name(text(value, "provider ID", 100), "provider ID"))
+      if (new Set(providers).size !== providers.length) throw new Error("model-routing.provider-order contains duplicates")
+      out.modelRouting.providerOrder = providers
+    }
+  }
+  if (v["model-classes"] !== undefined) {
+    const classes = object(v["model-classes"], "model-classes")
+    if (Object.keys(classes).length > 32) throw new Error("At most 32 model-classes may be configured per layer")
+    for (const [id, raw] of Object.entries(classes)) {
+      name(id, "model-classes")
+      if (raw === null) { delete out.modelClasses[id]; continue }
+      const value = object(raw, `model-classes.${id}`)
+      keys(value, ["models"], `model-classes.${id}`)
+      if (!Array.isArray(value.models) || !value.models.length || value.models.length > 24)
+        throw new Error(`model-classes.${id}.models must be a nonempty list of at most 24 model IDs`)
+      const models = value.models.map(model => modelID(model, `model-classes.${id}.models`))
+      if (new Set(models).size !== models.length) throw new Error(`model-classes.${id}.models contains duplicates`)
+      out.modelClasses[id] = { models }
+    }
+    if (Object.keys(out.modelClasses).length > 32) throw new Error("At most 32 model-classes may be configured")
+  }
+  if (v["model-aliases"] !== undefined) {
+    const aliases = object(v["model-aliases"], "model-aliases")
+    if (Object.keys(aliases).length > 64) throw new Error("At most 64 model-aliases may be configured per layer")
+    for (const [id, raw] of Object.entries(aliases)) {
+      modelID(id, "model-aliases")
+      if (raw === null) { delete out.modelAliases[id]; continue }
+      const entries = object(raw, `model-aliases.${id}`)
+      if (Object.keys(entries).length > 32) throw new Error(`model-aliases.${id} exceeds 32 providers`)
+      const mapping = { ...(out.modelAliases[id] ?? {}) }
+      for (const [providerID, model] of Object.entries(entries)) {
+        name(providerID, `model-aliases.${id}`)
+        if (model === null) delete mapping[providerID]
+        else mapping[providerID] = modelID(model, `model-aliases.${id}.${providerID}`)
+      }
+      if (Object.keys(mapping).length > 32) throw new Error(`model-aliases.${id} exceeds 32 providers`)
+      if (Object.keys(mapping).length) out.modelAliases[id] = mapping
+      else delete out.modelAliases[id]
+    }
+    if (Object.keys(out.modelAliases).length > 64) throw new Error("At most 64 model-aliases may be configured")
   }
   if (v.instructions !== undefined) {
     const i = object(v.instructions, "instructions"); keys(i, ["enabled", "max_chars"], "instructions")
@@ -182,6 +267,10 @@ async function loadConfigNow(paths: string[], decode: Decoder, openFile: ConfigO
     }
   }
   checkConfigCancellation(signal)
+  if (!errors.length) {
+    try { validateModelRouting(config) }
+    catch (error) { errors.push(`model-routing: ${error instanceof Error ? error.message : String(error)}`) }
+  }
   // Never use a partially loaded or stale role mapping. Native execution remains available.
   if (errors.length) {
     config = defaults(); config.instructions.enabled = false; config.ledger.capture = "off"
