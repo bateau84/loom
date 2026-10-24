@@ -6,6 +6,19 @@ type: Log
 
 ## 2026-10-24
 
+**Update**: Added OKF concept metadata (type, title, description, tags and
+timestamp) to 24 previously unindexed documents, in three groups:
+
+- [assignment-delivery.md](assignment-delivery.md), [collaboration.md](collaboration.md), [configuration-limits.md](configuration-limits.md), [configuration-parser.md](configuration-parser.md), [context-relevance.md](context-relevance.md), [coordination.md](coordination.md), [design.md](design.md), [evidence-reliability.md](evidence-reliability.md).
+- [handback-comparison.md](handback-comparison.md), [handback-experiment.md](handback-experiment.md), [handoffs.md](handoffs.md), [manual-backup-restore.md](manual-backup-restore.md), [migration.md](migration.md), [model-routing.md](model-routing.md), [opencode-2.1.1.md](opencode-2.1.1.md), [processing-limits.md](processing-limits.md).
+- [read-consistency.md](read-consistency.md), [retrieval-limits.md](retrieval-limits.md), [review-companions.md](review-companions.md), [reviewer-corrections.md](reviewer-corrections.md), [sender-qualification.md](sender-qualification.md), [task-selection-recovery.md](task-selection-recovery.md), [tool-discovery.md](tool-discovery.md), [tools.md](tools.md).
+
+**Update**: [`index.md`](index.md) now inventories every direct concept
+(28 documents), the nested [requirements bundle](requirements/index.md), and the
+change log. This replaces the old four-concept classification: earlier
+2026-10-24 notes describing `model-routing.md` as outside that bundle are
+superseded. Existing nested bundle ownership is unchanged.
+
 **Creation**: `model-routing.md` — Documented the draft role-based model
 classes, provider-first fallback policy, billing guardrails, and the separate
 runtime adapter work still required. This is supporting Markdown outside the
