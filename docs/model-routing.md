@@ -135,6 +135,9 @@ config fails closed under the existing Loom configuration-read policy.
 - The pure planner needs a runtime-supplied inventory with `billing`,
   `quota`, `tools`, `enabled`, and optional supported reasoning levels.
 
+
+**Quota-state implementation available, not integrated:** [Shared subscription quota state](shared-subscription-quota.md) defines an isolated machine-wide SQLite manager and runtime adapter API. The live dispatch and verified provider catalog bullets below remain open.
+
 ## Runtime adapter: outstanding work before enabling in production
 
 This feature is not complete until the following are independently verified.

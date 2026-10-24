@@ -6,7 +6,7 @@ type: Log
 
 ## 2026-10-24
 
-**Update**: [`design.md`](design.md) now links to the three indexed
+**Creation**: [Shared subscription quota state](shared-subscription-quota.md) — Added machine-wide SQLite WAL cooldown/recovery state and cross-process tests on an isolated PR branch; state is not connected to OpenCode dispatch. Updated the [model routing guide](model-routing.md) and documentation index.\n\n**Update**: [`design.md`](design.md) now links to the three indexed
 concern requirements rather than the reserved nested `index.md`.
 [`installed-host-validation.md`](installed-host-validation.md),
 [`manual-backup-restore.md`](manual-backup-restore.md),

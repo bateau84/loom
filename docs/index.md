@@ -35,6 +35,7 @@ scan root so the profile is discovered; it declares no mandatory link counts.
 - [Configuration parser](configuration-parser.md) — YAML decoding and allocation limits
 - [Migration](migration.md) — Moving out of the legacy OpenCode bundle
 - [Model routing (draft)](model-routing.md) — Model classes and provider-first planner; no live failover
+- [Shared subscription quota state](shared-subscription-quota.md) — Machine-local cross-process state and adapter contract; not live dispatch
 - [OpenCode 2.1.1 compatibility](opencode-2.1.1.md) — Supported host and native capabilities
 
 ## Operations and verification
