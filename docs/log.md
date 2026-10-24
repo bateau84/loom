@@ -6,6 +6,16 @@ type: Log
 
 ## 2026-10-24
 
+**Creation**: [OpenCode 2.1.1 model-dispatch investigation](model-routing-v2-dispatch.md) —
+Audited the pinned V2 request, retry, model resolver and stream/tool boundaries.
+Recorded the absent atomic pre-output route-change seam, unproven account affinity,
+rejected unsafe workarounds, the separate opaque quota-attestation interface and
+minimal upstream host changes required. Source-only; no live failover or host
+qualification claimed. [Model routing](model-routing.md), the
+[compatibility guide](opencode-2.1.1.md), and this [index](index.md) now link
+that blocker. No runtime behavior changed.
+
+
 **Update**: [`design.md`](design.md) now links to the three indexed
 concern requirements rather than the reserved nested `index.md`.
 [`installed-host-validation.md`](installed-host-validation.md),
