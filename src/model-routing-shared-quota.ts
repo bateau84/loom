@@ -25,24 +25,26 @@ export function reserveNativeRoute(quota: QuotaGate, route: QuotaIdentity): Pend
  * (see packages/core/src/session/to-session-error.ts). A bare HTTP status,
  * textual error message, or successful HTTP handshake is NOT quota evidence.
  *
- * Never infer a provider reset time, retry-after, numeric remaining balance,
- * or a provider-wide scope from these tags.
+ * Only consume an explicit, normalized native Retry-After delay. Never infer
+ * a reset time, numeric remaining balance, or provider-wide scope from tags.
  */
 export function classifiedNativeFailure(
-  error: { readonly type: string; readonly status?: number },
+  error: { readonly type: string; readonly status?: number; readonly retryAfterMs?: number },
 ): QuotaFailure | undefined {
+  // OpenCode's normalized delay is already in milliseconds. The SQLite
+  // manager validates its numeric bounds before persisting a deadline.
+  const timing = error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }
   switch (error.type) {
     case "provider.quota":
     case "provider.free-limit":
-      return { kind: "exhausted" }
+      return { kind: "exhausted", ...timing }
     case "provider.rate-limit":
-      return { kind: "throttled" }
+      return { kind: "throttled", ...timing }
     case "provider.auth":
-      // V2 also uses this type for pre-dispatch Integration.AuthorizationError.
-      // Require an actual provider HTTP authentication status before blocking
-      // an account across other processes. Never infer auth loss from text.
-      return error.status === 401 || error.status === 403
-        ? { kind: "authentication" } : undefined
+      // 401 indicates rejected credentials. A 403 can instead be model-level
+      // authorization denial: it cannot justify an indefinite account-wide
+      // block. Never infer authentication loss from text or bare status.
+      return error.status === 401 ? { kind: "authentication" } : undefined
     default:
       return undefined
   }
@@ -56,7 +58,7 @@ export function classifiedNativeFailure(
 export function recordNativeFailure(
   quota: QuotaGate,
   pending: PendingQuotaRequest | undefined,
-  error: { readonly type: string; readonly status?: number },
+  error: { readonly type: string; readonly status?: number; readonly retryAfterMs?: number },
 ): boolean {
   const failure = classifiedNativeFailure(error)
   if (!pending || !failure) return false
