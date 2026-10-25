@@ -36,6 +36,7 @@ scan root so the profile is discovered; it declares no mandatory link counts.
 - [Migration](migration.md) — Moving out of the legacy OpenCode bundle
 - [Model routing (draft)](model-routing.md) — Opt-in native 2.1.4 initial selection and billing guard; no live failover
 - [V2 model dispatch investigation](model-routing-v2-dispatch.md) — 2.1.1 blocker and 2.1.4 initial-routing update
+- [OpenCode Go eligibility](opencode-go-eligibility.md) — 2.1.4 native billing proof is missing; no Go included-route adapter
 - [OpenCode 2.1.1 compatibility](opencode-2.1.1.md) — Supported host and native capabilities
 
 ## Operations and verification
