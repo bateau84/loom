@@ -56,13 +56,19 @@ route, in-force cooldown, missing native connection, unknown or unverified
 billing all make the route ineligible. `paid-fallback: true` can only enable
 a **verified metered** attestation; unknown billing never becomes eligible.
 The public native catalog alone is not a general subscription-billing
-authority. The future quota implementation owns billing confidence and
-cooldown storage; Loom does not inspect credential secrets or create a
-second quota database.
+authority. The [shared quota manager](shared-subscription-quota.md) is now
+connected to initial planning and dispatch. Its SQLite WAL state is
+machine-wide across this user's OpenCode processes; it does **not**
+attest billing or provide native credentials. The adapter does not inspect
+secret material or create another quota database.
 
 **Dispatch guard:** Every managed primary request is checked against
-the planned model, the latest eligible native catalog/attestation and
-an in-process provider/model/account comparison across continuations.
+the planned model, current shared quota eligibility, the latest verified
+native billing attestation, and an in-process provider/model/account
+comparison across continuations. It **must** obtain an atomic shared
+`reserve()` immediately before returning to native dispatch.
+A new exhaustion, throttle, authentication block or competing probe lease
+rejects the committed route without switching models or replaying tools.
 If native OpenCode would fall through to its global default because an
 agent route is unavailable, Loom rejects the request before provider
 transport. With routing enabled, auxiliary model requests
@@ -73,8 +79,12 @@ unmanaged Sessions retain native auxiliary behavior. For an intentionally
 OpenCode behaves as before.
 
 A changed routing policy requires a plugin restart; request-time checks
-reject changes since activation. An unavailable planned route does not
-silently switch to a lower model. The model policy reported by
+reject changes since activation. New plugin activations read quota blocks
+written by other processes before choosing a model. Existing active
+sessions keep their initial selected model and fail closed if a different
+process exhausts that route; they do **not** silently switch to the next
+provider or model. OpenCode currently supplies only the active native
+connection for each provider, not a switchable pool of inactive accounts. The model policy reported by
 `loom_agents` includes `model_routing_runtime: initial-only`,
 `model_routing_selected` and `model_routing_unavailable_agents`
 when the full native host is available. A partial/older host shows
@@ -86,7 +96,12 @@ Session model is not overwritten. The pre-request connection check is
 not an atomic native connection lease: OpenCode can still resolve a
 different active account between model resolution and transport. Native
 account affinity during a stream, tool execution and auxiliary calls remains
-a host contract requirement. Invalid/overloaded config loaded at startup
+a host contract requirement. The adapter records only typed, normalized
+native `provider.quota`, `provider.free-limit`, `provider.rate-limit` and
+`provider.auth` failures from matching reserved primary requests. It
+disables repeated retries on those blocked routes, but does not infer
+a successful stream, a reset timestamp or remaining requests from HTTP 200.
+Unobserved success/recovery accounting is deliberately not fabricated. Invalid/overloaded config loaded at startup
 follows existing Loom fail-closed-guidance behavior and can leave routing
 disabled; operators must verify the runtime status before treating paid
 policy as enforced. The separate installed-host negative control establishes
@@ -120,6 +135,32 @@ No other provider is assumed included. The configured model must exist in
 the native catalog, the requested reasoning variant must be supported,
 and the current connection must have verified billing. If nothing
 qualifies, the managed request is blocked rather than silently spending.
+
+## Shared quota integration (implemented for initial selection)
+
+The adapter reads the [machine-wide shared quota store](shared-subscription-quota.md)
+before it selects a native agent model. Candidate order remains
+**logical model first, provider second**. Each candidate carries an opaque
+non-secret native account key and independently verified billing. An
+environment-variable name is not a stable account ID and is not used to
+authorize managed routing.
+
+`eligibility()` is only a preview; every eligible managed native request
+must also acquire an atomic `reserve()` immediately before native transport.
+Quota writes from other processes are visible to the next planning read and
+at the next guarded request boundary. A changed shared state blocks the
+currently committed model; native V2 cannot safely switch that model
+within an active turn. Fresh startup/reload planning can choose the next
+verified route, without silently lowering reasoning or using an unknown
+billing method.
+
+The host's typed `session.retry` provider error is used only for conservative
+negative accounting. Neither HTTP 200 nor a generic Session completion
+proves a specific provider request succeeded with the reserved account.
+Automatic `recordSuccess()`, `recordProviderQuota()`, login refresh
+accounting, and true stream-bound native account leasing remain unproven.
+The separately tested quota manager supports those state transitions once
+reliable observed provider evidence exists. No extra quota store is created.
 
 ## Intended behavior
 
