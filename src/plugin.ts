@@ -80,20 +80,22 @@ const specs = [
 export default Plugin.define({
   id: "loom",
   async setup(ctx) {
-    // OpenCode 2.1.4 can continue native dispatch after a plugin setup error.
-    // Register a restrictive pre-transport hook BEFORE any ledger or quota I/O.
-    // An installation that never loads this plugin at all still requires a
-    // native host-level guard; a plugin cannot protect an absent plugin.
+    // An unmodified OpenCode 2.1.4 host can continue native dispatch after
+    // a plugin setup error. Install an early pre-transport deny guard before
+    // ANY quota/ledger I/O, but only on the version whose guard was installed-
+    // host qualified. Older/partial hosts retain the existing plugin lifecycle
+    // and are NOT evidence of safe managed routing.
+    const guardedHost = ctx.app?.version === "2.1.4"
     let startupDispatch: "deny" | "delegated" | "disabled" = "deny"
     let startupDenial = "LOOM_MODEL_ROUTING_STARTUP_BLOCKED: routing has not completed initialization"
-    const startupGuard = await ctx.session.hook("model.request", () => {
+    const startupGuard = guardedHost ? await ctx.session.hook("model.request", () => {
       if (startupDispatch === "deny") throw new Error(startupDenial)
-    })
+    }) : undefined
     let startupGuardDisposed = false
     const disposeStartupGuard = async () => {
       if (startupGuardDisposed) return
       startupGuardDisposed = true
-      await startupGuard.dispose()
+      await startupGuard?.dispose()
     }
     try {
     const directory = await realpath(ctx.location.directory)
@@ -385,16 +387,10 @@ export default Plugin.define({
     } else if (routingStatus === "initial-only" || routingStatus === "blocked-config") {
       startupDispatch = "delegated"
     } else {
-      // On partial/legacy test hosts the runtime adapter may be unsupported
-      // before it even inspects policy. Only a separately validated, expressly
-      // disabled policy is allowed to preserve native routing.
-      const checked = await getConfig()
-      if (checked.errors.length === 0 && !checked.config.modelRouting.enabled) {
-        startupDispatch = "disabled"
-        await disposeStartupGuard()
-      } else {
-        startupDenial = "LOOM_MODEL_ROUTING_HOST_UNQUALIFIED: no proven native request guard"
-      }
+      // A capable real host with no working adapter must not silently fall
+      // through to its global model. Incomplete legacy mocks have no early
+      // guard and retain their existing setup behavior.
+      startupDenial = "LOOM_MODEL_ROUTING_HOST_UNQUALIFIED: no proven native request guard"
     }
     return async () => {
       startupDispatch = "deny"
@@ -406,6 +402,9 @@ export default Plugin.define({
     } catch (error) {
       startupDispatch = "deny"
       startupDenial = "LOOM_MODEL_ROUTING_STARTUP_FAILED: plugin initialization failed; native dispatch blocked"
+      // If the host does not expose the qualified early guard, we cannot
+      // truthfully retain protection. Preserve the original startup failure.
+      if (!startupGuard) throw error
       // Preserve pre-existing startup failure reporting and native fallback
       // when routing was demonstrably disabled by a successfully loaded config.
       // Unreadable config is NEVER interpreted as deliberate disabling.
