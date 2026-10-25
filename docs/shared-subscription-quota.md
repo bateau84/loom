@@ -12,6 +12,18 @@ timestamp: 2026-10-24T00:00:00Z
 
 ## Integrated initial routing and outcome evidence
 
+An OpenCode 2.1.4 plugin can encounter an unrelated Action-ledger failure
+before the quota manager starts, or a damaged quota store can reject startup.
+Loom now registers a separate, early native model-request **deny** hook
+before either database is opened. For a valid enabled policy, a failure keeps
+that hook active and reports `LOOM_MODEL_ROUTING_STARTUP_FAILED` instead of
+allowing OpenCode's metered default. For an explicitly disabled policy,
+ordinary native requests remain unchanged. A plugin that OpenCode never
+activates, or whose first guard registration itself fails, cannot provide
+this guarantee; that requires upstream host enforcement.
+
+
+
 A valid opt-in routing configuration opens the same shared SQLite state under
 the user's state home in every process. Missing, corrupt, inaccessible or unsafe
 quota storage prevents guarded routing startup; disabling routing does not open
@@ -52,6 +64,17 @@ remaining quota or an unreported reset timestamp; those values are never invente
 native retry on the blocked route. Unknown errors and native authorization failures without a provider HTTP
 status do not update quota. Do not treat pre-dispatch credential validation
 as provider evidence.
+
+**Delayed native terminal events:** `session.execution.succeeded`,
+`session.execution.failed` and `session.execution.interrupted` carry only
+the native Session ID, so they cannot identify which execution's reservation
+may be removed. A delayed terminal event for execution A can arrive after B
+has reserved in the same Session. Pending reservations and route affinity
+are therefore kept across terminal events and released only on
+`session.deleted` or plugin shutdown, with an explicit 512-Session
+fail-closed memory bound. The newest native request replaces the matching
+reservation, and its provider failure can still update shared state.
+Native unique request/attempt correlation remains unproven.
 
 **No invented success:** OpenCode 2.1.4's plugin request/retry hooks do not
 provide a stable, attempt-identified successful stream completion tied to the

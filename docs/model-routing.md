@@ -37,6 +37,21 @@ for the separate native retry/account-lease blocker.
 
 ## Initial routing on OpenCode 2.1.4 (implemented, opt-in)
 
+**Startup failure protection:** In a qualified 2.1.4 host, Loom installs an
+early `model.request` denial hook **before** initializing the Action ledger,
+shared quota store or agent routing. It allows dispatch only after the
+complete plugin is registered and normal eligibility checks are in place.
+If the ledger, quota DB or another initialization stage fails, Loom keeps the
+early denial hook installed, logs the initialization failure and blocks native
+model requests with `LOOM_MODEL_ROUTING_STARTUP_FAILED`. An explicitly
+disabled, valid routing policy preserves ordinary native execution. This
+protection requires OpenCode to have **successfully loaded the plugin and
+registered the early hook**; a plugin cannot protect an installation where
+OpenCode never activates it or rejects hook registration. Host-level fail-closed
+activation is a separate upstream requirement.
+
+
+
 At plugin startup, Loom reads the effective `.loom.yaml`, discovers actual
 models through the native `ctx.model.list()` and providers through
 `ctx.provider.list()`, and resolves current **opaque native connection IDs**.
@@ -92,7 +107,15 @@ reject changes since activation. Invalid config startup and unexpected
 termination of the native terminal-event subscription are distinct visible
 fail-closed states; `loom_agents` reports `blocked-config` on invalid startup
 and managed dispatch reports `LOOM_MODEL_ROUTING_EVENTS_UNAVAILABLE` if the
-subscription ends. In-memory Session leases have a bounded capacity. New plugin activations read quota blocks
+subscription ends. In-memory Session leases have a bounded capacity. Execution-terminal events
+carry only a Session ID, not a turn/attempt ID. Loom therefore does **not**
+discard a pending quota reservation on `session.execution.*`: a delayed
+previous-turn terminal event must not erase a newer reservation. Entries are
+reclaimed on `session.deleted` or plugin restart. At 512 distinct tracked
+Sessions Loom refuses further guarded routing until Sessions are deleted
+or Loom is restarted, rather than silently losing failure accounting.
+A precise attempt ID from the host would allow ordinary per-turn cleanup.
+New plugin activations read quota blocks
 written by other processes before choosing a model. Existing active
 sessions keep their initial selected model and fail closed if a different
 process exhausts that route; they do **not** silently switch to the next

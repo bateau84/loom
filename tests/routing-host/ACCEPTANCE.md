@@ -2,9 +2,12 @@
 
 ## Candidate and isolation
 
-- Tested remediation branch: `fix/model-routing-review-gates`, stacked on PR #197.
-- Assembled integration base: [PR #194](https://github.com/bateau84/loom/pull/194), commit `875a79012bd4338d8ac1b746b5c9ffbb81db1f15`.
-- Prior acceptance base: [PR #197](https://github.com/bateau84/loom/pull/197), commit `6fb15460fdad415927fe73d5e0cd7904d3365549`.
+- Current candidate: single [PR #190](https://github.com/bateau84/loom/pull/190),
+  branch `feat/provider-first-model-routing`, incorporating the historic
+  #191/#192/#194/#197/#198 work and subsequent cold-review startup and
+  terminal-event corrections. Record the **exact current head** in each test.
+- Original integration baseline: #194 at `875a79012bd4338d8ac1b746b5c9ffbb81db1f15`.
+- Earlier acceptance baseline: #197 at `6fb15460fdad415927fe73d5e0cd7904d3365549` (not proof of this candidate).
 - Source inputs: [PR #190](https://github.com/bateau84/loom/pull/190) (policy), [PR #191](https://github.com/bateau84/loom/pull/191) (initial adapter), [PR #192](https://github.com/bateau84/loom/pull/192) (SQLite shared quota).
 - Earlier adapter-only native fixture: [PR #193](https://github.com/bateau84/loom/pull/193) at `d478bc0221ccb188cde3a0cce84d89d44d6f9ddd`. That prior success **does not** qualify the assembled candidate.
 - Host: unmodified npm `@opencode/cli@2.1.4`.
@@ -40,8 +43,12 @@ rejection and native account/stream lease cannot currently be marked PASS:
 the suite cannot currently isolate the global-default mismatch behavior from
 a completely unavailable managed route. Its normal error categories and
 positive routing guard cases are tested in the mocked adapter separately.
-The remediation adds a real-host invalid-configuration blocking control,
-not a test-only included subscription attestation:
+The suite additionally includes fresh native-host startup failures for a
+corrupt shared quota database and an unusable Action-ledger path, with a
+callable metered local default. Their `STARTUP_FAILED` denial is checked
+before native provider transport. It does **not** simulate a host that
+never activates the Loom plugin. The suite still adds no test-only
+included subscription attestation:
 
 the local fixtures have **no independently verified included billing**.
 Native adapter tests use **test-only attestations** and are labelled as

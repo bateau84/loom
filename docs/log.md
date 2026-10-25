@@ -6,6 +6,20 @@ type: Log
 
 ## 2026-10-25
 
+**Cold-review startup and terminal-event corrections (PR #190):**
+The [routing adapter](model-routing.md) installs an early native model
+request deny hook before Action-ledger or quota initialization in OpenCode
+2.1.4. If guarded startup fails, the denial hook remains installed instead
+of letting native dispatch fall through to a potentially metered default.
+An unactivated plugin still cannot protect native dispatch without host-level
+enforcement. Per-Session quota reservations no longer disappear on delayed
+`session.execution.*` terminal events that lack execution identity; entries
+persist until native Session deletion or plugin restart, subject to a
+fail-closed capacity bound. Focused native and actual installed-host
+regressions cover these cases. New routing CI workflows now pin third-party
+actions to immutable commit hashes. OpenCode Go included billing,
+provider/account streaming leases and live fallback remain unproven.
+
 **Consolidation into PR #190 (draft):** The previously separate initial native
 routing, shared per-account SQLite quota implementation, installed-host
 acceptance tests and independent-review remediation now share one candidate

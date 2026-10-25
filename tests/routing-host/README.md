@@ -6,10 +6,11 @@ the exact Loom plugin candidate, installs it in an isolated directory, runs an
 loads only in-memory scripted model providers. It never connects to live AI
 providers, reads a user's OpenCode credentials or uses their global config.
 
-This acceptance branch is stacked on integrated PR #194 (which includes the
-runtime from PR #191 and shared quota manager from PR #192, both on PR #190).
-The installed plugin is the actual assembled candidate, not the old PR #193
-adapter-only candidate. No live provider switching is implemented.
+The complete initial-routing, shared-quota and acceptance implementation is
+now consolidated in [draft PR #190](https://github.com/bateau84/loom/pull/190).
+This test packs that assembled candidate; the previous stacked drafts are
+historical context, not separate test targets. No live provider switching is
+implemented.
 
 ## Reproduce on Linux or a GitHub Actions runner
 
@@ -18,7 +19,7 @@ Git and npm. Start from a disposable checkout of this PR branch:
 
 ```bash
 set -euo pipefail
-git checkout fix/model-routing-review-gates
+git checkout feat/provider-first-model-routing
 bun install --frozen-lockfile
 bun run typecheck
 bun run test:core
@@ -53,8 +54,9 @@ The original fixture's `routing-events.ndjson` is temporary; reported traces
 include allowlisted request route/model IDs, test mode, native tool names and
 a pseudonymous local Session label. Neither stores raw prompts, headers,
 account credentials, tokens or tool inputs. Guarded failures must match
-their expected `LOOM_MODEL_ROUTE_UNAVAILABLE` or
-`LOOM_MODEL_ROUTING_CONFIG_UNREADABLE` category, not merely zero transport.
+their expected `LOOM_MODEL_ROUTE_UNAVAILABLE`,
+`LOOM_MODEL_ROUTING_CONFIG_UNREADABLE` or
+`LOOM_MODEL_ROUTING_STARTUP_FAILED` category, not merely zero transport.
 
 ## What the installed-host gate verifies
 
@@ -72,6 +74,7 @@ their expected `LOOM_MODEL_ROUTE_UNAVAILABLE` or
 | Independent quota processes | Separate Bun child processes using PR #194 SQLite manager | Cross-process block, account/provider isolation, single recovery probe and observable recovery |
 | Unexpected native global default | Host configured with a paid-labelled default in a managed Session | No transport; without an eligible primary route the exact mismatch reason remains UNPROVEN |
 | Invalid routing configuration | Host startup with malformed `.loom.yaml` | Native request rejected with `LOOM_MODEL_ROUTING_CONFIG_UNREADABLE` before any provider transport |
+| Corrupt quota DB and broken Action-ledger startup | Separate fresh installed 2.1.4 hosts, routing enabled and a callable metered global default | Native request rejected by retained early `LOOM_MODEL_ROUTING_STARTUP_FAILED` guard, zero provider transport |
 | Trace oracle mutations | Synthetic corrupted trace inputs | Leak, duplicate tool calls, provider changes and model-only changes are rejected by the oracle |
 
 The negative controls are deliberately independent of the production
