@@ -385,7 +385,16 @@ export default Plugin.define({
     } else if (routingStatus === "initial-only" || routingStatus === "blocked-config") {
       startupDispatch = "delegated"
     } else {
-      startupDenial = "LOOM_MODEL_ROUTING_HOST_UNQUALIFIED: no proven native request guard"
+      // On partial/legacy test hosts the runtime adapter may be unsupported
+      // before it even inspects policy. Only a separately validated, expressly
+      // disabled policy is allowed to preserve native routing.
+      const checked = await getConfig()
+      if (checked.errors.length === 0 && !checked.config.modelRouting.enabled) {
+        startupDispatch = "disabled"
+        await disposeStartupGuard()
+      } else {
+        startupDenial = "LOOM_MODEL_ROUTING_HOST_UNQUALIFIED: no proven native request guard"
+      }
     }
     return async () => {
       startupDispatch = "deny"
