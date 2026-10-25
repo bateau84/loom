@@ -40,12 +40,15 @@ resolved its transport credentials.
 
 **Observed failures:** when OpenCode's `session.retry` hook reports a
 **typed** `provider.quota` / `provider.free-limit`, `provider.rate-limit`
-or `provider.auth` error **with provider HTTP 401/403 status** for a
+or `provider.auth` error **with provider HTTP 401 status** for a
 matching reserved primary request, the adapter
 calls `recordFailure()` for that exact account/model. Those tags correspond
-to exhausted, throttled and authentication states respectively. They do not
-prove a provider-wide limit, numeric remaining quota, or reset timestamp;
-those values are never invented. A classified failure suppresses another
+to exhausted, throttled and account authentication states respectively.
+HTTP 403 is ambiguous model-level authorization and does **not** justify an
+indefinite account-wide block. Native normalized `retryAfterMs` delays are
+preserved; when both a trusted retry delay and reset time exist, the later
+deadline wins. These events do not prove a provider-wide limit, numeric
+remaining quota or an unreported reset timestamp; those values are never invented. A classified failure suppresses another
 native retry on the blocked route. Unknown errors and native authorization failures without a provider HTTP
 status do not update quota. Do not treat pre-dispatch credential validation
 as provider evidence.
@@ -76,7 +79,7 @@ isolated SQLite/Bun-process and mocked native-host tests, not real paid traffic.
 
 openSharedQuotaState() opens an independent SQLite WAL database in the user state directory, under loom/quota-v1/subscriptions.sqlite. XDG_STATE_HOME is respected when absolute; otherwise use ~/.local/state. This is machine-local to a single OS user, shared by OpenCode instances and projects, **not** Loom's project Action ledger and not a cross-host coordination service. Network filesystems are not supported. BEGIN IMMEDIATE serializes mutations, with a bounded 5-second busy timeout.
 
-The store requires a user-owned mode-0700 directory and a user-owned regular mode-0600 database. Corrupt, inaccessible, unsafe-permission, symlink or unsupported-version data produces an error; the adapter must fail closed instead of inventing available quota. There is no silent reset or migration. WAL sidecar files are protected by the private directory.
+The store requires a user-owned mode-0700 directory and a user-owned regular mode-0600 database. Corrupt, inaccessible, unsafe-permission, symlink or unsupported-version data produces an error; the adapter must fail closed instead of inventing available quota. Schema v2 extends the v1 quota table with a release-revision fence in a single startup transaction, preserving existing rows; it does not reset quota or waive corruption checks. Stored timestamps, counters and lease fields are validated before eligibility decisions; corrupt data is never treated as an expired cooldown. WAL sidecar files are protected by the private directory.
 
 The store persists only SHA-256 route/scope identity hashes, bounded numeric timestamps, counters, state enums and random recovery-lease IDs. It does not persist API keys, bearer/refresh tokens, raw account IDs, emails, prompts, request bodies or response bodies. An accountID **must** be a stable, opaque, non-secret identifier obtained from supported OpenCode authentication metadata. The integration uses the native credential *record ID* (a public metadata reference), never its secret content or a hash of the credential. If this identifier changes on reconnection, the account obtains a fresh conservative quota scope. OpenCode's environment-backed connections expose only an environment variable name, which cannot identify the actual account; they are **not** eligible for managed quota routing until a stable native account identity is available. Hashes are not protection against a process already compromised under the same OS user.
 
@@ -138,11 +141,11 @@ if (plan.status === "ready") {
 quota.close()
 ~~~
 
-**Interface:** eligibility(route) is a read-only hint. reserve(route) is a mandatory atomic dispatch-time check and returns a QuotaPermit revision snapshot. recordSuccess(route,permit,optionalReport), recordFailure(route,permit,failure), recordProviderQuota(route,observation,report) and recordAuthenticationRecovered(route,observation) update shared state. observe(route) captures revisions before an external quota check or auth refresh. inventory(verifiedRoutes) produces pure planner inventory; it never promotes billing to included. An old success/header/failure cannot overwrite a newer exhaustion or recovery revision.
+**Interface:** eligibility(route) is a read-only hint. reserve(route) is a mandatory atomic dispatch-time check and returns a QuotaPermit revision snapshot. recordSuccess(route,permit,optionalReport), recordFailure(route,permit,failure), recordProviderQuota(route,observation,report) and recordAuthenticationRecovered(route,observation) update shared state. observe(route) captures revisions before an external quota check or auth refresh. inventory(verifiedRoutes) produces pure planner inventory; it never promotes billing to included. An old success/header/failure cannot overwrite a newer exhaustion or recovery revision. Concurrent negative reports within the same recovery epoch are merged conservatively: a stronger exhaustion or longer trusted retry deadline cannot be erased by a weaker report. Explicit recovery advances the release-revision fence, so old reports cannot reblock a recovered route.
 
 The model planner now preserves optional accountID and deduplicates by provider/model/account, rather than accidentally discarding a second subscription under the same provider. Old pure planner callers can omit accountID; **managed** route inventory must include it. Do not construct permits manually.
 
-The adapter classifies only the trusted native error tags described above. Authentication, unobserved successful outcomes, live provider switching and native stream/account affinity remain outside its proven capability. Retry and reset timestamps are accepted only when reported or normalized reliably; the library does not fetch them. Do not replay tool side effects. Never treat provider name or a configured model alias as proof that billing is included. paid-fallback remains off by default; unknown billing is never eligible. When model routing is disabled, do not open the quota store or change native OpenCode behavior.
+The adapter classifies only the trusted native error tags described above. Authentication, unobserved successful outcomes, live provider switching and native stream/account affinity remain outside its proven capability. Retry and reset timestamps are accepted only when reported or normalized reliably; the library does not fetch them. Do not replay tool side effects. Never treat provider name or a configured model alias as proof that billing is included. paid-fallback remains off by default; unknown billing is never eligible. When model routing is explicitly disabled in a valid configuration, do not open the quota store or change native OpenCode behavior. If configuration loading fails on a capable 2.1.4 host, the adapter blocks native model requests before transport rather than interpreting unreadable policy as intentionally disabled. A lost native terminal-event subscription also blocks subsequent managed requests until restart.
 
 ## Verification and current limitations
 
