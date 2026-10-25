@@ -75,7 +75,7 @@ async function withState(callback: (path: string) => Promise<void>) {
   finally { await rm(dir, { recursive: true, force: true }) }
 }
 function workerExhaust(path: string, account = "account-a") {
-  const child = spawnSync(process.execPath, [worker, "exhaust", path, account],
+  const child = spawnSync(process.execPath, [worker, "exhaust", path, account, "sol"],
     { encoding: "utf8", timeout: 15000 })
   if (child.status !== 0) throw new Error("Quota worker failed: " + child.stderr)
   expect(JSON.parse(child.stdout).changed).toBe(true)
