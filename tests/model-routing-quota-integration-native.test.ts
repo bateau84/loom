@@ -60,7 +60,14 @@ function fixture(accountGo = "account-a", billing: RouteEligibilitySource = atte
       get: async () => ({ data: { agent: "architect" } }),
       hook: async (name: string, fn: any) => { hooks.set(name, fn); return { dispose: async () => hooks.delete(name) } },
     },
-    event: { subscribe: async function* () {} },
+    event: { subscribe: async function* ({ signal }: { signal: AbortSignal }) {
+      // A real OpenCode event stream remains live until cancellation.
+      // Returning immediately would simulate a lost terminal-event feed.
+      await new Promise<void>(resolve => {
+        if (signal.aborted) resolve()
+        else signal.addEventListener("abort", () => resolve(), { once: true })
+      })
+    } },
   }
   return { ctx, hooks, agents, billing,
     config: async () => ({ config: policy(), errors: [], sources: [] }) }
