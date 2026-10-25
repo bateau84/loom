@@ -165,3 +165,29 @@ describe("native 2.1.4 adapter boundary (mocked host callbacks, not installed-ho
     await expect(f.hooks.get("model.request")!(dispatch())).rejects.toThrow("RESTART_REQUIRED")
   })
 })
+
+
+test("unreadable layered config blocks native model dispatch instead of disabling the billing guard", async () => {
+  const f = host()
+  const load = async () => ({
+    config: defaults(), errors: ["project/.loom.yaml: invalid YAML after enabled routing layer"],
+    sources: ["user/.loom.yaml", "project/.loom.yaml"],
+  })
+  const runtime = await registerModelRouting(f.ctx, load, [], new AbortController().signal, undefined, fakeQuota)
+  expect(runtime.status).toBe("blocked-config")
+  expect(f.hooks.has("model.request")).toBe(true)
+  expect(() => f.hooks.get("model.request")!(dispatch())).toThrow("LOOM_MODEL_ROUTING_CONFIG_UNREADABLE")
+  expect(f.agents.architect.model).toBeUndefined()
+})
+
+test("lost native terminal-event subscription blocks further managed requests and rejects account switches", async () => {
+  const f = host()
+  f.ctx.event.subscribe = async function* () {
+    throw new Error("test-only native event-stream disconnect")
+  }
+  const registrations: Array<{ dispose(): Promise<void> }> = []
+  await registerModelRouting(f.ctx, f.load, registrations, new AbortController().signal, undefined, fakeQuota)
+  await Bun.sleep(0)
+  await expect(f.hooks.get("model.request")!(dispatch())).rejects.toThrow("LOOM_MODEL_ROUTING_EVENTS_UNAVAILABLE")
+  for (const registration of registrations) await registration.dispose()
+})
