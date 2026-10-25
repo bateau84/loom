@@ -61,7 +61,7 @@ export default Plugin.define({
         } else {
           events.push({ type: "text-start", id: "message" },
             { type: "text-delta", id: "message", delta: compaction
-              ? "## Objective\\n- Validate native routing under compaction.\\n\\n## Work State\\n### Completed\\n- One native tool call completed.\\n\\n## Next Move\\n1. Continue on the same model."
+              ? "## Objective\n- Validate native routing under compaction.\n\n## Work State\n### Completed\n- One native tool call completed.\n\n## Next Move\n1. Continue on the same model."
               : "ROUTING_FIXTURE_OK" },
             { type: "text-end", id: "message" })
         }
