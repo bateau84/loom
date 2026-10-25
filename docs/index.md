@@ -37,6 +37,8 @@ scan root so the profile is discovered; it declares no mandatory link counts.
 - [Model routing (draft)](model-routing.md) — Guarded native 2.1.4 initial selection with shared quota; no live failover
 - [Shared subscription quota](shared-subscription-quota.md) — Cross-process SQLite quota state, atomic reservation, recovery and evidence limits
 - [V2 model dispatch investigation](model-routing-v2-dispatch.md) — 2.1.1 blocker and 2.1.4 initial-routing update
+- [OpenCode Go subscription eligibility](opencode-go-eligibility.md) — Missing native no-paid-overage guarantee; Go remains unverified
+- [Safe native fallback proposal](opencode-v2-safe-live-fallback.md) — OpenCode host changes required before live switching
 - [OpenCode 2.1.1 compatibility](opencode-2.1.1.md) — Supported host and native capabilities
 
 ## Operations and verification

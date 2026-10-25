@@ -26,6 +26,15 @@ timestamp: 2026-10-24T00:00:00Z
 For pinned-host evidence, see the
 [2.1.1/2.1.4 model-dispatch investigation](model-routing-v2-dispatch.md).
 
+**OpenCode Go is not yet verified included usage.** A native Go connection
+and model catalog do not establish subscription entitlement or prove that
+paid Extra Usage is disabled. See the
+[Go billing eligibility investigation](opencode-go-eligibility.md).
+Without a supported, account-bound, provider-enforced no-paid guarantee,
+these routes remain `billing: unknown`, even when the catalog lists them.
+See also the [OpenCode safe fallback proposal](opencode-v2-safe-live-fallback.md)
+for the separate native retry/account-lease blocker.
+
 ## Initial routing on OpenCode 2.1.4 (implemented, opt-in)
 
 At plugin startup, Loom reads the effective `.loom.yaml`, discovers actual
@@ -179,17 +188,18 @@ An agent chooses a **model class** and **reasoning level**, inherited from its
 roles. A model class is an **ordered list of logical models**, not providers.
 
 Within each logical model, Loom tries providers in configured preference order,
-using only models the installed OpenCode host actually exposes. For example:
+using only models the installed OpenCode host actually exposes. This is a
+**hypothetical future example**, contingent on verified included billing for
+*each* provider route:
 
-1. `gpt-6.1-sol` through OpenCode Go
-2. `gpt-6.1-sol` through OpenAI
-3. `gpt-6.1-sol` through GitHub Copilot (if offered)
-4. `gpt-6-astra` through OpenCode Go
-5. `gpt-6-astra` through OpenAI
+1. `kimi-k3` through OpenCode Go
+2. `kimi-k3` through a second verified included provider (if offered)
+3. `glm-5.3` through OpenCode Go
+4. `glm-5.3` through a second verified included provider (if offered)
 
-If OpenCode Go exhausts its subscription quota for `gpt-6.1-sol`, its
-availability entry is marked exhausted; the next route must still be
-`gpt-6.1-sol` at another provider, **not** `gpt-6-astra`.
+If the first provider's `kimi-k3` route is exhausted, the next included
+candidate for that **same logical model** comes before `glm-5.3`. This
+illustrates ordering only, **not** current Go subscription authorization.
 
 A logical-model identity is never inferred from a fuzzy or substring match.
 By default, matching uses the exact OpenCode model ID. Use `model-aliases`

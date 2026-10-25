@@ -6,6 +6,17 @@ type: Log
 
 ## 2026-10-25
 
+**Consolidation into PR #190 (draft):** The previously separate initial native
+routing, shared per-account SQLite quota implementation, installed-host
+acceptance tests and independent-review remediation now share one candidate
+branch. The [OpenCode Go entitlement audit](opencode-go-eligibility.md) and
+[safe V2 live-fallback proposal](opencode-v2-safe-live-fallback.md) have also
+been incorporated with the Go fail-closed regression tests. The local
+OpenCode 2.1.4 acceptance suite proves its scoped protective controls,
+not positive authorized subscription dispatch or in-flight provider
+switching. No changes have been merged into `main`; previous dated
+entries describe their original separate PRs for historical context.
+
 **Review remediation (draft, pending CI and independent re-review):**
 [Shared subscription quota](shared-subscription-quota.md) now validates all
 persisted numeric/lease fields before route eligibility, migrates existing
