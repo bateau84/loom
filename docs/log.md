@@ -6,6 +6,24 @@ type: Log
 
 ## 2026-10-25
 
+**Review remediation (draft, pending CI and independent re-review):**
+[Shared subscription quota](shared-subscription-quota.md) now validates all
+persisted numeric/lease fields before route eligibility, migrates existing
+quota schema v1 to v2 without resetting state, and preserves concurrent
+confirmed exhaustion against weaker negative reports. Recovery revisions
+still reject older failures and stale success. Native provider
+`retryAfterMs` is retained, with the later trusted deadline winning;
+ambiguous HTTP 403 is not account-wide authentication evidence.
+[Model routing](model-routing.md) now blocks dispatch when its startup
+configuration is unreadable, or when the native terminal-event stream
+ends unexpectedly; valid explicit disabling remains unchanged.
+Quota/native-adapter regression tests cover these failure sequences.
+[Installed acceptance](../tests/routing-host/ACCEPTANCE.md) now checks
+provider AND model continuity, native guard error categories, preserves
+sanitized per-case traces, and adds an invalid-config negative control.
+Positive real included-billing dispatch, native account affinity and
+live provider fallback remain unproven.
+
 **Integration**: [Shared subscription quota](shared-subscription-quota.md) now
 feeds [guarded initial model routing](model-routing.md). Imported the
 unmodified account-aware planner and quota manager from draft PR #192 onto
