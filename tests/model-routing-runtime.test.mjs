@@ -107,3 +107,50 @@ test("missing attestation and unsupported capabilities never leave the global na
   const disabled = planInitialModels(defaults(), [native], { openai: oauth }, {}, 100)
   assert.deepEqual(disabled.plan, {})
 })
+
+
+test("Go model plus active Console key or OAuth connection is not subscription billing proof", () => {
+  const config = mergeConfig(policy(), {
+    "model-classes": { strong: { models: ["kimi-k3"] } },
+  })
+  // Native catalog pricing describes a model price, not an included-use entitlement.
+  const go = { ...native, id: "kimi-k3", providerID: "opencode-go", cost: [{ input: 3, output: 15 }] }
+  const provider = { id: "opencode-go", integrationID: "opencode" }
+  const connections = [
+    { type: "credential", method: "key", id: "console-key-1" },
+    { type: "credential", method: "oauth", id: "console-oauth-1" },
+    { type: "env", name: "OPENCODE_API_KEY" },
+    { type: "credential", method: "key", id: "expired-go", status: { status: "needs_auth" } },
+  ]
+  for (const current of connections) {
+    assert.equal(nativeChatGPTAttestation(go, provider, current), undefined)
+    assert.equal(inventoryEntry(go, current, undefined, 100).billing, "unknown")
+    for (const paidFallback of [false, true]) {
+      const configured = paidFallback ? mergeConfig(config, { "model-routing": { "paid-fallback": true } }) : config
+      const state = planInitialModels(configured, [go], { "opencode-go": current }, {}, 100)
+      assert.equal(state.plan.architect.status, "unavailable")
+      assert.throws(() => assertInitialRoute(state.plan.architect, {
+        providerID: "opencode-go", id: "kimi-k3", variant: "medium",
+      }), /UNAVAILABLE/)
+    }
+  }
+  // A zero-price listing is equally insufficient; neither field is billing evidence.
+  const zeroCost = { ...go, cost: [] }
+  assert.equal(nativeChatGPTAttestation(zeroCost, provider, oauth), undefined)
+  assert.equal(inventoryEntry(zeroCost, oauth, undefined, 100).billing, "unknown")
+})
+
+test("Go attestation cannot authorize a different native account or model", () => {
+  const go = { ...native, id: "kimi-k3", providerID: "opencode-go" }
+  // Deliberately synthetic external evidence: NO such native Go attestation is
+  // provided by OpenCode 2.1.4. This tests fail-closed identity handling only.
+  const evidence = {
+    providerID: "opencode-go", modelID: "kimi-k3", connectionID: "key-A",
+    billing: "included", verified: true, quota: "available",
+  }
+  assert.equal(inventoryEntry(go, { type: "credential", method: "key", id: "key-B" }, evidence, 100).billing, "unknown")
+  assert.equal(inventoryEntry({ ...go, id: "glm-5.3" },
+    { type: "credential", method: "key", id: "key-A" }, evidence, 100).billing, "unknown")
+  assert.equal(inventoryEntry(go, { type: "credential", method: "key", id: "key-A",
+    status: { status: "needs_auth" } }, evidence, 100).enabled, false)
+})
