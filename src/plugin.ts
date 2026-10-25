@@ -158,12 +158,14 @@ export default Plugin.define({
                   evidence: { capture: snapshot.config.ledger.capture, ...observer.status() },
                   config_sources: snapshot.sources, errors: snapshot.errors,
                   warnings: entries.filter(a => a.configured && !a.available).map(a => `Configured agent is unavailable: ${a.id}`),
-                  ...(modelPolicies ? {
-                    model_policy_preview: modelPolicies,
+                  ...(modelPolicies || routing.status === "blocked-config" ? {
+                    ...(modelPolicies ? { model_policy_preview: modelPolicies } : {}),
                     model_routing_runtime: routing.status,
                     model_routing_selected: routing.selected,
                     model_routing_unavailable_agents: routing.unavailable,
-                    model_routing_note: routing.status === "initial-only"
+                    model_routing_note: routing.status === "blocked-config"
+                      ? "Configuration is unreadable: native model requests are blocked before transport until config repair and plugin restart. Valid disabled routing is unaffected."
+                      : routing.status === "initial-only"
                       ? "Native 2.1.4 agent selection only. Only verified included routes (or explicitly opted-in verified metered routes) are dispatched. No live provider failover; unavailable routes fail closed."
                       : "Policy preview only: Loom does not yet route native provider requests in this host. No model-routing adapter is installed.",
                   } : {}),
