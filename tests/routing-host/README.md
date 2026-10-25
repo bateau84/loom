@@ -54,14 +54,14 @@ record raw prompts, headers, account identities, tokens or tool inputs.
 
 | Control | Observed evidence | Expected result |
 | --- | --- | --- |
-| Native primary/secondary transport (routing disabled) | V2 provider `doStream` calls | One request to the exact selected provider and model |
+| Native Architect, Coder and Reviewer (routing disabled) | V2 provider `doStream` calls | One request to the exact selected provider and model |
 | Native metered transport (routing disabled) | Paid-labelled local provider request | The scripted provider is genuinely callable without the guard |
 | Injected provider faults (routing disabled) | Native transport traces before-output, after-text, and after-tool | No unexpected second provider or repeated native tool (not a live-fallback test) |
 | Real tool continuation (routing disabled) | Native `execute.before/after` and two provider requests | Exactly one successful tool execution; native continuation stays on the same provider |
 | Unknown billing (routing enabled) | No local provider `doStream` invocation | Session fails before transport or tools |
 | Metered route (paid fallback disabled) | No local paid-labelled provider `doStream` invocation | Session fails; the previously proven local route is never reached |
 | Unsupported requested `high` | Only `medium` advertised in fixture | No transport; does not alone prove the reason for denial |
-| Restart and disabled compatibility | Fresh real OpenCode processes | Guard continues to deny, disabled mode continues to run |
+| Native compaction after a completed tool | Compaction model request, native tool hook counts and selected provider | One native tool; compaction completes on same model/provider |\n| Restart and disabled compatibility | Fresh real OpenCode processes | Guard continues to deny, disabled mode continues to run |
 | Trace oracle mutations | Synthetic corrupted trace inputs | Leak, duplicate tool calls and provider changes are rejected by the oracle |
 
 The negative controls are deliberately independent of the production
@@ -87,7 +87,7 @@ genuine installed evidence.
 | 9. Exact reasoning | Unsupported local `high` blocks; selection under verified included routes UNPROVEN |
 | 10. Independent processes share quotas | PR #192 has separate tests; **assembled-host integration** UNPROVEN |
 | 11. Routing disabled | Native real-host compatibility checked |
-| 12. Restart, cancellation, compaction, provider errors | Restart and scripted provider faults checked; cancellation/compaction and live failover state UNPROVEN |
+| 12. Restart, cancellation, compaction, provider errors | Native restart, native interruption on scripted provider faults, and compaction after tool pass locally; **state during live provider fallback remains UNPROVEN** |
 
 A test cannot become PASS merely because a fixture skipped an unavailable
 product interface. When the adapter and quota source are assembled, add
