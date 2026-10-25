@@ -18,7 +18,7 @@ Git and npm. Start from a disposable checkout of this PR branch:
 
 ```bash
 set -euo pipefail
-git checkout test/model-routing-quota-installed-acceptance-v214
+git checkout fix/model-routing-review-gates
 bun install --frozen-lockfile
 bun run typecheck
 bun run test:core
@@ -48,9 +48,13 @@ cat "$RUN/report/report.json"
 
 Use `.github/workflows/installed-model-routing-acceptance-v214.yml` for
 automated runs. The workflow uploads `report.json` and private-host process
-logs as CI artifacts. The fixture's `routing-events.ndjson` is temporary and
-keeps **only request route IDs, test mode and native tool names**. It does not
-record raw prompts, headers, account identities, tokens or tool inputs.
+logs **and separate per-case sanitized event traces** as CI artifacts.
+The original fixture's `routing-events.ndjson` is temporary; reported traces
+include allowlisted request route/model IDs, test mode, native tool names and
+a pseudonymous local Session label. Neither stores raw prompts, headers,
+account credentials, tokens or tool inputs. Guarded failures must match
+their expected `LOOM_MODEL_ROUTE_UNAVAILABLE` or
+`LOOM_MODEL_ROUTING_CONFIG_UNREADABLE` category, not merely zero transport.
 
 ## What the installed-host gate verifies
 
@@ -59,15 +63,16 @@ record raw prompts, headers, account identities, tokens or tool inputs.
 | Native Architect, Coder and Reviewer (routing disabled) | V2 provider `doStream` calls | One request to the exact selected provider and model |
 | Native metered transport (routing disabled) | Paid-labelled local provider request | The scripted provider is genuinely callable without the guard |
 | Injected provider faults (routing disabled) | Native transport traces before-output, after-text, and after-tool | No unexpected second provider or repeated native tool (not a live-fallback test) |
-| Real tool continuation (routing disabled) | Native `execute.before/after` and two provider requests | Exactly one successful tool execution; native continuation stays on the same provider |
+| Real tool continuation (routing disabled) | Native `execute.before/after` and two provider requests | Exactly one successful tool execution; native continuation stays on the exact provider/model |
 | Unknown billing (routing enabled) | No local provider `doStream` invocation | Session fails before transport or tools |
 | Metered route (paid fallback disabled) | No local paid-labelled provider `doStream` invocation | Session fails; the previously proven local route is never reached |
 | Unsupported requested `high` | Only `medium` advertised in fixture | No transport; does not alone prove the reason for denial |
 | Native compaction after a completed tool | Compaction model request, native tool hook counts and selected provider | One native tool; compaction completes on same model/provider |\n| Restart and disabled compatibility | Fresh real OpenCode processes | Guard continues to deny, disabled mode continues to run |
 | Installed quota-state initialization | Real isolated native host and XDG quota DB | Enabled routing opens private 0600 quota state; disabled first-run does not |
 | Independent quota processes | Separate Bun child processes using PR #194 SQLite manager | Cross-process block, account/provider isolation, single recovery probe and observable recovery |
-| Unexpected native global default | Host configured with a paid-labelled default in a managed Session | Never reaches local provider transport |
-| Trace oracle mutations | Synthetic corrupted trace inputs | Leak, duplicate tool calls and provider changes are rejected by the oracle |
+| Unexpected native global default | Host configured with a paid-labelled default in a managed Session | No transport; without an eligible primary route the exact mismatch reason remains UNPROVEN |
+| Invalid routing configuration | Host startup with malformed `.loom.yaml` | Native request rejected with `LOOM_MODEL_ROUTING_CONFIG_UNREADABLE` before any provider transport |
+| Trace oracle mutations | Synthetic corrupted trace inputs | Leak, duplicate tool calls, provider changes and model-only changes are rejected by the oracle |
 
 The negative controls are deliberately independent of the production
 `planModelRoutes` implementation. The **synthetic mutations prove only that
@@ -94,7 +99,7 @@ an installed-host requirement to PASS.
 | 6 | Cross-process block and recovery | PASS separate SQLite child-process test; UNPROVEN native request integration |
 | 7 | Separate provider accounts | PASS separate SQLite child-process test; UNPROVEN native account switch |
 | 8 | Unknown and metered protection | PASS local installed guard negatives; real billing unproven |
-| 9 | Unexpected global default rejected | PASS local installed pre-transport guard |
+| 9 | Unexpected global default rejected | UNPROVEN distinct mismatch guard; blocked local transport is confirmed |
 | 10 | No silent active account/model change | UNPROVEN native stream lease; mocked guard checks |
 | 11 | No tool replay on error/interrupt | PASS local disabled-native negative; UNPROVEN managed interruption |
 | 12 | Routing disabled retains native behavior | PASS installed native host |
