@@ -254,3 +254,45 @@ test("native HTTP 403 on one model cannot indefinitely block another model on th
     expect(denied.decision.retry).toBe(true)
   } finally { store.close() }
 }))
+
+
+test("delayed execution A terminal event cannot discard execution B's quota reservation", async () => withState(async path => {
+  const store = await openSharedQuotaState({ path })
+  const controller = new AbortController()
+  try {
+    const f = fixture()
+    let deliver!: () => void
+    let processed!: () => void
+    const received = new Promise<void>(resolve => { processed = resolve })
+    f.ctx.event.subscribe = async function* ({ signal }: { signal: AbortSignal }) {
+      await new Promise<void>(resolve => {
+        deliver = resolve
+        signal.addEventListener("abort", resolve, { once: true })
+      })
+      if (signal.aborted) return
+      // A's completion arrives only AFTER B has obtained a new reservation.
+      yield { type: "session.execution.succeeded", data: { sessionID: "sess_quota_1" } }
+      processed() // for-await handler finished processing the preceding event
+      await new Promise<void>(resolve => {
+        signal.addEventListener("abort", resolve, { once: true })
+      })
+    }
+    await registerModelRouting(f.ctx, f.config, [], controller.signal, f.billing, store)
+    const hook = f.hooks.get("model.request")!
+    await hook(request()) // execution A
+    await hook(request()) // execution B, same native Session/model
+    // Wait for the actual event subscriber to become ready, then release A.
+    for (let i = 0; i < 50 && !deliver; i++) await Bun.sleep(1)
+    expect(deliver).toBeFunction()
+    deliver()
+    await received
+    const failed = { ...request(), error: { type: "provider.rate-limit", status: 429 },
+      attempt: 1, decision: { retry: true, delay: 0 } }
+    await f.hooks.get("retry")!(failed)
+    expect(failed.decision.retry).toBe(false)
+    expect(store.eligibility(go()).reason).toBe("throttled")
+  } finally {
+    controller.abort()
+    store.close()
+  }
+}))
