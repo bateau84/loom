@@ -131,6 +131,12 @@ before `Outcome.Retry` commits or schedules another attempt**.
 the next physical attempt, rebuilding the entire request and tool snapshot
 through the native model resolver.
 
+A host must check all of the following. A confirmed, authoritative quota
+rejection is distinct from a transport exception whose delivery or remote
+effects are unknown: receiving a provider's quota response does not by itself
+forbid early fallback, but an ordinary HTTP 429 without reliable classification
+must not be called `quota-exhausted`.
+
 A host must check all of the following:
 
 - The failure is classified and an **explicit** replacement was proposed;
@@ -160,10 +166,14 @@ A host must check all of the following:
 
 Use an internal typed `RetryWithRoute` outcome so an untrusted callback
 cannot mutate the already dispatched request. Close the Session's old WS
-transport/checkpoint before the replacement, re-resolve native provider
-capabilities/connection **once**, then keep the returned runtime model
-(including its already resolved credentials) pinned for the rest of the
-active turn. A new `Model.Ref` by itself is insufficient because
+transport/checkpoint before the replacement and re-resolve native provider
+capabilities and the chosen connection under a **native turn-scoped lease**.
+The lease pins the *connection identity*, not a frozen OAuth access token:
+safe native credential refresh for the same account is allowed, but a different
+account must never be selected implicitly. Give the native resolver an internal
+`resolveModelForConnection(model, variant, connection)` path so every future
+attempt/Step uses the chosen account rather than calling `connection.active()`
+anew. A new `Model.Ref` by itself is insufficient because
 `ModelResolver.resolveModel` otherwise reads the current active connection
 again.
 
