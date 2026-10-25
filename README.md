@@ -161,13 +161,20 @@ installed model definitions, and native permissions. **Opt-in, initial routing
 only on 2.1.4:** Loom assigns exact native models and reasoning variants from
 verified provider/connection evidence and guards against unknown or unapproved
 paid requests at provider dispatch. It never switches providers during
-a running native stream. The only automatic included-use classification
-currently recognized is native OpenCode ChatGPT OAuth with its known Codex
-integration evidence; other providers await the separate shared-quota
-attestation interface. With no verified eligible model, the managed request
-is rejected rather than silently choosing OpenCode's global default.
+a running native stream. Initial selection now reads the shared,
+per-account SQLite quota state across this user's OpenCode processes, and
+each managed request needs an atomic reservation before dispatch. Only
+native OpenCode ChatGPT OAuth with the known Codex integration evidence is
+recognized as included without a separate billing attestation; quota state
+alone never authorizes paid or subscription use. A classified native quota,
+rate-limit or auth failure updates shared state, but the plugin does not
+invent successful request accounting or a provider reset. Once the active
+model becomes unavailable, its request is rejected rather than switched or
+silently charged to OpenCode's global default.
 `loom_agents` exposes `model_routing_runtime` and selected/unavailable
-agents. See [model routing](docs/model-routing.md) for exact limitations before
+agents. See [model routing](docs/model-routing.md) and
+[shared subscription quota](docs/shared-subscription-quota.md) for the
+exact host/account-affinity and recovery limits before
 enabling it. Invalid configuration continues to disable guidance and
 automatic capture instead of applying a partial or stale role mapping;
 do **not** treat an invalid-startup configuration as an enforced billing
