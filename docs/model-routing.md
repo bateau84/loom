@@ -79,7 +79,11 @@ unmanaged Sessions retain native auxiliary behavior. For an intentionally
 OpenCode behaves as before.
 
 A changed routing policy requires a plugin restart; request-time checks
-reject changes since activation. New plugin activations read quota blocks
+reject changes since activation. Invalid config startup and unexpected
+termination of the native terminal-event subscription are distinct visible
+fail-closed states; `loom_agents` reports `blocked-config` on invalid startup
+and managed dispatch reports `LOOM_MODEL_ROUTING_EVENTS_UNAVAILABLE` if the
+subscription ends. In-memory Session leases have a bounded capacity. New plugin activations read quota blocks
 written by other processes before choosing a model. Existing active
 sessions keep their initial selected model and fail closed if a different
 process exhausts that route; they do **not** silently switch to the next
@@ -98,14 +102,20 @@ different active account between model resolution and transport. Native
 account affinity during a stream, tool execution and auxiliary calls remains
 a host contract requirement. The adapter records only typed, normalized
 native `provider.quota`, `provider.free-limit`, `provider.rate-limit` and
-`provider.auth` failures (the latter only with HTTP 401/403) from
-matching reserved primary requests. It
-disables repeated retries on those blocked routes, but does not infer
-a successful stream, a reset timestamp or remaining requests from HTTP 200.
-Unobserved success/recovery accounting is deliberately not fabricated. Invalid/overloaded config loaded at startup
-follows existing Loom fail-closed-guidance behavior and can leave routing
-disabled; operators must verify the runtime status before treating paid
-policy as enforced. The separate installed-host negative control establishes
+`provider.auth` failures (the latter only with HTTP 401) from
+matching reserved primary requests. HTTP 403 alone cannot prove that every
+model on the account is unauthorized, so it creates no account-wide block.
+Native normalized `retryAfterMs` is preserved, not replaced by an estimated
+short cooldown. The adapter disables repeated retries on reliably blocked
+routes but does not infer a successful stream, a reset timestamp or
+remaining requests from HTTP 200.
+Unobserved success/recovery accounting is deliberately not fabricated.
+An **unreadable/invalid configuration** is not intentionally disabled routing:
+a supported host registers a pre-transport guard that rejects native model
+requests with `LOOM_MODEL_ROUTING_CONFIG_UNREADABLE` until repair and plugin
+restart. Only a valid explicitly disabled policy preserves normal native
+models and execution. A lost terminal-event subscription blocks managed
+requests until restart instead of silently retaining unbounded leases. The separate installed-host negative control establishes
 only rejection under *unverified* billing and the disabled native path.
 It does not prove actual ChatGPT billing, two-provider switching or live
 tool-affinity acceptance.
