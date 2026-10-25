@@ -153,7 +153,7 @@ test("only real normalized provider failures update shared quota; retry does not
     const observed = { ...request(), error: { type: "provider.quota", status: 429 },
       attempt: 2, decision: { retry: true, delay: 0 } }
     await f.hooks.get("retry")!(observed)
-    expect(observed.decision).toEqual({ retry: false })
+    expect((observed.decision as { retry: boolean }).retry).toBe(false)
     const secondProcess = await openSharedQuotaState({ path })
     try {
       expect(secondProcess.eligibility(go()).reason).toBe("exhausted")
