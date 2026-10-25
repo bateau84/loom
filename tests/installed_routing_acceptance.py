@@ -40,7 +40,7 @@ NOT_PROVEN = {
     "8-stream-and-tool-account-affinity": "Native provider connection has no atomic lease across stream/continuation",
     "9-reasoning-preserved-on-fallback": "Native variants are tested by unit tests; no installed verified alternate route",
     "10-cross-process-quota": "PR #192 quota store is separate and not connected to the installed adapter",
-    "12-cancel-compaction-provider-failures": "Restart and scripted native provider errors tested; cancellation/compaction with live failover not integrated",
+    "12-cancel-compaction-provider-failures": "Native restart, errors/interruption and compaction checked without routing; combined live failover state is unproven",
     "live-two-provider": "Two permitted real native provider connections and explicit paid-use consent not supplied",
 }
 
@@ -160,6 +160,29 @@ def run_case(
         elif expect == "tool":
             require(outcome == "succeeded", f"{name}: native tool continuation did not succeed: {outcome}")
             expect_single_native_tool(captured, model)
+        elif expect == "compaction":
+            require(outcome == "succeeded", f"{name}: prerequisite native tool failed: {outcome}")
+            expect_single_native_tool(captured, model)
+            request(host, "POST", f"/api/session/{session}/compact", {})
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                captured = read_events(root)[start:]
+                if records(captured, "compaction-model-request"):
+                    break
+                time.sleep(.05)
+            else:
+                raise AssertionError("Native compaction did not reach the local model")
+            idle(host, [session])
+            captured = read_events(root)[start:]
+            require(len(records(captured, "tool-before")) == 1 and
+                    len(records(captured, "tool-after")) == 1,
+                    "Compaction replayed or erased the executed native tool hooks")
+            require(all(x["data"].get("providerID") == model
+                        for x in records(captured, "provider-request")),
+                    "Compaction selected an unexpected provider")
+            result = request(host, "GET", f"/api/session/{session}")
+            outcome = result.get("outcome")
+            require(outcome == "succeeded", "Native compaction did not finish successfully")
         elif expect in ("provider-error", "tool-error"):
             require(outcome in ("failed", "interrupted"), f"{name}: expected provider failure/interruption, got {outcome}")
             expect_failed_local_provider(captured, model, after_tool=(expect == "tool-error"))
@@ -223,6 +246,7 @@ def run(cli: Path, repo: Path, plugin: Path, artifact: Path, output: Path,
                 # The native host actually executes a tool and then sends a
                 # second model request; we inspect the real execute hook.
                 ("disabled-tool-continuation", False, "tool", "route-primary", "tool", "medium"),
+                ("disabled-compaction-after-tool", False, "tool", "route-primary", "compaction", "medium"),
                 # Faults are issued by the in-memory language model AFTER
                 # actual native transport. These must never call a different
                 # provider or execute/replay a native tool.
