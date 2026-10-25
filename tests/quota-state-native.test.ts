@@ -179,3 +179,112 @@ test("restarts, corrupt DB, symlinks, unsafe permissions and invalid signals fai
   await chmod(other, 0o644)
   await expect(openSharedQuotaState({ path: other })).rejects.toThrow(/private regular file/)
 }))
+
+
+test("concurrent negative reports retain confirmed exhaustion and never shorten retry deadlines", async () => fixture(async path => {
+  let now = 1_000_000
+  const store = await openSharedQuotaState({ path, now: () => now })
+  try {
+    const r = route("negative-race")
+    const weaker = store.reserve(r).permit!
+    const another = store.reserve(r).permit!
+    const stronger = store.reserve(r).permit!
+    expect(store.recordFailure(r, weaker, { kind: "throttled", retryAfterMs: 2_000 })).toBe(true)
+    expect(store.recordFailure(r, another, { kind: "overloaded" })).toBe(true)
+    expect(store.recordFailure(r, stronger, { kind: "exhausted", retryAfterMs: 60_000 })).toBe(true)
+    expect(store.eligibility(r)).toMatchObject({ eligible: false, reason: "exhausted", retryAt: now + 60_000 })
+    now += 2_100
+    expect(store.eligibility(r).eligible).toBe(false)
+    // A current provider-confirmed recovery creates a new generation.
+    expect(store.recordProviderQuota(r, store.observe(r), { remaining: 5 })).toBe(true)
+    expect(store.eligibility(r).eligible).toBe(true)
+    expect(store.recordFailure(r, stronger, { kind: "exhausted" })).toBe(false)
+    // Reports from new requests can still block the route normally.
+    expect(store.recordFailure(r, store.reserve(r).permit!, { kind: "exhausted" })).toBe(true)
+    expect(store.eligibility(r).reason).toBe("exhausted")
+  } finally { store.close() }
+}))
+
+test("concurrent provider-reported zero overrides weaker cooldown without stale success", async () => fixture(async path => {
+  const now = 2_000_000
+  const store = await openSharedQuotaState({ path, now: () => now })
+  try {
+    const r = route("provider-zero")
+    const first = store.reserve(r).permit!
+    const zero = store.reserve(r).permit!
+    expect(store.recordFailure(r, first, { kind: "throttled", retryAfterMs: 2_000 })).toBe(true)
+    expect(store.recordProviderQuota(r, zero, { remaining: 0, resetAt: now + 90_000 })).toBe(true)
+    expect(store.eligibility(r)).toMatchObject({ eligible: false, reason: "exhausted", retryAt: now + 90_000 })
+    store.recordSuccess(r, first, { remaining: 99 })
+    expect(store.eligibility(r).reason).toBe("exhausted")
+  } finally { store.close() }
+}))
+
+test("provider reset and native Retry-After are both respected as minimum retry deadlines", async () => fixture(async path => {
+  let now = 3_000_000
+  const store = await openSharedQuotaState({ path, now: () => now })
+  try {
+    const r = route("conflicting-deadlines")
+    const initial = store.reserve(r).permit!
+    expect(store.recordFailure(r, initial, {
+      kind: "throttled", resetAt: now + 2_000, retryAfterMs: 60_000,
+    })).toBe(true)
+    expect(store.eligibility(r).retryAt).toBe(now + 60_000)
+    now += 50_000
+    expect(store.eligibility(r).eligible).toBe(false)
+    now += 10_001
+    expect(store.eligibility(r).reason).toBe("probe-due")
+  } finally { store.close() }
+}))
+
+test("malformed SQLite numeric and lease fields fail closed despite quick_check ok", async () => {
+  for (const sql of [
+    "UPDATE quota SET until_ms='not-a-timestamp'",
+    "UPDATE quota SET updated_ms='not-an-integer'",
+    "UPDATE quota SET lease_until_ms='not-a-timestamp', lease_token='00000000-0000-4000-8000-000000000000'",
+    "UPDATE quota SET lease_token='00000000-0000-4000-8000-000000000000'",
+    "UPDATE quota SET remaining=-1",
+  ]) {
+    await fixture(async path => {
+      const routeID = route("corrupt-field")
+      const original = await openSharedQuotaState({ path })
+      original.recordFailure(routeID, original.reserve(routeID).permit!, { kind: "exhausted" })
+      original.close()
+      const raw = new Database(path)
+      try {
+        raw.exec(sql)
+        expect((raw.prepare("PRAGMA quick_check").get() as { quick_check: string }).quick_check).toBe("ok")
+      } finally { raw.close() }
+      const reopened = await openSharedQuotaState({ path })
+      try { expect(() => reopened.eligibility(routeID)).toThrow(/Invalid shared quota state/) }
+      finally { reopened.close() }
+    })
+  }
+})
+
+test("version one quota database migrates without deleting its existing records", async () => fixture(async path => {
+  const legacy = new Database(path)
+  try {
+    legacy.exec(`CREATE TABLE quota (
+      id TEXT PRIMARY KEY NOT NULL CHECK(length(id)=64),
+      state TEXT NOT NULL CHECK(state IN ('available','unknown','exhausted','throttled','overloaded','authentication')),
+      evidence TEXT NOT NULL CHECK(evidence IN ('provider','observed','unknown')),
+      revision INTEGER NOT NULL CHECK(revision>=0),
+      until_ms INTEGER, lease_until_ms INTEGER, lease_token TEXT,
+      remaining INTEGER, failures INTEGER NOT NULL CHECK(failures>=0),
+      updated_ms INTEGER NOT NULL, last_success_ms INTEGER
+    ); PRAGMA user_version=1;`)
+    legacy.prepare("INSERT INTO quota (id,state,evidence,revision,until_ms,lease_until_ms,lease_token,remaining,failures,updated_ms,last_success_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+      .run("a".repeat(64), "exhausted", "observed", 1, Date.now() + 30000, null, null, null, 1, Date.now(), null)
+  } finally { legacy.close() }
+  await chmod(path, 0o600)
+  const upgraded = await openSharedQuotaState({ path })
+  try {
+    const version = new Database(path)
+    try {
+      expect((version.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(2)
+      const row = version.prepare("SELECT state, release_revision FROM quota WHERE id=?").get("a".repeat(64))
+      expect(row).toMatchObject({ state: "exhausted", release_revision: 0 })
+    } finally { version.close() }
+  } finally { upgraded.close() }
+}))
