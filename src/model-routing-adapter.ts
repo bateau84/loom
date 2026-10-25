@@ -104,7 +104,7 @@ function assertAllowedRequest(
 }
 
 export type ModelRoutingRuntime = {
-  status: "disabled" | "not-connected" | "initial-only"
+  status: "disabled" | "not-connected" | "initial-only" | "blocked-config"
   selected: Record<string, { provider_id: string; model_id: string; reasoning: string; billing: string }>
   unavailable: string[]
 }
@@ -130,13 +130,22 @@ export async function registerModelRouting(
     return { status: "not-connected", selected: {}, unavailable: [] }
   }
   const snapshot = await getConfig()
-  // Existing Loom treats an invalid/overloaded config read as disabled. Do
-  // not make its native tool registry/ledger fail during a routing-disabled
-  // startup: that would regress existing multi-instance behavior.
+  if (snapshot.errors.length) {
+    // A malformed policy must never become authorization for OpenCode's paid
+    // native default. The configuration reader discards partial policies, so
+    // routing intent is unknowable after an error: protect ALL native requests.
+    // Install the pre-transport guard even though the rest of Loom can still
+    // expose tools and configuration diagnostics.
+    disposers.push(await ctx.session.hook("model.request", () => {
+      throw new Error("LOOM_MODEL_ROUTING_CONFIG_UNREADABLE: model dispatch blocked until config is repaired and Loom restarted")
+    }))
+    return { status: "blocked-config", selected: {}, unavailable: [] }
+  }
+  // A deliberately disabled, successfully loaded policy retains normal
+  // OpenCode models and requests. This differs from an unreadable policy.
   if (!snapshot.config.modelRouting.enabled) {
     return { status: "disabled", selected: {}, unavailable: [] }
   }
-  if (snapshot.errors.length) throw new Error("LOOM_MODEL_ROUTING_CONFIG_UNREADABLE")
   const config = snapshot.config
   const policyVersion = fingerprint(config)
   // A single shared WAL store per plugin process, entirely separate from
@@ -175,6 +184,9 @@ export async function registerModelRouting(
   // Store only the last owned native primary reservation per Session/agent/
   // model; never use it to switch, retry or record unobserved successes.
   const pending = new Map<string, PendingQuotaRequest & { sessionID: string }>()
+  const MAX_TRACKED_SESSIONS = 512
+  let eventsHealthy = true
+  disposers.push({ dispose: async () => { eventsHealthy = false; leases.clear(); pending.clear() } })
   const pendingKey = (sessionID: string, agent: string, providerID: string, modelID: string) =>
     JSON.stringify([sessionID, agent, providerID, modelID])
   // Keep callback synchronous to dispatch: hook registration is a supported
@@ -209,6 +221,12 @@ export async function registerModelRouting(
         ((agentPlan && agentPlan.status !== "no-policy") || leases.has(event.sessionID))) {
       if (!agentPlan || agentPlan.status === "no-policy")
         throw new Error("LOOM_MODEL_ROUTE_AFFINITY: managed Session switched to an unconfigured agent")
+      if (!eventsHealthy) throw new Error("LOOM_MODEL_ROUTING_EVENTS_UNAVAILABLE: restart required")
+      if ((!leases.has(event.sessionID) && leases.size >= MAX_TRACKED_SESSIONS) ||
+          (pending.size >= MAX_TRACKED_SESSIONS &&
+            !pending.has(pendingKey(event.sessionID, event.agent, event.model.providerID, event.model.id)))) {
+        throw new Error("LOOM_MODEL_ROUTING_STATE_LIMIT: terminal events missing; restart required")
+      }
       assertInitialRoute(agentPlan, event.model)
       // A newly exhausted or unverified route fails *before* calling the provider.
       const nativeID = assertAllowedRequest(fresh, event.model, config.modelRouting.paidFallback)
@@ -227,6 +245,7 @@ export async function registerModelRouting(
         { ...reservation, sessionID: event.sessionID })
       leases.set(event.sessionID, lease)
     } else if (event.kind !== "primary" && await managedSession(event.sessionID)) {
+      if (!eventsHealthy) throw new Error("LOOM_MODEL_ROUTING_EVENTS_UNAVAILABLE: restart required")
       // Guard title/compaction/generate for managed Sessions, without changing
       // native utility behavior for *explicitly unconfigured* Session agents.
       const nativeID = assertAllowedRequest(fresh, event.model, config.modelRouting.paidFallback)
@@ -253,17 +272,22 @@ export async function registerModelRouting(
         if (signal.aborted) break
         if (event.type === "session.execution.succeeded" || event.type === "session.execution.failed" ||
             event.type === "session.execution.interrupted" || event.type === "session.deleted") {
-          // V2 event payloads identify the native Session as data.sessionID.
-          if ("sessionID" in event.data && typeof event.data.sessionID === "string")
-            {
-              leases.delete(event.data.sessionID)
-              for (const [id, record] of pending) if (record.sessionID === event.data.sessionID) pending.delete(id)
-            }
+          if ("sessionID" in event.data && typeof event.data.sessionID === "string") {
+            leases.delete(event.data.sessionID)
+            for (const [id, record] of pending) if (record.sessionID === event.data.sessionID) pending.delete(id)
+          }
         }
       }
     } catch {
-      // A missed release is conservative. The next primary request with a
-      // different route is rejected rather than silently changing accounts.
+      // A terminated subscriber cannot prove that existing Session leases
+      // have ended. Never silently resume routing without terminal events.
+    } finally {
+      if (!signal.aborted) {
+        eventsHealthy = false
+        leases.clear()
+        pending.clear()
+        console.warn("Loom routing event subscription ended unexpectedly; managed model requests are blocked until restart")
+      }
     }
   }
   void run()
