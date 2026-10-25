@@ -147,8 +147,10 @@ export default Plugin.define({
       const saved = store.selected(session)
       return saved ? { action_id: saved.action_id, ...(saved.node_id === undefined ? {} : { node_id: saved.node_id }) } : undefined
     }
+    let routingStatus: "disabled" | "not-connected" | "initial-only" | "blocked-config" = "not-connected"
     try {
       const routing = await registerModelRouting(ctx, () => getConfig(), disposers, lifetime.signal)
+      routingStatus = routing.status
       disposers.push(await ctx.tool.transform(editor => {
         editor.namespace({ name: "loom", description: LOOM_NAMESPACE_HELP })
         for (const spec of specs) editor.add({
@@ -377,10 +379,10 @@ export default Plugin.define({
     // A valid, explicitly disabled policy removes it; a guarded runtime
     // delegates to the fully registered model.request hook. Unknown hosts
     // and partial runtimes remain denied instead of falling through.
-    if (routing.status === "disabled") {
+    if (routingStatus === "disabled") {
       startupDispatch = "disabled"
       await disposeStartupGuard()
-    } else if (routing.status === "initial-only" || routing.status === "blocked-config") {
+    } else if (routingStatus === "initial-only" || routingStatus === "blocked-config") {
       startupDispatch = "delegated"
     } else {
       startupDenial = "LOOM_MODEL_ROUTING_HOST_UNQUALIFIED: no proven native request guard"
