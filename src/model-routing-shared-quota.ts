@@ -38,7 +38,11 @@ export function classifiedNativeFailure(
     case "provider.rate-limit":
       return { kind: "throttled" }
     case "provider.auth":
-      return { kind: "authentication" }
+      // V2 also uses this type for pre-dispatch Integration.AuthorizationError.
+      // Require an actual provider HTTP authentication status before blocking
+      // an account across other processes. Never infer auth loss from text.
+      return error.status === 401 || error.status === 403
+        ? { kind: "authentication" } : undefined
     default:
       return undefined
   }
