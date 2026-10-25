@@ -1,5 +1,6 @@
 import type { Config, Reasoning } from "./config.js"
 import { planModelRoutes, type ModelPlan, type RouteInventory } from "./model-routing.js"
+import type { QuotaGate } from "./model-routing-shared-quota.js"
 
 /** Only public catalog fields and opaque native connection IDs; never credentials. */
 export type NativeRoutingModel = {
@@ -93,7 +94,10 @@ export function inventoryEntry(
   attestation: RouteAttestation | undefined,
   now: number,
 ): RouteInventory {
-  const nativeID = connectionID(connection)
+  // OpenCode environment connections expose only a variable name, not a
+  // stable identity of the underlying account. Do not pool them across
+  // processes or authorize included subscription usage by that name.
+  const nativeID = connection?.type === "credential" ? connectionID(connection) : undefined
   const trusted = nativeID !== undefined &&
     attestation?.verified === true &&
     attestation.providerID === model.providerID &&
@@ -105,6 +109,7 @@ export function inventoryEntry(
   return {
     providerID: model.providerID,
     modelID: model.id,
+    ...(nativeID ? { accountID: nativeID } : {}),
     billing: trusted ? attestation.billing : "unknown",
     quota: trusted && (attestation.cooldownUntil === undefined || attestation.cooldownUntil <= now)
       ? attestation.quota : "exhausted",
@@ -127,11 +132,22 @@ export function planInitialModels(
   connections: Readonly<Record<string, NativeRoutingConnection | undefined>>,
   attestations: Readonly<Record<string, RouteAttestation | undefined>>,
   now: number,
+  quota?: QuotaGate,
 ): RoutingSnapshot {
-  const inventory = models.map(model => inventoryEntry(
-    model, connections[model.providerID],
-    attestations[JSON.stringify([model.providerID, model.id])], now,
-  ))
+  const inventory = models.map(model => {
+    const candidate = inventoryEntry(model, connections[model.providerID],
+      attestations[JSON.stringify([model.providerID, model.id])], now)
+    // Billing is independently attested; quota state can ONLY narrow the
+    // candidate's eligibility. A prior quota report never upgrades billing.
+    if (!quota || !candidate.accountID || candidate.billing === "unknown") return candidate
+    const current = quota.eligibility({
+      providerID: candidate.providerID, modelID: candidate.modelID,
+      accountID: candidate.accountID,
+    })
+    return { ...candidate,
+      quota: candidate.quota === "exhausted" || !current.eligible
+        ? "exhausted" as const : current.quota }
+  })
   const plans: Record<string, ModelPlan> = {}
   for (const id of Object.keys(config.agents)) plans[id] = planModelRoutes(config, id, inventory)
   return {
