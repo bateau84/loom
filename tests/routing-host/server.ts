@@ -44,17 +44,25 @@ export default Plugin.define({
         const afterTool = Array.isArray(input.prompt) && input.prompt.some((item: any) =>
           item.role === "tool" || (Array.isArray(item.content) &&
             item.content.some((part: any) => part.type === "tool-result")))
+        // Reuse the host's real compaction instruction signature; do not
+        // synthesize compaction events or manipulate native Session history.
+        const contextText = JSON.stringify(input.prompt)
+        const compaction = contextText.includes("You MUST use this format for your response") &&
+          contextText.includes("## Objective")
         audit("provider-request", { providerID, modelID, kind, afterTool: Boolean(afterTool) })
+        if (compaction) audit("compaction-model-request", { providerID, modelID })
         if (kind === "pre-output-error") throw new Error("ROUTING_FIXTURE_BEFORE_OUTPUT")
         if (kind === "tool-then-error" && afterTool) throw new Error("ROUTING_FIXTURE_AFTER_NATIVE_TOOL")
         const events: any[] = [{ type: "stream-start", warnings: [] }]
-        const tool = (kind === "tool" || kind === "tool-then-error") && !afterTool
+        const tool = (kind === "tool" || kind === "tool-then-error") && !afterTool && !compaction
         if (tool) {
           events.push({ type: "tool-call", toolCallId: randomUUID(), toolName: "execute",
             input: JSON.stringify({ code: "return search({namespace:'loom',limit:2}).items.length" }) })
         } else {
           events.push({ type: "text-start", id: "message" },
-            { type: "text-delta", id: "message", delta: "ROUTING_FIXTURE_OK" },
+            { type: "text-delta", id: "message", delta: compaction
+              ? "## Objective\\n- Validate native routing under compaction.\\n\\n## Work State\\n### Completed\\n- One native tool call completed.\\n\\n## Next Move\\n1. Continue on the same model."
+              : "ROUTING_FIXTURE_OK" },
             { type: "text-end", id: "message" })
         }
         if (kind !== "partial-error") {
