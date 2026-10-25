@@ -189,3 +189,20 @@ test("disabled routing preserves current Loom behavior", () => {
   const p = planModelRoutes(defaults(), "any", [route("opencode-go", "go-sol")])
   assert.deepEqual(p, { status: "disabled", candidates: [] })
 })
+
+
+test("multiple accounts on one provider remain independent candidates", () => {
+  const plan = planModelRoutes(configured(), "architect", [
+    route("opencode-go", "go-sol", { accountID: "exhausted", quota: "exhausted" }),
+    route("opencode-go", "go-sol", { accountID: "healthy" }),
+    route("openai", "gpt-6.1-sol", { accountID: "openai-account" }),
+  ])
+  assert.equal(plan.status, "ready")
+  assert.equal(plan.selected.accountID, "healthy")
+  const both = planModelRoutes(configured(), "architect", [
+    route("opencode-go", "go-sol", { accountID: "first" }),
+    route("opencode-go", "go-sol", { accountID: "second" }),
+  ])
+  assert.equal(both.status, "ready")
+  assert.deepEqual(both.candidates.map(c => c.accountID), ["first", "second"])
+})
