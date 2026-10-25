@@ -20,7 +20,7 @@ from installed_host_smoke import (
 )
 from installed_questions import request, idle
 from routing_acceptance_oracle import (
-    records, expect_transport, expect_blocked, expect_single_native_tool, run_mutation_controls,
+    records, expect_transport, expect_blocked, expect_single_native_tool,\n    expect_failed_local_provider, run_mutation_controls,
 )
 
 HOST_VERSION = "2.1.4"
@@ -39,7 +39,7 @@ NOT_PROVEN = {
     "8-stream-and-tool-account-affinity": "Native provider connection has no atomic lease across stream/continuation",
     "9-reasoning-preserved-on-fallback": "Native variants are tested by unit tests; no installed verified alternate route",
     "10-cross-process-quota": "PR #192 quota store is separate and not connected to the installed adapter",
-    "12-cancel-compaction-provider-failures": "Restart/normal continuation tested; interruption and compaction failover not integrated",
+    "12-cancel-compaction-provider-failures": "Restart and scripted native provider errors tested; cancellation/compaction with live failover not integrated",
     "live-two-provider": "Two permitted real native provider connections and explicit paid-use consent not supplied",
 }
 
@@ -135,6 +135,9 @@ def run_case(
         elif expect == "tool":
             require(outcome == "succeeded", f"{name}: native tool continuation did not succeed: {outcome}")
             expect_single_native_tool(captured, model)
+        elif expect in ("provider-error", "tool-error"):
+            require(outcome == "failed", f"{name}: expected injected provider failure, got {outcome}")
+            expect_failed_local_provider(captured, model, after_tool=(expect == "tool-error"))
         else:
             raise AssertionError("Unsupported test expectation")
         return {
@@ -195,6 +198,15 @@ def run(cli: Path, repo: Path, plugin: Path, artifact: Path, output: Path,
                 # The native host actually executes a tool and then sends a
                 # second model request; we inspect the real execute hook.
                 ("disabled-tool-continuation", False, "tool", "route-primary", "tool", "medium"),
+                # Faults are issued by the in-memory language model AFTER
+                # actual native transport. These must never call a different
+                # provider or execute/replay a native tool.
+                ("disabled-before-output-error", False, "pre-output-error",
+                 "route-primary", "provider-error", "medium"),
+                ("disabled-after-text-error", False, "partial-error",
+                 "route-primary", "provider-error", "medium"),
+                ("disabled-after-tool-error", False, "tool-then-error",
+                 "route-primary", "tool-error", "medium"),
                 # No fake 'subscription: included' hints are accepted.
                 ("enabled-unknown-billing", True, "text", "route-primary", "blocked", "medium"),
                 # A known-positive native metered transport must be blocked
