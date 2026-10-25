@@ -142,8 +142,9 @@ export async function registerModelRouting(
   // A single shared WAL store per plugin process, entirely separate from
   // Loom's Action ledger. Opening fails closed on corrupt/insecure state.
   // Native-only fixtures can inject a quota gate without touching real HOME.
-  const quota = injectedQuota ?? await openSharedQuotaState()
-  if (!injectedQuota) disposers.push({ dispose: async () => { quota.close() } })
+  const ownedQuota = injectedQuota ? undefined : await openSharedQuotaState()
+  const quota = injectedQuota ?? ownedQuota!
+  if (ownedQuota) disposers.push({ dispose: async () => { ownedQuota.close() } })
   const initial = await catalog(ctx, config, source, quota)
   const selected: ModelRoutingRuntime["selected"] = {}
   const unavailable: string[] = []
