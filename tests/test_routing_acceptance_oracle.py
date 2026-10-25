@@ -4,7 +4,8 @@ from __future__ import annotations
 import unittest
 
 from routing_acceptance_oracle import (
-    expect_transport, expect_blocked, expect_single_native_tool, run_mutation_controls,
+    expect_transport, expect_blocked, expect_single_native_tool,
+    expect_failed_local_provider, run_mutation_controls,
 )
 
 
@@ -37,6 +38,21 @@ class RoutingAcceptanceOracleTest(unittest.TestCase):
         ]
         with self.assertRaises(AssertionError):
             expect_single_native_tool(events, "route-primary")
+
+    def test_provider_error_after_tool_requires_same_route_and_one_tool(self):
+        trace = [
+            {"type": "provider-request", "data": {"providerID": "route-primary", "afterTool": False}},
+            {"type": "tool-before", "data": {"sessionID": "s", "tool": "execute"}},
+            {"type": "tool-after", "data": {"sessionID": "s", "tool": "execute", "status": "completed"}},
+            {"type": "provider-request", "data": {"providerID": "route-primary", "afterTool": True}},
+        ]
+        expect_failed_local_provider(trace, "route-primary", after_tool=True)
+        with self.assertRaises(AssertionError):
+            expect_failed_local_provider(trace + [trace[1]], "route-primary", after_tool=True)
+        with self.assertRaises(AssertionError):
+            expect_failed_local_provider(trace[:-1] + [{"type": "provider-request",
+                "data": {"providerID": "route-metered", "afterTool": True}}],
+                "route-primary", after_tool=True)
 
     def test_mutation_controls_must_all_reject_counterexamples(self):
         proof = run_mutation_controls()
