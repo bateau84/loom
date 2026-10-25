@@ -20,7 +20,8 @@ from installed_host_smoke import (
 )
 from installed_questions import request, idle
 from routing_acceptance_oracle import (
-    records, expect_transport, expect_blocked, expect_single_native_tool,\n    expect_failed_local_provider, run_mutation_controls,
+    records, expect_transport, expect_blocked, expect_single_native_tool,
+    expect_failed_local_provider, run_mutation_controls,
 )
 
 HOST_VERSION = "2.1.4"
