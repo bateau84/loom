@@ -1,6 +1,10 @@
 import type { Config, Reasoning } from "./config.js"
 import { planModelRoutes, type ModelPlan, type RouteInventory } from "./model-routing.js"
-import type { QuotaGate } from "./model-routing-shared-quota.js"
+/** Read-only structural boundary: core/Node tests do not import Bun SQLite. */
+export type QuotaEligibilityReader = {
+  eligibility(route: { providerID: string; modelID: string; accountID: string }):
+    { eligible: boolean; quota: "available" | "unknown" | "exhausted" }
+}
 
 /** Only public catalog fields and opaque native connection IDs; never credentials. */
 export type NativeRoutingModel = {
@@ -132,7 +136,7 @@ export function planInitialModels(
   connections: Readonly<Record<string, NativeRoutingConnection | undefined>>,
   attestations: Readonly<Record<string, RouteAttestation | undefined>>,
   now: number,
-  quota?: QuotaGate,
+  quota?: QuotaEligibilityReader,
 ): RoutingSnapshot {
   const inventory = models.map(model => {
     const candidate = inventoryEntry(model, connections[model.providerID],
