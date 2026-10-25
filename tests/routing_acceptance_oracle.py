@@ -30,10 +30,11 @@ def expect_blocked(events):
         raise AssertionError("A protected request executed a native tool")
 
 
-def expect_single_native_tool(events, provider):
+def expect_single_native_tool(events, provider, model="sol"):
     requests = records(events, "provider-request")
-    if len(requests) != 2 or any(r["data"].get("providerID") != provider for r in requests):
-        raise AssertionError("Native tool continuation changed provider or made unexpected model requests")
+    if len(requests) != 2 or any((r["data"].get("providerID"), r["data"].get("modelID")) !=
+                                  (provider, model) for r in requests):
+        raise AssertionError("Native tool continuation changed provider/model or made unexpected requests")
     if [bool(r["data"].get("afterTool")) for r in requests] != [False, True]:
         raise AssertionError("Native continuation did not provide a real tool result")
     before = [r for r in records(events, "tool-before") if r["data"].get("tool") == "execute"]
@@ -45,11 +46,12 @@ def expect_single_native_tool(events, provider):
 
 
 
-def expect_failed_local_provider(events, provider, *, after_tool=False):
-    """Provider errors must not call a *different* or paid local route."""
+def expect_failed_local_provider(events, provider, *, after_tool=False, model="sol"):
+    """Provider faults must not change either provider or model or replay tools."""
     calls = records(events, "provider-request")
-    if not calls or any(event["data"].get("providerID") != provider for event in calls):
-        raise AssertionError("Provider error caused an unexpected provider route")
+    if not calls or any((event["data"].get("providerID"), event["data"].get("modelID")) !=
+                        (provider, model) for event in calls):
+        raise AssertionError("Provider error caused an unexpected provider/model route")
     before = [event for event in records(events, "tool-before")
               if event["data"].get("tool") == "execute"]
     after = [event for event in records(events, "tool-after")
@@ -69,10 +71,10 @@ def run_mutation_controls():
     """Each deliberate counterexample MUST be rejected by the same production oracle."""
     blocked = [{"type": "provider-request", "data": {"providerID": "route-metered", "modelID": "sol"}}]
     tool = [
-        {"type": "provider-request", "data": {"providerID": "route-primary", "afterTool": False}},
+        {"type": "provider-request", "data": {"providerID": "route-primary", "modelID": "sol", "afterTool": False}},
         {"type": "tool-before", "data": {"sessionID": "s", "tool": "execute"}},
         {"type": "tool-after", "data": {"sessionID": "s", "tool": "execute", "status": "completed"}},
-        {"type": "provider-request", "data": {"providerID": "route-primary", "afterTool": True}},
+        {"type": "provider-request", "data": {"providerID": "route-primary", "modelID": "sol", "afterTool": True}},
     ]
     def must_reject(fn, events):
         try:
@@ -85,12 +87,15 @@ def run_mutation_controls():
                 tool + [tool[1], tool[2]])
     must_reject(lambda e: expect_single_native_tool(e, "route-primary"),
                 tool[:3] + [{"type": "provider-request", "data": {"providerID": "route-secondary",
-                    "afterTool": True}}])
+                    "modelID": "sol", "afterTool": True}}])
+    must_reject(lambda e: expect_single_native_tool(e, "route-primary"),
+                tool[:3] + [{"type": "provider-request", "data": {"providerID": "route-primary",
+                    "modelID": "astra", "afterTool": True}}])
     must_reject(lambda e: expect_transport(e, "route-primary", 1),
                 [{"type": "provider-request", "data": {"providerID": "route-metered"}}])
     return {"status": "PASS", "kind": "oracle-mutation-controls",
             "cases": ["paid transport leaks through guard", "duplicate native tool execution",
-                      "provider changes after tool", "unexpected provider selection"],
+                      "provider changes after tool", "model changes after tool", "unexpected provider selection"],
             "evidence": "synthetic oracle negative controls, not installed-host execution"}
 
 
