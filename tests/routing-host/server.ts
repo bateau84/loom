@@ -18,7 +18,7 @@ const usage = {
   inputTokens: { total: 1, noCache: 1, cacheRead: 0, cacheWrite: 0 },
   outputTokens: { total: 1, text: 1, reasoning: 0 },
 }
-type Scenario = { kind: "text" | "tool" | "pre-output-error" | "partial-error" }
+type Scenario = { kind: "text" | "tool" | "pre-output-error" | "partial-error" | "tool-then-error" }
 
 export default Plugin.define({
   id: "loom.routing.acceptance.fixture",
@@ -46,8 +46,9 @@ export default Plugin.define({
             item.content.some((part: any) => part.type === "tool-result")))
         audit("provider-request", { providerID, modelID, kind, afterTool: Boolean(afterTool) })
         if (kind === "pre-output-error") throw new Error("ROUTING_FIXTURE_BEFORE_OUTPUT")
+        if (kind === "tool-then-error" && afterTool) throw new Error("ROUTING_FIXTURE_AFTER_NATIVE_TOOL")
         const events: any[] = [{ type: "stream-start", warnings: [] }]
-        const tool = kind === "tool" && !afterTool
+        const tool = (kind === "tool" || kind === "tool-then-error") && !afterTool
         if (tool) {
           events.push({ type: "tool-call", toolCallId: randomUUID(), toolName: "execute",
             input: JSON.stringify({ code: "return search({namespace:'loom',limit:2}).items.length" }) })
