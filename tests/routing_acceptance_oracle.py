@@ -44,6 +44,27 @@ def expect_single_native_tool(events, provider):
         raise AssertionError("Tool hooks recorded different native Sessions")
 
 
+
+def expect_failed_local_provider(events, provider, *, after_tool=False):
+    """Provider errors must not call a *different* or paid local route."""
+    calls = records(events, "provider-request")
+    if not calls or any(event["data"].get("providerID") != provider for event in calls):
+        raise AssertionError("Provider error caused an unexpected provider route")
+    before = [event for event in records(events, "tool-before")
+              if event["data"].get("tool") == "execute"]
+    after = [event for event in records(events, "tool-after")
+             if event["data"].get("tool") == "execute"]
+    if after_tool:
+        if len(before) != 1 or len(after) != 1 or after[0]["data"].get("status") != "completed":
+            raise AssertionError("Provider failure replayed, skipped or duplicated the native tool")
+        if len(calls) < 2 or calls[0]["data"].get("afterTool") or not all(
+                e["data"].get("afterTool") for e in calls[1:]):
+            raise AssertionError("Post-tool failure resumed without the native tool result")
+    elif before or after:
+        raise AssertionError("A provider error caused native tool execution")
+
+
+
 def run_mutation_controls():
     """Each deliberate counterexample MUST be rejected by the same production oracle."""
     blocked = [{"type": "provider-request", "data": {"providerID": "route-metered", "modelID": "sol"}}]
