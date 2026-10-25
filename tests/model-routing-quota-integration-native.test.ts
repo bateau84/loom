@@ -267,14 +267,14 @@ test("delayed execution A terminal event cannot discard execution B's quota rese
     f.ctx.event.subscribe = async function* ({ signal }: { signal: AbortSignal }) {
       await new Promise<void>(resolve => {
         deliver = resolve
-        signal.addEventListener("abort", resolve, { once: true })
+        signal.addEventListener("abort", () => resolve(), { once: true })
       })
       if (signal.aborted) return
       // A's completion arrives only AFTER B has obtained a new reservation.
       yield { type: "session.execution.succeeded", data: { sessionID: "sess_quota_1" } }
       processed() // for-await handler finished processing the preceding event
       await new Promise<void>(resolve => {
-        signal.addEventListener("abort", resolve, { once: true })
+        signal.addEventListener("abort", () => resolve(), { once: true })
       })
     }
     await registerModelRouting(f.ctx, f.config, [], controller.signal, f.billing, store)
