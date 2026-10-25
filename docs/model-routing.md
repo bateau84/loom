@@ -98,7 +98,8 @@ different active account between model resolution and transport. Native
 account affinity during a stream, tool execution and auxiliary calls remains
 a host contract requirement. The adapter records only typed, normalized
 native `provider.quota`, `provider.free-limit`, `provider.rate-limit` and
-`provider.auth` failures from matching reserved primary requests. It
+`provider.auth` failures (the latter only with HTTP 401/403) from
+matching reserved primary requests. It
 disables repeated retries on those blocked routes, but does not infer
 a successful stream, a reset timestamp or remaining requests from HTTP 200.
 Unobserved success/recovery accounting is deliberately not fabricated. Invalid/overloaded config loaded at startup
