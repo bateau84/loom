@@ -93,6 +93,26 @@ def wait_terminal(host: PrivateHost, session: str) -> dict:
     return current
 
 
+def interrupt_after_fault(host: PrivateHost, session: str, root: Path, start: int,
+                          *, after_tool: bool) -> bool:
+    """Use the actual V2 interrupt route; never wait for unlimited provider retries."""
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        events = read_events(root)[start:]
+        calls = records(events, "provider-request")
+        executed = [e for e in records(events, "tool-after")
+                    if e["data"].get("tool") == "execute" and e["data"].get("status") == "completed"]
+        if (len(calls) >= 2 and executed) if after_tool else bool(calls):
+            break
+        time.sleep(.05)
+    else:
+        raise RuntimeError("Scripted provider fault did not reach its expected native boundary")
+    response = request(host, "POST", f"/api/session/{session}/interrupt")
+    require(isinstance(response, dict) and "interrupted" in response,
+            "Installed host did not return a native V2 interrupt result")
+    return bool(response["interrupted"])
+
+
 def run_case(
     name: str, cli: Path, repo: Path, plugin: Path,
     output: Path, root: Path, env: dict, *,
@@ -122,6 +142,10 @@ def run_case(
             payload["model"] = selection
         session = request(host, "POST", "/api/session", payload)["id"]
         request(host, "POST", f"/api/session/{session}/prompt", {"text": "LOCAL_ROUTING_ACCEPTANCE_" + name})
+        interrupted = None
+        if expect in ("provider-error", "tool-error"):
+            interrupted = interrupt_after_fault(host, session, root, start,
+                                                after_tool=(expect == "tool-error"))
         result = wait_terminal(host, session)
         captured = read_events(root)[start:]
         outcome = result.get("outcome")
@@ -137,7 +161,7 @@ def run_case(
             require(outcome == "succeeded", f"{name}: native tool continuation did not succeed: {outcome}")
             expect_single_native_tool(captured, model)
         elif expect in ("provider-error", "tool-error"):
-            require(outcome == "failed", f"{name}: expected injected provider failure, got {outcome}")
+            require(outcome in ("failed", "interrupted"), f"{name}: expected provider failure/interruption, got {outcome}")
             expect_failed_local_provider(captured, model, after_tool=(expect == "tool-error"))
         else:
             raise AssertionError("Unsupported test expectation")
@@ -149,7 +173,7 @@ def run_case(
             "native_model_request_count": len(records(captured, "model-request")),
             "native_tool_before": len(records(captured, "tool-before")),
             "native_tool_after": len(records(captured, "tool-after")),
-            "scenario": scenario,
+            "scenario": scenario, "native_interrupt_applied": interrupted,
         }
     finally:
         host.close()
