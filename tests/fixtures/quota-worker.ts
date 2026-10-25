@@ -1,8 +1,8 @@
 import { openSharedQuotaState, type QuotaIdentity } from "../../src/quota-state.js"
 
-const [command, path, accountID = "account-a"] = process.argv.slice(2)
+const [command, path, accountID = "account-a", modelID = "gpt-6.1-sol"] = process.argv.slice(2)
 if (!path) throw new Error("Missing database path")
-const route: QuotaIdentity = { providerID: "opencode-go", accountID, modelID: "gpt-6.1-sol" }
+const route: QuotaIdentity = { providerID: "opencode-go", accountID, modelID }
 const store = await openSharedQuotaState({ path })
 try {
   if (command === "exhaust" || command === "exhaust-short") {
