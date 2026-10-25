@@ -56,6 +56,8 @@ type Row = {
   failures: number
   updated_ms: number
   last_success_ms: number | null
+  /** Last explicit release revision. Earlier in-flight failures cannot undo recovery. */
+  release_revision: number
 }
 const SCOPES: readonly QuotaScope[] = ["provider", "provider-model", "account", "account-model"]
 const DEFAULTS: Record<"exhausted" | "throttled" | "overloaded", number> = {
@@ -63,12 +65,13 @@ const DEFAULTS: Record<"exhausted" | "throttled" | "overloaded", number> = {
 }
 const PROBE_MS = 60_000
 const MAX_DELAY_MS = 90 * 24 * 60 * 60_000
-const STATUS_SQL = `INSERT INTO quota (id,state,evidence,revision,until_ms,lease_until_ms,lease_token,remaining,failures,updated_ms,last_success_ms)
-  VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+const STATUS_SQL = `INSERT INTO quota (id,state,evidence,revision,until_ms,lease_until_ms,lease_token,remaining,failures,updated_ms,last_success_ms,release_revision)
+  VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
   state=excluded.state,evidence=excluded.evidence,revision=excluded.revision,
   until_ms=excluded.until_ms,lease_until_ms=excluded.lease_until_ms,
   lease_token=excluded.lease_token,remaining=excluded.remaining,failures=excluded.failures,
-  updated_ms=excluded.updated_ms,last_success_ms=excluded.last_success_ms`
+  updated_ms=excluded.updated_ms,last_success_ms=excluded.last_success_ms,
+  release_revision=excluded.release_revision`
 
 function identity(value: QuotaIdentity): QuotaIdentity {
   for (const key of ["providerID", "accountID", "modelID"] as const) {
@@ -115,16 +118,61 @@ function scopeOf(value: { scope?: QuotaScope; scopeVerified?: true }, fallback: 
 function empty(now: number): Row {
   return { state: "unknown", evidence: "unknown", revision: 0, until_ms: null,
     lease_until_ms: null, lease_token: null, remaining: null, failures: 0,
-    updated_ms: now, last_success_ms: null }
+    updated_ms: now, last_success_ms: null, release_revision: 0 }
 }
+function isBlock(state: State): state is QuotaBlock {
+  return state === "exhausted" || state === "throttled" ||
+    state === "overloaded" || state === "authentication"
+}
+const BLOCK_STRENGTH: Record<QuotaBlock, number> = {
+  overloaded: 1, throttled: 2, exhausted: 3, authentication: 4,
+}
+const validTime = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+const optionalTime = (value: unknown): value is number | null =>
+  value === null || validTime(value)
+
 function validateRow(row: Row): Row {
+  const leasePair = (row.lease_until_ms === null) === (row.lease_token === null)
   if (!["unknown", "available", "exhausted", "throttled", "overloaded", "authentication"].includes(row.state) ||
     !["provider", "observed", "unknown"].includes(row.evidence) ||
-    !Number.isSafeInteger(row.revision) || row.revision < 0 ||
-    !Number.isSafeInteger(row.failures) || row.failures < 0) {
+    !validTime(row.revision) || !validTime(row.release_revision) ||
+    row.release_revision > row.revision ||
+    !Number.isSafeInteger(row.failures) || row.failures < 0 || row.failures > 16 ||
+    !optionalTime(row.until_ms) || !optionalTime(row.lease_until_ms) ||
+    !optionalTime(row.last_success_ms) || !validTime(row.updated_ms) ||
+    (row.remaining !== null && (!validTime(row.remaining))) ||
+    !leasePair ||
+    (row.lease_token !== null && (typeof row.lease_token !== "string" ||
+      !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(row.lease_token))) ||
+    (isBlock(row.state) && row.state !== "authentication" && row.until_ms === null) ||
+    (row.state === "authentication" && row.until_ms !== null) ||
+    (!isBlock(row.state) && (row.until_ms !== null || row.lease_token !== null)) ||
+    (row.state === "authentication" && row.lease_token !== null)) {
     throw new Error("Invalid shared quota state; refusing routing")
   }
   return row
+}
+
+/** Failure permits from concurrent requests remain valid within one recovery epoch.
+ * Stronger negative evidence can extend an existing block; stale success and
+ * any failure predating an explicit recovery are still rejected.
+ */
+function mayApplyNegative(row: Row, permit: QuotaPermit, scope: QuotaScope): boolean {
+  const revision = permit.revisions[scope]
+  return validTime(revision) && revision >= row.release_revision &&
+    revision <= row.revision && (revision === row.revision || isBlock(row.state))
+}
+function blockUpdate(row: Row, kind: QuotaBlock, until: number | null,
+  evidence: Evidence, now: number): Row {
+  const former = isBlock(row.state) ? row.state : undefined
+  const state = former && BLOCK_STRENGTH[former] > BLOCK_STRENGTH[kind] ? former : kind
+  const deadline = state === "authentication" ? null :
+    Math.max(until ?? 0, former && row.state !== "authentication" ? row.until_ms ?? 0 : 0)
+  return { ...row, state,
+    evidence: evidence === "provider" || row.evidence === "provider" ? "provider" : "observed",
+    until_ms: deadline, lease_until_ms: null, lease_token: null, remaining: null,
+    failures: Math.min(row.failures + 1, 16), revision: row.revision + 1, updated_ms: now }
 }
 
 export function defaultQuotaPath(): string {
@@ -183,9 +231,9 @@ export async function openSharedQuotaState(options: { path?: string; now?: () =>
     db.exec("BEGIN IMMEDIATE")
     try {
       const row = db.prepare("PRAGMA user_version").get() as { user_version: number }
-      if (row.user_version !== 0 && row.user_version !== 1) throw new Error("Unsupported shared quota schema version")
+      if (![0, 1, 2].includes(row.user_version)) throw new Error("Unsupported shared quota schema version")
       if (row.user_version === 0 && !created) throw new Error("Existing shared quota database was never initialized")
-      if (row.user_version === 1 && !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='quota'").get()) {
+      if (row.user_version >= 1 && !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='quota'").get()) {
         throw new Error("Existing shared quota database is missing the quota table")
       }
       db.exec(`CREATE TABLE IF NOT EXISTS quota (
@@ -195,8 +243,16 @@ export async function openSharedQuotaState(options: { path?: string; now?: () =>
         revision INTEGER NOT NULL CHECK(revision>=0),
         until_ms INTEGER, lease_until_ms INTEGER, lease_token TEXT,
         remaining INTEGER, failures INTEGER NOT NULL CHECK(failures>=0),
-        updated_ms INTEGER NOT NULL, last_success_ms INTEGER
-      ); PRAGMA user_version=1;`)
+        updated_ms INTEGER NOT NULL, last_success_ms INTEGER,
+        release_revision INTEGER NOT NULL DEFAULT 0 CHECK(release_revision>=0)
+      );`)
+      if (row.user_version === 1) {
+        const columns = db.prepare("PRAGMA table_info(quota)").all() as Array<{ name: string }>
+        if (!columns.some(column => column.name === "release_revision")) {
+          db.exec("ALTER TABLE quota ADD COLUMN release_revision INTEGER NOT NULL DEFAULT 0 CHECK(release_revision>=0)")
+        }
+      }
+      db.exec("PRAGMA user_version=2")
       db.exec("COMMIT")
     } catch (e) { db.exec("ROLLBACK"); throw e }
     return new SharedQuotaState(db, options.now ?? Date.now)
@@ -217,13 +273,13 @@ export class SharedQuotaState {
     catch (e) { this.db.exec("ROLLBACK"); throw e }
   }
   private read(key: string, now: number): Row {
-    const row = this.db.prepare("SELECT state,evidence,revision,until_ms,lease_until_ms,lease_token,remaining,failures,updated_ms,last_success_ms FROM quota WHERE id=?").get(key) as Row | null
+    const row = this.db.prepare("SELECT state,evidence,revision,until_ms,lease_until_ms,lease_token,remaining,failures,updated_ms,last_success_ms,release_revision FROM quota WHERE id=?").get(key) as Row | null
     return row ? validateRow(row) : empty(now)
   }
   private put(key: string, row: Row): void {
     this.db.prepare(STATUS_SQL).run(key, row.state, row.evidence, row.revision,
       row.until_ms, row.lease_until_ms, row.lease_token, row.remaining,
-      row.failures, row.updated_ms, row.last_success_ms)
+      row.failures, row.updated_ms, row.last_success_ms, row.release_revision)
   }
   private entries(route: QuotaIdentity, now: number): Array<{ scope: QuotaScope; key: string; row: Row }> {
     return SCOPES.map(scope => { const key = scopeKey(route, scope); return { scope, key, row: this.read(key, now) } })
@@ -302,16 +358,18 @@ export class SharedQuotaState {
       const retry = delay(failure.retryAfterMs)
       const key = scopeKey(route, scope)
       const row = this.read(key, now)
-      if (permit.revisions[scope] !== row.revision ||
-        (row.lease_token && row.lease_token !== permit.probeToken)) return false
+      if (!mayApplyNegative(row, permit, scope)) return false
       const failures = Math.min(row.failures + 1, 16)
       const fallback = DEFAULTS[kind as keyof typeof DEFAULTS] ?? 0
       const backoff = Math.min(MAX_DELAY_MS, fallback * 2 ** Math.min(failures - 1, 5))
+      // Both native Retry-After and a reset time are lower bounds when supplied.
+      // Local exponential cooldown is used only when neither was supplied.
       const until = kind === "authentication" ? null
-        : Math.max(now + 1000, explicitReset ?? (retry === undefined ? now + backoff : now + retry))
-      this.put(key, { ...row, state: kind, evidence: explicitReset !== undefined || retry !== undefined ? "provider" : "observed",
-        until_ms: until, lease_until_ms: null, lease_token: null, remaining: null,
-        failures, revision: row.revision + 1, updated_ms: now })
+        : Math.max(now + 1000, explicitReset ?? 0,
+          retry === undefined ? 0 : now + retry,
+          explicitReset === undefined && retry === undefined ? now + backoff : 0)
+      this.put(key, blockUpdate(row, kind, until,
+        explicitReset !== undefined || retry !== undefined ? "provider" : "observed", now))
       return true
     })
   }
@@ -328,15 +386,21 @@ export class SharedQuotaState {
     const reset = timestamp(report.resetAt, now)
     const key = scopeKey(route, scope)
     const row = this.read(key, now)
-    if (row.revision !== permit.revisions[scope]) return false
     if (remaining > 0) {
+      // Positive observations must match the exact revision; a stale report
+      // must never erase a later block.
+      if (row.revision !== permit.revisions[scope]) return false
       this.put(key, { ...row, state: "available", evidence: "provider", revision: row.revision + 1,
-        until_ms: null, lease_until_ms: null, lease_token: null, remaining, failures: 0, updated_ms: now })
+        release_revision: row.revision + 1, until_ms: null, lease_until_ms: null,
+        lease_token: null, remaining, failures: 0, updated_ms: now })
     } else {
+      // Provider-confirmed zero is negative evidence. Concurrent throttle
+      // reports cannot discard it unless an actual recovery has occurred.
+      if (!mayApplyNegative(row, permit, scope)) return false
       const failures = Math.min(row.failures + 1, 16)
-      this.put(key, { ...row, state: "exhausted", evidence: "provider", revision: row.revision + 1,
-        until_ms: Math.max(now + 1000, reset ?? now + DEFAULTS.exhausted * 2 ** Math.min(failures - 1, 5)),
-        lease_until_ms: null, lease_token: null, remaining: 0, failures, updated_ms: now })
+      this.put(key, { ...blockUpdate(row, "exhausted",
+        Math.max(now + 1000, reset ?? now + DEFAULTS.exhausted * 2 ** Math.min(failures - 1, 5)),
+        "provider", now), remaining: 0 })
     }
     return true
   }
@@ -364,7 +428,8 @@ export class SharedQuotaState {
           const row = this.read(scopedKey, now)
           if (row.lease_token === permit.probeToken && row.revision === permit.revisions[s]) {
             this.put(scopedKey, { ...row, state: "unknown", evidence: "observed",
-              revision: row.revision + 1, until_ms: null, lease_until_ms: null, lease_token: null,
+              revision: row.revision + 1, release_revision: row.revision + 1,
+              until_ms: null, lease_until_ms: null, lease_token: null,
               remaining: null, failures: 0, updated_ms: now, last_success_ms: now })
           }
         }
@@ -381,7 +446,8 @@ export class SharedQuotaState {
       const row = this.read(key, now)
       if (row.state !== "authentication" || row.revision !== observation.revisions.account) return false
       this.put(key, { ...row, state: "unknown", evidence: "observed", revision: row.revision + 1,
-        until_ms: null, lease_until_ms: null, lease_token: null, remaining: null, failures: 0, updated_ms: now })
+        release_revision: row.revision + 1, until_ms: null, lease_until_ms: null,
+        lease_token: null, remaining: null, failures: 0, updated_ms: now })
       return true
     })
   }
