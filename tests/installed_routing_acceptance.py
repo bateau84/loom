@@ -215,8 +215,22 @@ def run_case(
     enabled: bool, scenario: str = "text", model: str = "route-primary",
     expect: str, reasoning: str = "medium", agent: str = "architect",
     use_global_default: bool = False, invalid_policy: bool = False,
+    startup_fault: str | None = None,
 ) -> dict:
     project = root / "project"
+    # These faults are injected BEFORE plugin activation, not after the
+    # transport was already guarded. OpenCode must retain the early deny hook.
+    state_home = Path(env["XDG_STATE_HOME"]) / "loom"
+    if startup_fault == "quota-corrupt":
+        quota_dir = state_home / "quota-v1"
+        quota_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        (quota_dir / "subscriptions.sqlite").write_text("corrupt native quota store\n")
+        (quota_dir / "subscriptions.sqlite").chmod(0o600)
+    elif startup_fault == "action-ledger":
+        state_home.mkdir(mode=0o700, parents=True, exist_ok=True)
+        (state_home / "actions-v1").write_text("not a state directory\n")
+    elif startup_fault is not None:
+        raise ValueError("Unsupported routing startup fault")
     (root / "scenario.json").write_text(json.dumps({"kind": scenario}) + "\n")
     (project / ".loom.yaml").write_text(
         "model-routing:\n  enabled: true\n  default-class: [\n" if invalid_policy
@@ -260,7 +274,8 @@ def run_case(
             expect_blocked(captured)
             # A random native failure must not be mistaken for the intended
             # billing/config guard merely because no local transport ran.
-            expected_code = ("LOOM_MODEL_ROUTING_CONFIG_UNREADABLE" if invalid_policy
+            expected_code = ("LOOM_MODEL_ROUTING_STARTUP_FAILED" if startup_fault
+                             else "LOOM_MODEL_ROUTING_CONFIG_UNREADABLE" if invalid_policy
                              else "LOOM_MODEL_ROUTE_UNAVAILABLE")
             native_errors = (json.dumps(result) + "\n" +
                 (output / f"{name}.server.stderr.txt").read_text(errors="replace"))
@@ -302,7 +317,10 @@ def run_case(
         else:
             raise AssertionError("Unsupported test expectation")
         quota_db = Path(env["XDG_STATE_HOME"]) / "loom/quota-v1/subscriptions.sqlite"
-        if enabled:
+        if enabled and startup_fault == "action-ledger":
+            require(not quota_db.exists(),
+                    "Action-ledger startup fault must precede opening the shared quota DB")
+        elif enabled:
             require(quota_db.is_file(), "Routing-enabled installed Loom did not open shared quota state")
             require(stat.S_IMODE(quota_db.stat().st_mode) == 0o600,
                     "Installed plugin quota DB permissions must be 0600")
@@ -433,6 +451,21 @@ def run(cli: Path, repo: Path, plugin: Path, artifact: Path, output: Path,
                 invalid_policy=True))
             report["shared_quota_process_controls"] = run_quota_process_controls(
                 repo, root, env)
+        # Separate disposable hosts: an intentionally broken quota DB or
+        # ledger must not contaminate normal native acceptance cases.
+        for fault in ("quota-corrupt", "action-ledger"):
+            with tempfile.TemporaryDirectory(prefix="loom-routing-startup-fault-") as fault_temp:
+                fault_root = Path(fault_temp).resolve()
+                (fault_root / "project").mkdir()
+                fault_env = isolated_environment(fault_root)
+                fault_env["LOOM_ROUTING_FIXTURE"] = str(fault_root)
+                subprocess.run(["git", "init", "-q", str(fault_root / "project")],
+                               env=fault_env, check=True, timeout=10)
+                report["cases"].append(run_case(
+                    "enabled-startup-" + fault, cli, repo, plugin, output,
+                    fault_root, fault_env, enabled=True, model="route-metered",
+                    expect="blocked", use_global_default=True,
+                    startup_fault=fault))
         report["protection_controls"] = "PASS"
         # The overall verdict stays UNPROVEN until every required integration
         # case has installed-host and (where required) real-provider evidence.
