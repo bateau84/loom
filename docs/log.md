@@ -4,6 +4,18 @@ type: Log
 
 # Update Log
 
+## 2026-10-25
+
+**Creation**: [Safe live fallback host proposal](opencode-v2-safe-live-fallback.md) —
+Audited the tagged OpenCode 2.1.4 and newer `dev` native request,
+retry, publisher, tool execution, model resolution, connection and
+Session transport boundaries. Proposed a restricted host-owned
+retry replacement with explicit same-turn side-effect safety,
+exact model/reasoning capabilities, native account pinning and
+deterministic upstream tests. This is an **upstream API proposal only**:
+no host implementation or live failover has passed tests.
+Updated the [documentation index](index.md).
+
 ## 2026-10-24
 
 **Implementation**: [Initial OpenCode 2.1.4 model routing](model-routing.md)
