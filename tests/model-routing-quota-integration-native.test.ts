@@ -174,6 +174,10 @@ test("rate-limit throttling and authentication are distinct; no quota evidence f
   try {
     expect(classifiedNativeFailure({ type: "provider.rate-limit", status: 429 })?.kind).toBe("throttled")
     expect(classifiedNativeFailure({ type: "provider.auth", status: 401 })?.kind).toBe("authentication")
+    // A model-level 403 does not establish account-wide credential expiry.
+    expect(classifiedNativeFailure({ type: "provider.auth", status: 403 })).toBeUndefined()
+    expect(classifiedNativeFailure({ type: "provider.rate-limit", status: 429,
+      retryAfterMs: 3_600_000 })).toEqual({ kind: "throttled", retryAfterMs: 3_600_000 })
     expect(classifiedNativeFailure({ type: "provider.auth" })).toBeUndefined()
     expect(classifiedNativeFailure({ type: "provider.internal", status: 500 })).toBeUndefined()
     expect(classifiedNativeFailure({ type: "provider.transport" })).toBeUndefined()
@@ -211,5 +215,42 @@ test("environment variable name is not treated as verified account identity", as
     f.ctx.integration.connection.active = async () => ({ type: "env", name: "API_KEY" })
     const result = await registerModelRouting(f.ctx, f.config, [], new AbortController().signal, f.billing, store)
     expect(result.unavailable).toContain("architect")
+  } finally { store.close() }
+}))
+
+
+test("native Retry-After delays reach the shared quota store and affect another process", async () => withState(async path => {
+  let now = 5_000_000
+  const store = await openSharedQuotaState({ path, now: () => now })
+  try {
+    const f = fixture()
+    await registerModelRouting(f.ctx, f.config, [], new AbortController().signal, f.billing, store)
+    await f.hooks.get("model.request")!(request())
+    const failure = { ...request(), error: { type: "provider.rate-limit", status: 429,
+      retryAfterMs: 3_600_000 }, attempt: 2, decision: { retry: true, delay: 0 } }
+    await f.hooks.get("retry")!(failure)
+    expect(failure.decision.retry).toBe(false)
+    const second = await openSharedQuotaState({ path, now: () => now })
+    try {
+      expect(second.eligibility(go()).reason).toBe("throttled")
+      expect(second.eligibility(go()).retryAt).toBe(now + 3_600_000)
+      now += 60_000
+      expect(second.eligibility(go()).eligible).toBe(false)
+    } finally { second.close() }
+  } finally { store.close() }
+}))
+
+test("native HTTP 403 on one model cannot indefinitely block another model on the same account", async () => withState(async path => {
+  const store = await openSharedQuotaState({ path })
+  try {
+    const f = fixture()
+    await registerModelRouting(f.ctx, f.config, [], new AbortController().signal, f.billing, store)
+    await f.hooks.get("model.request")!(request())
+    const denied = { ...request(), error: { type: "provider.auth", status: 403 },
+      attempt: 1, decision: { retry: true, delay: 0 } }
+    await f.hooks.get("retry")!(denied)
+    expect(store.eligibility(go()).eligible).toBe(true)
+    expect(store.eligibility({ ...go(), modelID: "astra" }).eligible).toBe(true)
+    expect(denied.decision.retry).toBe(true)
   } finally { store.close() }
 }))
