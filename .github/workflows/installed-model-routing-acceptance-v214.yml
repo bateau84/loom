@@ -6,7 +6,7 @@ permissions:
 jobs:
   installed-routing:
     runs-on: ubuntu-latest
-    timeout-minutes: 18
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,6 +21,9 @@ jobs:
         run: |
           bun install --frozen-lockfile
           bun run typecheck
+          bun run test:core
+          bun run test:native
+          bun run test:python
           python3 tests/routing_acceptance_oracle.py
       - name: Pack and install the exact candidate, never modify the runner user config
         run: |

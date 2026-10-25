@@ -2,14 +2,15 @@
 
 This test never supplies credentials, never uses the user's OpenCode config,
 and never claims that scripted models prove live subscription/provider failover.
-The current adapter has no native safe-retry contract and the separate quota
-manager has not been wired to it; missing end-to-end cases are UNPROVEN.
+The current adapter has no native safe-retry contract with the shared quota store assembled. Real billing and native account leasing
+are not simulated as successful production claims.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import stat
 import subprocess
 import tempfile
 import time
@@ -31,18 +32,113 @@ AGENTS = ("architect", "coder", "reviewer")
 
 # These require capabilities *outside* the assembled 2.1.4 initial-only
 # adapter. Do not convert fixture calls, mock unit tests or skipped cases to PASS.
+REQUIREMENTS = [
+    (1, "UNPROVEN", "Positive role-to-model selection on installed host needs verified included billing; mocked adapter tests are separate."),
+    (2, "UNPROVEN", "Installed host proves high is not silently downgraded, not positive supported-variant dispatch."),
+    (3, "UNPROVEN", "Same-model/next-provider order is shown in native adapter tests, not installed provider requests."),
+    (4, "UNPROVEN", "Fresh installed-host selection after another process exhausts an eligible, attested route cannot be observed."),
+    (5, "UNPROVEN", "Mocked pre-dispatch rejection is tested; local installed fixtures have no eligible committed route."),
+    (6, "UNPROVEN", "Independent Bun processes share real SQLite quota blocks/recovery; assembled native dispatch lacks included attestation."),
+    (7, "UNPROVEN", "Real shared store isolates synthetic provider accounts; installed native account switching is not proven."),
+    (8, "PASS", "Local installed host rejects unknown and paid-labelled provider transport; real metered billing attestation remains UNPROVEN."),
+    (9, "PASS", "Unexpected native global-default model is denied before local provider transport."),
+    (10, "UNPROVEN", "In-process adapter has an account/route guard; native stream/account lease cannot be proven."),
+    (11, "UNPROVEN", "Native disabled-path errors and tools are counted; managed-tool interruption and any live fallback remain unproven."),
+    (12, "PASS", "Actual installed native host executes the routing-disabled primary, alternate and tool-continuation paths."),
+]
+
+# These require trusted native host / provider capabilities not supplied by
+# local in-memory language models. A simulated response is never a PASS here.
 NOT_PROVEN = {
-    "1-preferred-included": "No native local verified-included attestation source is wired to the packed plugin",
-    "2-same-model-next-provider": "No native safe provider-switch API at a pre-output retry boundary",
-    "3-next-model-after-exhaustion": "Runtime does not re-plan failed requests",
-    "6-fallback-before-output": "2.1.4 retry cannot atomically replace a model before transport replay",
-    "7-no-replay-after-tool": "One normal native tool execution is tested; fallback after a tool is not supported",
-    "8-stream-and-tool-account-affinity": "Native provider connection has no atomic lease across stream/continuation",
-    "9-reasoning-preserved-on-fallback": "Native variants are tested by unit tests; no installed verified alternate route",
-    "10-cross-process-quota": "PR #192 quota store is separate and not connected to the installed adapter",
-    "12-cancel-compaction-provider-failures": "Native restart, errors/interruption and compaction checked without routing; combined live failover state is unproven",
-    "live-two-provider": "Two permitted real native provider connections and explicit paid-use consent not supplied",
+    "positive-eligible-managed-native-request":
+        "The production plugin has no trusted native billing attestation for these synthetic local provider IDs",
+    "initial-replan-after-shared-exhaustion":
+        "Replanning is mocked with test-only attestations, not observed on an installed eligible route",
+    "committed-request-pre-dispatch-block":
+        "The installed local fixtures have no previously committed verified-included route to pre-block",
+    "live-provider-account-lease":
+        "The OpenCode 2.1.4 stream does not expose an atomic native account lease",
+    "real-opencode-go-quota":
+        "OpenCode Go has no supported provider-enforced, no-paid inclusion attestation in this setup",
+    "real-provider-billing":
+        "No real provider credentials or authorized paid API requests are supplied",
+    "native-exact-sdk-match":
+        "CLI 2.1.4 is installed; candidate SDK is still pinned to 2.1.1",
+    "live-fallback-out-of-scope":
+        "No safe in-flight model/provider replacement API is available or tested",
 }
+
+
+def run_quota_process_controls(repo: Path, root: Path, env: dict) -> dict:
+    """Real SQLite WAL, separate Bun OS processes; NO synthetic billing proof.
+
+    This is an isolated shared-state integration test, not evidence that a
+    native OpenCode request used an included account or a new provider.
+    """
+    worker_path = repo / "tests/fixtures/quota-worker.ts"
+    fixture_root = root / "quota-process-controls"
+    fixture_root.mkdir(mode=0o700)
+    def call(command: str, database: Path, *, account="fixture-account-a",
+             model="sol", provider="route-primary") -> dict:
+        cmd = ["bun", str(worker_path), command, str(database), account, model, provider]
+        proc = subprocess.run(cmd, env=env, cwd=repo, capture_output=True,
+                              text=True, timeout=20, check=False)
+        require(proc.returncode == 0,
+                "Independent quota worker failed: " + proc.stderr[-1000:])
+        return json.loads(proc.stdout.strip())
+
+    def after_cooldown(observation: dict) -> None:
+        until = observation.get("retryAt")
+        require(isinstance(until, (int, float)) and until > 0,
+                "Worker did not report a bounded local probe time")
+        time.sleep(max(0.0, until / 1000 - time.time()) + 0.15)
+
+    blocked_db = fixture_root / "blocked.sqlite"
+    require(call("exhaust-short", blocked_db).get("changed") is True,
+            "Process A failed to record verified-style synthetic exhaustion")
+    blocked = call("read", blocked_db)
+    require(blocked.get("eligible") is False and blocked.get("reason") == "exhausted",
+            "Process B did not observe process A's quota block")
+    require(call("read", blocked_db, account="fixture-account-b").get("eligible") is True,
+            "Another account on same provider inherited exhaustion")
+    require(call("read", blocked_db, provider="route-secondary").get("eligible") is True,
+            "Another provider inherited exhaustion")
+    require(stat.S_IMODE(blocked_db.stat().st_mode) == 0o600,
+            "Shared quota database is not 0600")
+    require(stat.S_IMODE(fixture_root.stat().st_mode) == 0o700,
+            "Fixture state root is not private")
+    after_cooldown(blocked)
+    first_probe = call("probe", blocked_db)
+    second_probe = call("probe", blocked_db)
+    require(first_probe.get("eligible") is True and first_probe.get("probe") is True,
+            "First process was not allowed the expired-route probe")
+    require(second_probe.get("eligible") is False and second_probe.get("probe") is False,
+            "A second independent process claimed the already leased probe")
+
+    recovery_db = fixture_root / "recovery.sqlite"
+    require(call("exhaust-short", recovery_db).get("changed") is True,
+            "Independent recovery fixture did not exhaust")
+    after_cooldown(call("read", recovery_db))
+    recovered = call("probe-recover", recovery_db)
+    require(recovered.get("owned_probe") is True,
+            "Recovery fixture did not own the probe reservation")
+    state = call("read", recovery_db)
+    require(state.get("eligible") is True and state.get("reason") is None,
+            "A third process could not see recovery after the owned probe")
+    return {
+        "status": "PASS",
+        "evidence_kind": "real-sqlite-independent-bun-processes",
+        "assertions": [
+            "process-b-sees-process-a-exhaustion",
+            "same-provider-other-account-unblocked",
+            "separate-provider-unblocked",
+            "one-probe-owner-across-processes",
+            "owned-probe-recovery-visible-to-another-process",
+            "private-database-and-state-directory",
+        ],
+        "native_installed_route_proven": False,
+        "billing_evidence": "test-only synthetic report, never a real-provider attestation",
+    }
 
 
 def read_events(root: Path) -> list[dict]:
@@ -118,11 +214,14 @@ def run_case(
     output: Path, root: Path, env: dict, *,
     enabled: bool, scenario: str = "text", model: str = "route-primary",
     expect: str, reasoning: str = "medium", agent: str = "architect",
+    use_global_default: bool = False,
 ) -> dict:
     project = root / "project"
     (root / "scenario.json").write_text(json.dumps({"kind": scenario}) + "\n")
     (project / ".loom.yaml").write_text(json.dumps(routing_policy(enabled, reasoning)) + "\n")
     host_config = config(enabled)
+    if use_global_default:
+        host_config["model"] = "route-metered/sol"
     host_config["plugins"].extend([str(plugin), str(repo / "tests/routing-host")])
     config_path = Path(env["OPENCODE_CONFIG_DIR"]) / "opencode.json"
     config_path.write_text(json.dumps(host_config) + "\n")
@@ -135,7 +234,7 @@ def run_case(
             p.get("id") == identifier and p.get("state", {}).get("status") == "active"
             for p in ps
         ) for identifier in ("loom", "loom.routing.acceptance.fixture")))
-        selection = {"providerID": model, "id": "sol"} if model != "route-primary" else None
+        selection = {"providerID": model, "id": "sol"} if model != "route-primary" and not use_global_default else None
         payload = {"agent": agent, "title": name,
                    "location": {"directory": str(project)}}
         if selection:
@@ -188,8 +287,16 @@ def run_case(
             expect_failed_local_provider(captured, model, after_tool=(expect == "tool-error"))
         else:
             raise AssertionError("Unsupported test expectation")
+        quota_db = Path(env["XDG_STATE_HOME"]) / "loom/quota-v1/subscriptions.sqlite"
+        if enabled:
+            require(quota_db.is_file(), "Routing-enabled installed Loom did not open shared quota state")
+            require(stat.S_IMODE(quota_db.stat().st_mode) == 0o600,
+                    "Installed plugin quota DB permissions must be 0600")
+        elif name == "disabled-primary":
+            require(not quota_db.exists(), "Routing-disabled native mode opened the shared quota DB")
         return {
             "name": name, "status": "PASS", "evidence_kind": "installed-local-provider",
+            "quota_database_opened": quota_db.is_file() if enabled else None,
             "routing_enabled": enabled, "agent": agent, "session_outcome": outcome,
             "transport_routes": [e["data"]["providerID"] + "/" + e["data"]["modelID"]
                                  for e in records(captured, "provider-request")],
@@ -211,7 +318,11 @@ def run(cli: Path, repo: Path, plugin: Path, artifact: Path, output: Path,
         "protection_controls": "NOT RUN", "live_provider_status": "UNPROVEN",
         "no_real_provider_credentials_used": True,
         "no_paid_provider_requests_allowed": True,
+        "version_qualification": "OpenCode CLI 2.1.4 with Loom SDK 2.1.1 (NOT exact matched-version qualification)",
+        "requirements": [{"id": number, "status": status, "evidence": evidence}
+                         for number, status, evidence in REQUIREMENTS],
         "cases": [], "negative_controls": None,
+        "shared_quota_process_controls": {"status": "UNPROVEN"},
         "unproven": [{"name": name, "reason": why} for name, why in NOT_PROVEN.items()],
     }
     try:
@@ -279,6 +390,15 @@ def run(cli: Path, repo: Path, plugin: Path, artifact: Path, output: Path,
                     enabled=enabled, scenario=scenario, model=model,
                     expect=expectation, reasoning=reasoning,
                     agent=agent_name[0] if agent_name else "architect"))
+            # This model is a genuine local native global default, NOT an
+            # explicitly pinned per-Session route. It must never be dispatched
+            # when managed Loom routing is enabled.
+            report["cases"].append(run_case(
+                "enabled-unexpected-global-default", cli, repo, plugin, output, root, env,
+                enabled=True, model="route-metered", expect="blocked",
+                use_global_default=True))
+            report["shared_quota_process_controls"] = run_quota_process_controls(
+                repo, root, env)
         report["protection_controls"] = "PASS"
         # The overall verdict stays UNPROVEN until every required integration
         # case has installed-host and (where required) real-provider evidence.

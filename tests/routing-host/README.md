@@ -6,8 +6,10 @@ the exact Loom plugin candidate, installs it in an isolated directory, runs an
 loads only in-memory scripted model providers. It never connects to live AI
 providers, reads a user's OpenCode credentials or uses their global config.
 
-This branch is stacked on PR #191 and indirectly on PR #190. The separate
-machine-wide quota manager is PR #192, **not assembled into this branch**.
+This acceptance branch is stacked on integrated PR #194 (which includes the
+runtime from PR #191 and shared quota manager from PR #192, both on PR #190).
+The installed plugin is the actual assembled candidate, not the old PR #193
+adapter-only candidate. No live provider switching is implemented.
 
 ## Reproduce on Linux or a GitHub Actions runner
 
@@ -16,7 +18,7 @@ Git and npm. Start from a disposable checkout of this PR branch:
 
 ```bash
 set -euo pipefail
-git checkout test/model-routing-installed-acceptance-v214
+git checkout test/model-routing-quota-installed-acceptance-v214
 bun install --frozen-lockfile
 bun run typecheck
 bun run test:core
@@ -62,6 +64,9 @@ record raw prompts, headers, account identities, tokens or tool inputs.
 | Metered route (paid fallback disabled) | No local paid-labelled provider `doStream` invocation | Session fails; the previously proven local route is never reached |
 | Unsupported requested `high` | Only `medium` advertised in fixture | No transport; does not alone prove the reason for denial |
 | Native compaction after a completed tool | Compaction model request, native tool hook counts and selected provider | One native tool; compaction completes on same model/provider |\n| Restart and disabled compatibility | Fresh real OpenCode processes | Guard continues to deny, disabled mode continues to run |
+| Installed quota-state initialization | Real isolated native host and XDG quota DB | Enabled routing opens private 0600 quota state; disabled first-run does not |
+| Independent quota processes | Separate Bun child processes using PR #194 SQLite manager | Cross-process block, account/provider isolation, single recovery probe and observable recovery |
+| Unexpected native global default | Host configured with a paid-labelled default in a managed Session | Never reaches local provider transport |
 | Trace oracle mutations | Synthetic corrupted trace inputs | Leak, duplicate tool calls and provider changes are rejected by the oracle |
 
 The negative controls are deliberately independent of the production
@@ -72,27 +77,32 @@ The full suite's `protection_controls` may report `PASS`, while the
 **overall `status` must remain `UNPROVEN`** until all requirements have
 genuine installed evidence.
 
-## Acceptance matrix
+## Acceptance matrix for the integrated candidate
 
-| Requirement | Current installed scope |
-| --- | --- |
-| 1. Preferred verified included route | UNPROVEN: local fixtures cannot supply native subscription billing attestation |
-| 2. Same model, next provider | UNPROVEN: V2.1.4 has no safe live model replacement |
-| 3. Next model when all providers exhausted | UNPROVEN: no live retry/replan |
-| 4. No eligible route | Protected negative observed; error clarity beyond failed Session requires dedicated check |
-| 5. Do not use metered/unknown billing | Installed-host fail-closed guard checked with a working disabled positive control |
-| 6. Clean pre-output fallback | UNPROVEN: a scripted pre-output error alone is not fallback |
-| 7. Tool side effects never replayed | Normal native continuation counted; **failover after tool** UNPROVEN |
-| 8. Streaming and account affinity | Route preserved through local normal continuation; **native account lease** UNPROVEN |
-| 9. Exact reasoning | Unsupported local `high` blocks; selection under verified included routes UNPROVEN |
-| 10. Independent processes share quotas | PR #192 has separate tests; **assembled-host integration** UNPROVEN |
-| 11. Routing disabled | Native real-host compatibility checked |
-| 12. Restart, cancellation, compaction, provider errors | Native restart, native interruption on scripted provider faults, and compaction after tool pass locally; **state during live provider fallback remains UNPROVEN** |
+The JSON report records **PASS**, **FAIL** or **UNPROVEN** for each of
+the 12 acceptance requirements. The suite fails immediately on a broken
+protection control. Passing a mocked or synthetic test does not promote
+an installed-host requirement to PASS.
 
-A test cannot become PASS merely because a fixture skipped an unavailable
-product interface. When the adapter and quota source are assembled, add
-positive native attestations using their **existing product interface**; do
-not put another router, fake credential adapter or quota cache in this fixture.
+| # | Requirement | Installed-host verdict |
+| --- | --- | --- |
+| 1 | Role-based chosen model | UNPROVEN: no trusted local included billing |
+| 2 | Native requested reasoning | UNPROVEN positive; unsupported high is safely denied |
+| 3 | Same model then next provider | UNPROVEN native; mocked runtime checks it |
+| 4 | Exclude exhausted at fresh selection | UNPROVEN native; mocked + shared state checks |
+| 5 | Reject newly exhausted committed route | UNPROVEN native; mocked pre-dispatch check |
+| 6 | Cross-process block and recovery | PASS separate SQLite child-process test; UNPROVEN native request integration |
+| 7 | Separate provider accounts | PASS separate SQLite child-process test; UNPROVEN native account switch |
+| 8 | Unknown and metered protection | PASS local installed guard negatives; real billing unproven |
+| 9 | Unexpected global default rejected | PASS local installed pre-transport guard |
+| 10 | No silent active account/model change | UNPROVEN native stream lease; mocked guard checks |
+| 11 | No tool replay on error/interrupt | PASS local disabled-native negative; UNPROVEN managed interruption |
+| 12 | Routing disabled retains native behavior | PASS installed native host |
+
+Quota checks use separate actual Bun OS processes and one real shared SQLite WAL
+database. They are **state-level tests**, not proof that a native OpenCode
+stream switched accounts or routed to an included subscription.
+The reported `UNPROVEN` items are blockers to complete acceptance.
 
 ## Opt-in real-provider acceptance (not run)
 
