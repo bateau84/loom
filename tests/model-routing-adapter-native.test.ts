@@ -14,6 +14,14 @@ const PROVIDER = {
   headers: { originator: "opencode", "x-codex-beta-features": "remote_compaction_v2" },
 }
 const ACCOUNT = { type: "credential", id: "opaque-native-chatgpt-account", method: "oauth" }
+const fakeQuota = {
+  eligibility: () => ({ eligible: true, quota: "unknown" as const, confidence: "unknown" as const }),
+  reserve: () => ({ eligible: true, quota: "unknown" as const, confidence: "unknown" as const,
+    permit: { routeKey: "synthetic-test-only",
+      revisions: { provider: 0, "provider-model": 0, account: 0, "account-model": 0 } } }),
+  recordFailure: () => true,
+  recordSuccess: () => {},
+}
 function policy(enabled = true) {
   return mergeConfig(defaults(), {
     "model-routing": { enabled, "default-class": "strong", "default-reasoning": "medium", "paid-fallback": false },
@@ -64,7 +72,7 @@ describe("native 2.1.4 adapter boundary (mocked host callbacks, not installed-ho
   test("role selects native Agent.Info.model with verified billing and reasoning", async () => {
     const f = host()
     const registrations: Array<{ dispose(): Promise<void> }> = []
-    const runtime = await registerModelRouting(f.ctx, f.load, registrations, new AbortController().signal)
+    const runtime = await registerModelRouting(f.ctx, f.load, registrations, new AbortController().signal, undefined, fakeQuota)
     expect(runtime.status).toBe("initial-only")
     expect(runtime.selected.architect).toEqual({
       provider_id: "openai", model_id: "test-sol", reasoning: "medium", billing: "included",
@@ -79,7 +87,7 @@ describe("native 2.1.4 adapter boundary (mocked host callbacks, not installed-ho
 
   test("native global fallback, unknown/metered billing and wrong reasoning are rejected before provider requests", async () => {
     const f = host()
-    await registerModelRouting(f.ctx, f.load, [], new AbortController().signal)
+    await registerModelRouting(f.ctx, f.load, [], new AbortController().signal, undefined, fakeQuota)
     const hook = f.hooks.get("model.request")!
     await expect(hook(dispatch("architect", { providerID: "paid", id: "fallback", variant: "medium" }))).rejects.toThrow("MISMATCH")
     await expect(hook(dispatch("architect", { providerID: "openai", id: "test-sol", variant: "low" }))).rejects.toThrow("MISMATCH")
@@ -94,7 +102,7 @@ describe("native 2.1.4 adapter boundary (mocked host callbacks, not installed-ho
 
   test("provider/account stays pinned through primary continuations, never replayed", async () => {
     const f = host()
-    await registerModelRouting(f.ctx, f.load, [], new AbortController().signal)
+    await registerModelRouting(f.ctx, f.load, [], new AbortController().signal, undefined, fakeQuota)
     const hook = f.hooks.get("model.request")!
     await hook(dispatch())
     await hook(dispatch())
@@ -105,7 +113,7 @@ describe("native 2.1.4 adapter boundary (mocked host callbacks, not installed-ho
   test("missing native billing attestation blocks global default instead of silently charging", async () => {
     const f = host()
     f.setConnection({ ...ACCOUNT, method: "key" })
-    const runtime = await registerModelRouting(f.ctx, f.load, [], new AbortController().signal)
+    const runtime = await registerModelRouting(f.ctx, f.load, [], new AbortController().signal, undefined, fakeQuota)
     expect(runtime.unavailable).toContain("architect")
     expect(f.agents.architect.model).toBeUndefined()
     await expect(f.hooks.get("model.request")!(dispatch())).rejects.toThrow("UNAVAILABLE")
@@ -113,7 +121,7 @@ describe("native 2.1.4 adapter boundary (mocked host callbacks, not installed-ho
 
   test("auxiliary native model requests do not bypass paid-fallback false", async () => {
     const f = host()
-    await registerModelRouting(f.ctx, f.load, [], new AbortController().signal)
+    await registerModelRouting(f.ctx, f.load, [], new AbortController().signal, undefined, fakeQuota)
     const hook = f.hooks.get("model.request")!
     await expect(hook(dispatch("title", { providerID: "global-paid", id: "model", variant: "medium" }, "title")))
       .rejects.toThrow("UNAVAILABLE")
@@ -126,7 +134,7 @@ describe("native 2.1.4 adapter boundary (mocked host callbacks, not installed-ho
 
   test("disabled routing leaves native agents and all hooks untouched", async () => {
     const f = host(policy(false))
-    const runtime = await registerModelRouting(f.ctx, f.load, [], new AbortController().signal)
+    const runtime = await registerModelRouting(f.ctx, f.load, [], new AbortController().signal, undefined, fakeQuota)
     expect(runtime.status).toBe("disabled")
     expect(f.agents.architect.model).toBeUndefined()
     expect(f.hooks.size).toBe(0)
@@ -135,7 +143,7 @@ describe("native 2.1.4 adapter boundary (mocked host callbacks, not installed-ho
   test("host 2.1.1 does not falsely advertise native initial routing", async () => {
     const f = host()
     f.ctx.app.version = "2.1.1"
-    const runtime = await registerModelRouting(f.ctx, f.load, [], new AbortController().signal)
+    const runtime = await registerModelRouting(f.ctx, f.load, [], new AbortController().signal, undefined, fakeQuota)
     expect(runtime.status).toBe("not-connected")
     await expect(f.hooks.get("model.request")!(dispatch("architect",
       { providerID: "native-default", id: "other", variant: "medium" }))).rejects.toThrow("MISMATCH")
@@ -145,7 +153,7 @@ describe("native 2.1.4 adapter boundary (mocked host callbacks, not installed-ho
     const f = host()
     let c = policy()
     const load = async () => ({ config: c, errors: [], sources: [] })
-    await registerModelRouting(f.ctx, load, [], new AbortController().signal)
+    await registerModelRouting(f.ctx, load, [], new AbortController().signal, undefined, fakeQuota)
     c = mergeConfig(c, { "model-routing": { "paid-fallback": true } })
     await expect(f.hooks.get("model.request")!(dispatch())).rejects.toThrow("RESTART_REQUIRED")
   })
