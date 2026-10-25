@@ -4,6 +4,18 @@ type: Log
 
 # Update Log
 
+## 2026-10-25
+
+**Investigation**: [OpenCode Go subscription eligibility](opencode-go-eligibility.md) —
+Pinned OpenCode 2.1.4 native source shows only opaque connection IDs and
+provider/model metadata, not a verified Go entitlement, Extra Usage state or
+pre-request no-paid guarantee. The current Console documents billing_source
+and allowance **after** a request, while Extra Usage can draw on paid balance.
+No Go adapter was implemented. Added deterministic routing negative-control
+tests to retain `billing: unknown` for active Go connections without a verified
+external attestation. Automatic Go included routing remains blocked pending a
+supported account-bound subscription-only contract.
+
 ## 2026-10-24
 
 **Implementation**: [Initial OpenCode 2.1.4 model routing](model-routing.md)
