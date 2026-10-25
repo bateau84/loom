@@ -40,12 +40,15 @@ resolved its transport credentials.
 
 **Observed failures:** when OpenCode's `session.retry` hook reports a
 **typed** `provider.quota` / `provider.free-limit`, `provider.rate-limit`
-or `provider.auth` error for a matching reserved primary request, the adapter
+or `provider.auth` error **with provider HTTP 401/403 status** for a
+matching reserved primary request, the adapter
 calls `recordFailure()` for that exact account/model. Those tags correspond
 to exhausted, throttled and authentication states respectively. They do not
 prove a provider-wide limit, numeric remaining quota, or reset timestamp;
 those values are never invented. A classified failure suppresses another
-native retry on the blocked route. Unknown errors do not update quota.
+native retry on the blocked route. Unknown errors and native authorization failures without a provider HTTP
+status do not update quota. Do not treat pre-dispatch credential validation
+as provider evidence.
 
 **No invented success:** OpenCode 2.1.4's plugin request/retry hooks do not
 provide a stable, attempt-identified successful stream completion tied to the
