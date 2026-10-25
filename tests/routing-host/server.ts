@@ -83,7 +83,7 @@ export default Plugin.define({
               capabilities: { tools: true, input: ["text"], output: ["text"] },
               variants: [{ id: "medium", settings: { reasoningEffort: "medium" } }],
               time: { released: 0 },
-              cost: route.price ? [{ input: 5, output: 5 }] : [],
+              cost: route.price ? [{ input: 5, output: 5, cache: { read: 0, write: 0 } }] : [],
               status: "active", enabled: true,
               limit: { context: 200000, output: 1000 },
             })) as any,
