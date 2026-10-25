@@ -40,8 +40,8 @@ REQUIREMENTS = [
     (5, "UNPROVEN", "Mocked pre-dispatch rejection is tested; local installed fixtures have no eligible committed route."),
     (6, "UNPROVEN", "Independent Bun processes share real SQLite quota blocks/recovery; assembled native dispatch lacks included attestation."),
     (7, "UNPROVEN", "Real shared store isolates synthetic provider accounts; installed native account switching is not proven."),
-    (8, "PASS", "Local installed host rejects unknown and paid-labelled provider transport; real metered billing attestation remains UNPROVEN."),
-    (9, "PASS", "Unexpected native global-default model is denied before local provider transport."),
+    (8, "PASS", "Local installed host rejects unverified routes; independently verified metered-billing policy is not isolated because no eligible managed route exists."),
+    (9, "UNPROVEN", "Global-default transport is denied locally, but the scenario also has no eligible route; the mismatch-specific guard is not isolated."),
     (10, "UNPROVEN", "In-process adapter has an account/route guard; native stream/account lease cannot be proven."),
     (11, "UNPROVEN", "Native disabled-path errors and tools are counted; managed-tool interruption and any live fallback remain unproven."),
     (12, "PASS", "Actual installed native host executes the routing-disabled primary, alternate and tool-continuation paths."),
@@ -214,11 +214,13 @@ def run_case(
     output: Path, root: Path, env: dict, *,
     enabled: bool, scenario: str = "text", model: str = "route-primary",
     expect: str, reasoning: str = "medium", agent: str = "architect",
-    use_global_default: bool = False,
+    use_global_default: bool = False, invalid_policy: bool = False,
 ) -> dict:
     project = root / "project"
     (root / "scenario.json").write_text(json.dumps({"kind": scenario}) + "\n")
-    (project / ".loom.yaml").write_text(json.dumps(routing_policy(enabled, reasoning)) + "\n")
+    (project / ".loom.yaml").write_text(
+        "model-routing:\n  enabled: true\n  default-class: [\n" if invalid_policy
+        else json.dumps(routing_policy(enabled, reasoning)) + "\n")
     host_config = config(enabled)
     if use_global_default:
         host_config["model"] = "route-metered/sol"
@@ -256,6 +258,15 @@ def run_case(
         elif expect == "blocked":
             require(outcome == "failed", f"{name}: unavailable guarded request was not failed: {outcome}")
             expect_blocked(captured)
+            # A random native failure must not be mistaken for the intended
+            # billing/config guard merely because no local transport ran.
+            expected_code = ("LOOM_MODEL_ROUTING_CONFIG_UNREADABLE" if invalid_policy
+                             else "LOOM_MODEL_ROUTE_UNAVAILABLE")
+            native_errors = (json.dumps(result) + "\n" +
+                (output / f"{name}.server.stderr.txt").read_text(errors="replace"))
+            require(expected_code in native_errors,
+                    f"{name}: blocked for the wrong reason; missing {expected_code}")
+            guard_code = expected_code
         elif expect == "tool":
             require(outcome == "succeeded", f"{name}: native tool continuation did not succeed: {outcome}")
             expect_single_native_tool(captured, model)
@@ -276,9 +287,12 @@ def run_case(
             require(len(records(captured, "tool-before")) == 1 and
                     len(records(captured, "tool-after")) == 1,
                     "Compaction replayed or erased the executed native tool hooks")
-            require(all(x["data"].get("providerID") == model
-                        for x in records(captured, "provider-request")),
-                    "Compaction selected an unexpected provider")
+            require(all((x["data"].get("providerID"), x["data"].get("modelID")) ==
+                        (model, "sol") for x in records(captured, "provider-request")),
+                    "Compaction selected an unexpected provider/model")
+            require(all((x["data"].get("providerID"), x["data"].get("modelID")) ==
+                        (model, "sol") for x in records(captured, "compaction-model-request")),
+                    "Compaction model identity changed after the native tool")
             result = request(host, "GET", f"/api/session/{session}")
             outcome = result.get("outcome")
             require(outcome == "succeeded", "Native compaction did not finish successfully")
@@ -294,8 +308,24 @@ def run_case(
                     "Installed plugin quota DB permissions must be 0600")
         elif name == "disabled-primary":
             require(not quota_db.exists(), "Routing-disabled native mode opened the shared quota DB")
+        # The external fixture already omits raw prompts/headers/accounts.
+        # Retain a further allowlisted, pseudonymized per-case trace so the
+        # oracle can be replayed against CI evidence independently.
+        safe_events = []
+        allow = {"providerID", "modelID", "kind", "agent", "reasoning", "tool",
+                 "status", "afterTool", "providerIDs"}
+        for record in captured:
+            details = {key: value for key, value in record.get("data", {}).items()
+                       if key in allow}
+            if "sessionID" in record.get("data", {}):
+                details["sessionID"] = "fixture-session"
+            safe_events.append({"type": record["type"], "data": details})
+        trace = output / f"{name}.routing-events.ndjson"
+        trace.write_text("".join(json.dumps(item, sort_keys=True) + "\n" for item in safe_events))
         return {
             "name": name, "status": "PASS", "evidence_kind": "installed-local-provider",
+            "trace_file": trace.name,
+            **({"guard_code": guard_code} if expect == "blocked" else {}),
             "quota_database_opened": quota_db.is_file() if enabled else None,
             "routing_enabled": enabled, "agent": agent, "session_outcome": outcome,
             "transport_routes": [e["data"]["providerID"] + "/" + e["data"]["modelID"]
@@ -397,6 +427,10 @@ def run(cli: Path, repo: Path, plugin: Path, artifact: Path, output: Path,
                 "enabled-unexpected-global-default", cli, repo, plugin, output, root, env,
                 enabled=True, model="route-metered", expect="blocked",
                 use_global_default=True))
+            report["cases"].append(run_case(
+                "enabled-invalid-policy-fail-closed", cli, repo, plugin, output, root, env,
+                enabled=True, model="route-primary", expect="blocked",
+                invalid_policy=True))
             report["shared_quota_process_controls"] = run_quota_process_controls(
                 repo, root, env)
         report["protection_controls"] = "PASS"
