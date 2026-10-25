@@ -80,6 +80,22 @@ const specs = [
 export default Plugin.define({
   id: "loom",
   async setup(ctx) {
+    // OpenCode 2.1.4 can continue native dispatch after a plugin setup error.
+    // Register a restrictive pre-transport hook BEFORE any ledger or quota I/O.
+    // An installation that never loads this plugin at all still requires a
+    // native host-level guard; a plugin cannot protect an absent plugin.
+    let startupDispatch: "deny" | "delegated" | "disabled" = "deny"
+    let startupDenial = "LOOM_MODEL_ROUTING_STARTUP_BLOCKED: routing has not completed initialization"
+    const startupGuard = await ctx.session.hook("model.request", () => {
+      if (startupDispatch === "deny") throw new Error(startupDenial)
+    })
+    let startupGuardDisposed = false
+    const disposeStartupGuard = async () => {
+      if (startupGuardDisposed) return
+      startupGuardDisposed = true
+      await startupGuard.dispose()
+    }
+    try {
     const directory = await realpath(ctx.location.directory)
     const configuredPaths = configPaths(directory)
     const lifetime = new AbortController()
@@ -357,6 +373,46 @@ export default Plugin.define({
       lifetime.abort()
       await Promise.allSettled(disposers.map(d => d.dispose())); database.close(); throw error
     }
-    return async () => { lifetime.abort(); await Promise.allSettled(disposers.map(d => d.dispose())); database.close() }
+    // The early guard remains restrictive until the entire plugin initialized.
+    // A valid, explicitly disabled policy removes it; a guarded runtime
+    // delegates to the fully registered model.request hook. Unknown hosts
+    // and partial runtimes remain denied instead of falling through.
+    if (routing.status === "disabled") {
+      startupDispatch = "disabled"
+      await disposeStartupGuard()
+    } else if (routing.status === "initial-only" || routing.status === "blocked-config") {
+      startupDispatch = "delegated"
+    } else {
+      startupDenial = "LOOM_MODEL_ROUTING_HOST_UNQUALIFIED: no proven native request guard"
+    }
+    return async () => {
+      startupDispatch = "deny"
+      lifetime.abort()
+      await Promise.allSettled(disposers.map(d => d.dispose()))
+      database.close()
+      await disposeStartupGuard()
+    }
+    } catch (error) {
+      startupDispatch = "deny"
+      startupDenial = "LOOM_MODEL_ROUTING_STARTUP_FAILED: plugin initialization failed; native dispatch blocked"
+      // Preserve pre-existing startup failure reporting and native fallback
+      // when routing was demonstrably disabled by a successfully loaded config.
+      // Unreadable config is NEVER interpreted as deliberate disabling.
+      let safelyDisabled = false
+      try {
+        const root = await realpath(ctx.location.directory)
+        const snapshot = await loadConfig(configPaths(root), decodeConfigYaml)
+        safelyDisabled = snapshot.errors.length === 0 && !snapshot.config.modelRouting.enabled
+      } catch { /* Unknown routing intent stays denied. */ }
+      if (safelyDisabled) {
+        startupDispatch = "disabled"
+        await disposeStartupGuard()
+        throw error
+      }
+      console.error("Loom startup failed; keeping native model dispatch denied:", error instanceof Error ? error.message : String(error))
+      // Resolving setup retains the installed deny hook. Throwing would let
+      // OpenCode unload that hook and continue with an unguarded global model.
+      return async () => { startupDispatch = "deny"; await disposeStartupGuard() }
+    }
   },
 })
