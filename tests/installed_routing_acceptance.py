@@ -117,7 +117,7 @@ def run_case(
     name: str, cli: Path, repo: Path, plugin: Path,
     output: Path, root: Path, env: dict, *,
     enabled: bool, scenario: str = "text", model: str = "route-primary",
-    expect: str, reasoning: str = "medium",
+    expect: str, reasoning: str = "medium", agent: str = "architect",
 ) -> dict:
     project = root / "project"
     (root / "scenario.json").write_text(json.dumps({"kind": scenario}) + "\n")
@@ -136,7 +136,7 @@ def run_case(
             for p in ps
         ) for identifier in ("loom", "loom.routing.acceptance.fixture")))
         selection = {"providerID": model, "id": "sol"} if model != "route-primary" else None
-        payload = {"agent": "architect", "title": name,
+        payload = {"agent": agent, "title": name,
                    "location": {"directory": str(project)}}
         if selection:
             payload["model"] = selection
@@ -190,7 +190,7 @@ def run_case(
             raise AssertionError("Unsupported test expectation")
         return {
             "name": name, "status": "PASS", "evidence_kind": "installed-local-provider",
-            "routing_enabled": enabled, "session_outcome": outcome,
+            "routing_enabled": enabled, "agent": agent, "session_outcome": outcome,
             "transport_routes": [e["data"]["providerID"] + "/" + e["data"]["modelID"]
                                  for e in records(captured, "provider-request")],
             "native_model_request_count": len(records(captured, "model-request")),
@@ -242,6 +242,8 @@ def run(cli: Path, repo: Path, plugin: Path, artifact: Path, output: Path,
                 # when Loom routing has been disabled.
                 ("disabled-primary", False, "text", "route-primary", "one", "medium"),
                 ("disabled-secondary", False, "text", "route-secondary", "one", "medium"),
+                ("disabled-coder", False, "text", "route-primary", "one", "medium", "coder"),
+                ("disabled-reviewer", False, "text", "route-primary", "one", "medium", "reviewer"),
                 ("disabled-metered", False, "text", "route-metered", "one", "medium"),
                 # The native host actually executes a tool and then sends a
                 # second model request; we inspect the real execute hook.
@@ -258,6 +260,8 @@ def run(cli: Path, repo: Path, plugin: Path, artifact: Path, output: Path,
                  "route-primary", "tool-error", "medium"),
                 # No fake 'subscription: included' hints are accepted.
                 ("enabled-unknown-billing", True, "text", "route-primary", "blocked", "medium"),
+                ("enabled-unknown-coder", True, "text", "route-primary", "blocked", "medium", "coder"),
+                ("enabled-unknown-reviewer", True, "text", "route-primary", "blocked", "medium", "reviewer"),
                 # A known-positive native metered transport must be blocked
                 # with paid-fallback: false when billing is not verified.
                 ("enabled-no-metered-fallback", True, "text", "route-metered", "blocked", "medium"),
@@ -268,11 +272,13 @@ def run(cli: Path, repo: Path, plugin: Path, artifact: Path, output: Path,
                 ("enabled-guard-after-restart", True, "text", "route-primary", "blocked", "medium"),
                 ("disabled-after-restart", False, "text", "route-secondary", "one", "medium"),
             ]
-            for name, enabled, scenario, model, expectation, reasoning in checks:
+            for case in checks:
+                name, enabled, scenario, model, expectation, reasoning, *agent_name = case
                 report["cases"].append(run_case(
                     name, cli, repo, plugin, output, root, env,
                     enabled=enabled, scenario=scenario, model=model,
-                    expect=expectation, reasoning=reasoning))
+                    expect=expectation, reasoning=reasoning,
+                    agent=agent_name[0] if agent_name else "architect"))
         report["protection_controls"] = "PASS"
         # The overall verdict stays UNPROVEN until every required integration
         # case has installed-host and (where required) real-provider evidence.
