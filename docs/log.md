@@ -4,6 +4,23 @@ type: Log
 
 # Update Log
 
+## 2026-10-25
+
+**Integration**: [Shared subscription quota](shared-subscription-quota.md) now
+feeds [guarded initial model routing](model-routing.md). Imported the
+unmodified account-aware planner and quota manager from draft PR #192 onto
+the separate integration branch stacked on #191. Native account IDs are
+read from non-secret credential-record metadata, and active OpenCode
+2.1.4 model requests use atomic SQLite reservations. Known native provider
+quota, rate-limit and authentication error types can update shared cooldowns;
+a failed committed route is rejected, never silently retried on another model.
+Added isolated cross-process/native-hook integration tests. No automatic
+provider-success, reset or remaining-quota accounting is claimed, because
+OpenCode does not expose a safe request/account correlation for it. Existing
+PRs #190/#191/#192 remain unchanged; live fallback stays blocked.
+[Model-dispatch investigation](model-routing-v2-dispatch.md) retains the
+unsupported V2 interface boundary.
+
 ## 2026-10-24
 
 **Implementation**: [Initial OpenCode 2.1.4 model routing](model-routing.md)
