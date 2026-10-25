@@ -177,8 +177,11 @@ export async function registerModelRouting(
   }))
 
   // In-process lease prevents an account/model switch during the Session's
-  // primary tool continuations. Only host terminal events release a lease;
-  // missed events merely retain an over-conservative lease (not an unsafe one).
+  // primary tool continuations. Native terminal events contain only the
+  // Session ID, not the execution ID. Therefore they CANNOT safely release
+  // current-turn leases: an old terminal event may arrive after a later turn
+  // has already reserved. Keep state until Session deletion or plugin restart,
+  // with an explicit fail-closed capacity limit.
   const leases = new Map<string, string>()
   // OpenCode's retry hook has no request/attempt ID or safe-switch flag.
   // Store only the last owned native primary reservation per Session/agent/
@@ -225,7 +228,7 @@ export async function registerModelRouting(
       if ((!leases.has(event.sessionID) && leases.size >= MAX_TRACKED_SESSIONS) ||
           (pending.size >= MAX_TRACKED_SESSIONS &&
             !pending.has(pendingKey(event.sessionID, event.agent, event.model.providerID, event.model.id)))) {
-        throw new Error("LOOM_MODEL_ROUTING_STATE_LIMIT: terminal events missing; restart required")
+        throw new Error("LOOM_MODEL_ROUTING_STATE_LIMIT: tracked Sessions reached capacity; close/delete old Sessions or restart Loom")
       }
       assertInitialRoute(agentPlan, event.model)
       // A newly exhausted or unverified route fails *before* calling the provider.
@@ -270,11 +273,15 @@ export async function registerModelRouting(
     try {
       for await (const event of ctx.event.subscribe({ signal })) {
         if (signal.aborted) break
-        if (event.type === "session.execution.succeeded" || event.type === "session.execution.failed" ||
-            event.type === "session.execution.interrupted" || event.type === "session.deleted") {
-          if ("sessionID" in event.data && typeof event.data.sessionID === "string") {
-            leases.delete(event.data.sessionID)
-            for (const [id, record] of pending) if (record.sessionID === event.data.sessionID) pending.delete(id)
+        // Only session.deleted proves the Session ID can no longer own a
+        // current request. Execution terminal events have no generation ID:
+        // applying a delayed terminal event could erase a *newer* reservation.
+        // Never use them to drop quota state or session affinity.
+        if (event.type === "session.deleted" &&
+            "sessionID" in event.data && typeof event.data.sessionID === "string") {
+          leases.delete(event.data.sessionID)
+          for (const [id, record] of pending) {
+            if (record.sessionID === event.data.sessionID) pending.delete(id)
           }
         }
       }
