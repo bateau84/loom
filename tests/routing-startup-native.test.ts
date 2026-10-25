@@ -35,6 +35,7 @@ test("failed quota and Action ledger initialization retain a deny hook; valid di
         }
         const hooks = new Set<(event: any) => unknown>()
         const ctx: any = {
+          app: { version: "2.1.4" },
           location: { directory: project, project: { id: "routing-startup",
             canonical: project, directory: project } },
           session: { hook: async (name: string, callback: (event: any) => unknown) => {
@@ -69,7 +70,7 @@ test("failed quota and Action ledger initialization retain a deny hook; valid di
       await mkdir(root, { recursive: true })
       await writeFile(join(root, "actions-v1"), "not-a-directory")
       const hooks = new Set<(event: any) => unknown>()
-      const ctx: any = { location: { directory: project,
+      const ctx: any = { app: { version: "2.1.4" }, location: { directory: project,
         project: { id: "routing-disabled", canonical: project, directory: project } },
         session: { hook: async (_name: string, callback: (event: any) => unknown) => {
           hooks.add(callback)
