@@ -167,6 +167,7 @@ test("rate-limit throttling and authentication are distinct; no quota evidence f
   try {
     expect(classifiedNativeFailure({ type: "provider.rate-limit", status: 429 })?.kind).toBe("throttled")
     expect(classifiedNativeFailure({ type: "provider.auth", status: 401 })?.kind).toBe("authentication")
+    expect(classifiedNativeFailure({ type: "provider.auth" })).toBeUndefined()
     expect(classifiedNativeFailure({ type: "provider.internal", status: 500 })).toBeUndefined()
     expect(classifiedNativeFailure({ type: "provider.transport" })).toBeUndefined()
     const f = fixture()
