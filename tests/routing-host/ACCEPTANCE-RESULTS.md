@@ -1,5 +1,14 @@
 # Installed routing and shared quota — acceptance results
 
+> **Historical baseline only.** The run and commit listed below describe the
+> original PR #197 source at `bdce5ce` (with its separate checked-out merge
+> SHA). They do **not** establish success for the later
+> `fix/model-routing-review-gates` remediation branch. Review the current
+> branch's installed acceptance workflow and generated `report.json` with
+> its saved per-case sanitized traces before drawing a new conclusion.
+> Positive managed native dispatch and real-provider billing remain UNPROVEN.
+
+
 ## Verdict
 
 **Overall: UNPROVEN.** All automated protection and cross-process state checks
