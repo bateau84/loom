@@ -1,4 +1,9 @@
 import { Model, Plugin, Provider } from "@opencode/plugin"
+import { openSharedQuotaState } from "./quota-state.js"
+import {
+  quotaIdentity, reserveNativeRoute, recordNativeFailure,
+  type QuotaGate, type PendingQuotaRequest,
+} from "./model-routing-shared-quota.js"
 import type { Config, ConfigSnapshot } from "./config.js"
 import {
   assertInitialRoute, connectionID, inventoryEntry, nativeChatGPTAttestation,
@@ -29,7 +34,7 @@ type Catalog = {
  * credential files, extra quota DB or protocol translation.
  */
 async function catalog(
-  ctx: Context, config: Config, source?: RouteEligibilitySource,
+  ctx: Context, config: Config, source?: RouteEligibilitySource, quota?: QuotaGate,
 ): Promise<Catalog> {
   const [nativeModels, nativeProviders] = await Promise.all([ctx.model.list(), ctx.provider.list()])
   const wanted = new Set<string>()
@@ -76,7 +81,7 @@ async function catalog(
     // A supplied negative/unverified claim takes precedence over native evidence.
     attestations[key(model.providerID, model.id)] = reported ?? native
   }
-  return { state: planInitialModels(config, models, connections, attestations, Date.now()),
+  return { state: planInitialModels(config, models, connections, attestations, Date.now(), quota),
     models, connections, attestations }
 }
 
@@ -116,6 +121,7 @@ export async function registerModelRouting(
   disposers: Registration[],
   signal: AbortSignal,
   source?: RouteEligibilitySource,
+  injectedQuota?: QuotaGate,
 ): Promise<ModelRoutingRuntime> {
   // Native 2.1.4 runtime routing is not present on old/partial host mocks.
   // Check capability before consuming an admitted config I/O slot; legacy
@@ -133,7 +139,12 @@ export async function registerModelRouting(
   if (snapshot.errors.length) throw new Error("LOOM_MODEL_ROUTING_CONFIG_UNREADABLE")
   const config = snapshot.config
   const policyVersion = fingerprint(config)
-  const initial = await catalog(ctx, config, source)
+  // A single shared WAL store per plugin process, entirely separate from
+  // Loom's Action ledger. Opening fails closed on corrupt/insecure state.
+  // Native-only fixtures can inject a quota gate without touching real HOME.
+  const quota = injectedQuota ?? await openSharedQuotaState()
+  if (!injectedQuota) disposers.push({ dispose: async () => { quota.close() } })
+  const initial = await catalog(ctx, config, source, quota)
   const selected: ModelRoutingRuntime["selected"] = {}
   const unavailable: string[] = []
   for (const [agent, plan] of Object.entries(initial.state.plan)) {
@@ -159,6 +170,12 @@ export async function registerModelRouting(
   // primary tool continuations. Only host terminal events release a lease;
   // missed events merely retain an over-conservative lease (not an unsafe one).
   const leases = new Map<string, string>()
+  // OpenCode's retry hook has no request/attempt ID or safe-switch flag.
+  // Store only the last owned native primary reservation per Session/agent/
+  // model; never use it to switch, retry or record unobserved successes.
+  const pending = new Map<string, PendingQuotaRequest & { sessionID: string }>()
+  const pendingKey = (sessionID: string, agent: string, providerID: string, modelID: string) =>
+    JSON.stringify([sessionID, agent, providerID, modelID])
   // Keep callback synchronous to dispatch: hook registration is a supported
   // pre-transport boundary, but thrown rejections need installed-host proof.
   const managedSession = async (sessionID: string) => {
@@ -185,7 +202,7 @@ export async function registerModelRouting(
     if (currentConfig.errors.length || fingerprint(currentConfig.config) !== policyVersion) {
       throw new Error("LOOM_MODEL_ROUTING_RESTART_REQUIRED: routing config changed or is unreadable")
     }
-    const fresh = await catalog(ctx, config, source)
+    const fresh = await catalog(ctx, config, source, quota)
     const agentPlan = initial.state.plan[event.agent]
     if (event.kind === "primary" &&
         ((agentPlan && agentPlan.status !== "no-policy") || leases.has(event.sessionID))) {
@@ -194,16 +211,39 @@ export async function registerModelRouting(
       assertInitialRoute(agentPlan, event.model)
       // A newly exhausted or unverified route fails *before* calling the provider.
       const nativeID = assertAllowedRequest(fresh, event.model, config.modelRouting.paidFallback)
+      if (agentPlan.status === "ready" && agentPlan.selected.accountID !== nativeID)
+        throw new Error("LOOM_MODEL_ROUTE_AFFINITY: selected account changed after initial planning")
       const lease = JSON.stringify([event.model.providerID, event.model.id, event.model.variant, nativeID])
       const pinned = leases.get(event.sessionID)
       if (pinned && pinned !== lease)
         throw new Error("LOOM_MODEL_ROUTE_AFFINITY: native provider/model/account changed during a Session turn")
+      // Reservation is atomic and synchronous, at the last available
+      // pre-transport plugin boundary. A shared exhaustion/lease race cannot
+      // slip through an earlier read-only eligibility snapshot.
+      const reservation = reserveNativeRoute(quota,
+        quotaIdentity(event.model.providerID, event.model.id, nativeID))
+      pending.set(pendingKey(event.sessionID, event.agent, event.model.providerID, event.model.id),
+        { ...reservation, sessionID: event.sessionID })
       leases.set(event.sessionID, lease)
     } else if (event.kind !== "primary" && await managedSession(event.sessionID)) {
       // Guard title/compaction/generate for managed Sessions, without changing
       // native utility behavior for *explicitly unconfigured* Session agents.
-      assertAllowedRequest(fresh, event.model, config.modelRouting.paidFallback)
+      const nativeID = assertAllowedRequest(fresh, event.model, config.modelRouting.paidFallback)
+      reserveNativeRoute(quota, quotaIdentity(event.model.providerID, event.model.id, nativeID))
+      // Auxiliary request outcomes cannot be reliably paired to a unique
+      // reservation. Do not invent provider success/failure accounting.
     }
+  }))
+  disposers.push(await ctx.session.hook("retry", event => {
+    // OpenCode's normalized provider error type is authoritative enough to
+    // classify a failed primary request; raw HTTP success is not. The hook
+    // does NOT establish that it is safe to change models.
+    const found = pending.get(pendingKey(event.sessionID, event.agent, event.model.providerID, event.model.id))
+    if (!recordNativeFailure(quota, found, event.error)) return
+    pending.delete(pendingKey(event.sessionID, event.agent, event.model.providerID, event.model.id))
+    // Never loop on a route that we have just marked exhausted/throttled.
+    // This rejects, rather than attempting an unsafe live provider switch.
+    event.decision = { retry: false }
   }))
 
   const run = async () => {
@@ -214,7 +254,10 @@ export async function registerModelRouting(
             event.type === "session.execution.interrupted" || event.type === "session.deleted") {
           // V2 event payloads identify the native Session as data.sessionID.
           if ("sessionID" in event.data && typeof event.data.sessionID === "string")
-            leases.delete(event.data.sessionID)
+            {
+              leases.delete(event.data.sessionID)
+              for (const [id, record] of pending) if (record.sessionID === event.data.sessionID) pending.delete(id)
+            }
         }
       }
     } catch {
