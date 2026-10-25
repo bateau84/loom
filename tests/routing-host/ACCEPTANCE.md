@@ -2,14 +2,18 @@
 
 ## Candidate and isolation
 
-- Tested branch: `test/model-routing-quota-installed-acceptance-v214`
-- Base: [integration PR #194](https://github.com/bateau84/loom/pull/194), baseline commit `875a79012bd4338d8ac1b746b5c9ffbb81db1f15`.
+- Tested remediation branch: `fix/model-routing-review-gates`, stacked on PR #197.
+- Assembled integration base: [PR #194](https://github.com/bateau84/loom/pull/194), commit `875a79012bd4338d8ac1b746b5c9ffbb81db1f15`.
+- Prior acceptance base: [PR #197](https://github.com/bateau84/loom/pull/197), commit `6fb15460fdad415927fe73d5e0cd7904d3365549`.
 - Source inputs: [PR #190](https://github.com/bateau84/loom/pull/190) (policy), [PR #191](https://github.com/bateau84/loom/pull/191) (initial adapter), [PR #192](https://github.com/bateau84/loom/pull/192) (SQLite shared quota).
 - Earlier adapter-only native fixture: [PR #193](https://github.com/bateau84/loom/pull/193) at `d478bc0221ccb188cde3a0cce84d89d44d6f9ddd`. That prior success **does not** qualify the assembled candidate.
 - Host: unmodified npm `@opencode/cli@2.1.4`.
 - Plugin: npm-packed candidate with `@opencode/plugin@2.1.1`. **SDK/host exact-version matching is UNPROVEN.**
 - Fixtures: three in-memory native local provider IDs, no network provider requests, no personal credentials, no paid requests. Each host runs in isolated HOME/XDG state.
-- Evidence: `report.json`, trace oracles and per-case local host logs uploaded by the acceptance workflow.
+- Evidence: `report.json`, per-case pseudonymous sanitized routing event traces,
+  trace-oracle mutations and per-case local host logs uploaded by the
+  acceptance workflow. The test now also asserts the expected guard error
+  category; zero requests alone are insufficient.
 
 ## Reproduction
 
@@ -23,7 +27,7 @@ is a *test contract*, not a fabricated successful test report.
 ## Results and limits
 
 The runner writes all 12 requested requirements with **PASS**, **FAIL**, or
-**UNPROVEN**, and separately records observed installed-host provider routes,
+**UNPROVEN**, and separately records observed installed-host provider/model routes,
 native execute before/after counts, installed quota state initialization,
 restarts, real independent-process quota observations and failing negative
 controls. An assertion failure exits nonzero, sets report status FAIL and
@@ -33,6 +37,12 @@ passing installed-host evidence.
 Positive native class selection and reasoning, same-model/next-provider route
 selection, selection after shared exhaustion, committed-route pre-dispatch
 rejection and native account/stream lease cannot currently be marked PASS:
+the suite cannot currently isolate the global-default mismatch behavior from
+a completely unavailable managed route. Its normal error categories and
+positive routing guard cases are tested in the mocked adapter separately.
+The remediation adds a real-host invalid-configuration blocking control,
+not a test-only included subscription attestation:
+
 the local fixtures have **no independently verified included billing**.
 Native adapter tests use **test-only attestations** and are labelled as
 mocked. Quota child-process tests use synthetic reported failures and
