@@ -183,15 +183,17 @@ export async function registerModelRouting(
   // has already reserved. Keep state until Session deletion or plugin restart,
   // with an explicit fail-closed capacity limit.
   const leases = new Map<string, string>()
-  // OpenCode's retry hook has no request/attempt ID or safe-switch flag.
-  // Store only the last owned native primary reservation per Session/agent/
-  // model; never use it to switch, retry or record unobserved successes.
-  const pending = new Map<string, PendingQuotaRequest & { sessionID: string }>()
+  // OpenCode's retry hook has no request/attempt ID or request-kind flag.
+  // Track at most ONE attributable primary reservation per native Session,
+  // so storage is bounded by distinct Session count rather than by agents
+  // or models invoked within the same Session. Auxiliary requests invalidate
+  // that attribution instead of borrowing a stale primary permit.
+  const pending = new Map<string, PendingQuotaRequest & {
+    sessionID: string; agent: string; providerID: string; modelID: string
+  }>()
   const MAX_TRACKED_SESSIONS = 512
   let eventsHealthy = true
   disposers.push({ dispose: async () => { eventsHealthy = false; leases.clear(); pending.clear() } })
-  const pendingKey = (sessionID: string, agent: string, providerID: string, modelID: string) =>
-    JSON.stringify([sessionID, agent, providerID, modelID])
   // Keep callback synchronous to dispatch: hook registration is a supported
   // pre-transport boundary, but thrown rejections need installed-host proof.
   const managedSession = async (sessionID: string) => {
@@ -225,9 +227,7 @@ export async function registerModelRouting(
       if (!agentPlan || agentPlan.status === "no-policy")
         throw new Error("LOOM_MODEL_ROUTE_AFFINITY: managed Session switched to an unconfigured agent")
       if (!eventsHealthy) throw new Error("LOOM_MODEL_ROUTING_EVENTS_UNAVAILABLE: restart required")
-      if ((!leases.has(event.sessionID) && leases.size >= MAX_TRACKED_SESSIONS) ||
-          (pending.size >= MAX_TRACKED_SESSIONS &&
-            !pending.has(pendingKey(event.sessionID, event.agent, event.model.providerID, event.model.id)))) {
+      if (!leases.has(event.sessionID) && leases.size >= MAX_TRACKED_SESSIONS) {
         throw new Error("LOOM_MODEL_ROUTING_STATE_LIMIT: tracked Sessions reached capacity; close/delete old Sessions or restart Loom")
       }
       assertInitialRoute(agentPlan, event.model)
@@ -244,26 +244,42 @@ export async function registerModelRouting(
       // slip through an earlier read-only eligibility snapshot.
       const reservation = reserveNativeRoute(quota,
         quotaIdentity(event.model.providerID, event.model.id, nativeID))
-      pending.set(pendingKey(event.sessionID, event.agent, event.model.providerID, event.model.id),
-        { ...reservation, sessionID: event.sessionID })
+      pending.set(event.sessionID, { ...reservation, sessionID: event.sessionID,
+        agent: event.agent, providerID: event.model.providerID, modelID: event.model.id })
       leases.set(event.sessionID, lease)
     } else if (event.kind !== "primary" && await managedSession(event.sessionID)) {
       if (!eventsHealthy) throw new Error("LOOM_MODEL_ROUTING_EVENTS_UNAVAILABLE: restart required")
       // Guard title/compaction/generate for managed Sessions, without changing
       // native utility behavior for *explicitly unconfigured* Session agents.
       const nativeID = assertAllowedRequest(fresh, event.model, config.modelRouting.paidFallback)
+      const pinned = leases.get(event.sessionID)
+      if (pinned) {
+        const [primaryProvider, , , primaryAccount] =
+          JSON.parse(pinned) as [string, string, string | null, string]
+        // If a native auxiliary call uses the same provider as the managed
+        // primary route, it must not silently switch from account A to B.
+        // Otherwise its unqualified retry could poison A's quota state.
+        if (primaryProvider === event.model.providerID && primaryAccount !== nativeID)
+          throw new Error("LOOM_MODEL_ROUTE_AFFINITY: auxiliary request changed the managed provider account")
+      }
       reserveNativeRoute(quota, quotaIdentity(event.model.providerID, event.model.id, nativeID))
-      // Auxiliary request outcomes cannot be reliably paired to a unique
-      // reservation. Do not invent provider success/failure accounting.
+      // The host's retry event does not distinguish primary from auxiliary.
+      // Once an auxiliary request is dispatched, an earlier primary permit
+      // no longer identifies the owner of a matching retry. Discard it rather
+      // than ever applying the auxiliary failure to the primary account.
+      pending.delete(event.sessionID)
+      // Do not invent successful or auxiliary failure accounting.
     }
   }))
   disposers.push(await ctx.session.hook("retry", event => {
     // OpenCode's normalized provider error type is authoritative enough to
     // classify a failed primary request; raw HTTP success is not. The hook
     // does NOT establish that it is safe to change models.
-    const found = pending.get(pendingKey(event.sessionID, event.agent, event.model.providerID, event.model.id))
+    const found = pending.get(event.sessionID)
+    if (!found || found.agent !== event.agent ||
+        found.providerID !== event.model.providerID || found.modelID !== event.model.id) return
     if (!recordNativeFailure(quota, found, event.error)) return
-    pending.delete(pendingKey(event.sessionID, event.agent, event.model.providerID, event.model.id))
+    pending.delete(event.sessionID)
     // Never loop on a route that we have just marked exhausted/throttled.
     // This rejects, rather than attempting an unsafe live provider switch.
     event.decision = { retry: false }
@@ -280,9 +296,7 @@ export async function registerModelRouting(
         if (event.type === "session.deleted" &&
             "sessionID" in event.data && typeof event.data.sessionID === "string") {
           leases.delete(event.data.sessionID)
-          for (const [id, record] of pending) {
-            if (record.sessionID === event.data.sessionID) pending.delete(id)
-          }
+          pending.delete(event.data.sessionID)
         }
       }
     } catch {
