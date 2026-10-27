@@ -22,7 +22,7 @@ configuration example, documentation and migration helper.
 - A bundled native `loom` skill, discoverable and loaded on demand.
 - Seven tools: `loom_agents`, `loom_action`, `loom_plan`, `loom_context`, `loom_record`,
   `loom_assessment`, and `loom_qa`.
-- Read-only, paginated OpenCode 2.1.1 native Session discovery via `loom_action sessions`,
+- Read-only, paginated OpenCode 2.2.0 native Session discovery via `loom_action sessions`,
   optionally filtered by Action; includes native archive status, without changing Sessions.
 
 A conversation needs no Action. An Action needs no plan. A task does not need to
@@ -62,32 +62,32 @@ interrupt an OpenCode session or certify successful delivery.
 
 ## Loading the plugin
 
-Upgrade candidate: **OpenCode 2.1.1**, with `@opencode/plugin@2.1.1`
-pinned in the source package and lockfile. This branch adds 2.1.1-specific
-installed boot, scripted-question and compaction checks; **do not count it as
-qualified until the assembled candidate's 2.1.1 checks pass**. The older
-2.0.32 qualification (PR #182) passed E1-E3 and its negative control using
-the packed alpha candidate (SHA-256
-`ef7dad9a30ade952cd055fe5c637ff19d1b7b75ef8da590cde07fad58e7efd15`);
-that is *historical evidence only*, not 2.1.1 approval. No test claims
-live-provider or external-MCP coverage.
+Upgrade candidate: **OpenCode 2.2.0**, with `@opencode/plugin@2.2.0`
+pinned in the source package and lockfile. The isolated installed boot,
+scripted-question, Session discovery and compaction checks use the exact
+2.2.0 CLI and SDK; see draft PR #199 for current CI evidence.
+**Only a successful run on the reviewed head qualifies the tested behavior.**
+Evidence collected under 2.1.1 or the older 2.0.32 host
+does not establish 2.2.0 compatibility. The historical 2.0.32 qualification
+(PR #182) passed E1–E3 and its negative control with the packed alpha artifact
+(SHA-256 `ef7dad9a30ade952cd055fe5c637ff19d1b7b75ef8da590cde07fad58e7efd15`).
+No test claims live-provider or external-MCP coverage.
 
 The separately pinned Code Mode search fixture remains 2.0.29; it cannot
 qualify the new host, and 2.0.29 is not a supported SDK/host target. Selective
 session-read remains a version-specific source-qualified N/A, never proof of
 authorization. Neither workflow upgrades your personal CLI or changes
 your active configuration. See
-[2.1.1 migration and native features](docs/opencode-2.1.1.md) and
+[2.2.0 migration and compatibility](docs/opencode-2.2.0.md) and
 [installed-host validation](docs/installed-host-validation.md).
+**Model-routing host boundary:** the current packaged SDK/CLI is 2.2.0.
+Initial managed routing was only inspected and tested on 2.1.4. On 2.2.0
+Loom keeps opt-in managed routing blocked with
+`LOOM_MODEL_ROUTING_HOST_UNQUALIFIED` pending version-specific acceptance.
+A valid disabled policy leaves normal OpenCode 2.2.0 requests unchanged.
+Do not infer safe provider/account billing or live failover from the older
+2.1.4 results; see [model routing](docs/model-routing.md).
 
-**Initial model routing requires the native OpenCode 2.1.4 host.** The
-separately stacked draft PR #191 uses the **2.1.1 SDK already pinned by #190**
-and qualifies an isolated unmodified **2.1.4 CLI** with a scripted
-unknown-billing negative control. The V2.1.4 host can honor
-`Agent.Info.model` configured by Loom, so no per-agent model assignment in
-`opencode.json` is necessary. This is not evidence of live subscription
-fallback or comprehensive mixed-version host qualification; the full
-installed-host suite remains separate.
 **Bun support: `>=1.4.2 <2.0.0`. Use Bun 1.4.2 to reproduce validation.**
 The exact tested baseline is recorded in `.bun-version` and used by the CI jobs.
 This is a supported minimum based on that tested baseline, not a claim that
@@ -157,8 +157,7 @@ metadata, not injected instructions, automatic matching or permissions.
 Supported sections are `version`, `agents`, `roles`, `instructions`, `context`,
 `ledger`, and optional `model-routing`, `model-classes`, and `model-aliases`.
 Unknown settings fail validation. OpenCode still owns provider credentials,
-installed model definitions, and native permissions. **Opt-in, initial routing
-only on 2.1.4:** Loom assigns exact native models and reasoning variants from
+installed model definitions, and native permissions. **Version-specific initial routing on 2.1.4:** Loom assigns exact native models and reasoning variants from
 verified provider/connection evidence and guards against unknown or unapproved
 paid requests at provider dispatch. It never switches providers during
 a running native stream. Initial selection now reads the shared,
@@ -174,8 +173,8 @@ silently charged to OpenCode's global default.
 `loom_agents` exposes `model_routing_runtime` and selected/unavailable
 agents. See [model routing](docs/model-routing.md) and
 [shared subscription quota](docs/shared-subscription-quota.md) for the
-exact host/account-affinity and recovery limits before
-enabling it. Invalid configuration continues to disable guidance and
+exact host/account-affinity and recovery limits. The current
+2.2.0 host is not yet qualified for managed routing. Invalid configuration continues to disable guidance and
 automatic capture instead of applying a partial or stale role mapping;
 do **not** treat an invalid-startup configuration as an enforced billing
 policy. Diagnostics remain available through `loom_agents`; native tools

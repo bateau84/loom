@@ -21,7 +21,7 @@ class BootHarnessTest(unittest.TestCase):
             root = Path(tmp)
             artifact = root / "loom-plugin.tgz"
             package = json.dumps({"name": "loom-plugin", "version": "2.0.0-alpha.1",
-                                  "dependencies": {"@opencode/plugin": "2.1.1"}}).encode()
+                                  "dependencies": {"@opencode/plugin": "2.2.0"}}).encode()
             with tarfile.open(artifact, "w:gz") as archive:
                 info = tarfile.TarInfo("package/package.json")
                 info.size = len(package)
@@ -30,16 +30,16 @@ class BootHarnessTest(unittest.TestCase):
             plugin.mkdir(parents=True)
             (plugin / "package.json").write_text(json.dumps({
                 "name": "loom-plugin", "version": "2.0.0-alpha.1",
-                "dependencies": {"@opencode/plugin": "2.1.1"},
+                "dependencies": {"@opencode/plugin": "2.2.0"},
             }))
             sdk = root / "prefix/node_modules/@opencode/plugin"
             sdk.mkdir(parents=True)
-            (sdk / "package.json").write_text(json.dumps({"version": "2.1.1"}))
+            (sdk / "package.json").write_text(json.dumps({"version": "2.2.0"}))
 
-            result = smoke.installed_plugin_inventory(artifact, plugin, "2.0.0-alpha.1", "2.1.1")
+            result = smoke.installed_plugin_inventory(artifact, plugin, "2.0.0-alpha.1", "2.2.0")
 
             self.assertEqual(result["version"], "2.0.0-alpha.1")
-            self.assertEqual(result["sdk_version"], "2.1.1")
+            self.assertEqual(result["sdk_version"], "2.2.0")
             self.assertEqual(result["artifact_filename"], "loom-plugin.tgz")
             self.assertEqual(result["artifact_path"], str(artifact.resolve()))
             self.assertEqual(result["installed_path"], str(plugin.resolve()))
@@ -50,7 +50,7 @@ class BootHarnessTest(unittest.TestCase):
             root = Path(tmp)
             artifact = root / "loom-plugin.tgz"
             package = json.dumps({"name": "loom-plugin", "version": "2.0.0-alpha.1",
-                                  "dependencies": {"@opencode/plugin": "2.1.1"}}).encode()
+                                  "dependencies": {"@opencode/plugin": "2.2.0"}}).encode()
             with tarfile.open(artifact, "w:gz") as archive:
                 info = tarfile.TarInfo("package/package.json")
                 info.size = len(package)
@@ -58,13 +58,13 @@ class BootHarnessTest(unittest.TestCase):
             plugin = root / "node_modules/loom-plugin"
             plugin.mkdir(parents=True)
             (plugin / "package.json").write_text(json.dumps({"name": "loom-plugin", "version": "2.0.0-alpha.1",
-                "dependencies": {"@opencode/plugin": "2.1.1"}}))
+                "dependencies": {"@opencode/plugin": "2.2.0"}}))
             sdk = root / "node_modules/@opencode/plugin"
             sdk.mkdir(parents=True)
             (sdk / "package.json").write_text(json.dumps({"version": "2.0.31"}))
 
             with self.assertRaisesRegex(RuntimeError, "Installed SDK"):
-                smoke.installed_plugin_inventory(artifact, plugin, "2.0.0-alpha.1", "2.1.1")
+                smoke.installed_plugin_inventory(artifact, plugin, "2.0.0-alpha.1", "2.2.0")
 
     def test_source_inventory_works_without_git_objects(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -176,7 +176,7 @@ class BootHarnessTest(unittest.TestCase):
             root = Path(tmp)
             output = root / "report"
             package = {"name": "loom-plugin", "version": "2.0.0-alpha.1",
-                       "dependencies": {"@opencode/plugin": "2.1.1"}}
+                       "dependencies": {"@opencode/plugin": "2.2.0"}}
             artifact = root / "artifact.tgz"
             payload = json.dumps(package).encode()
             with tarfile.open(artifact, "w:gz") as archive:
@@ -188,9 +188,9 @@ class BootHarnessTest(unittest.TestCase):
             (plugin / "package.json").write_text(json.dumps(package))
             sdk = root / "node_modules/@opencode/plugin"
             sdk.mkdir(parents=True)
-            (sdk / "package.json").write_text(json.dumps({"version": "2.1.1"}))
+            (sdk / "package.json").write_text(json.dumps({"version": "2.2.0"}))
             with patch.object(smoke, "source_inventory", return_value={}), self.assertRaises(FileNotFoundError):
-                smoke.run_probe(str(root / "missing-opencode"), root, output, "2.1.1",
+                smoke.run_probe(str(root / "missing-opencode"), root, output, "2.2.0",
                                 plugin=plugin, artifact=artifact, expected_plugin="2.0.0-alpha.1")
             report = json.loads((output / "report.json").read_text())
             self.assertEqual(report["status"], "failed")
