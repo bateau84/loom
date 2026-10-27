@@ -1,16 +1,19 @@
-# Installed model-routing acceptance: OpenCode V2.1.4
+# Installed model-routing acceptance: OpenCode V2.2.0
 
 This is an **installed-host test**, not a replacement router. The harness packs
 the exact Loom plugin candidate, installs it in an isolated directory, runs an
-**unmodified** OpenCode 2.1.4 host in an isolated HOME/XDG environment, and
+**unmodified** OpenCode 2.2.0 host in an isolated HOME/XDG environment, and
 loads only in-memory scripted model providers. It never connects to live AI
 providers, reads a user's OpenCode credentials or uses their global config.
 
 The complete initial-routing, shared-quota and acceptance implementation is
 now consolidated in [draft PR #190](https://github.com/bateau84/loom/pull/190).
 This test packs that assembled candidate; the previous stacked drafts are
-historical context, not separate test targets. No live provider switching is
-implemented.
+historical context, not separate test targets. OpenCode 2.2.0 managed routing
+has **not** yet been qualified: enabled routing must fail at the early
+`LOOM_MODEL_ROUTING_HOST_UNQUALIFIED` guard; the disabled/native path is
+still exercised. The previous 2.1.4 routing acceptance is historical
+evidence, not proof of positive 2.2.0 model selection or live fallback.
 
 ## Reproduce on Linux or a GitHub Actions runner
 
@@ -35,7 +38,7 @@ npm pack --json --pack-destination "$RUN/pack" > "$RUN/pack/pack.json"
 ARCHIVE="$(find "$RUN/pack" -maxdepth 1 -name 'loom-plugin-*.tgz' -print -quit)"
 test -n "$ARCHIVE"
 npm install --prefix "$RUN/plugin" --no-audit --no-fund "$ARCHIVE"
-npm install --prefix "$RUN/host" --no-audit --no-fund @opencode/cli@2.1.4
+npm install --prefix "$RUN/host" --no-audit --no-fund @opencode/cli@2.2.0
 
 python3 tests/installed_routing_acceptance.py \
   --opencode "$RUN/host/node_modules/.bin/opencode" \
@@ -54,9 +57,9 @@ The original fixture's `routing-events.ndjson` is temporary; reported traces
 include allowlisted request route/model IDs, test mode, native tool names and
 a pseudonymous local Session label. Neither stores raw prompts, headers,
 account credentials, tokens or tool inputs. Guarded failures must match
-their expected `LOOM_MODEL_ROUTE_UNAVAILABLE`,
-`LOOM_MODEL_ROUTING_CONFIG_UNREADABLE` or
-`LOOM_MODEL_ROUTING_STARTUP_FAILED` category, not merely zero transport.
+their expected `LOOM_MODEL_ROUTING_HOST_UNQUALIFIED` (or
+`LOOM_MODEL_ROUTING_STARTUP_FAILED` for a broken Action ledger)
+category, not merely zero transport.
 
 ## What the installed-host gate verifies
 
@@ -70,7 +73,7 @@ their expected `LOOM_MODEL_ROUTE_UNAVAILABLE`,
 | Metered route (paid fallback disabled) | No local paid-labelled provider `doStream` invocation | Session fails; the previously proven local route is never reached |
 | Unsupported requested `high` | Only `medium` advertised in fixture | No transport; does not alone prove the reason for denial |
 | Native compaction after a completed tool | Compaction model request, native tool hook counts and selected provider | One native tool; compaction completes on same model/provider |\n| Restart and disabled compatibility | Fresh real OpenCode processes | Guard continues to deny, disabled mode continues to run |
-| Installed quota-state initialization | Real isolated native host and XDG quota DB | Enabled routing opens private 0600 quota state; disabled first-run does not |
+| Unqualified 2.2.0 host routing | Real isolated host, enabled Loom policy | No native provider transport or new quota database; native routing-disabled requests still run |
 | Independent quota processes | Separate Bun child processes using PR #194 SQLite manager | Cross-process block, account/provider isolation, single recovery probe and observable recovery |
 | Unexpected native global default | Host configured with a paid-labelled default in a managed Session | No transport; without an eligible primary route the exact mismatch reason remains UNPROVEN |
 | Invalid routing configuration | Host startup with malformed `.loom.yaml` | Native request rejected with `LOOM_MODEL_ROUTING_CONFIG_UNREADABLE` before any provider transport |
@@ -101,8 +104,8 @@ an installed-host requirement to PASS.
 | 5 | Reject newly exhausted committed route | UNPROVEN native; mocked pre-dispatch check |
 | 6 | Cross-process block and recovery | PASS separate SQLite child-process test; UNPROVEN native request integration |
 | 7 | Separate provider accounts | PASS separate SQLite child-process test; UNPROVEN native account switch |
-| 8 | Unknown and metered protection | PASS local installed guard negatives; real billing unproven |
-| 9 | Unexpected global default rejected | UNPROVEN distinct mismatch guard; blocked local transport is confirmed |
+| 8 | Unknown and metered protection | UNPROVEN policy-specific on 2.2.0; host-unqualified guard blocks all managed requests |
+| 9 | Unexpected global default rejected | UNPROVEN mismatch-specific guard; 2.2.0 host-unqualified blocking prevents transport |
 | 10 | No silent active account/model change | UNPROVEN native stream lease; mocked guard checks |
 | 11 | No tool replay on error/interrupt | PASS local disabled-native negative; UNPROVEN managed interruption |
 | 12 | Routing disabled retains native behavior | PASS installed native host |
@@ -140,5 +143,5 @@ genuinely working connections:
    outcomes. Do not publish credentials, login secrets or raw request bodies.
 
 **Current real-provider verdict: UNPROVEN.** No live account connections
-were supplied or used, no API spending was authorized, and OpenCode 2.1.4
+were supplied or used, no API spending was authorized, and OpenCode 2.2.0
 does not currently provide a proven safe automatic live-fallback seam.
