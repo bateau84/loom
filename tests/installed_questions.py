@@ -695,6 +695,13 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
                     'Native delegation ignored specialist model precedence: ' + json.dumps(selected_model))
             require(any(e['data']['agent'] == 'question-specialist' for e in target_requests(root, child_id)),
                     'No installed native specialist model request observed')
+            retrieved = [e for e in events(root)[typed_start:] if e['type'] == 'tool-before'
+                         and e['data']['sessionID'] == child_id
+                         and e['data']['tool'] in ('loom_record', 'loom.record')
+                         and e['data'].get('input', {}).get('operation') == 'query'
+                         and e['data']['input'].get('view') == 'thread'
+                         and e['data']['input'].get('question_id') == typed_q['id']]
+            require(retrieved, 'Specialist did not retrieve its authoritative stored question')
             typed_thread = s.invoke(typed_reader, 'record', {'operation': 'query', 'view': 'thread', 'question_id': typed_q['id']})
             typed_answers = typed_thread['answers']
             require(len(typed_answers) == 1 and typed_answers[0]['agent'] == 'question-specialist' and

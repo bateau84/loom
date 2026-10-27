@@ -44,7 +44,7 @@ export default Plugin.define({
         const oqID = [...text.matchAll(/You are being asked a Loom Open Question \(ID: ([^)]+)\)/g)].at(-1)?.[1]
         const oqKey = oqID ? `typed-oq:${oqID}` : undefined
         const oqCode = role === "respondent" && oqID && oqKey && !issued.has(oqKey)
-          ? `return await tools.loom.record({operation:"answer",question_id:${JSON.stringify(oqID)},answer:"Verified scripted specialist response for installed OQ",context_attachments:["fixture://installed-typed-specialist"]})`
+          ? `const q = JSON.parse(await tools.loom.record({operation:"query",view:"thread",question_id:${JSON.stringify(oqID)}})); if(q?.result?.question?.id !== ${JSON.stringify(oqID)}) throw new Error("Native OQ thread retrieval failed"); return await tools.loom.record({operation:"answer",question_id:${JSON.stringify(oqID)},answer:"Verified scripted specialist response for installed OQ",context_attachments:["fixture://installed-typed-specialist"]})`
           : undefined
         if (oqCode) issued.add(oqKey!)
         const code = jobCode ?? oqCode
