@@ -288,3 +288,50 @@ test("version one quota database migrates without deleting its existing records"
     } finally { version.close() }
   } finally { upgraded.close() }
 }))
+
+
+test("positive quota report cannot release an authentication block without confirmed refresh", async () => fixture(async path => {
+  const store = await openSharedQuotaState({ path })
+  const r = route("auth-account")
+  try {
+    const initial = store.reserve(r).permit!
+    expect(store.recordFailure(r, initial, { kind: "authentication" })).toBe(true)
+    expect(store.eligibility(r).reason).toBe("authentication")
+    const observation = store.observe(r)
+    // A valid provider balance is NOT proof that expired credentials were refreshed.
+    expect(store.recordProviderQuota(r, observation, {
+      scope: "account", scopeVerified: true, remaining: 5,
+    })).toBe(false)
+    expect(store.recordProviderQuota(r, store.observe(r), { remaining: 5 })).toBe(false)
+    store.recordSuccess(r, store.observe(r), {
+      scope: "account", scopeVerified: true, remaining: 5,
+    })
+    expect(store.eligibility(r).reason).toBe("authentication")
+    expect(store.eligibility({ ...r, modelID: "other-model" }).reason).toBe("authentication")
+    // Only the separately confirmed authentication recovery API clears the block.
+    expect(store.recordAuthenticationRecovered(r, store.observe(r))).toBe(true)
+    expect(store.eligibility(r).eligible).toBe(true)
+    expect(store.recordProviderQuota(r, store.observe(r), {
+      scope: "account", scopeVerified: true, remaining: 5,
+    })).toBe(true)
+    expect(store.eligibility(r).quota).toBe("available")
+  } finally { store.close() }
+}))
+
+test("logically contradictory provider-available zero-balance row fails closed", async () => fixture(async path => {
+  const r = route("contradictory")
+  const store = await openSharedQuotaState({ path })
+  try {
+    expect(store.recordProviderQuota(r, store.observe(r), { remaining: 5 })).toBe(true)
+  } finally { store.close() }
+  const raw = new Database(path)
+  try {
+    raw.exec("UPDATE quota SET remaining=0 WHERE state='available' AND evidence='provider'")
+    expect((raw.prepare("PRAGMA quick_check").get() as { quick_check: string }).quick_check).toBe("ok")
+  } finally { raw.close() }
+  const reopened = await openSharedQuotaState({ path })
+  try {
+    expect(() => reopened.eligibility(r)).toThrow(/Invalid shared quota state/)
+    expect(() => reopened.reserve(r)).toThrow(/Invalid shared quota state/)
+  } finally { reopened.close() }
+}))
