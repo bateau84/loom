@@ -254,3 +254,87 @@ test("typed OQ recipient contract rejects malformed or competing destinations", 
     expect(q.data.format).toBe("loom-question/v2")
   } finally { await f.close() }
 })
+
+test("a second Session with the selected agent cannot answer a direct OQ", async () => {
+  const f = await registeredLoom()
+  try {
+    const q = (await f.invoke("record", {
+      operation: "ask", question: "Which API?", recipient: { kind: "agent", id: "investigator" }, blocking: true,
+    }, "asker", "author")).result
+    await expect(f.invoke("record", { operation: "answer", question_id: q.id, answer: "I know the role" },
+      "unrelated-investigator-session", "investigator")).rejects.toThrow("Session")
+    expect((await f.invoke("record", { operation: "query", view: "thread", question_id: q.id })).result.answers).toHaveLength(0)
+    const a = (await f.invoke("record", { operation: "answer", question_id: q.id, answer: "From the actual child" },
+      "ses_questionchild_1", "investigator")).result
+    expect(a.data.format).toBe("loom-answer/v2")
+    const persisted = (await f.invoke("record", { operation: "query", session_only: true, limit: 30 }, "asker")).result.items
+    expect(persisted.some((record: any) => record.data.format === "loom-question-respondent-binding/v1" &&
+      record.data.question_id === q.id && record.data.session_id === "ses_questionchild_1")).toBe(true)
+  } finally { await f.close() }
+})
+
+test("role-targeted OQ is discoverable by role and by resolved agent across task boundaries", async () => {
+  const f = await registeredLoom()
+  try {
+    await writeFile(join(f.directory, ".loom.yaml"), "agents:\\n  investigator: {roles: [research]}\\ninstructions: {enabled: false}\\nledger: {capture: off}\\n".replaceAll("\\\\n", "\\n"))
+    const action = (await f.invoke("action", { operation: "create", title: "Discoverability", goal: "Resolve an open question" })).result
+    await f.invoke("plan", { operation: "save", action_id: action.id, expected_revision: 0,
+      nodes: [{ id: "ask", kind: "task", title: "Ask question" }, { id: "receive", kind: "task", title: "Other task" }] })
+    await f.invoke("context", { action_id: action.id, node_id: "ask" }, "asker", "author")
+    const q = (await f.invoke("record", { operation: "ask", question: "What is the finding?",
+      recipient: { kind: "role", id: "research" }, blocking: false }, "asker", "author")).result
+    for (const respondent of ["research", "investigator"]) {
+      const listed = (await f.invoke("record", { operation: "query", view: "questions",
+        action_id: action.id, respondent }, "reader", "investigator")).result.items
+      expect(listed.some((item: any) => item.question_id === q.id)).toBe(true)
+    }
+    const otherTask = (await f.invoke("context", { action_id: action.id, node_id: "receive" },
+      "receiving-session", "investigator")).result
+    expect(otherTask.questions.some((item: any) => item.question_id === q.id)).toBe(true)
+  } finally { await f.close() }
+})
+
+test("native OQ delegation uses specialist model before the asking Session model", async () => {
+  const f = await registeredLoom()
+  try {
+    const parentModel = { providerID: "local-fixture", id: "parent-model", variant: "high" }
+    f.sessions.set("asker", { id: "asker", agent: "author", model: parentModel,
+      projectID: "tool-help", location: { directory: f.directory } })
+    const first = (await f.invoke("record", { operation: "ask", question: "First?",
+      recipient: { kind: "agent", id: "investigator" }, blocking: false }, "asker", "author")).result
+    expect(first.dispatch.status).toBe("admission-observed")
+    expect(f.sessionCreates[0].model).toEqual(parentModel)
+    const specialistModel = { providerID: "specialist-fixture", id: "preferred-model" }
+    f.nativeAgents[0].model = specialistModel
+    const second = (await f.invoke("record", { operation: "ask", question: "Second?",
+      recipient: { kind: "agent", id: "investigator" }, blocking: false }, "asker", "author")).result
+    expect(second.dispatch.status).toBe("admission-observed")
+    expect(f.sessionCreates[1].model).toEqual(specialistModel)
+  } finally { await f.close() }
+})
+
+test("a forwarded role OQ can only be answered by a specialist Session belonging to its dispatcher", async () => {
+  const f = await registeredLoom()
+  try {
+    f.sessions.set("asking-child", { id: "asking-child", parentID: "dispatcher", agent: "author",
+      projectID: "tool-help", location: { directory: f.directory } })
+    f.sessions.set("dispatcher", { id: "dispatcher", agent: "author",
+      projectID: "tool-help", location: { directory: f.directory } })
+    f.sessions.set("wrong-parent-child", { id: "wrong-parent-child", parentID: "some-other-parent", agent: "investigator",
+      projectID: "tool-help", location: { directory: f.directory } })
+    f.sessions.set("right-parent-child", { id: "right-parent-child", parentID: "dispatcher", agent: "investigator",
+      projectID: "tool-help", location: { directory: f.directory } })
+    const q = (await f.invoke("record", { operation: "ask", question: "Find a specialist answer",
+      recipient: { kind: "agent", id: "investigator" }, blocking: true }, "asking-child", "author")).result
+    expect(q.dispatch).toMatchObject({ status: "admission-observed", reason: "native-parent-notice-admitted",
+      target_session_id: "dispatcher" })
+    await expect(f.invoke("record", { operation: "answer", question_id: q.id, answer: "Wrong parent" },
+      "wrong-parent-child", "investigator")).rejects.toThrow("dispatching Session")
+    await expect(f.invoke("record", { operation: "answer", question_id: q.id, answer: "Not a specialist" },
+      "dispatcher", "author")).rejects.toThrow("intended respondent")
+    const a = (await f.invoke("record", { operation: "answer", question_id: q.id, answer: "Specialist answer" },
+      "right-parent-child", "investigator")).result
+    expect(a.data.format).toBe("loom-answer/v2")
+    expect(a.resume.asking_session_id).toBe("asking-child")
+  } finally { await f.close() }
+})
