@@ -63,10 +63,11 @@ interrupt an OpenCode session or certify successful delivery.
 ## Loading the plugin
 
 Upgrade candidate: **OpenCode 2.2.0**, with `@opencode/plugin@2.2.0`
-pinned in the source package and lockfile. The installed boot, scripted-question,
-Session discovery and compaction checks are being requalified against the exact
-2.2.0 CLI and SDK. **Do not count this as qualified until the assembled candidate's
-2.2.0 checks pass.** Evidence collected under 2.1.1 or the older 2.0.32 host
+pinned in the source package and lockfile. The isolated installed boot,
+scripted-question, Session discovery and compaction checks use the exact
+2.2.0 CLI and SDK; see draft PR #199 for current CI evidence.
+**Only a successful run on the reviewed head qualifies the tested behavior.**
+Evidence collected under 2.1.1 or the older 2.0.32 host
 does not establish 2.2.0 compatibility. The historical 2.0.32 qualification
 (PR #182) passed E1–E3 and its negative control with the packed alpha artifact
 (SHA-256 `ef7dad9a30ade952cd055fe5c637ff19d1b7b75ef8da590cde07fad58e7efd15`).

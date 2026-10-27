@@ -70,6 +70,27 @@ passes; changing an oracle alone is not proof.
    that separate branch was qualified on CLI 2.1.4 / SDK 2.1.1 and is not
    authorized for deployment here.
 
+## Isolated installed-host evidence
+
+The first 2.2.0 question run failed because its old catalog oracle demanded
+zero visible tools for a deny-all agent. The 2.2.0 host still advertises
+`skill`; the updated fixture executes both forbidden `shell` and `skill`
+calls through the native host. The real host rejects shell dispatch and returns
+a structured `permission.rejected` result for `skill`:
+
+- [Plugin CI](https://github.com/bateau84/loom/actions/runs/40482966462) —
+  PASS, including typecheck, core, native and Python suites, production build.
+- [Installed boot](https://github.com/bateau84/loom/actions/runs/40482966470) —
+  PASS, packed candidate, matched SDK/CLI, agent preservation and restart.
+- [Installed E1–E5 acceptance](https://github.com/bateau84/loom/actions/runs/40482966503) —
+  PASS, with exact 2.2.0 SDK/CLI, scripted local provider, restart, compaction,
+  duplicate-input negative control and deny-all tool execution checks.
+
+These runs were recorded at head `5c9b16aca413e587312aef2fdef3fd37715c9433`.
+After further code changes, requalify the current head before merging.
+This is still **not** live-provider, subscription billing, external MCP,
+cross-host state migration or routing acceptance evidence.
+
 ## Rollback and safety
 
 Neither CI workflow touches the user's OpenCode installation or personal

@@ -457,8 +457,9 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             require(any(json.loads(v).get('error', {}).get('message') == 'No tool named "shell" is currently available. Please use a tool from the available tool list.'
                         for v in results_for('shell')),
                     'No real native rejection of forbidden shell tool call observed')
-            require(any('Permission denied' in v for v in results_for('skill')),
-                    'Visible skill tool bypassed deny-all permission or did not return a permission failure')
+            require(any(json.loads(v).get('error') == {'type': 'permission.rejected', 'message': 'Permission denied: skill'}
+                        for v in results_for('skill')),
+                    'Visible skill tool bypassed native deny-all permission or returned a non-permission error')
             report['native_policy_countercheck'] = {'status': 'PASS', 'meaning': 'Deny-all native agent omitted shell, rejected shell invocation, and denied visible skill execution through the real permission boundary'}
             report['checks'].append({'name': 'E2-idle-switched-native-resume', 'status': 'PASS', 'outcome': resumed['resume'],
                                      'native_admissions': len(admitted), 'consumption': 'Observed switched-agent model request, not comprehension/completion',

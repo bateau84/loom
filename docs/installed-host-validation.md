@@ -173,11 +173,11 @@ they are not substitutes for the installed-host run.
 ```sh
 python3 tests/installed_host_smoke.py \
   --opencode /absolute/path/to/opencode \
-  --expect-version 2.0.32 \
+  --expect-version 2.2.0 \
   --plugin /absolute/path/to/plugin-prefix/node_modules/loom-plugin \
   --artifact /absolute/path/to/loom-plugin-candidate.tgz \
   --expect-plugin-version 2.0.0-alpha.1 \
-  --expect-sdk-version 2.0.32 \
+  --expect-sdk-version 2.2.0 \
   --report-directory /absolute/path/to/new-report-directory
 ```
 
