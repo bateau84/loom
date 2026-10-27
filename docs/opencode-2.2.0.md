@@ -43,6 +43,17 @@ Source boundaries:
 - [Session service](https://github.com/anomalyco/opencode/blob/v2.2.0/packages/core/src/session.ts)
 - [Session.get](https://github.com/anomalyco/opencode/blob/v2.2.0/packages/core/src/session/session.ts)
 
+## Native switched-agent negative control
+
+In a real isolated 2.2.0 host, the deny-all switched agent still receives
+the native `skill` entry in its model tool list. It no longer guarantees
+an empty list, unlike the historical 2.1.1 fixture expectation. The
+qualification now requires *both* that `shell` is absent and rejected when
+the scripted provider requests it, *and* that invoking the still-visible
+native `skill` tool is denied by the actual host permission boundary.
+This is acceptance evidence only when the whole installed-host scenario
+passes; changing an oracle alone is not proof.
+
 ## Required qualification
 
 1. With Bun 1.4.2, regenerate `bun.lock` from `package.json` and commit the

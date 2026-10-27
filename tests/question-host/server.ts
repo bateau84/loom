@@ -57,11 +57,17 @@ export default Plugin.define({
         const latest = notices.at(-1)
         const checkPolicy = role === "switched" && latest && !policyChecks.has(latest.answer)
         if (checkPolicy) policyChecks.add(latest.answer)
-        const tool = code ? "execute" : checkPolicy ? "shell" : undefined
-        const args = code ? { code } : { command: "printf NATIVE_POLICY_MUST_DENY", description: "Harmless native deny countercheck" }
         const events: any[] = [{ type: "stream-start", warnings: [] }]
-        if (tool) events.push({ type: "tool-call", toolCallId: randomUUID(), toolName: tool, input: JSON.stringify(args) })
-        else {
+        if (code) {
+          events.push({ type: "tool-call", toolCallId: randomUUID(), toolName: "execute", input: JSON.stringify({ code }) })
+        } else if (checkPolicy) {
+          // Two real negative controls: the omitted shell tool must not dispatch, and the
+          // still-advertised native skill tool must honor the switched agent's deny-all policy.
+          events.push({ type: "tool-call", toolCallId: randomUUID(), toolName: "shell",
+            input: JSON.stringify({ command: "printf NATIVE_POLICY_MUST_DENY", description: "Harmless native deny countercheck" }) })
+          events.push({ type: "tool-call", toolCallId: randomUUID(), toolName: "skill",
+            input: JSON.stringify({ id: "loom" }) })
+        } else {
           const summary = text.includes("You MUST use this format for your response") && text.includes("## Objective")
           events.push({ type: "text-start", id: "text" },
             { type: "text-delta", id: "text", delta: summary
@@ -69,7 +75,7 @@ export default Plugin.define({
               : "HARNESS_IDLE" },
             { type: "text-end", id: "text" })
         }
-        events.push({ type: "finish", finishReason: { unified: tool ? "tool-calls" : "stop", raw: tool ? "tool_calls" : "stop" }, usage })
+        events.push({ type: "finish", finishReason: { unified: code || checkPolicy ? "tool-calls" : "stop", raw: code || checkPolicy ? "tool_calls" : "stop" }, usage })
         return { stream: new ReadableStream({ start(c) { for (const e of events) c.enqueue(e); c.close() } }) }
       },
     })

@@ -446,12 +446,20 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             allowed_catalogs = [e['data'].get('tools', []) for e in events(root) if e['type'] == 'provider-request' and e['data']['role'] == 'asker']
             denied_requests = [e['data'] for e in events(root) if e['type'] == 'provider-request' and e['data']['role'] == 'switched']
             require(any(any(t['name'] == 'shell' for t in catalog) for catalog in allowed_catalogs), 'Countercheck used an unknown native tool')
-            require(denied_requests and all(not e.get('tools') for e in denied_requests), 'Native switched deny policy did not filter tools')
-            rejection_values = [c.get('output', {}).get('value', '') for e in denied_requests for message in e['prompt']
-                                if message['role'] == 'tool' for c in message['content'] if c.get('toolName') == 'shell']
-            require(any(json.loads(v).get('error', {}).get('message') == 'No tool named "shell" is currently available. Please use a tool from the available tool list.' for v in rejection_values),
-                    'No real native rejection of provider countercheck observed')
-            report['native_policy_countercheck'] = {'status': 'PASS', 'meaning': 'Native deny-all switched-agent catalog filtering and rejection, not permission-hook override or a successful tool execution'}
+            # OpenCode 2.2.0 keeps its built-in skill tool visible to a deny-all agent,
+            # but it must still reject actual skill execution via Permission.assert.
+            # Never treat mere visibility as permission, or relax the shell absence oracle.
+            require(denied_requests and all({t['name'] for t in e.get('tools', [])} == {'skill'} for e in denied_requests),
+                    'Native switched deny-all catalog exposed more than the separately guarded skill tool')
+            def results_for(name):
+                return [c.get('output', {}).get('value', '') for e in denied_requests for message in e['prompt']
+                        if message['role'] == 'tool' for c in message['content'] if c.get('toolName') == name]
+            require(any(json.loads(v).get('error', {}).get('message') == 'No tool named "shell" is currently available. Please use a tool from the available tool list.'
+                        for v in results_for('shell')),
+                    'No real native rejection of forbidden shell tool call observed')
+            require(any('Permission denied' in v for v in results_for('skill')),
+                    'Visible skill tool bypassed deny-all permission or did not return a permission failure')
+            report['native_policy_countercheck'] = {'status': 'PASS', 'meaning': 'Deny-all native agent omitted shell, rejected shell invocation, and denied visible skill execution through the real permission boundary'}
             report['checks'].append({'name': 'E2-idle-switched-native-resume', 'status': 'PASS', 'outcome': resumed['resume'],
                                      'native_admissions': len(admitted), 'consumption': 'Observed switched-agent model request, not comprehension/completion',
                                      'initial_agent': before['agent']})
