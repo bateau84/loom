@@ -142,6 +142,10 @@ function validateRow(row: Row): Row {
     !optionalTime(row.until_ms) || !optionalTime(row.lease_until_ms) ||
     !optionalTime(row.last_success_ms) || !validTime(row.updated_ms) ||
     (row.remaining !== null && (!validTime(row.remaining))) ||
+    // A provider-certified available state cannot simultaneously carry zero
+    // remaining allowance. SQLite quick_check does not enforce this relation.
+    (row.state === "available" && row.evidence === "provider" &&
+      (row.remaining === null || row.remaining === 0)) ||
     !leasePair ||
     (row.lease_token !== null && (typeof row.lease_token !== "string" ||
       !/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(row.lease_token))) ||
@@ -387,6 +391,11 @@ export class SharedQuotaState {
     const key = scopeKey(route, scope)
     const row = this.read(key, now)
     if (remaining > 0) {
+      // A quota/balance report is NOT proof that authentication recovered.
+      // Account-wide HTTP 401 blocks can only be lifted by the dedicated,
+      // separately verified recordAuthenticationRecovered() operation. This
+      // also applies when the positive report is for another quota scope.
+      if (this.read(scopeKey(route, "account"), now).state === "authentication") return false
       // Positive observations must match the exact revision; a stale report
       // must never erase a later block.
       if (row.revision !== permit.revisions[scope]) return false
