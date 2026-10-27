@@ -37,7 +37,7 @@ test("an Action plan revision is attributable to its native planning Session and
     expect((await f.invoke("plan", { operation: "read", action_id: action.id }, "planner-session", "task-manager")).result)
       .toEqual({ revision: 0, nodes: [] })
 
-    expect((await f.invoke("context", { action_id: action.id }, "planner-session", "task-manager")).result.action_id)
+    expect((await f.invoke("context", { action_id: action.id }, "planner-session", "task-manager")).result.action.id)
       .toBe(action.id)
     const nodes = [
       { id: "research", kind: "task", title: "Investigate retry safety", roles: ["research"] },
