@@ -338,3 +338,34 @@ test("a forwarded role OQ can only be answered by a specialist Session belonging
     expect(a.resume.asking_session_id).toBe("asking-child")
   } finally { await f.close() }
 })
+
+test("a failed durable respondent binding never prompts or authorizes the orphaned child", async () => {
+  const f = await registeredLoom()
+  const path = join(f.directory, "state", "loom", "actions-v1",
+    digest({ project: "tool-help", canonical: f.directory }), "ledger.sqlite")
+  const db = new Database(path)
+  try {
+    db.exec(`CREATE TRIGGER fail_oq_respondent_binding BEFORE INSERT ON ledger
+      WHEN NEW.kind='result' AND json_extract(NEW.data,'$.data.format')='loom-question-respondent-binding/v1'
+      BEGIN SELECT RAISE(ABORT,'test binding write rejected'); END`)
+    const q = (await f.invoke("record", { operation: "ask",
+      question: "Do not launch without authority", recipient: { kind: "agent", id: "investigator" },
+      blocking: true }, "asker", "author")).result
+    expect(q.dispatch).toMatchObject({ status: "outcome-unknown", attempted: true,
+      reason: "native-operation-failed-or-unconfirmed" })
+    expect(f.sessionCreates).toHaveLength(1)
+    expect(f.sessionPrompts).toHaveLength(0)
+    await expect(f.invoke("record", { operation: "answer", question_id: q.id,
+      answer: "Orphaned child must not be authorized" }, "ses_questionchild_1", "investigator"))
+      .rejects.toThrow("no verified receiving Session")
+    const rows = (await f.invoke("record", { operation: "query", session_only: true, limit: 30 }, "asker")).result.items
+    expect(rows.some((r: any) => r.kind === "question" && r.id === q.id)).toBe(true)
+    expect(rows.some((r: any) => r.data.format === "loom-question-respondent-binding/v1")).toBe(false)
+    expect(rows.some((r: any) => r.data.format === "loom-question-dispatch/v1" &&
+      r.data.status === "outcome-unknown")).toBe(true)
+  } finally {
+    db.exec("DROP TRIGGER IF EXISTS fail_oq_respondent_binding")
+    db.close()
+    await f.close()
+  }
+})
