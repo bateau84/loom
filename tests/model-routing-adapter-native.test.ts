@@ -191,3 +191,19 @@ test("lost native terminal-event subscription blocks further managed requests an
   await expect(f.hooks.get("model.request")!(dispatch())).rejects.toThrow("LOOM_MODEL_ROUTING_EVENTS_UNAVAILABLE")
   for (const registration of registrations) await registration.dispose()
 })
+
+
+test("unqualified 2.2.0 host never installs live managed routing; valid disabled policy remains native", async () => {
+  const managed = host()
+  managed.ctx.app.version = "2.2.0"
+  const runtime = await registerModelRouting(managed.ctx, managed.load, [], new AbortController().signal, undefined, fakeQuota)
+  expect(runtime.status).toBe("not-connected")
+  expect(managed.hooks.size).toBe(0)
+  expect(managed.agents.architect.model).toBeUndefined()
+
+  const disabled = host(policy(false))
+  disabled.ctx.app.version = "2.2.0"
+  const baseline = await registerModelRouting(disabled.ctx, disabled.load, [], new AbortController().signal, undefined, fakeQuota)
+  expect(baseline.status).toBe("disabled")
+  expect(disabled.hooks.size).toBe(0)
+})
