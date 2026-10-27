@@ -281,7 +281,8 @@ export default Plugin.define({
                     : questionRoute(recipient, snapshot.config, roster, asking)
                   if (route.mode === "notify" && route.session && !await owns(route.session))
                     route = { mode: "manual", reason: "parent-not-local" }
-                  const stored = store.collaboration.ask(actor, focus, input, {
+                  const { operation: _askOperation, ...askFields } = input
+                  const stored = store.collaboration.ask(actor, focus, askFields, {
                     ...(route.expected_agent ? { expected_agent: route.expected_agent } : {}),
                     ...(route.expected_session ? { expected_session: route.expected_session } : {}),
                   })
