@@ -4,6 +4,28 @@ type: Log
 
 # Update Log
 
+## 2026-10-27
+
+**Critic safety corrections:** [Shared quota](shared-subscription-quota.md)
+now refuses positive quota evidence while an account remains blocked by
+a confirmed HTTP 401, and rejects contradictory persisted provider-available
+rows with zero/missing allowance. [Model routing](model-routing.md) rejects
+an auxiliary request that changes the active native account on the managed
+provider; auxiliary dispatch invalidates stale primary retry attribution.
+One pending primary record per Session makes the 512-Session limit accurate,
+including Session deletion and readmission. The native and real-SQLite
+regression tests exercise these cross-boundary cases.
+
+**Host upgrade integration:** Mainline PR #199 migrated Loom's packaged
+`@opencode/plugin` SDK and installed native CLI tests to 2.2.0. This
+foundation now incorporates that host upgrade without assuming that the
+version-specific 2.1.4 model-routing attestation or dispatch semantics were
+also qualified on 2.2.0. A valid disabled policy preserves native execution;
+opt-in managed routing on 2.2.0 is explicitly host-unqualified and blocked
+before provider transport pending independent qualification. The
+[2.2.0 host audit](opencode-2.2.0.md) is an indexed OKF concept.
+This does not establish live subscription billing or seamless fallback.
+
 ## 2026-10-25
 
 **Cold-review startup and terminal-event corrections (PR #190):**

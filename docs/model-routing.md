@@ -35,6 +35,17 @@ these routes remain `billing: unknown`, even when the catalog lists them.
 See also the [OpenCode safe fallback proposal](opencode-v2-safe-live-fallback.md)
 for the separate native retry/account-lease blocker.
 
+## Current OpenCode 2.2.0 host boundary
+
+Loom's ordinary SDK/CLI was updated to 2.2.0 in merged PR #199, but
+the separate guarded model-routing adapter was qualified only with
+OpenCode CLI 2.1.4. On a 2.2.0 host, **opt-in managed routing remains
+host-unqualified and is denied by the early pre-transport guard** until
+its native model/account/billing behavior is requalified; valid explicitly
+disabled routing leaves normal native execution unchanged. This restriction
+is deliberate: 2.1.4 subscription heuristics must not authorize paid
+2.2.0 traffic without independent evidence.
+
 ## Initial routing on OpenCode 2.1.4 (implemented, opt-in)
 
 **Startup failure protection:** In a qualified 2.1.4 host, Loom installs an
@@ -85,6 +96,19 @@ connected to initial planning and dispatch. Its SQLite WAL state is
 machine-wide across this user's OpenCode processes; it does **not**
 attest billing or provide native credentials. The adapter does not inspect
 secret material or create another quota database.
+
+**Auxiliary attribution:** On the supported 2.1.4 path, compaction/title/
+generate requests using the same provider as the managed primary request
+cannot silently switch to a different native account. The hook rejects
+that mismatch before transport. Because native retry events omit request
+kind and attempt identity, accepting an auxiliary model request discards
+the preceding primary's pending failure permit rather than attributing
+an auxiliary failure to the wrong account. Only the next primary request
+establishes a fresh attributable permit. Pending records are keyed by
+Session, so alternating configured agents do not exhaust the distinct
+512-Session cap prematurely. Session deletion reclaims that slot.
+Native account/stream leasing and positive managed-provider acceptance
+are still unproven.
 
 **Dispatch guard:** Every managed primary request is checked against
 the planned model, current shared quota eligibility, the latest verified

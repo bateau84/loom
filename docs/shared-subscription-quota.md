@@ -76,6 +76,24 @@ fail-closed memory bound. The newest native request replaces the matching
 reservation, and its provider failure can still update shared state.
 Native unique request/attempt correlation remains unproven.
 
+**Authentication recovery and provider observations:** Provider-reported
+positive remaining allowance cannot lift an account authentication block
+caused by confirmed HTTP 401. This remains blocked across all quota scopes,
+until a distinct verified credential refresh explicitly calls
+`recordAuthenticationRecovered`. A contradictory stored
+`available`+provider-evidence row with zero or missing remaining allowance
+also fails closed even if SQLite's structural integrity check reports OK.
+
+**Auxiliary request attribution:** Native retry events lack kind/attempt
+identity. Managed auxiliary model requests must not change the active
+account on the same provider as the pinned primary route. A successful
+auxiliary dispatch invalidates the stale primary pending permit for that
+Session, so a utility retry cannot poison its previous account's quota
+state. A future primary request gets a new permit. The pending map stores
+one latest primary record per Session (not per agent/model); 512 distinct
+Sessions are supported, with Session deletion allowing readmission.
+Full transport-level account pinning remains an upstream limitation.
+
 **No invented success:** OpenCode 2.1.4's plugin request/retry hooks do not
 provide a stable, attempt-identified successful stream completion tied to the
 *actual active native account*. An HTTP 200, request-hook completion, or a
@@ -116,7 +134,7 @@ A model-specific quota observation is never silently promoted to an entire accou
 
 | Adapter evidence | State | Release |
 | --- | --- | --- |
-| Provider subscription remaining greater than zero | available (provider confidence) | Clears the matching current block |
+| Provider subscription remaining greater than zero | available (provider confidence) | Clears the matching quota block only; never clears rejected authentication |
 | Provider subscription remaining zero | exhausted (provider confidence) | Provider reset or a local probe cooldown |
 | Confirmed subscription quota exhaustion | exhausted | Provider reset / Retry-After, or local probe cooldown |
 | Temporary 429/throttling | throttled | Trusted Retry-After or local cooldown |
