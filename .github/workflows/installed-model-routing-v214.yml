@@ -1,4 +1,4 @@
-name: Installed OpenCode 2.1.4 initial routing guard
+name: Installed OpenCode 2.2.0 initial routing guard
 on:
   pull_request:
 permissions:
@@ -24,8 +24,8 @@ jobs:
           npm pack --json --pack-destination "$RUNNER_TEMP/loom-routing-artifact" > "$RUNNER_TEMP/loom-routing-artifact/pack.json"
           ARTIFACT=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))[0].filename)' "$RUNNER_TEMP/loom-routing-artifact/pack.json")
           npm install --prefix "$RUNNER_TEMP/loom-routing-install" --no-audit --no-fund "$RUNNER_TEMP/loom-routing-artifact/$ARTIFACT"
-      - name: Install isolated unmodified OpenCode 2.1.4 CLI
-        run: npm install --prefix "$RUNNER_TEMP/loom-routing-host" --no-audit --no-fund @opencode/cli@2.1.4
+      - name: Install isolated unmodified OpenCode 2.2.0 CLI
+        run: npm install --prefix "$RUNNER_TEMP/loom-routing-host" --no-audit --no-fund @opencode/cli@2.2.0
       - name: Actual native request negative control and routing-disabled control
         run: >-
           python3 tests/installed_model_routing.py

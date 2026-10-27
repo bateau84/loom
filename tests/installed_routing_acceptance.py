@@ -25,8 +25,8 @@ from routing_acceptance_oracle import (
     expect_failed_local_provider, run_mutation_controls,
 )
 
-HOST_VERSION = "2.1.4"
-SDK_VERSION = "2.1.1"
+HOST_VERSION = "2.2.0"
+SDK_VERSION = "2.2.0"
 PROVIDERS = ("route-primary", "route-secondary", "route-metered")
 AGENTS = ("architect", "coder", "reviewer")
 
@@ -40,18 +40,18 @@ REQUIREMENTS = [
     (5, "UNPROVEN", "Mocked pre-dispatch rejection is tested; local installed fixtures have no eligible committed route."),
     (6, "UNPROVEN", "Independent Bun processes share real SQLite quota blocks/recovery; assembled native dispatch lacks included attestation."),
     (7, "UNPROVEN", "Real shared store isolates synthetic provider accounts; installed native account switching is not proven."),
-    (8, "PASS", "Local installed host rejects unverified routes; independently verified metered-billing policy is not isolated because no eligible managed route exists."),
+    (8, "UNPROVEN", "Managed routing on 2.2.0 is rejected at the host-unqualified guard, before model billing policy is evaluated."),
     (9, "UNPROVEN", "Global-default transport is denied locally, but the scenario also has no eligible route; the mismatch-specific guard is not isolated."),
     (10, "UNPROVEN", "In-process adapter has an account/route guard; native stream/account lease cannot be proven."),
     (11, "UNPROVEN", "Native disabled-path errors and tools are counted; managed-tool interruption and any live fallback remain unproven."),
-    (12, "PASS", "Actual installed native host executes the routing-disabled primary, alternate and tool-continuation paths."),
+    (12, "PASS", "Actual installed OpenCode 2.2.0 host executes routing-disabled primary, alternate and tool-continuation paths."),
 ]
 
 # These require trusted native host / provider capabilities not supplied by
 # local in-memory language models. A simulated response is never a PASS here.
 NOT_PROVEN = {
     "positive-eligible-managed-native-request":
-        "The production plugin has no trusted native billing attestation for these synthetic local provider IDs",
+        "OpenCode 2.2.0 managed routing is host-unqualified and local providers cannot attest included subscriptions",
     "initial-replan-after-shared-exhaustion":
         "Replanning is mocked with test-only attestations, not observed on an installed eligible route",
     "committed-request-pre-dispatch-block":
@@ -274,9 +274,8 @@ def run_case(
             expect_blocked(captured)
             # A random native failure must not be mistaken for the intended
             # billing/config guard merely because no local transport ran.
-            expected_code = ("LOOM_MODEL_ROUTING_STARTUP_FAILED" if startup_fault
-                             else "LOOM_MODEL_ROUTING_CONFIG_UNREADABLE" if invalid_policy
-                             else "LOOM_MODEL_ROUTE_UNAVAILABLE")
+            expected_code = ("LOOM_MODEL_ROUTING_STARTUP_FAILED" if startup_fault == "action-ledger"
+                             else "LOOM_MODEL_ROUTING_HOST_UNQUALIFIED")
             native_errors = (json.dumps(result) + "\n" +
                 (output / f"{name}.server.stderr.txt").read_text(errors="replace"))
             require(expected_code in native_errors,
@@ -317,13 +316,11 @@ def run_case(
         else:
             raise AssertionError("Unsupported test expectation")
         quota_db = Path(env["XDG_STATE_HOME"]) / "loom/quota-v1/subscriptions.sqlite"
-        if enabled and startup_fault == "action-ledger":
-            require(not quota_db.exists(),
-                    "Action-ledger startup fault must precede opening the shared quota DB")
+        if enabled and startup_fault == "quota-corrupt":
+            require(quota_db.is_file() and stat.S_IMODE(quota_db.stat().st_mode) == 0o600,
+                    "Corrupt private fixture must remain intact and private")
         elif enabled:
-            require(quota_db.is_file(), "Routing-enabled installed Loom did not open shared quota state")
-            require(stat.S_IMODE(quota_db.stat().st_mode) == 0o600,
-                    "Installed plugin quota DB permissions must be 0600")
+            require(not quota_db.exists(), "Unqualified 2.2.0 managed routing must not open shared quota state")
         elif name == "disabled-primary":
             require(not quota_db.exists(), "Routing-disabled native mode opened the shared quota DB")
         # The external fixture already omits raw prompts/headers/accounts.
@@ -361,12 +358,12 @@ def run(cli: Path, repo: Path, plugin: Path, artifact: Path, output: Path,
         expected_plugin_version: str) -> dict:
     output.mkdir(parents=True, exist_ok=True)
     report = {
-        "kind": "installed-model-routing-acceptance-v214", "status": "UNPROVEN",
+        "kind": "installed-model-routing-acceptance-v220", "status": "UNPROVEN",
         "host_version_required": HOST_VERSION, "sdk_version_required": SDK_VERSION,
         "protection_controls": "NOT RUN", "live_provider_status": "UNPROVEN",
         "no_real_provider_credentials_used": True,
         "no_paid_provider_requests_allowed": True,
-        "version_qualification": "OpenCode CLI 2.1.4 with Loom SDK 2.1.1 (NOT exact matched-version qualification)",
+        "version_qualification": "OpenCode CLI 2.2.0 with matched SDK 2.2.0; managed routing remains host-unqualified",
         "requirements": [{"id": number, "status": status, "evidence": evidence}
                          for number, status, evidence in REQUIREMENTS],
         "cases": [], "negative_controls": None,
