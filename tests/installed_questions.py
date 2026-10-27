@@ -39,7 +39,8 @@ READ_DENIAL_APPLICABILITY = {
     'authority': 'Tagged v2.2.0 source inspection for this upgrade; PR #182 only qualifies the historical 2.0.32 host. This is not installed execution or permission.assert evidence.',
 }
 REQUIRED_INSTALLED_CHECKS = {
-    'E1-no-plan-manual-question', 'E1-storage-failure-zero-contact', 'E2-idle-switched-native-resume',
+    'E1-no-plan-manual-question', 'E1-storage-failure-zero-contact', 'E6-typed-role-native-dispatch',
+    'E2-idle-switched-native-resume',
     'E2-later-legacy-missing-failed-first', 'E2-running', 'E2-preyield', 'E2-public-moved-target',
     'E3-new-unicode-relational-parts', 'E3-old-action-full-content-oracle',
     'E3-node-session-oracles-cursor-corrupt-no-advance', 'E3-populated-startup-raw-preservation',
@@ -331,10 +332,13 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
         agents = {'question-' + role: {'description': role + ' fixture', 'mode': 'primary', 'model': 'question-fixture/' + role,
                   'system': 'Follow the deterministic local verification script.'} for role in roles}
         agents['question-switched']['permissions'] = [{'action': '*', 'resource': '*', 'effect': 'deny'}]
+        agents['question-specialist'] = {'description': 'Scoped OQ specialist fixture',
+                                         'mode': 'subagent', 'model': 'question-fixture/respondent',
+                                         'system': 'Read the question and store an evidence-backed answer.'}
         config = {'plugins': ['*', str(plugin), str(repo / 'tests/question-host')], 'agents': agents,
                   'model': 'question-fixture/asker', 'update': 'disable', 'share': 'disabled'}
         (Path(env['OPENCODE_CONFIG_DIR']) / 'opencode.json').write_text(json.dumps(config))
-        (project / '.loom.yaml').write_text('agents: {}\ninstructions: {enabled: false}\nledger: {capture: off}\n')
+        (project / '.loom.yaml').write_text('agents:\n  question-specialist:\n    roles: [research]\ninstructions: {enabled: false}\nledger: {capture: off}\n')
         (root / 'jobs.json').write_text('{}')
         report['configuration_sha256'] = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
         try:
@@ -377,6 +381,50 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             require(all(x in page['markdown'] for x in [q['id'], a['id'], respondent, 'fixture://question', 'fixture://answer']), 'Incomplete relational read')
             require(not page['next_cursor'], 'Unexpected short-history continuation')
             report['checks'].append({'name': 'E1-no-plan-manual-question', 'status': 'PASS', 'question': q['id'], 'answer': a['id']})
+
+            # Fully installed typed-OQ path: real native child, model request,
+            # Loom callback, durable answer and exact-asker synthetic admission.
+            typed_start = len(events(root))
+            typed_q = s.invoke(asker, 'record', {'operation': 'ask',
+                           'question': 'Which boundary needs research?',
+                           'recipient': {'kind': 'role', 'id': 'research'}, 'blocking': True})
+            dispatch = typed_q['dispatch']
+            require(dispatch['status'] == 'admission-observed' and
+                    dispatch['reason'] == 'native-prompt-admitted' and
+                    dispatch['target_agent'] == 'question-specialist', 'Typed OQ dispatch not admitted: ' + str(dispatch))
+            child_id = dispatch['target_session_id']
+            idle(host, [asker, child_id])
+            child = request(host, 'GET', f'/api/session/{child_id}')
+            require(child['parentID'] == asker and child['agent'] == 'question-specialist',
+                    'Native OQ recipient was not the expected child Session')
+            require(child['model'] == {'providerID': 'question-fixture', 'id': 'respondent'},
+                    'Native delegation ignored specialist model precedence')
+            require(any(e['data']['agent'] == 'question-specialist' for e in target_requests(root, child_id)),
+                    'No installed native specialist model request observed')
+            typed_thread = s.invoke(reader, 'record', {'operation': 'query', 'view': 'thread', 'question_id': typed_q['id']})
+            typed_answers = typed_thread['answers']
+            require(len(typed_answers) == 1 and typed_answers[0]['agent'] == 'question-specialist' and
+                    typed_answers[0]['session_id'] == child_id and
+                    typed_answers[0]['data']['format'] == 'loom-answer/v2',
+                    'Native specialist did not persist one attributed typed answer')
+            typed_notices = [e['data'] for e in events(root)[typed_start:] if e['type'] == 'native-event'
+                             and e['data']['type'] == 'session.inbox.enqueued'
+                             and e['data']['data']['item']['type'] == 'synthetic'
+                             and e['data']['data']['item']['payload'].get('metadata', {}).get('question_id') == typed_q['id']]
+            verify_single_admission(typed_notices, asker, typed_answers[0]['id'])
+            unrelated = request(host, 'POST', '/api/session', {'agent': 'question-specialist',
+                         'title': 'unrelated specialist', 'model': {'providerID': 'question-fixture', 'id': 'respondent'},
+                         'location': {'directory': str(project)}})['id']
+            assert_rejected(s, unrelated, [{'operation': 'answer', 'question_id': typed_q['id'],
+                                            'answer': 'Same agent from wrong native Session'}])
+            require(len(s.invoke(reader, 'record', {'operation': 'query', 'view': 'thread',
+                         'question_id': typed_q['id']})['answers']) == 1,
+                    'Wrong Session contaminated typed OQ answer history')
+            report['checks'].append({'name': 'E6-typed-role-native-dispatch', 'status': 'PASS',
+                                     'question': typed_q['id'], 'child_session': child_id,
+                                     'answer': typed_answers[0]['id'], 'native_admissions': len(typed_notices),
+                                     'qualification': 'Installed OpenCode 2.2.0 scripted-model run; no production provider'})
+
             invalid = [dict(operation='ask', question='Invalid', to_agent='question-respondent', blocking=False, **extra)
                        for extra in [{'attachments': ['fixture://alias']}, {'attachments': [], 'context_attachments': []},
                                      {'reference': {'action_id': 'missing', 'kind': 'action', 'id': 'missing'}}, {'session_id': respondent}]]
