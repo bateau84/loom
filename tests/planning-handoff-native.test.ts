@@ -20,6 +20,7 @@ test("planning and coordination guidance distinguish Action planning from option
   expect(planner).toContain("saved revision and node IDs")
   expect(planner).toContain("docs/plan/")
   expect(planner).toContain("Without an Action ID")
+  expect(planner).toContain("if saving to an existing Action is requested, obtain its ID")
   expect(general).toContain("When delegating planning for an existing Action")
   expect(general).toContain("verify the saved loom_plan revision")
   expect(researcher).toContain("An Action alone does not require a Plan")
