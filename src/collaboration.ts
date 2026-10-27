@@ -103,8 +103,7 @@ export class Collaboration {
         WHERE kind IN ('completion','reopen');
       CREATE INDEX IF NOT EXISTS ledger_questions ON ledger(action_id,seq) WHERE kind='question';
       CREATE INDEX IF NOT EXISTS ledger_answers ON ledger(action_id,json_extract(data,'$.data.question_id'),seq) WHERE kind='answer';
-      CREATE UNIQUE INDEX IF NOT EXISTS ledger_question_respondent_binding ON ledger(json_extract(data,'$.data.question_id'))
-        WHERE kind='result' AND json_extract(data,'$.data.format')='loom-question-respondent-binding/v1';`)
+`)
 
   }
   /** Called inside the Action update transaction, before mutating the old object. */

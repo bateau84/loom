@@ -331,7 +331,7 @@ test("a forwarded role OQ can only be answered by a specialist Session belonging
     await expect(f.invoke("record", { operation: "answer", question_id: q.id, answer: "Wrong parent" },
       "wrong-parent-child", "investigator")).rejects.toThrow("dispatching Session")
     await expect(f.invoke("record", { operation: "answer", question_id: q.id, answer: "Not a specialist" },
-      "dispatcher", "author")).rejects.toThrow("intended respondent")
+      "dispatcher", "author")).rejects.toThrow("dispatching Session")
     const a = (await f.invoke("record", { operation: "answer", question_id: q.id, answer: "Specialist answer" },
       "right-parent-child", "investigator")).result
     expect(a.data.format).toBe("loom-answer/v2")
