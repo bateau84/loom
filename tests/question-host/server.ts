@@ -37,8 +37,17 @@ export default Plugin.define({
         const ids = [...text.matchAll(/LOOM_HARNESS_JOB:([a-f0-9]+)/g)].map(m => m[1])
         const id = ids.at(-1)
         const jobs = JSON.parse(readFileSync(join(root, "jobs.json"), "utf8"))
-        const code = id && !issued.has(id) ? jobs[id]?.code : undefined
-        if (code) issued.add(id!)
+        const jobCode = id && !issued.has(id) ? jobs[id]?.code : undefined
+        if (jobCode) issued.add(id!)
+        // Exercise installed native child execution with a deterministic model,
+        // not a replacement Loom tool or a fabricated answer record.
+        const oqID = [...text.matchAll(/You are being asked a Loom Open Question \\(ID: ([^)]+)\\)/g)].at(-1)?.[1]
+        const oqKey = oqID ? `typed-oq:${oqID}` : undefined
+        const oqCode = role === "respondent" && oqID && oqKey && !issued.has(oqKey)
+          ? `return await tools.loom.record({operation:"answer",question_id:${JSON.stringify(oqID)},answer:"Verified scripted specialist response for installed OQ",context_attachments:["fixture://installed-typed-specialist"]})`
+          : undefined
+        if (oqCode) issued.add(oqKey!)
+        const code = jobCode ?? oqCode
         if (id && ((code && jobs[id]?.hold === "before") || (!code && jobs[id]?.hold === "after"))) {
           audit("provider-held", { role, job: id, phase: jobs[id].hold })
           for (let i = 0; ; i++) {
