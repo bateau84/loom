@@ -6,7 +6,7 @@ import type { SQL, Store } from "./store.js"
 export type WorkRef = { action_id: string; node_id: string; action_revision: number; plan_revision: number; hash: string }
 export type QuestionReference = { action_id: string; kind: "action" | PlanNode["kind"]; id: string }
 export type QuestionRecipient = { kind: "agent" | "role" | "dispatcher" | "user"; id?: string }
-export type QuestionTarget = { expected_agent?: string; expected_session?: string }
+export type QuestionTarget = { expected_agent?: string; expected_session?: string; expected_parent_session?: string }
 export function questionRecipient(raw: unknown): QuestionRecipient {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("recipient must be an object")
   const value = raw as Record<string, unknown>
@@ -102,7 +102,9 @@ export class Collaboration {
       CREATE INDEX IF NOT EXISTS ledger_progress ON ledger(action_id,json_extract(data,'$.node_id'),seq)
         WHERE kind IN ('completion','reopen');
       CREATE INDEX IF NOT EXISTS ledger_questions ON ledger(action_id,seq) WHERE kind='question';
-      CREATE INDEX IF NOT EXISTS ledger_answers ON ledger(action_id,json_extract(data,'$.data.question_id'),seq) WHERE kind='answer';`)
+      CREATE INDEX IF NOT EXISTS ledger_answers ON ledger(action_id,json_extract(data,'$.data.question_id'),seq) WHERE kind='answer';
+      CREATE UNIQUE INDEX IF NOT EXISTS ledger_question_respondent_binding ON ledger(json_extract(data,'$.data.question_id'))
+        WHERE kind='result' AND json_extract(data,'$.data.format')='loom-question-respondent-binding/v1';`)
 
   }
   /** Called inside the Action update transaction, before mutating the old object. */
@@ -207,17 +209,50 @@ export class Collaboration {
         context, context_attachments, reference, ...revisions } })
     })
   }
-  answer(actor: Actor, input: Record<string, unknown>): AnswerCommit {
+  /** Bind one verified native child before allowing it to receive or answer the question. */
+  bindRespondent(questionID: string, sessionID: string, agent: string): LedgerRecord {
+    uid(sessionID, "respondent Session"); uid(questionID, "question ID")
+    return this.atomic(true, () => {
+      const question = this.record(questionID, "question")
+      if (question.data.format !== "loom-question/v2" || question.data.expected_agent !== agent ||
+          question.data.expected_parent_session || question.data.expected_session)
+        throw new Error("Question does not permit a direct respondent binding")
+      const bound = this.db.prepare(`SELECT 1 FROM ledger WHERE kind='result'
+        AND json_extract(data,'$.data.format')='loom-question-respondent-binding/v1'
+        AND json_extract(data,'$.data.question_id')=? LIMIT 1`).get(questionID)
+      if (bound) throw new Error("Question respondent is already bound")
+      return this.store.append({ session_id: question.session_id, agent: "system",
+        ...(question.action_id ? { action_id: question.action_id } : {}),
+        ...(question.node_id ? { node_id: question.node_id } : {}),
+        kind: "result", data: { format: "loom-question-respondent-binding/v1",
+          question_id: questionID, session_id: sessionID, agent,
+          qualification: "Verified native child identity, not proof of prompt delivery or an answer" } })
+    })
+  }
+  answer(actor: Actor, input: Record<string, unknown>, verifiedParentSession?: string): AnswerCommit {
     canonical(input, new ProcessingBudget(PROCESSING_LIMITS.recordChars))
     fields(input, ["question_id", "answer", "context_attachments"])
     const answer = text(input.answer, "answer"), context_attachments = references(input.context_attachments, "context_attachments")
     const committed = this.atomic(true, () => {
       const question = this.record(input.question_id as string, "question")
       if (question.data.format === "loom-question/v2") {
-        const expectedAgent = question.data.expected_agent, expectedSession = question.data.expected_session
+        const expectedAgent = question.data.expected_agent
+        let expectedSession = question.data.expected_session
         if (!expectedAgent && !expectedSession) throw new Error("Question has no authorized respondent; arrange routing first")
         if (expectedAgent && actor.agent !== expectedAgent) throw new Error("Answering agent does not match the intended respondent")
-        if (expectedSession && actor.session_id !== expectedSession) throw new Error("Answering Session does not match the intended respondent")
+        if (question.data.expected_parent_session !== undefined) {
+          if (verifiedParentSession !== question.data.expected_parent_session)
+            throw new Error("Answering Session is not a verified child of the dispatching Session")
+        } else if (expectedAgent && expectedSession === undefined) {
+          const bound = this.db.prepare(`SELECT json_extract(data,'$.data.session_id') AS session_id
+            FROM ledger WHERE kind='result'
+            AND json_extract(data,'$.data.format')='loom-question-respondent-binding/v1'
+            AND json_extract(data,'$.data.question_id')=? LIMIT 1`).get(question.id) as { session_id?: string } | undefined
+          if (typeof bound?.session_id !== "string") throw new Error("Question has no verified receiving Session")
+          expectedSession = bound.session_id
+        }
+        if (expectedSession && actor.session_id !== expectedSession)
+          throw new Error("Answering Session does not match the intended respondent")
       }
       const prior = this.db.prepare("SELECT 1 FROM ledger WHERE kind='answer' AND json_extract(data,'$.data.question_id')=? LIMIT 1").get(question.id)
       // No selection, current node, Plan or host availability is required to preserve an answer.
@@ -278,12 +313,12 @@ export class Collaboration {
     const params: unknown[] = [q.action_id, after]
     let filter = "q.action_id=? AND q.kind='question' AND q.seq>?"
     if (q.node_id !== undefined) { filter += " AND json_extract(q.data,'$.node_id')=?"; params.push(q.node_id) }
-    const recipient = "COALESCE(json_extract(q.data,'$.data.to_agent'),json_extract(q.data,'$.data.respondent'),json_extract(q.data,'$.data.recipient.id'),json_extract(q.data,'$.data.expected_agent'))"
-    if (q.respondent !== undefined) { filter += ` AND ${recipient}=?`; params.push(q.respondent) }
+    const recipient = "(json_extract(q.data,'$.data.to_agent')=? OR json_extract(q.data,'$.data.respondent')=? OR json_extract(q.data,'$.data.recipient.id')=? OR json_extract(q.data,'$.data.expected_agent')=?)"
+    if (q.respondent !== undefined) { filter += ` AND ${recipient}`; params.push(...Array(4).fill(q.respondent)) }
     if (relevant !== undefined) {
       if (relevant.length > 300) throw new ProcessingLimitError("question context exceeds 300 nodes")
       filter += ` AND (json_extract(q.data,'$.node_id') IS NULL${relevant.length ? ` OR json_extract(q.data,'$.node_id') IN (${relevant.map(() => "?").join(",")})` : ""}${agent ? ` OR ${recipient}=?` : ""})`
-      params.push(...relevant); if (agent) params.push(agent)
+      params.push(...relevant); if (agent) params.push(...Array(4).fill(agent))
     }
     if (state !== "all") filter += ` AND ${state === "open" ? "NOT " : ""}EXISTS (SELECT 1 FROM ledger a
       WHERE a.kind='answer' AND a.action_id=q.action_id AND json_extract(a.data,'$.data.question_id')=q.id)`

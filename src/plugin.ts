@@ -14,7 +14,7 @@ import { renderFullHistory } from "./history-renderer.js"
 import { fullThreadMarkdown } from "./response-format.js"
 import { Store } from "./store.js"
 import { QUESTION_DISPATCH, questionRecipient } from "./collaboration.js"
-import { questionRoute, sendQuestion, type QuestionRoute } from "./question-routing.js"
+import { questionRoute, sendQuestion, type NativeModel, type QuestionRoute } from "./question-routing.js"
 import { resumeAnswer } from "./answer-resume.js"
 import { TOOL_HELP, LOOM_NAMESPACE_HELP } from "./tool-help.js"
 
@@ -42,6 +42,16 @@ function contextConfigDiagnostics(errors: string[], maxChars: number): { config_
   }
   diagnostics.config_errors = errors.map(error => error.slice(0, low))
   return diagnostics
+}
+function nativeModel(value: unknown): NativeModel | undefined {
+  if (value === undefined || value === null) return undefined
+  const ref = payload(value)
+  if (typeof ref.providerID !== "string" || !ref.providerID ||
+      typeof ref.id !== "string" || !ref.id ||
+      (ref.variant !== undefined && (typeof ref.variant !== "string" || !ref.variant)))
+    throw new Error("OpenCode returned an invalid native model reference")
+  return { providerID: ref.providerID, id: ref.id,
+    ...(typeof ref.variant === "string" ? { variant: ref.variant } : {}) }
 }
 function agents(value: unknown): NativeAgent[] {
   const items = unwrapped(value)
@@ -247,7 +257,19 @@ export default Plugin.define({
                 const focus = identityScoped || input.session_only || (input.operation === "ask" && input.reference !== undefined) ? undefined : focusFor(input, actor.session_id)
                 if (input.operation === "answer") {
                   const { operation: _operation, ...answer } = input
-                  const committed = store.collaboration.answer(actor, answer)
+                  const original = store.collaboration.thread(String(input.question_id)).question
+                  let verifiedParent: string | undefined
+                  if (original.data.format === "loom-question/v2" &&
+                      typeof original.data.expected_parent_session === "string") {
+                    const candidate = payload(unwrapped(await ctx.session.get({ sessionID: actor.session_id })))
+                    if (candidate.id !== actor.session_id ||
+                        candidate.parentID !== original.data.expected_parent_session ||
+                        candidate.agent !== actor.agent || !await sessionIsLocal(candidate) ||
+                        !await owns(candidate.parentID as Parameters<typeof ctx.session.get>[0]["sessionID"]))
+                      throw new Error("Answering Session is not a verified child of the dispatching Session")
+                    verifiedParent = candidate.parentID as string
+                  }
+                  const committed = store.collaboration.answer(actor, answer, verifiedParent)
                   result = await resumeAnswer(store, committed, async sessionID => {
                     const target = payload(unwrapped(await ctx.session.get({ sessionID })))
                     return target.id === sessionID && await sessionIsLocal(target)
@@ -273,9 +295,11 @@ export default Plugin.define({
                     const a = payload(raw)
                     if (typeof a.id !== "string" || typeof a.mode !== "string")
                       throw new Error("OpenCode agent registry lacks an ID or mode")
-                    return { id: a.id, mode: a.mode, hidden: a.hidden === true }
+                    return { id: a.id, mode: a.mode, hidden: a.hidden === true, model: nativeModel(a.model) }
                   })
-                  const asking = { id: actor.session_id, ...(typeof asker.parentID === "string" ? { parentID: asker.parentID } : {}) }
+                  const asking = { id: actor.session_id,
+                    ...(typeof asker.parentID === "string" ? { parentID: asker.parentID } : {}),
+                    model: nativeModel(asker.model) }
                   let route: QuestionRoute = snapshot.errors.length
                     ? { mode: "manual", reason: "loom-config-unavailable" }
                     : questionRoute(recipient, snapshot.config, roster, asking)
@@ -285,6 +309,7 @@ export default Plugin.define({
                   const stored = store.collaboration.ask(actor, focus, askFields, {
                     ...(route.expected_agent ? { expected_agent: route.expected_agent } : {}),
                     ...(route.expected_session ? { expected_session: route.expected_session } : {}),
+                    ...(route.expected_parent_session ? { expected_parent_session: route.expected_parent_session } : {}),
                   })
                   // Use the SAME permission action as OpenCode's built-in subagent tool.
                   // Denial must reject the tool call, not be turned into a successful dispatch result.
@@ -294,10 +319,11 @@ export default Plugin.define({
                       source: { type: "tool", messageID: toolContext.messageID, id: toolContext.id } })
                   }
                   const dispatch = await sendQuestion(store, stored, route, {
-                    create: async (agent, parentID, title) => {
+                    create: async (agent, parentID, title, model) => {
                       const child = payload(unwrapped(await ctx.session.create({
                         parentID: parentID as NonNullable<Parameters<typeof ctx.session.create>[0]>["parentID"],
                         agent: agent as NonNullable<Parameters<typeof ctx.session.create>[0]>["agent"], title,
+                        ...(model ? { model: model as NonNullable<Parameters<typeof ctx.session.create>[0]>["model"] } : {}),
                       })))
                       if (!await sessionIsLocal(child)) throw new Error("Created child is not in the local project")
                       return child

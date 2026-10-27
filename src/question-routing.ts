@@ -3,13 +3,15 @@ import type { QuestionRecipient, QuestionTarget } from "./collaboration.js"
 import type { LedgerRecord } from "./model.js"
 import type { Store } from "./store.js"
 
-export type NativeRecipientAgent = { id: string; mode: string; hidden?: boolean }
-export type NativeAsker = { id: string; parentID?: string; agent?: string }
+export type NativeModel = { providerID: string; id: string; variant?: string }
+export type NativeRecipientAgent = { id: string; mode: string; hidden?: boolean; model?: NativeModel }
+export type NativeAsker = { id: string; parentID?: string; agent?: string; model?: NativeModel }
 export type QuestionRoute = QuestionTarget & {
   mode: "delegate" | "notify" | "manual"
   reason: string
   agent?: string
   session?: string
+  model?: NativeModel
 }
 
 /** Choose a responsibility, not a model. Never guess between equally eligible agents. */
@@ -27,12 +29,14 @@ export function questionRoute(recipient: QuestionRecipient, config: Config, rost
   if (matches.length !== 1) return { mode: "manual", reason: matches.length ? "ambiguous-role" : "recipient-agent-unavailable" }
   const agent = matches[0].id
   if (asker.parentID) return { mode: "notify", reason: "delegate-through-parent-to-respect-depth",
-    expected_agent: agent, agent, session: asker.parentID }
-  return { mode: "delegate", reason: "resolved-agent", expected_agent: agent, agent }
+    expected_agent: agent, expected_parent_session: asker.parentID, agent, session: asker.parentID }
+  const model = matches[0].model ?? asker.model
+  return { mode: "delegate", reason: "resolved-agent", expected_agent: agent, agent,
+    ...(model ? { model } : {}) }
 }
 
 type Native = {
-  create: (agent: string, parentID: string, title: string) => Promise<unknown>
+  create: (agent: string, parentID: string, title: string, model?: NativeModel) => Promise<unknown>
   prompt: (sessionID: string, text: string) => Promise<unknown>
   synthetic: (sessionID: string, text: string, metadata: Record<string, string>) => Promise<unknown>
 }
@@ -47,10 +51,13 @@ export async function sendQuestion(store: Store, question: LedgerRecord, route: 
     signal.throwIfAborted()
     if (route.mode === "delegate" && route.agent) {
       outcome = { status: "outcome-unknown", reason: "native-create-or-prompt", target_agent: route.agent, attempted: true }
-      const child = record(unwrap(await api.create(route.agent, question.session_id, `Loom question ${question.id}`)))
+      const child = record(unwrap(await api.create(route.agent, question.session_id, `Loom question ${question.id}`, route.model)))
       if (typeof child.id !== "string" || child.parentID !== question.session_id || child.agent !== route.agent)
         throw new Error("Native child Session identity could not be confirmed")
       outcome.target_session_id = child.id
+      signal.throwIfAborted()
+      // Append-only authority binding must commit BEFORE native prompt admission.
+      store.collaboration.bindRespondent(question.id, child.id, route.agent)
       signal.throwIfAborted()
       const ack = record(unwrap(await api.prompt(child.id,
         `You are being asked a Loom Open Question (ID: ${question.id}). Read it with loom_record query view=thread and question_id, investigate within your responsibility, then submit the answer using loom_record operation=answer with this exact question_id. A chat response alone does not save an answer. Do not claim authority outside your role. Do not create another Action just to answer.`)))
@@ -61,7 +68,7 @@ export async function sendQuestion(store: Store, question: LedgerRecord, route: 
       outcome = { status: "outcome-unknown", reason: "native-parent-notice", target_session_id: route.session,
         ...(route.agent ? { target_agent: route.agent } : {}), attempted: true }
       const ack = record(unwrap(await api.synthetic(route.session,
-        `Loom Open Question ${question.id} requires ${route.agent ? `agent ${route.agent}` : (question.data.recipient as QuestionRecipient).kind}. Retrieve its full thread with loom_record. If this is for the user, ask the user directly and relay the actual decision with its source. Otherwise delegate natively to the responsible agent; do not answer outside your authority. The question is only recorded, not resolved.`,
+        `Loom Open Question ${question.id} requires ${route.agent ? `agent ${route.agent}` : (question.data.recipient as QuestionRecipient).kind}. Retrieve its full thread with loom_record. If this is for the user, ask the user directly and relay the actual decision with its source. Otherwise delegate natively to a specialist child of your Session with the question ID; only a matching specialist Session under you may answer. Do not answer outside your authority. The question is only recorded, not resolved.`,
         { format: "loom-question-notice/v1", question_id: question.id })))
       if (ack.type !== "synthetic" || ack.sessionID !== route.session || typeof ack.id !== "string")
         throw new Error("Native parent notice admission could not be confirmed")
