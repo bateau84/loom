@@ -40,6 +40,7 @@ READ_DENIAL_APPLICABILITY = {
 }
 REQUIRED_INSTALLED_CHECKS = {
     'E1-no-plan-manual-question', 'E1-storage-failure-zero-contact', 'E6-typed-role-native-dispatch',
+    'E6-parent-user-native-notices',
     'E2-idle-switched-native-resume',
     'E2-later-legacy-missing-failed-first', 'E2-running', 'E2-preyield', 'E2-public-moved-target',
     'E3-new-unicode-relational-parts', 'E3-old-action-full-content-oracle',
@@ -725,6 +726,46 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
                                      'question': typed_q['id'], 'child_session': child_id,
                                      'answer': typed_answers[0]['id'], 'native_admissions': len(typed_notices),
                                      'qualification': 'Installed OpenCode 2.2.0 scripted-model run; no production provider'})
+
+            # Delegated work can ask its actual dispatcher or request a user
+            # decision. Verify durable native parent notices, not invented approval.
+            def parent_notice(question_id, after):
+                return [e['data'] for e in events(root)[after:]
+                        if e['type'] == 'native-event'
+                        and e['data']['type'] == 'session.inbox.enqueued'
+                        and e['data']['data']['item']['type'] == 'synthetic'
+                        and e['data']['data']['item']['payload'].get('metadata', {}).get('question_id') == question_id]
+            dispatcher_from = len(events(root))
+            forwarded = s.invoke(child_id, 'record', {'operation': 'ask', 'question': 'Clarify my task scope',
+                           'recipient': {'kind': 'dispatcher'}, 'blocking': False})
+            require(forwarded['dispatch']['status'] == 'admission-observed'
+                    and forwarded['dispatch']['target_session_id'] == typed_asker,
+                    'Child dispatcher question did not target its native parent')
+            dispatcher_notice = parent_notice(forwarded['id'], dispatcher_from)
+            require(len(dispatcher_notice) == 1 and dispatcher_notice[0]['data']['sessionID'] == typed_asker,
+                    'No exact native dispatcher notice')
+            dispatcher_answer = s.invoke(typed_asker, 'record', {
+                'operation': 'answer', 'question_id': forwarded['id'], 'answer': 'Scope explained by dispatcher'})
+            require(dispatcher_answer['session_id'] == typed_asker and 'resume' not in dispatcher_answer,
+                    'Nonblocking dispatcher answer did not preserve expected authorship')
+
+            user_from = len(events(root))
+            user_question = s.invoke(child_id, 'record', {'operation': 'ask',
+                            'question': 'What does the user prefer?', 'recipient': {'kind': 'user'},
+                            'blocking': False})
+            require(user_question['dispatch']['status'] == 'admission-observed'
+                    and user_question['dispatch']['target_session_id'] == typed_asker,
+                    'Child user question was not routed to its parent')
+            user_notice = parent_notice(user_question['id'], user_from)
+            require(len(user_notice) == 1 and user_notice[0]['data']['sessionID'] == typed_asker,
+                    'No exact native user-question relay')
+            unanswered = s.invoke(typed_reader, 'record', {'operation': 'query',
+                                'view': 'thread', 'question_id': user_question['id']})
+            require(not unanswered['answers'], 'A user decision was fabricated without user interaction')
+            report['checks'].append({'name': 'E6-parent-user-native-notices', 'status': 'PASS',
+                                     'dispatcher_question': forwarded['id'], 'user_question': user_question['id'],
+                                     'qualification': 'Native parent delivery verified; actual human reply is unproven in scripted host'})
+
 
 
             require(not any(e['type'] == 'observer-failure' for e in events(root)), 'Passive native admission observation failed; zero-event claims invalid')
