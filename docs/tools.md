@@ -215,8 +215,9 @@ are not retried automatically. `blocking` is intent, not a forced wait or gate.
 ```
 
 Answer requires `question_id`, `answer`; optional `context_attachments`. Actual
-author/Session derive from the caller. Typed questions enforce the stored expected
-agent/Session; legacy manual questions preserve their prior behavior. An agent
+author/Session derive from the caller. Typed direct questions enforce the bound native child Session and agent;
+forwarded specialist questions verify the replying specialist is a native
+child of the dispatcher. Legacy questions preserve their previous behavior. An agent
 relaying a user decision must include the real user source; identity checks alone
 do not verify it. Association is inherited from the question,
 even if nullable or its node was removed; answering does not select the asker's
@@ -224,9 +225,9 @@ work. Both canonical attachment fields are string-reference arrays. `attachments
 is never an alias, alone or alongside the canonical field. Old statement,
 respondent, background and artifact_refs are not ask/answer inputs.
 
-Only the FIRST committed answer to a new-format blocking question qualifies for
-one immediate postcommit best-effort exact-asking-Session resume. Later,
-nonblocking and legacy answers never submit asker input. No retries, eligibility
+Only the FIRST committed answer to a blocking legacy v1 or typed v2 question
+qualifies for one immediate postcommit best-effort exact-asking-Session
+resume. Later and nonblocking answers never submit asker input. No retries, eligibility
 transfer, recovery replay or startup/read reconstruction exists; crash after
 commit can permanently lose liveness. Missing/moved/inaccessible targets fail
 visibly without retargeting; current native agent/model/permissions stay unchanged.

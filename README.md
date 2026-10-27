@@ -224,14 +224,16 @@ native subagent delegation after the usual `subagent` permission check.
 Questions raised inside child Sessions reach the dispatching Session, which
 can delegate to a suitable role or ask the user. A primary agent must ask
 the user via native interaction; Loom cannot independently verify that a
-relayed user answer genuinely came from the user. New typed OQs accept answers
-only from the stored intended agent/Session. Legacy `to_agent` questions
+relayed user answer genuinely came from the user. New typed OQs accept answers from the verified direct child Session and agent,
+or from a specialist child of the actual dispatcher for forwarded questions.
+Native model choice prefers the specialist's configured model over the
+asker's. Legacy `to_agent` questions
 stay fail-closed and manual. Dispatch admission is not execution, answer,
 or approval; no automatic retry is promised. Blocking is advisory, not a gate.
 
-Only the FIRST committed answer to a new-format blocking question qualifies for
-one postcommit best-effort resume of the exact asking Session. Later/nonblocking/
-legacy answers never submit asker input. No retries, transfers, recovery replay
+Only the FIRST committed answer to a blocking legacy v1 or typed v2
+question qualifies for best-effort resumption of the exact asking Session.
+Later/nonblocking answers never submit asker input. No retries, transfers, recovery replay
 or consumption guarantee: crash after commit may permanently lose resume.
 Missing/moved/inaccessible targets fail visibly, never retarget; current native
 agent/model/permissions remain unchanged. Target checks are not leases; the

@@ -15,9 +15,9 @@ Primary Sessions use native user interaction for user-targeted questions.
 Legacy `to_agent` questions remain manual. A delivered notice is not an answer.
 Blocking is intent, not an enforced wait or execution gate.
 
-The first committed answer to a new-format blocking question alone qualifies
-for one postcommit best-effort exact-asking-Session resume. Later/nonblocking/
-legacy answers never submit asker input. Failure or crash may permanently lose
+The first committed answer to a blocking legacy v1 or typed v2 question
+qualifies for best-effort exact-asking-Session resume. Later/nonblocking
+answers never submit asker input. Failure or crash may permanently lose
 liveness; no retries, transfer, replay or eventual consumption promise exists.
 Target checks are not leases; admission is not processing or completion.
 
