@@ -13,7 +13,8 @@ import { digest, PROCESSING_LIMITS, type Actor, type Focus } from "./model.js"
 import { renderFullHistory } from "./history-renderer.js"
 import { fullThreadMarkdown } from "./response-format.js"
 import { Store } from "./store.js"
-import { QUESTION_DISPATCH } from "./collaboration.js"
+import { QUESTION_DISPATCH, questionRecipient } from "./collaboration.js"
+import { questionRoute, sendQuestion } from "./question-routing.js"
 import { resumeAnswer } from "./answer-resume.js"
 import { TOOL_HELP, LOOM_NAMESPACE_HELP } from "./tool-help.js"
 
@@ -55,7 +56,8 @@ const choice = (...values: string[]) => ({ type: "string", enum: values })
 const workRefInput = obj({ action_id: str, node_id: str, action_revision: { type: "integer", minimum: 1 }, plan_revision: { type: "integer", minimum: 1 }, hash: str },
   ["action_id", "node_id", "action_revision", "plan_revision", "hash"])
 const contextAttachments = { type: "array", items: { type: "string", maxLength: 2000 }, maxItems: 50 }
-const askInput = { question: str, to_agent: str, blocking: { type: "boolean" }, context: str, context_attachments: contextAttachments,
+const recipientInput = obj({ kind: choice("agent", "role", "dispatcher", "user"), id: str }, ["kind"])
+const askInput = { question: str, to_agent: str, recipient: recipientInput, blocking: { type: "boolean" }, context: str, context_attachments: contextAttachments,
   reference: obj({ action_id: str, kind: choice("action", "phase", "wave", "task", "subtask"), id: str }, ["action_id", "kind", "id"]) }
 const answerInput = { question_id: str, answer: str, context_attachments: contextAttachments }
 const specs = [
@@ -65,7 +67,10 @@ const specs = [
   { name: "context", description: TOOL_HELP.context, input: obj({ action_id: str, node_id: str, clear: { type: "boolean" }, mode: choice("continuation", "independent"), handoff_id: { type: ["string", "null"] } }) },
   { name: "record", description: TOOL_HELP.record, input: { ...obj({ operation: choice("add", "query", "complete", "reopen", "ask", "answer"), view: choice("ledger", "progress", "questions", "thread", "full_thread"), response_format: choice("markdown", "json"), session_id: str, cursor: str, work_ref: workRefInput, ...askInput, ...answerInput, respondent: str, question_state: choice("open", "answered", "all"), offset: num, action_id: str, node_id: str, kind: choice("claim", "result", "concern", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]),
     allOf: [
-      { if: { properties: { operation: { const: "ask" } } }, then: obj({ operation: { const: "ask" }, ...askInput }, ["operation", "question", "to_agent", "blocking"]) },
+      { if: { properties: { operation: { const: "ask" } } }, then: {
+          ...obj({ operation: { const: "ask" }, ...askInput }, ["operation", "question", "blocking"]),
+          oneOf: [{ required: ["to_agent"], not: { required: ["recipient"] } }, { required: ["recipient"], not: { required: ["to_agent"] } }],
+        } },
       { if: { properties: { operation: { const: "answer" } } }, then: obj({ operation: { const: "answer" }, ...answerInput }, ["operation", "question_id", "answer"]) },
       { if: { properties: { view: { const: "full_thread" } }, required: ["view"] }, then: {
         ...obj({ operation: { const: "query" }, view: { const: "full_thread" }, action_id: str, node_id: str, session_id: str, cursor: str, response_format: choice("markdown", "json"),
@@ -249,12 +254,63 @@ export default Plugin.define({
                   }, notice => ctx.session.synthetic(notice), AbortSignal.any([toolContext.signal, lifetime.signal]))
                   break
                 }
-                if (["complete", "reopen", "ask"].includes(String(input.operation)) || (input.operation === "query" && input.view !== undefined && input.view !== "ledger")) {
+                if (input.operation === "ask") {
+                  if (input.recipient === undefined) {
+                    result = { ...store.collaboration.execute(actor, input, focus) as object, dispatch: QUESTION_DISPATCH,
+                      guidance: input.blocking === true
+                        ? "Recipient not contacted. Manual/native handling is required. If manual handling has been arranged, you may naturally yield for a response; blocking intent does not force a wait."
+                        : "Recipient not contacted. Manual/native handling is required; continue your work and retrieve answers later." }
+                    break
+                  }
+                  const recipient = questionRecipient(input.recipient)
+                  const asker = payload(unwrapped(await ctx.session.get({ sessionID: actor.session_id })))
+                  if (asker.id !== actor.session_id || !await sessionIsLocal(asker))
+                    throw new Error("Cannot route a question from an unverified local Session")
+                  const native = agents(await ctx.agent.list())
+                  // The native registry carries execution mode; the Loom roster carries responsibility.
+                  const all = unwrapped(await ctx.agent.list())
+                  if (!Array.isArray(all)) throw new Error("OpenCode returned an unsupported agent registry shape")
+                  const roster = all.map(raw => {
+                    const a = payload(raw)
+                    return { id: String(a.id), mode: String(a.mode), hidden: a.hidden === true }
+                  }).filter(a => native.some(n => n.id === a.id))
+                  let route = snapshot.errors.length
+                    ? { mode: "manual" as const, reason: "loom-config-unavailable" }
+                    : questionRoute(recipient, snapshot.config, roster, asker)
+                  if (route.mode === "notify" && route.session && !await owns(route.session))
+                    route = { mode: "manual", reason: "parent-not-local" }
+                  const stored = store.collaboration.ask(actor, focus, input, {
+                    ...(route.expected_agent ? { expected_agent: route.expected_agent } : {}),
+                    ...(route.expected_session ? { expected_session: route.expected_session } : {}),
+                  })
+                  // Use the SAME permission action as OpenCode's built-in subagent tool.
+                  // Denial must reject the tool call, not be turned into a successful dispatch result.
+                  if (route.mode === "delegate" && route.agent) {
+                    await ctx.permission.assert({ action: "subagent", resources: [route.agent], save: [route.agent],
+                      sessionID: actor.session_id, agent: actor.agent,
+                      source: { type: "tool", messageID: toolContext.messageID, id: toolContext.id } })
+                  }
+                  const dispatch = await sendQuestion(store, stored, route, {
+                    create: async (agent, parentID, title) => {
+                      const child = payload(unwrapped(await ctx.session.create({ parentID, agent, title })))
+                      if (!await sessionIsLocal(child)) throw new Error("Created child is not in the local project")
+                      return child
+                    },
+                    prompt: (sessionID, text) => ctx.session.prompt({ sessionID, text, resume: true, delivery: "steer" }),
+                    synthetic: (sessionID, text, metadata) => ctx.session.synthetic({
+                      sessionID, text, metadata, description: "Loom Open Question", resume: true, delivery: "steer",
+                    }),
+                  }, AbortSignal.any([toolContext.signal, lifetime.signal]))
+                  result = { ...stored, dispatch,
+                    guidance: dispatch.status === "admission-observed"
+                      ? "Native input admitted; recipient execution/answer is not guaranteed. Read the question thread for a real answer; blocking is advisory."
+                      : recipient.kind === "user" && route.mode === "manual"
+                        ? "Ask the user using native interaction; record the actual user decision with its source. No user was contacted by Loom."
+                        : "Automatic delivery was not confirmed. Inspect the dispatch result and use native handling; do not assume the question was answered." }
+                  break
+                }
+                if (["complete", "reopen"].includes(String(input.operation)) || (input.operation === "query" && input.view !== undefined && input.view !== "ledger")) {
                   result = store.collaboration.execute(actor, input, focus)
-                  if (input.operation === "ask") result = { ...result as object, dispatch: QUESTION_DISPATCH,
-                    guidance: input.blocking === true
-                      ? "Recipient not contacted. Manual/native handling is required. If manual handling has been arranged, you may naturally yield for a response; blocking intent does not force a wait."
-                      : "Recipient not contacted. Manual/native handling is required; continue your work and retrieve answers later." }
                   break
                 }
                 if (input.operation === "query") result = store.records({ action_id: input.session_only ? undefined : focus?.action_id, session_id: actor.session_id, node_id: input.session_only ? undefined : focus?.node_id, record_id: input.record_id as string | undefined, after: input.after as number | undefined, limit: input.limit as number | undefined })
