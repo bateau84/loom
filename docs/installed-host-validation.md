@@ -51,10 +51,10 @@ must be escalated. Record PASS/FAIL/UNPROVEN, substitutions, logs and limitation
 repeat affected proof when content changes. No normal-host API, config, DB,
 restart, active integration or activation is authorized by this document.
 
-## OpenCode 2.1.1 upgrade candidate
+## OpenCode 2.2.0 upgrade candidate
 
 The candidate source dependency, the isolated CLI used by both host workflows,
-and the installed smoke/question harnesses are now pinned to **2.1.1**.
+and the installed smoke/question harnesses are now pinned to **2.2.0**.
 These changes do not retroactively upgrade the historical 2.0.32 evidence.
 
 In addition to E1–E3, the installed question harness now requires
@@ -66,10 +66,10 @@ installed package, CLI and deterministic local model; neither live-provider
 behavior nor real-user settings are exercised. A successful native Session
 lookup/list is not evidence that question dispatch is authorized.
 
-The 2.1.1 `session.get` adapter still delegates to direct `Session.get`, which
+The tagged 2.2.0 `session.get` adapter still delegates to direct `Session.get`, which
 looks up a Session ID in the native Store, without a selective per-session read
 permission gate. This makes the *selective read denial* scenario not applicable
-on tagged 2.1.1 source; it is marked `executed:false`, not PASS or permission
+on tagged 2.2.0 source; it is marked `executed:false`, not PASS or permission
 authority. Reassess this at every new host version.
 
 ## Existing no-inference boot scope
@@ -77,8 +77,8 @@ authority. Reassess this at every new host version.
 The existing Bun native suite uses a simulated host API. It proves callback
 behavior under that contract, not that the published OpenCode CLI can load Loom.
 `tests/installed_host_smoke.py` is a separate, no-inference boot probe using an
-exact npm-packed candidate artifact, exact installed `@opencode/plugin@2.1.1`,
-and a separately provisioned `@opencode/cli@2.1.1`. CI packs the checkout with
+exact npm-packed candidate artifact, exact installed `@opencode/plugin@2.2.0`,
+and a separately provisioned `@opencode/cli@2.2.0`. CI packs the checkout with
 `npm pack`, installs that tarball into its own prefix, and installs the CLI into a
 different prefix. The report records the artifact SHA-256, installed package and
 SDK versions, and installed path. The CLI has an exact top-level version, not a
@@ -98,7 +98,7 @@ A historical, separately copied 2.0.29 artifact boot run (SHA-256
 `d984373ec43823906ace9d9202bb2b37175ef7e36d84fdafad159c56463782de`) used SDK/CLI
 2.0.29. It is retained only as historical evidence and is **not supported or
 maintained**; its workflow has been removed. OpenCode 2.0.32 was the sole
-qualified predecessor; 2.1.1 must pass its own assembled-host checks.
+qualified predecessor; 2.2.0 must pass its own assembled-host checks.
 
 The installed-question qualification has passed for the exact packed candidate
 `loom-plugin@2.0.0-alpha.1`, SHA-256
