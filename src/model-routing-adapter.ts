@@ -123,6 +123,17 @@ export async function registerModelRouting(
   source?: RouteEligibilitySource,
   injectedQuota?: QuotaGate,
 ): Promise<ModelRoutingRuntime> {
+  // OpenCode 2.2.0 has been qualified for the ordinary Loom host path, NOT
+  // for this version-specific subscription routing/attestation adapter.
+  // Refuse opt-in managed routing until its native billing and request
+  // semantics receive independent qualification. The early request hook in
+  // plugin.ts remains deny-all for this status on the real 2.2.0 host.
+  // Explicitly disabled, valid configurations retain native OpenCode use.
+  if (ctx.app?.version === "2.2.0") {
+    const snapshot = await getConfig()
+    return { status: !snapshot.errors.length && !snapshot.config.modelRouting.enabled
+        ? "disabled" : "not-connected", selected: {}, unavailable: [] }
+  }
   // Native 2.1.4 runtime routing is not present on old/partial host mocks.
   // Check capability before consuming an admitted config I/O slot; legacy
   // Loom tool tests intentionally saturate that separate admission boundary.
