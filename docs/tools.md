@@ -184,7 +184,7 @@ No concern lifecycle, structured record links, automatic escalation or gates.
 ## Questions without assignment machinery
 
 ```json
-{"operation":"ask","question":"Does the finding cover empty input?","recipient":{"kind":"role","id":"research"},"blocking":true,"context":"The cited source is ambiguous.","context_attachments":["SOURCE_REFERENCE"],"reference":{"action_id":"ACTION_ID","kind":"task","id":"TASK_ID"}}
+{"operation":"ask","question":"Does the finding cover empty input?","to_agent":"research","blocking":true,"context":"The cited source is ambiguous.","context_attachments":["SOURCE_REFERENCE"],"reference":{"action_id":"ACTION_ID","kind":"task","id":"TASK_ID"}}
 ```
 
 Required: `question`, explicit Boolean `blocking`, and exactly one of
@@ -202,7 +202,9 @@ dispatching Session; that agent can answer within its authority or delegate
 further. A user-targeted question from a child reaches the parent for user
 interaction; a primary agent must ask the user itself through the native
 interface. Unavailable or ambiguous role assignments are not auto-dispatched.
-Legacy `to_agent` is still stored with no native contact.
+Legacy `to_agent` is still stored with no native contact. For automatic native routing instead, replace `to_agent`
+with `recipient:{"kind":"role","id":"research"}` after discovering an eligible
+role through `loom_agents`.
 
 `dispatch.status:"admission-observed"` means OpenCode confirmed native input,
 not that another agent ran, answered, or obtained user approval. Unknown outcomes
