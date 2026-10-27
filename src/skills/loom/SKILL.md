@@ -117,60 +117,51 @@ Completion does not complete parents or Actions and does not establish independe
 `reopen` appends a reason without erasing history or undoing native side effects.
 Update Action state separately; paused/cancelled labels do not stop execution.
 
-## Questions: decide who owns the answer
+## Questions: route material unknowns
 
-Raise an OQ for a material decision or unresolved fact outside your responsibility,
-not every small unknown. Ask your dispatching Session for scope/instructions,
-the right specialist role for technical authority, or the user for intent or
-approval only the user can grant. Use `blocking:true` only if your work cannot
-safely proceed; otherwise continue independent work. Persist the question,
-source references and intended recipient. Do not assume that asking is answering.
+Raise an OQ only for a material decision outside your responsibility, not
+routine investigation. Target the dispatcher for task scope, a specialist
+role for technical decisions, or the user for their intent and approval.
+`blocking:true` means safe work cannot proceed; otherwise continue.
 
-Use `loom_record ask` with `question`, explicit Boolean `blocking`, and
-`recipient:{kind:"role"|"agent"|"dispatcher"|"user",id?:string}`.
-An agent/role needs an ID from `loom_agents`; dispatcher/user forbid an ID.
-Optional `context`, `context_attachments`, and
-`reference:{action_id,kind:action|phase|wave|task|subtask,id}`.
-Association defaults to selection, otherwise the asking Session. No Action or
-Plan is required. Invalid references never fall back.
+`loom_record ask` requires `question`, Boolean `blocking`, and exactly one of
+`recipient:{kind:"agent"|"role"|"dispatcher"|"user",id?:string}` or legacy
+`to_agent`. Agent/role needs `id` from `loom_agents`, dispatcher/user none.
+Optional `context`, `context_attachments`, `reference:{action_id,kind,id}`.
+Association defaults to selection, otherwise the asking Session.
+Invalid explicit references fail; no Action or Plan needed.
+
+Typed recipients request native OpenCode 2.2.0 delivery. An eligible agent
+may receive a native child Session after `subagent` permission. Children
+forward to their actual parent; ambiguous roles and primary user questions
+need native/manual handling. Record the real user's answer and source;
+a forwarded question is not permission. `dispatch` confirms input admission,
+not execution, answer or approval. Typed replies check agent/Session identity,
+not factual correctness or human provenance.
+
+Legacy `to_agent` remains manual:
 
 ```json
-{"operation":"ask","question":"Which limit applies?","recipient":{"kind":"role","id":"research"},"blocking":false,"context_attachments":["SOURCE_REFERENCE"]}
+{"operation":"ask","question":"Which limit applies?","to_agent":"research","blocking":false,"context_attachments":["SOURCE_REFERENCE"]}
 ```
 
-On OpenCode 2.2.0 an eligible role/agent from a top-level Session is contacted
-through native child Session/prompt after the native `subagent` permission check.
-A role with multiple eligible agents is ambiguous and is not routed. Questions
-from a child are delivered to the parent for native coordination instead of
-creating deeper children. User questions from a child go to the parent; in the
-primary Session, ask the user through native interaction and record their actual
-decision, not a fabricated answer. The tool's `dispatch` status distinguishes
-native admission from unconfirmed or manual handling. No automatic retry.
-Legacy `to_agent` asks remain manual/fail-closed for compatibility.
-Blocking is intent, not a forced wait or gate.
+Legacy `dispatch:{status:"not-attempted",reason:"policy-capability-unavailable"}`
+means the recipient is NOT contacted. Arrange native handling yourself.
 
-A typed OQ accepts answers only from its intended native agent or dispatching
-Session. This identity check does not verify human provenance or factual
-correctness. A user answer relayed by General needs an actual source reference.
-
-Answer with `question_id`, `answer`, optional `context_attachments`. Caller supplies
-actual author/Session. Original nullable association survives node removal without
-selecting asker's work. Conflicting answers remain. `attachments` is never an alias;
-old statement/respondent/background/artifact_refs are not ask/answer inputs.
+Answer with `question_id`, `answer`, optional `context_attachments`:
 
 ```json
 {"operation":"answer","question_id":"QUESTION_ID","answer":"Read the source and its limitations.","context_attachments":["SOURCE_REFERENCE"]}
 ```
 
-Only the FIRST committed answer to a new blocking question can attempt one best-effort resume of the original asking Session. Later, nonblocking and legacy answers do not retry. Missing or moved targets fail closed; native agent/model/permissions stay unchanged. Target validation is not an atomic lease; the 5000ms limit bounds waiting, not cancellation of started input. Admission is not processing or completion; timeout can leave outcome unknown. No retries or startup replay: a crash may lose resume. Do not repeat an answer to try delivery.
-
-The answer remains durable independently. An eligible response includes `resume`
-status/IDs/qualification and a separate SYSTEM annotation; annotation failure
-does not erase the answer. Read `view:thread` for authoritative answers.
-Answered means response, not resolution, approval or permission.
-
-Assignment/delivery operations AND views are retired. Historical records stay
-readable/inert, not current consent. No startup sender or retry engine exists.
+Only the FIRST committed answer to a new blocking question attempts
+best-effort resume of its exact asking Session. Later/nonblocking answers
+do not. No retries or crash replay; missing/moved targets are not retargeted.
+Target validation is not an atomic lease; the 5000ms wait does not cancel
+native I/O. Admission is not processing or completion. Do not repeat an
+answer to try delivery. Read `view:thread`; answered is not resolution
+or approval. Historical records remain readable; retired assignment/delivery
+operations and views remain unavailable.
 
 ## Complete stored history
 
