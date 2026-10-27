@@ -295,8 +295,8 @@ export default Plugin.define({
                   const dispatch = await sendQuestion(store, stored, route, {
                     create: async (agent, parentID, title) => {
                       const child = payload(unwrapped(await ctx.session.create({
-                        parentID: parentID as Parameters<typeof ctx.session.create>[0]["parentID"],
-                        agent: agent as Parameters<typeof ctx.session.create>[0]["agent"], title,
+                        parentID: parentID as NonNullable<Parameters<typeof ctx.session.create>[0]>["parentID"],
+                        agent: agent as NonNullable<Parameters<typeof ctx.session.create>[0]>["agent"], title,
                       })))
                       if (!await sessionIsLocal(child)) throw new Error("Created child is not in the local project")
                       return child
