@@ -276,7 +276,7 @@ test("a second Session with the selected agent cannot answer a direct OQ", async
 test("role-targeted OQ is discoverable by role and by resolved agent across task boundaries", async () => {
   const f = await registeredLoom()
   try {
-    await writeFile(join(f.directory, ".loom.yaml"), "agents:\\n  investigator: {roles: [research]}\\ninstructions: {enabled: false}\\nledger: {capture: off}\\n".replaceAll("\\\\n", "\\n"))
+    await writeFile(join(f.directory, ".loom.yaml"), ["agents:", "  investigator: {roles: [research]}", "instructions: {enabled: false}", "ledger: {capture: off}", ""].join("\n"))
     const action = (await f.invoke("action", { operation: "create", title: "Discoverability", goal: "Resolve an open question" })).result
     await f.invoke("plan", { operation: "save", action_id: action.id, expected_revision: 0,
       nodes: [{ id: "ask", kind: "task", title: "Ask question" }, { id: "receive", kind: "task", title: "Other task" }] })
