@@ -8,10 +8,10 @@ Blocking is stored collaboration intent, not a workflow gate or forced wait.
 ## Current collaboration boundary
 
 Questions and answers are durable and attributed to the actual calling agent and
-Session. No Action, Plan or assignment is required. Recipient dispatch is
-fail-closed on the supported OpenCode 2.0.32 host; manual native handling is
-required. Installed-host boot evidence is separate from installed-question
-qualification.
+Session. No Action, Plan or assignment is required. Legacy `to_agent` dispatch
+is fail-closed; new typed recipients on OpenCode 2.2.0 request native delivery.
+Native permission remains authoritative. Installed-host boot evidence is separate
+from installed-question qualification.
 Only the first committed answer to a new-format blocking question qualifies for
 one best-effort exact-asker resume. General assignment/delivery/authorization/retry
 operations AND views are retired; their history remains readable and inert.
@@ -71,9 +71,11 @@ sequence: the latest explicit report is the current report, not an approval deci
 
 `loom_record` supports:
 
-- `ask`: required `question`, `to_agent`, explicit Boolean `blocking`; optional
-  `context`, `context_attachments`, `reference:{action_id,kind,id}`. Reference kinds
-  are action, phase, wave, task, subtask. The returned record ID is the question ID.
+- `ask`: required `question`, explicit Boolean `blocking` and exactly one of
+  `recipient:{kind,id?}` (agent/role requires id, dispatcher/user no id) or legacy
+  `to_agent`; optional `context`, `context_attachments`,
+  `reference:{action_id,kind,id}`. Reference kinds are action, phase, wave, task,
+  subtask. The returned record ID is the question ID.
 - `answer`: required `question_id`, `answer`; optional `context_attachments`.
   The original question supplies its nullable Action/node association.
 
@@ -89,21 +91,31 @@ the question belongs only to its asking Session; no Action or selection is creat
 Action references require `id=action_id`; node references require matching ID and
 kind in that Action. Invalid explicit reference never silently falls back.
 
-`to_agent` is an intended native agent ID or user label, not a dispatch command
-or an authority restriction. Answers record the actual calling agent and Session.
-A different agent may respond without impersonating the intended respondent.
-Research can answer a Worker's question without selecting the Worker's task, even
-when Research has an unrelated or unreadable selection. Removed tasks retain their
-threads and can receive answers. Sources, background and qualifications remain in
-the full ledger records; multiple or conflicting responses are not overwritten.
+Legacy `to_agent` remains an intended label, not a dispatch command or answer
+authority. Its answers can come from any calling agent for historical compatibility.
+New typed OQs record a concrete expected agent or Session based on the native
+roster and parent Session. A wrong caller is rejected before recording the
+answer. This checks identity, not the validity of the decision or whether an
+agent genuinely consulted the user. A parent/General relaying a user decision
+must cite the actual user response. Removed Plan nodes retain question threads.
 
-**Answered means at least one response exists.** It does not mean resolved,
-approved, independently verified or permitted to proceed. Use native delegation or
-user interaction to bring a respondent in. Ask returns
-`dispatch:{status:"not-attempted",reason:"policy-capability-unavailable"}`:
-the recipient is NOT contacted. There is no permission prompt, child creation,
-native executor or policy probe inside ask. If manual handling has been arranged,
-a blocking asker may naturally yield; this does not force a wait.
+For new agent/role recipients, exactly one available, enabled, visible, native
+subagent-capable target must match. Loom asserts the same `subagent` permission
+as OpenCode's native delegation and then creates a native child Session with
+a prompt to read/answer the saved question. If the asker is a child, Loom
+instead submits a synthetic notice to its actual parent; no deeper child is
+created. Dispatcher targets use that parent; user targets also notify the parent,
+or require native user interaction in a primary Session. A failed/missing/ambiguous
+target stays recorded without invented receipt. The dispatch outcome is stored as
+a separate SYSTEM record. On native permission rejection, the tool rejects and
+the stored question can still be found by its original asker.
+
+**Answered means an authorized response was stored (or, for legacy questions,
+any response).** It does not mean resolved, approved, independently verified
+or permitted to proceed. `dispatch.status:admission-observed` means a native
+prompt/notice was durably admitted, not run or consumed. Unknown results are
+not retried; partial native side effects cannot be assumed absent.
+Blocking is collaboration intent, never a forced wait or execution gate.
 
 ## One-shot first-answer resume
 

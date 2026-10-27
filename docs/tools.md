@@ -184,29 +184,39 @@ No concern lifecycle, structured record links, automatic escalation or gates.
 ## Questions without assignment machinery
 
 ```json
-{"operation":"ask","question":"Does the finding cover empty input?","to_agent":"research","blocking":true,"context":"The cited source is ambiguous.","context_attachments":["SOURCE_REFERENCE"],"reference":{"action_id":"ACTION_ID","kind":"task","id":"TASK_ID"}}
+{"operation":"ask","question":"Does the finding cover empty input?","recipient":{"kind":"role","id":"research"},"blocking":true,"context":"The cited source is ambiguous.","context_attachments":["SOURCE_REFERENCE"],"reference":{"action_id":"ACTION_ID","kind":"task","id":"TASK_ID"}}
 ```
 
-Required: `question`, `to_agent`, explicit Boolean `blocking`. Optional: `context`,
-`context_attachments`, `reference`. Without reference, selection supplies association;
-without either, the question belongs only to its asking Session. No Action, Plan,
-assignment or selection is created for an unscoped ask. Explicit Action reference
-requires `id=action_id`; node ID and kind must match. Invalid explicit reference
-never falls back. Reference kinds are action/phase/wave/task/subtask.
+Required: `question`, explicit Boolean `blocking`, and exactly one of
+`recipient` (new) or `to_agent` (legacy/manual). The recipient is one of
+`{kind:"agent",id:"AGENT_ID"}`, `{kind:"role",id:"ROLE_ID"}`,
+`{kind:"dispatcher"}`, `{kind:"user"}`. Optional `context`,
+`context_attachments`, `reference`. Without reference, selection supplies
+association; without either, it belongs only to the asking Session. Explicit
+Action/node references are validated, never silently changed.
 
-On the supported OpenCode 2.0.32 host, ask stores
-the question and returns
-`dispatch:{status:"not-attempted",reason:"policy-capability-unavailable"}`.
-The recipient is **NOT contacted**. Arrange manual native handling outside ask.
-If that is arranged, a blocking asker may naturally yield. Blocking is intent,
-not a gate, forced wait or statement that the recipient is working.
+On OpenCode 2.2.0, a question directed to a single eligible agent/role from a
+primary Session creates a native child Session and submits a prompt after native
+`subagent` permission approval. A question from a child is relayed to its
+dispatching Session; that agent can answer within its authority or delegate
+further. A user-targeted question from a child reaches the parent for user
+interaction; a primary agent must ask the user itself through the native
+interface. Unavailable or ambiguous role assignments are not auto-dispatched.
+Legacy `to_agent` is still stored with no native contact.
+
+`dispatch.status:"admission-observed"` means OpenCode confirmed native input,
+not that another agent ran, answered, or obtained user approval. Unknown outcomes
+are not retried automatically. `blocking` is intent, not a forced wait or gate.
 
 ```json
 {"operation":"answer","question_id":"QUESTION_ID","answer":"Empty input is excluded; see the source limits.","context_attachments":["SOURCE_REFERENCE"]}
 ```
 
 Answer requires `question_id`, `answer`; optional `context_attachments`. Actual
-author/Session derive from the caller. Association is inherited from the question,
+author/Session derive from the caller. Typed questions enforce the stored expected
+agent/Session; legacy manual questions preserve their prior behavior. An agent
+relaying a user decision must include the real user source; identity checks alone
+do not verify it. Association is inherited from the question,
 even if nullable or its node was removed; answering does not select the asker's
 work. Both canonical attachment fields are string-reference arrays. `attachments`
 is never an alias, alone or alongside the canonical field. Old statement,

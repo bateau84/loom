@@ -203,12 +203,12 @@ test("typed OQ delegates to one eligible agent and only that native agent can an
 test("role OQs fail closed for ambiguous candidates and never bypass explicit subagent permission denial", async () => {
   const f = await registeredLoom()
   try {
-    await writeFile(join(f.directory, ".loom.yaml"), "agents:\\n  investigator: {roles: [research]}\\ninstructions: {enabled: false}\\nledger: {capture: off}\\n")
+    await writeFile(join(f.directory, ".loom.yaml"), "agents:\n  investigator: {roles: [research]}\ninstructions: {enabled: false}\nledger: {capture: off}\n")
     const q = (await f.invoke("record", { operation: "ask", question: "Who knows?", recipient: { kind: "role", id: "research" }, blocking: false }, "asker", "author")).result
     expect(q.data.expected_agent).toBe("investigator")
     expect(q.dispatch.status).toBe("admission-observed")
     f.nativeAgents.push({ id: "second-researcher", mode: "subagent" })
-    await writeFile(join(f.directory, ".loom.yaml"), "agents:\\n  investigator: {roles: [research]}\\n  second-researcher: {roles: [research]}\\ninstructions: {enabled: false}\\nledger: {capture: off}\\n")
+    await writeFile(join(f.directory, ".loom.yaml"), "agents:\n  investigator: {roles: [research]}\n  second-researcher: {roles: [research]}\ninstructions: {enabled: false}\nledger: {capture: off}\n")
     const ambiguous = (await f.invoke("record", { operation: "ask", question: "Another?", recipient: { kind: "role", id: "research" }, blocking: true }, "asker", "author")).result
     expect(ambiguous.dispatch).toMatchObject({ status: "not-attempted", reason: "ambiguous-role", attempted: false })
     expect(f.sessionCreates).toHaveLength(1)

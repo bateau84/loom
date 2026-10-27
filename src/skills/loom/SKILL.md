@@ -117,22 +117,41 @@ Completion does not complete parents or Actions and does not establish independe
 `reopen` appends a reason without erasing history or undoing native side effects.
 Update Action state separately; paused/cancelled labels do not stop execution.
 
-## Questions and manual native handling
+## Questions: decide who owns the answer
 
-Ask with `question`, `to_agent`, explicit Boolean `blocking`; optional `context`,
-`context_attachments` (references), `reference:{action_id,kind:action|phase|wave|task|subtask,id}`.
-Association defaults to selection, otherwise asking Session only; no Action/Plan
-required. Invalid explicit references never fall back: Action/node IDs and kind
-must match.
+Raise an OQ for a material decision or unresolved fact outside your responsibility,
+not every small unknown. Ask your dispatching Session for scope/instructions,
+the right specialist role for technical authority, or the user for intent or
+approval only the user can grant. Use `blocking:true` only if your work cannot
+safely proceed; otherwise continue independent work. Persist the question,
+source references and intended recipient. Do not assume that asking is answering.
+
+Use `loom_record ask` with `question`, explicit Boolean `blocking`, and
+`recipient:{kind:"role"|"agent"|"dispatcher"|"user",id?:string}`.
+An agent/role needs an ID from `loom_agents`; dispatcher/user forbid an ID.
+Optional `context`, `context_attachments`, and
+`reference:{action_id,kind:action|phase|wave|task|subtask,id}`.
+Association defaults to selection, otherwise the asking Session. No Action or
+Plan is required. Invalid references never fall back.
 
 ```json
-{"operation":"ask","question":"Which limit applies here?","to_agent":"research","blocking":false,"context_attachments":["SOURCE_REFERENCE"]}
+{"operation":"ask","question":"Which limit applies?","recipient":{"kind":"role","id":"research"},"blocking":false,"context_attachments":["SOURCE_REFERENCE"]}
 ```
 
-On pinned OpenCode 2.1.1 the question is saved, but the recipient is NOT contacted.
-Inspect `dispatch:{status:not-attempted,reason:policy-capability-unavailable}`.
-Arrange manual handling outside ask; a blocking asker may yield after it is
-arranged. Blocking is intent, not a wait, approval or gate; nonblocking work continues.
+On OpenCode 2.2.0 an eligible role/agent from a top-level Session is contacted
+through native child Session/prompt after the native `subagent` permission check.
+A role with multiple eligible agents is ambiguous and is not routed. Questions
+from a child are delivered to the parent for native coordination instead of
+creating deeper children. User questions from a child go to the parent; in the
+primary Session, ask the user through native interaction and record their actual
+decision, not a fabricated answer. The tool's `dispatch` status distinguishes
+native admission from unconfirmed or manual handling. No automatic retry.
+Legacy `to_agent` asks remain manual/fail-closed for compatibility.
+Blocking is intent, not a forced wait or gate.
+
+A typed OQ accepts answers only from its intended native agent or dispatching
+Session. This identity check does not verify human provenance or factual
+correctness. A user answer relayed by General needs an actual source reference.
 
 Answer with `question_id`, `answer`, optional `context_attachments`. Caller supplies
 actual author/Session. Original nullable association survives node removal without

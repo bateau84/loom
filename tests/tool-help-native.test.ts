@@ -77,7 +77,7 @@ test("canonical collaboration help matches conditional schemas and rejects alias
   try {
     const tool = f.tools.get("record")
     for (const [operation, required, allowed] of [
-      ["ask", ["operation", "question", "to_agent", "blocking"], ["operation", "question", "to_agent", "blocking", "context", "context_attachments", "reference"]],
+      ["ask", ["operation", "question", "blocking"], ["operation", "question", "to_agent", "recipient", "blocking", "context", "context_attachments", "reference"]],
       ["answer", ["operation", "question_id", "answer"], ["operation", "question_id", "answer", "context_attachments"]],
     ] as const) {
       const schema = tool.input.allOf.find((s: any) => s.if.properties.operation?.const === operation).then
@@ -105,7 +105,7 @@ test("canonical collaboration help matches conditional schemas and rejects alias
       for (const invalid of [{ ...withoutCanonical, attachments: [] }, { ...input, attachments: [] }])
         await expect(f.invoke("record", invalid)).rejects.toThrow("attachments is not supported")
     }
-    for (const text of ["FIRST committed", "policy-capability-unavailable", "manual native handling required", "No retries", "not an atomic lease", "not perpetual", "No recursive evidence expansion"]) expect(tool.description).toContain(text)
+    for (const text of ["FIRST committed", "legacy", "single", "No retries", "not an atomic lease", "not perpetual", "No recursive evidence expansion"]) expect(tool.description).toContain(text)
     expect(tool.input.properties.operation.enum).toEqual(["add", "query", "complete", "reopen", "ask", "answer"])
     expect(tool.input.properties.view.enum).toEqual(["ledger", "progress", "questions", "thread", "full_thread"])
     const history = (await f.invoke("record", { operation: "query", view: "full_thread", session_id: "asker", limit: 1 })).result

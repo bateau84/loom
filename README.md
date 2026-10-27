@@ -184,8 +184,9 @@ unloading removes this plugin's contribution, not other skills. Update the guide
 alongside changes to Loom's tools. The guide body is read during plugin setup;
 an already loaded host needs plugin re-registration and a fresh native skill
 load to use an updated body, not just a YAML reread. This documentation change
-does not reload or restart the host. The guide teaches fail-closed manual question
-handling, one-shot best-effort first-answer resume and complete stored history.
+does not reload or restart the host. The guide describes typed OQ routing through native OpenCode 2.2.0 APIs,
+legacy fail-closed manual questions, one-shot best-effort first-answer resume,
+and complete stored history.
 See [collaboration](docs/collaboration.md). Historical assignment/delivery records
 remain inert; guide loading or configuration cannot authorize/replay old intents.
 
@@ -210,17 +211,23 @@ execution is never gated by it. The current implementation intentionally does no
 infer a child's task from its parent's *current* selection, which might have
 changed after dispatch. Fully automatic native handoff remains future work.
 
-Ask uses `question`, `to_agent`, explicit Boolean `blocking`, and optional
-`context`, `context_attachments`, `reference:{action_id,kind,id}`. Answer uses
-`question_id`, `answer`, optional `context_attachments`; `attachments` is not an
-alias. Actual author/Session derive from the caller. Without reference/selection,
-questions belong only to the asking Session; answers inherit original nullable
-association without selecting its work. Invalid explicit reference never falls back.
+Ask uses `question`, explicit Boolean `blocking`, and exactly one of
+`recipient:{kind:"agent"|"role"|"dispatcher"|"user",id?:string}` (preferred)
+or legacy `to_agent` (manual). Provide `id` for agent/role, not for dispatcher/user.
+Optional `context`, `context_attachments`, `reference:{action_id,kind,id}`.
+Answer uses `question_id`, `answer`, optional `context_attachments`;
+`attachments` is not an alias. The native caller determines author/Session;
+Action association is optional and unchanged by answering.
 
-On the supported OpenCode 2.0.32 host, question dispatch is fail-closed:
-`not-attempted / policy-capability-unavailable`. The question is stored, recipient
-NOT contacted; arrange manual native handling. If arranged, a blocking asker may
-naturally yield, but blocking is intent, not a forced wait or gate.
+On OpenCode 2.2.0, a typed agent/role OQ from a top-level Session attempts
+native subagent delegation after the usual `subagent` permission check.
+Questions raised inside child Sessions reach the dispatching Session, which
+can delegate to a suitable role or ask the user. A primary agent must ask
+the user via native interaction; Loom cannot independently verify that a
+relayed user answer genuinely came from the user. New typed OQs accept answers
+only from the stored intended agent/Session. Legacy `to_agent` questions
+stay fail-closed and manual. Dispatch admission is not execution, answer,
+or approval; no automatic retry is promised. Blocking is advisory, not a gate.
 
 Only the FIRST committed answer to a new-format blocking question qualifies for
 one postcommit best-effort resume of the exact asking Session. Later/nonblocking/
