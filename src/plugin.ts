@@ -85,7 +85,7 @@ export default Plugin.define({
     // ANY quota/ledger I/O, but only on the version whose guard was installed-
     // host qualified. Older/partial hosts retain the existing plugin lifecycle
     // and are NOT evidence of safe managed routing.
-    const guardedHost = ctx.app?.version === "2.1.4"
+    const guardedHost = ctx.app?.version === "2.1.4" || ctx.app?.version === "2.2.0"
     let startupDispatch: "deny" | "delegated" | "disabled" = "deny"
     let startupDenial = "LOOM_MODEL_ROUTING_STARTUP_BLOCKED: routing has not completed initialization"
     const startupGuard = guardedHost ? await ctx.session.hook("model.request", () => {
