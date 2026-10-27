@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 export type NodeKind = "phase" | "wave" | "task" | "subtask"
 export type PlanNode = { id: string; kind: NodeKind; title: string; parent?: string; depends_on?: string[]; outcome?: string; context?: string; criteria?: string[]; skills?: string[]; roles?: string[]; agent?: string }
 export type Action = { id: string; title: string; goal: string; state: "active" | "paused" | "completed" | "cancelled"; revision: number; created_at: string }
-export type Plan = { revision: number; nodes: PlanNode[] }
+export type Plan = { revision: number; nodes: PlanNode[]; saved_by?: Actor }
 export type Focus = { action_id: string; node_id?: string }
 export type Actor = { session_id: string; agent: string }
 // Legacy assignment/delivery kinds remain readable history, not writable tool capabilities.

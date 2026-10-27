@@ -29,23 +29,23 @@ Use Promise.allSettled for independent calls and inspect outcomes.
 Use `loom_agents {}`: match `agents[].roles` to `role_descriptions`.
 Check `available`/`enabled`; delegate natively.
 
-Recover existing Action IDs from handoffs or `loom_action` list to avoid duplicates. For new durable work, create a goal:
+Reuse handed-off Action IDs or find via `loom_action` list. To create an Action:
 
 ```json
 {"operation":"create","title":"Explain a setting","goal":"Produce a source-backed explanation with its limitations."}
 ```
 
-Use returned `result.id` as the Action ID. `loom_action sessions` lists local Sessions, optionally filtered by `action_id`, with `next_cursor` paging and native archive state. This does not prove execution or delivery.
+Use `result.id` as Action ID. `loom_action sessions` finds local Sessions, optionally by Action, with paging; it does not prove execution.
 
-Read the current optional Plan before changing it:
+Read the Plan before edits:
 
 ```json
 {"operation":"read","action_id":"ACTION_ID"}
 ```
 
-A Plan is intent, not an activity log. Nodes require `id`, `kind`, `title`; optional fields: `outcome`, `criteria`, `context`, `depends_on`, `parent`, `agent`, `roles`, `skills`. Kinds: phase/wave/task/subtask. Hierarchy is optional; sibling order is not enforced.
+A Plan has optional phase/wave/task/subtask nodes. Required: `id`, `kind`, `title`; optional: `outcome`, `criteria`, `context`, `depends_on`, `parent`, `agent`, `roles`, `skills`. Save the complete node list with Plan `expected_revision` (0 for a new Plan), retain IDs and reconcile conflicts. Action updates use the Action's separate current revision. New revisions record native `saved_by` Session/agent.
 
-Save the complete node list using current Plan `expected_revision`; keep unchanged IDs. Only a new Plan uses revision 0. Action updates use the Action's separate current revision. On conflicts, reread and reconcile.
+For delegated planning with `action_id`, select it via `loom_context`, read/save with `loom_plan`, and return Action ID, revision and node IDs. General verifies the saved Plan. Chat or `docs/plan/` alone is not Plan storage. Without an ID, propose without inventing an Action; report save failures.
 
 Explicitly select the work before performing it:
 

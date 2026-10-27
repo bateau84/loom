@@ -109,7 +109,7 @@ export class Store {
     if (!row && revision !== undefined && revision !== 0) throw new Error("Unknown plan revision")
     return row ? parse<Plan>(row, PROCESSING_LIMITS.storedPlanChars) : { revision: 0, nodes: [] }
   }
-  savePlan(id: string, expected: number, nodes: unknown): Plan {
+  savePlan(id: string, expected: number, nodes: unknown, savedBy?: Actor): Plan {
     const valid = validatePlan(nodes)
     return this.transaction(() => {
       // Read revision metadata only: an oversized old plan must remain replaceable
@@ -118,7 +118,7 @@ export class Store {
       const row = this.db.prepare("SELECT revision FROM plans WHERE action_id=? ORDER BY revision DESC LIMIT 1").get(id) as { revision: number } | undefined
       const revision = row?.revision ?? 0
       if (expected !== revision) throw new Error(`Plan changed; read revision ${revision} before editing`)
-      const plan: Plan = { revision: revision + 1, nodes: valid }
+      const plan: Plan = { revision: revision + 1, nodes: valid, ...(savedBy ? { saved_by: { ...savedBy } } : {}) }
       this.db.prepare("INSERT INTO plans(action_id,revision,data) VALUES(?,?,?)").run(id, plan.revision, encode(plan, PROCESSING_LIMITS.storedPlanChars))
       return plan
     })
@@ -130,8 +130,9 @@ export class Store {
   hasSelection(session: string): boolean { return !!this.db.prepare("SELECT 1 FROM focus WHERE session_id=?").get(session) }
   /** Read-only activity hint. A recorded contribution does not mean that a Session is running. */
   hasActionActivity(actionID: string, sessionID: string): boolean {
-    return !!this.db.prepare("SELECT 1 FROM ledger WHERE action_id=? AND session_id=? LIMIT 1")
-      .get(uid(actionID, "action_id"), uid(sessionID, "session_id"))
+    const action = uid(actionID, "action_id"), session = uid(sessionID, "session_id")
+    return !!this.db.prepare("SELECT 1 FROM ledger WHERE action_id=? AND session_id=? LIMIT 1").get(action, session)
+      || !!this.db.prepare("SELECT 1 FROM plans WHERE action_id=? AND json_extract(data,'$.saved_by.session_id')=? LIMIT 1").get(action, session)
   }
   /** Validate and save the reference atomically; later plan edits may invalidate it. */
   select(session: string, focus?: Focus) {
