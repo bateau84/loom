@@ -11,6 +11,9 @@ export async function registeredLoom(initialSkills: any[] = []) {
   process.env.OPENCODE_CONFIG_DIR = join(directory, "config")
   const sessions = new Map<string, any>()
   const nativeInputs: unknown[] = [], sessionReads: string[] = [], nativeListRequests: any[] = []
+  const sessionCreates: any[] = [], sessionPrompts: any[] = []
+  const nativeAgents: any[] = [{ id: "investigator", mode: "subagent", hidden: false },
+    { id: "author", mode: "primary", hidden: false }]
   const nativePages = new Map<string, any>()
   const tools = new Map<string, any>(), namespaces = new Map<string, any>()
   const hooks = new Map<string, any>()
@@ -29,7 +32,7 @@ export async function registeredLoom(initialSkills: any[] = []) {
   const registration = () => ({ dispose: async () => {} })
   const ctx = {
     location: { directory, project: { id: "tool-help", canonical: directory, directory } },
-    agent: { list: async () => [{ id: "investigator" }, { id: "author" }], transform: () => { throw new Error("No agent rewriting") } },
+    agent: { list: async () => nativeAgents, transform: () => { throw new Error("No agent rewriting") } },
     permission: {
       hook: () => { throw new Error("No new permission hooks") },
       assert: async (request: unknown) => {
@@ -52,7 +55,16 @@ export async function registeredLoom(initialSkills: any[] = []) {
     },
     session: {
       list: async (query: any) => { nativeListRequests.push(query); return nativePages.get(query.cursor ?? "") ?? { data: [], cursor: { next: null, previous: null } } },
-      synthetic: async (r:any) => { nativeInputs.push(r); return {id:r.id,sessionID:r.sessionID,type:"synthetic",delivery:r.delivery,payload:{text:r.text,description:r.description,metadata:r.metadata}} },
+      synthetic: async (r:any) => { nativeInputs.push(r); return {id:r.id ?? (r.metadata?.format === "loom-question-notice/v1" ? "msg_questionnotice" : undefined),sessionID:r.sessionID,type:"synthetic",delivery:r.delivery,payload:{text:r.text,description:r.description,metadata:r.metadata}} },
+      create: async (r:any) => {
+        sessionCreates.push(r)
+        const child = { id: "ses_questionchild_" + sessionCreates.length, parentID: r.parentID, agent: r.agent,
+          projectID: "tool-help", location: { directory } }
+        sessions.set(child.id, child)
+        return child
+      },
+      prompt: async (r:any) => { sessionPrompts.push(r); return { id: "msg_questionprompt_" + sessionPrompts.length,
+        sessionID: r.sessionID, type: "user", delivery: r.delivery } },
       context: async () => [],
       get: async ({ sessionID }: { sessionID: string }) => {
         sessionReads.push(sessionID)
@@ -81,6 +93,7 @@ export async function registeredLoom(initialSkills: any[] = []) {
     dispose = await (plugin as any).setup(ctx)
     return {
       tools, namespaces, close, directory, hooks, sessions, skills, reloadSkills, nativeInputs, sessionReads, nativeListRequests, nativePages,
+      nativeAgents, sessionCreates, sessionPrompts,
       permission, permissionRequests, skillRequests,
       context: async (sessionID: string, agent: string) => {
         const event = { sessionID, agent, system: [] as Array<{ type: string; text: string }>, messages: [], tools: {}, options: {} }

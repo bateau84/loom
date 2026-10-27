@@ -14,7 +14,7 @@ import { renderFullHistory } from "./history-renderer.js"
 import { fullThreadMarkdown } from "./response-format.js"
 import { Store } from "./store.js"
 import { QUESTION_DISPATCH, questionRecipient } from "./collaboration.js"
-import { questionRoute, sendQuestion } from "./question-routing.js"
+import { questionRoute, sendQuestion, type QuestionRoute } from "./question-routing.js"
 import { resumeAnswer } from "./answer-resume.js"
 import { TOOL_HELP, LOOM_NAMESPACE_HELP } from "./tool-help.js"
 
@@ -266,17 +266,19 @@ export default Plugin.define({
                   const asker = payload(unwrapped(await ctx.session.get({ sessionID: actor.session_id })))
                   if (asker.id !== actor.session_id || !await sessionIsLocal(asker))
                     throw new Error("Cannot route a question from an unverified local Session")
-                  const native = agents(await ctx.agent.list())
-                  // The native registry carries execution mode; the Loom roster carries responsibility.
+                  // The native registry carries execution mode; the Loom config carries responsibility.
                   const all = unwrapped(await ctx.agent.list())
                   if (!Array.isArray(all)) throw new Error("OpenCode returned an unsupported agent registry shape")
                   const roster = all.map(raw => {
                     const a = payload(raw)
-                    return { id: String(a.id), mode: String(a.mode), hidden: a.hidden === true }
-                  }).filter(a => native.some(n => n.id === a.id))
-                  let route = snapshot.errors.length
-                    ? { mode: "manual" as const, reason: "loom-config-unavailable" }
-                    : questionRoute(recipient, snapshot.config, roster, asker)
+                    if (typeof a.id !== "string" || typeof a.mode !== "string")
+                      throw new Error("OpenCode agent registry lacks an ID or mode")
+                    return { id: a.id, mode: a.mode, hidden: a.hidden === true }
+                  })
+                  const asking = { id: actor.session_id, ...(typeof asker.parentID === "string" ? { parentID: asker.parentID } : {}) }
+                  let route: QuestionRoute = snapshot.errors.length
+                    ? { mode: "manual", reason: "loom-config-unavailable" }
+                    : questionRoute(recipient, snapshot.config, roster, asking)
                   if (route.mode === "notify" && route.session && !await owns(route.session))
                     route = { mode: "manual", reason: "parent-not-local" }
                   const stored = store.collaboration.ask(actor, focus, input, {
@@ -292,13 +294,18 @@ export default Plugin.define({
                   }
                   const dispatch = await sendQuestion(store, stored, route, {
                     create: async (agent, parentID, title) => {
-                      const child = payload(unwrapped(await ctx.session.create({ parentID, agent, title })))
+                      const child = payload(unwrapped(await ctx.session.create({
+                        parentID: parentID as Parameters<typeof ctx.session.create>[0]["parentID"],
+                        agent: agent as Parameters<typeof ctx.session.create>[0]["agent"], title,
+                      })))
                       if (!await sessionIsLocal(child)) throw new Error("Created child is not in the local project")
                       return child
                     },
-                    prompt: (sessionID, text) => ctx.session.prompt({ sessionID, text, resume: true, delivery: "steer" }),
+                    prompt: (sessionID, text) => ctx.session.prompt({ sessionID: sessionID as Parameters<typeof ctx.session.prompt>[0]["sessionID"],
+                      text, resume: true, delivery: "steer" }),
                     synthetic: (sessionID, text, metadata) => ctx.session.synthetic({
-                      sessionID, text, metadata, description: "Loom Open Question", resume: true, delivery: "steer",
+                      sessionID: sessionID as Parameters<typeof ctx.session.synthetic>[0]["sessionID"],
+                      text, metadata, description: "Loom Open Question", resume: true, delivery: "steer",
                     }),
                   }, AbortSignal.any([toolContext.signal, lifetime.signal]))
                   result = { ...stored, dispatch,

@@ -54,7 +54,9 @@ test("registered schema and callbacks require canonical fields and reject aliase
     expect(schema.additionalProperties).toBe(false)
     const ask = schema.allOf.find((s: any) => s.if.properties.operation.const === "ask").then
     const answer = schema.allOf.find((s: any) => s.if.properties.operation.const === "answer").then
-    expect(ask.required).toEqual(["operation", "question", "to_agent", "blocking"])
+    expect(ask.required).toEqual(["operation", "question", "blocking"])
+    expect(ask.oneOf).toEqual([{ required: ["to_agent"], not: { required: ["recipient"] } },
+      { required: ["recipient"], not: { required: ["to_agent"] } }])
     expect(answer.required).toEqual(["operation", "question_id", "answer"])
     expect(ask.properties.blocking).toEqual({ type: "boolean" })
     for (const operation of [ask, answer]) {
@@ -64,7 +66,7 @@ test("registered schema and callbacks require canonical fields and reject aliase
         expect(operation.properties[alias]).toBeUndefined()
     }
     const valid = { operation: "ask", question: "Question?", to_agent: "investigator", blocking: false }
-    for (const required of ["question", "to_agent", "blocking"]) {
+    for (const required of ["question", "blocking"]) {
       const input: any = { ...valid }; delete input[required]
       await expect(f.invoke("record", input)).rejects.toThrow()
     }
@@ -174,4 +176,81 @@ test("registered asks and failed commits never contact native APIs; only first b
     if (previous.config === undefined) delete process.env.OPENCODE_CONFIG_DIR; else process.env.OPENCODE_CONFIG_DIR = previous.config
     await rm(root, { recursive: true, force: true })
   }
+})
+
+test("typed OQ delegates to one eligible agent and only that native agent can answer", async () => {
+  const f = await registeredLoom()
+  try {
+    const q = (await f.invoke("record", { operation: "ask", question: "Which API boundary?", recipient: { kind: "agent", id: "investigator" }, blocking: true }, "asker", "author")).result
+    expect(q.data).toMatchObject({ format: "loom-question/v2", recipient: { kind: "agent", id: "investigator" }, expected_agent: "investigator" })
+    expect(q.dispatch).toMatchObject({ status: "admission-observed", reason: "native-prompt-admitted", target_agent: "investigator", attempted: true })
+    expect(f.permissionRequests[0]).toMatchObject({ action: "subagent", resources: ["investigator"], sessionID: "asker", agent: "author" })
+    expect(f.sessionCreates).toHaveLength(1)
+    expect(f.sessionCreates[0]).toMatchObject({ agent: "investigator", parentID: "asker" })
+    expect(f.sessionPrompts[0]).toMatchObject({ sessionID: "ses_questionchild_1", resume: true, delivery: "steer" })
+    expect(f.sessionPrompts[0].text).toContain(q.id)
+    await expect(f.invoke("record", { operation: "answer", question_id: q.id, answer: "Unqualified guess" }, "someone-else", "author")).rejects.toThrow("intended respondent")
+    const threadBefore = (await f.invoke("record", { operation: "query", view: "thread", question_id: q.id })).result
+    expect(threadBefore.answers).toHaveLength(0)
+    const a = (await f.invoke("record", { operation: "answer", question_id: q.id, answer: "Verified via code" }, "ses_questionchild_1", "investigator")).result
+    expect(a.data.format).toBe("loom-answer/v2")
+    expect(a.resume).toMatchObject({ attempted: true, asking_session_id: "asker" })
+    const threadAfter = (await f.invoke("record", { operation: "query", view: "thread", question_id: q.id })).result
+    expect(threadAfter.answers).toHaveLength(1)
+  } finally { await f.close() }
+})
+
+test("role OQs fail closed for ambiguous candidates and never bypass explicit subagent permission denial", async () => {
+  const f = await registeredLoom()
+  try {
+    await writeFile(join(f.directory, ".loom.yaml"), "agents:\\n  investigator: {roles: [research]}\\ninstructions: {enabled: false}\\nledger: {capture: off}\\n")
+    const q = (await f.invoke("record", { operation: "ask", question: "Who knows?", recipient: { kind: "role", id: "research" }, blocking: false }, "asker", "author")).result
+    expect(q.data.expected_agent).toBe("investigator")
+    expect(q.dispatch.status).toBe("admission-observed")
+    f.nativeAgents.push({ id: "second-researcher", mode: "subagent" })
+    await writeFile(join(f.directory, ".loom.yaml"), "agents:\\n  investigator: {roles: [research]}\\n  second-researcher: {roles: [research]}\\ninstructions: {enabled: false}\\nledger: {capture: off}\\n")
+    const ambiguous = (await f.invoke("record", { operation: "ask", question: "Another?", recipient: { kind: "role", id: "research" }, blocking: true }, "asker", "author")).result
+    expect(ambiguous.dispatch).toMatchObject({ status: "not-attempted", reason: "ambiguous-role", attempted: false })
+    expect(f.sessionCreates).toHaveLength(1)
+    await expect(f.invoke("record", { operation: "answer", question_id: ambiguous.id, answer: "Guessed", }, "ses_questionchild_1", "investigator")).rejects.toThrow("no authorized respondent")
+    f.permission.error = new Error("denied by native policy")
+    await expect(f.invoke("record", { operation: "ask", question: "Denied?", recipient: { kind: "agent", id: "investigator" }, blocking: true }, "asker", "author")).rejects.toThrow("denied by native policy")
+    expect(f.sessionCreates).toHaveLength(1)
+    expect(f.sessionPrompts).toHaveLength(1)
+  } finally { await f.close() }
+})
+
+test("child questions notify the exact dispatching Session; top-level user question needs native interaction", async () => {
+  const f = await registeredLoom()
+  try {
+    f.sessions.set("child", { id: "child", parentID: "primary", agent: "author", projectID: "tool-help", location: { directory: f.directory } })
+    f.sessions.set("primary", { id: "primary", agent: "author", projectID: "tool-help", location: { directory: f.directory } })
+    const q = (await f.invoke("record", { operation: "ask", question: "Choose interface?", recipient: { kind: "dispatcher" }, blocking: true }, "child", "author")).result
+    expect(q.dispatch).toMatchObject({ status: "admission-observed", reason: "native-parent-notice-admitted", target_session_id: "primary" })
+    expect(f.nativeInputs).toHaveLength(1)
+    expect((f.nativeInputs[0] as any).sessionID).toBe("primary")
+    await expect(f.invoke("record", { operation: "answer", question_id: q.id, answer: "wrong Session" }, "child", "author")).rejects.toThrow("Answering Session")
+    const answer = (await f.invoke("record", { operation: "answer", question_id: q.id, answer: "Explicit decision" }, "primary", "author")).result
+    expect(answer.data.format).toBe("loom-answer/v2")
+    const user = (await f.invoke("record", { operation: "ask", question: "What does the user prefer?", recipient: { kind: "user" }, blocking: true }, "primary", "author")).result
+    expect(user.dispatch).toMatchObject({ status: "not-attempted", reason: "ask-user-in-primary-session" })
+    expect(user.guidance).toContain("Ask the user")
+    expect(f.sessionCreates).toHaveLength(0)
+  } finally { await f.close() }
+})
+
+test("typed OQ recipient contract rejects malformed or competing destinations", async () => {
+  const f = await registeredLoom()
+  try {
+    const base = { operation: "ask", question: "Boundary?", blocking: true }
+    for (const input of [
+      { ...base }, { ...base, recipient: { kind: "role" } },
+      { ...base, recipient: { kind: "user", id: "someone" } },
+      { ...base, recipient: { kind: "agent", id: "" } },
+      { ...base, recipient: { kind: "role", id: "research", extra: true } },
+      { ...base, recipient: { kind: "agent", id: "investigator" }, to_agent: "investigator" },
+    ]) await expect(f.invoke("record", input)).rejects.toThrow()
+    const q = (await f.invoke("record", { ...base, recipient: { kind: "agent", id: "investigator" } })).result
+    expect(q.data.format).toBe("loom-question/v2")
+  } finally { await f.close() }
 })
