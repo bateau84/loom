@@ -317,7 +317,7 @@ export class Collaboration {
     if (q.respondent !== undefined) { filter += ` AND ${recipient}`; params.push(...Array(4).fill(q.respondent)) }
     if (relevant !== undefined) {
       if (relevant.length > 300) throw new ProcessingLimitError("question context exceeds 300 nodes")
-      filter += ` AND (json_extract(q.data,'$.node_id') IS NULL${relevant.length ? ` OR json_extract(q.data,'$.node_id') IN (${relevant.map(() => "?").join(",")})` : ""}${agent ? ` OR ${recipient}=?` : ""})`
+      filter += ` AND (json_extract(q.data,'$.node_id') IS NULL${relevant.length ? ` OR json_extract(q.data,'$.node_id') IN (${relevant.map(() => "?").join(",")})` : ""}${agent ? ` OR ${recipient}` : ""})`
       params.push(...relevant); if (agent) params.push(...Array(4).fill(agent))
     }
     if (state !== "all") filter += ` AND ${state === "open" ? "NOT " : ""}EXISTS (SELECT 1 FROM ledger a
