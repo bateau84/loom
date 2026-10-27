@@ -296,3 +296,95 @@ test("delayed execution A terminal event cannot discard execution B's quota rese
     store.close()
   }
 }))
+
+
+test("auxiliary account changes cannot contaminate retained primary quota evidence", async () => withState(async path => {
+  const store = await openSharedQuotaState({ path })
+  try {
+    const f = fixture()
+    await registerModelRouting(f.ctx, f.config, [], new AbortController().signal, f.billing, store)
+    const dispatch = f.hooks.get("model.request")!
+    const retry = f.hooks.get("retry")!
+    await dispatch(request()) // a managed primary request was reserved for account A
+
+    // The active OpenCode credentials change to account B while a managed
+    // compaction request asks for the very same provider/model and Session.
+    // Its failure must never be charged against A's earlier reservation.
+    f.ctx.integration.connection.active = async (providerID: string) =>
+      ({ type: "credential", method: "oauth",
+        id: providerID === "opencode-go" ? "account-b" : "openai-secondary" })
+    await expect(dispatch({ ...request(), kind: "compaction" })).rejects.toThrow("LOOM_MODEL_ROUTE_AFFINITY")
+    expect(store.eligibility(go("account-a")).eligible).toBe(true)
+    expect(store.eligibility(go("account-b")).eligible).toBe(true)
+
+    // Same-account compaction remains permitted, but its native retry lacks
+    // the kind/attempt identifier needed for dependable quota attribution.
+    f.ctx.integration.connection.active = async (providerID: string) =>
+      ({ type: "credential", method: "oauth",
+        id: providerID === "opencode-go" ? "account-a" : "openai-secondary" })
+    await dispatch({ ...request(), kind: "compaction" })
+    const auxiliaryFailure = { ...request(), error: { type: "provider.rate-limit", status: 429 },
+      attempt: 1, decision: { retry: true, delay: 0 } }
+    await retry(auxiliaryFailure)
+    expect(auxiliaryFailure.decision.retry).toBe(true)
+    expect(store.eligibility(go("account-a")).eligible).toBe(true)
+
+    // A new primary reservation after the auxiliary request is identifiable
+    // and its own failure is still recorded against account A.
+    await dispatch(request())
+    const primaryFailure = { ...request(), error: { type: "provider.rate-limit", status: 429 },
+      attempt: 2, decision: { retry: true, delay: 0 } }
+    await retry(primaryFailure)
+    expect(primaryFailure.decision.retry).toBe(false)
+    expect(store.eligibility(go("account-a")).reason).toBe("throttled")
+    expect(store.eligibility(go("account-b")).eligible).toBe(true)
+  } finally { store.close() }
+}))
+
+test("512 distinct Sessions admit repeated agent requests, reject 513th and recover after deletion", async () => withState(async path => {
+  const store = await openSharedQuotaState({ path })
+  const controller = new AbortController()
+  try {
+    const f = fixture()
+    f.agents.coder = {}
+    f.config = async () => ({
+      config: mergeConfig(policy(), { agents: { coder: { roles: ["architecture"] } } }),
+      errors: [], sources: [],
+    })
+    let releaseDeletion: () => void = () => { throw new Error("Subscriber not ready") }
+    let deletionProcessed: () => void = () => {}
+    const processed = new Promise<void>(resolve => { deletionProcessed = () => resolve() })
+    f.ctx.event.subscribe = async function* ({ signal }: { signal: AbortSignal }) {
+      await new Promise<void>(resolve => {
+        releaseDeletion = () => resolve()
+        if (signal.aborted) resolve()
+        else signal.addEventListener("abort", () => resolve(), { once: true })
+      })
+      if (signal.aborted) return
+      yield { type: "session.deleted", data: { sessionID: "tracked-0" } }
+      deletionProcessed()
+      await new Promise<void>(resolve => {
+        if (signal.aborted) resolve()
+        else signal.addEventListener("abort", () => resolve(), { once: true })
+      })
+    }
+    const runtime = await registerModelRouting(
+      f.ctx, f.config, [], controller.signal, f.billing, store,
+    )
+    expect(runtime.selected.architect.provider_id).toBe("opencode-go")
+    expect(runtime.selected.coder.provider_id).toBe("opencode-go")
+    const dispatch = f.hooks.get("model.request")!
+    for (let i = 0; i < 512; i++) {
+      const event = { ...request(), sessionID: "tracked-" + i }
+      await dispatch(event)
+      // A second configured agent in the SAME Session must not consume an
+      // additional distinct-Session slot.
+      if (i % 2 === 0) await dispatch({ ...event, agent: "coder" })
+    }
+    const blocked = { ...request(), sessionID: "tracked-512" }
+    await expect(dispatch(blocked)).rejects.toThrow("LOOM_MODEL_ROUTING_STATE_LIMIT")
+    releaseDeletion()
+    await processed
+    await expect(dispatch(blocked)).resolves.toBeUndefined()
+  } finally { controller.abort(); store.close() }
+}))
