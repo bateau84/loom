@@ -397,8 +397,9 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             child = request(host, 'GET', f'/api/session/{child_id}')
             require(child['parentID'] == asker and child['agent'] == 'question-specialist',
                     'Native OQ recipient was not the expected child Session')
-            require(child['model'] == {'providerID': 'question-fixture', 'id': 'respondent'},
-                    'Native delegation ignored specialist model precedence')
+            selected_model = child.get('model') or {}
+            require(selected_model.get('providerID') == 'question-fixture' and selected_model.get('id') == 'respondent',
+                    'Native delegation ignored specialist model precedence: ' + json.dumps(selected_model))
             require(any(e['data']['agent'] == 'question-specialist' for e in target_requests(root, child_id)),
                     'No installed native specialist model request observed')
             typed_thread = s.invoke(reader, 'record', {'operation': 'query', 'view': 'thread', 'question_id': typed_q['id']})
