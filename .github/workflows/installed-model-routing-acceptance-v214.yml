@@ -31,7 +31,7 @@ jobs:
           npm pack --json --pack-destination "$RUNNER_TEMP/loom-acceptance-artifact" > "$RUNNER_TEMP/loom-acceptance-artifact/pack.json"
           ARTIFACT=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))[0].filename)' "$RUNNER_TEMP/loom-acceptance-artifact/pack.json")
           npm install --prefix "$RUNNER_TEMP/loom-acceptance-install" --no-audit --no-fund "$RUNNER_TEMP/loom-acceptance-artifact/$ARTIFACT"
-      - name: Install unmodified OpenCode CLI pinned to V2.1.4
+      - name: Install unmodified OpenCode CLI pinned to V2.2.0
         run: npm install --prefix "$RUNNER_TEMP/loom-acceptance-host" --no-audit --no-fund @opencode/cli@2.2.0
       - name: Installed-host negative controls, continuation and restart
         run: >-
