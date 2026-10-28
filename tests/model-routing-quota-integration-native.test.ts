@@ -387,13 +387,21 @@ test("512 distinct Sessions admit repeated agent requests, reject 513th and reco
     const dispatch = f.hooks.get("model.request")!
     for (let i = 0; i < 512; i++) {
       const event = { ...request(), sessionID: "tracked-" + i }
-      await dispatch(event)
-      // A second configured agent in the SAME Session must not consume an
-      // additional distinct-Session slot.
-      if (i % 2 === 0) await dispatch({ ...event, agent: "coder" })
+      if (i % 2 === 0) {
+        // Auxiliary-only Sessions also own a future retry ambiguity fence
+        // and must count toward the same distinct-Session capacity limit.
+        await dispatch({ ...event, kind: "compaction" })
+      } else {
+        await dispatch(event)
+        // A second configured agent in the SAME Session does not consume an
+        // additional distinct-Session slot.
+        await dispatch({ ...event, agent: "coder" })
+      }
     }
     const blocked = { ...request(), sessionID: "tracked-512" }
     await expect(dispatch(blocked)).rejects.toThrow("LOOM_MODEL_ROUTING_STATE_LIMIT")
+    await expect(dispatch({ ...blocked, kind: "compaction" }))
+      .rejects.toThrow("LOOM_MODEL_ROUTING_STATE_LIMIT")
     releaseDeletion()
     await processed
     await expect(dispatch(blocked)).resolves.toBeUndefined()
