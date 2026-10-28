@@ -409,3 +409,18 @@ test("a failed durable respondent binding never prompts or authorizes the orphan
     await f.close()
   }
 })
+
+test("native subagent depth zero prevents even an empty OQ child Session", async () => {
+  const f = await registeredLoom()
+  try {
+    f.nativeSubagent.depth = 0
+    const q = (await f.invoke("record", { operation: "ask", question: "Depth policy?",
+      recipient: { kind: "agent", id: "investigator" }, blocking: true }, "asker", "author")).result
+    expect(q.dispatch.status).not.toBe("admission-observed")
+    expect(f.sessionCreates).toHaveLength(0)
+    expect(f.sessionPrompts).toHaveLength(0)
+    await expect(f.invoke("record", { operation: "answer", question_id: q.id,
+      answer: "No delegate was created" }, "unrelated", "investigator"))
+      .rejects.toThrow("verified receiving Session")
+  } finally { await f.close() }
+})
