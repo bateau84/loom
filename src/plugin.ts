@@ -360,7 +360,7 @@ export default Plugin.define({
                         // native permission checks, and model selection semantics.
                         const result = await native.execute({
                           agent, description: `Resolve Loom OQ ${questionID.slice(0, 8)}`,
-                          prompt: `Loom OQ dispatch token: ${token}\\n${prompt}`, background: true,
+                          prompt: `Loom OQ dispatch token: ${token}\n${prompt}`, background: true,
                         }, toolContext)
                         const output = payload(result.output)
                         if (typeof output.sessionID !== "string" || pending.bound !== output.sessionID ||
