@@ -65,7 +65,7 @@ interrupt an OpenCode session or certify successful delivery.
 Upgrade candidate: **OpenCode 2.2.0**, with `@opencode/plugin@2.2.0`
 pinned in the source package and lockfile. The isolated installed boot,
 scripted-question, Session discovery and compaction checks use the exact
-2.2.0 CLI and SDK; see draft PR #199 for current CI evidence.
+2.2.0 CLI and SDK; see merged PR #199 and the current CI checks.
 **Only a successful run on the reviewed head qualifies the tested behavior.**
 Evidence collected under 2.1.1 or the older 2.0.32 host
 does not establish 2.2.0 compatibility. The historical 2.0.32 qualification
@@ -80,13 +80,16 @@ authorization. Neither workflow upgrades your personal CLI or changes
 your active configuration. See
 [2.2.0 migration and compatibility](docs/opencode-2.2.0.md) and
 [installed-host validation](docs/installed-host-validation.md).
-**Model-routing host boundary:** the current packaged SDK/CLI is 2.2.0.
-Initial managed routing was only inspected and tested on 2.1.4. On 2.2.0
-Loom keeps opt-in managed routing blocked with
-`LOOM_MODEL_ROUTING_HOST_UNQUALIFIED` pending version-specific acceptance.
-A valid disabled policy leaves normal OpenCode 2.2.0 requests unchanged.
-Do not infer safe provider/account billing or live failover from the older
-2.1.4 results; see [model routing](docs/model-routing.md).
+**Model-routing host boundary:** this branch now packages SDK 2.2.0.
+The previous native initial-selection implementation was investigated using
+**CLI 2.1.4 / SDK 2.1.1** and is retained as a historical contract-test
+candidate. No current SDK 2.2.0 host pairing, **including CLI 2.1.4**,
+is qualified for managed subscription routing. The production adapter
+returns `not-connected` and the early `model.request` hook denies such
+opt-in requests with `LOOM_MODEL_ROUTING_HOST_UNQUALIFIED`. Valid,
+explicitly disabled routing preserves native OpenCode execution.
+Test-only billing attestations do not authorize real provider requests;
+see [model routing](docs/model-routing.md).
 
 **Bun support: `>=1.4.2 <2.0.0`. Use Bun 1.4.2 to reproduce validation.**
 The exact tested baseline is recorded in `.bun-version` and used by the CI jobs.
@@ -157,7 +160,7 @@ metadata, not injected instructions, automatic matching or permissions.
 Supported sections are `version`, `agents`, `roles`, `instructions`, `context`,
 `ledger`, and optional `model-routing`, `model-classes`, and `model-aliases`.
 Unknown settings fail validation. OpenCode still owns provider credentials,
-installed model definitions, and native permissions. **Version-specific initial routing on 2.1.4:** Loom assigns exact native models and reasoning variants from
+installed model definitions, and native permissions. **Historical 2.1.4 candidate behavior:** Loom's dormant adapter can assign exact native models and reasoning variants from
 verified provider/connection evidence and guards against unknown or unapproved
 paid requests at provider dispatch. It never switches providers during
 a running native stream. Initial selection now reads the shared,
@@ -174,7 +177,8 @@ silently charged to OpenCode's global default.
 agents. See [model routing](docs/model-routing.md) and
 [shared subscription quota](docs/shared-subscription-quota.md) for the
 exact host/account-affinity and recovery limits. The current
-2.2.0 host is not yet qualified for managed routing. Invalid configuration continues to disable guidance and
+No current SDK 2.2.0 host is qualified for managed routing, including CLI 2.1.4.
+Invalid configuration continues to disable guidance and
 automatic capture instead of applying a partial or stale role mapping;
 do **not** treat an invalid-startup configuration as an enforced billing
 policy. Diagnostics remain available through `loom_agents`; native tools
