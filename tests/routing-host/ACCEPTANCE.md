@@ -43,12 +43,15 @@ rejection and native account/stream lease cannot currently be marked PASS:
 the suite cannot currently isolate the global-default mismatch behavior from
 a completely unavailable managed route. Its normal error categories and
 positive routing guard cases are tested in the mocked adapter separately.
-The suite additionally includes fresh native-host startup failures for a
-corrupt shared quota database and an unusable Action-ledger path, with a
-callable metered local default. Their `STARTUP_FAILED` denial is checked
-before native provider transport. It does **not** simulate a host that
-never activates the Loom plugin. The suite still adds no test-only
-included subscription attestation:
+The current **2.2.0** suite also tests a deliberately corrupt quota-file
+fixture, but the host-unqualified guard correctly prevents opening that
+database; this is **not proof of active quota initialization failure**.
+A separate unusable Action-ledger path triggers the early
+`LOOM_MODEL_ROUTING_STARTUP_FAILED` guard. Both cases use an otherwise
+callable metered local default and observe zero provider transport.
+The older **2.1.4** corrupt-quota startup proof remains historical.
+None of these cases simulates a host that never activates Loom, or
+supplies a test-only included-subscription attestation:
 
 the local fixtures have **no independently verified included billing**.
 Native adapter tests use **test-only attestations** and are labelled as
