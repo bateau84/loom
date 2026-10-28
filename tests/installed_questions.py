@@ -40,7 +40,7 @@ READ_DENIAL_APPLICABILITY = {
 }
 REQUIRED_INSTALLED_CHECKS = {
     'E1-no-plan-manual-question', 'E1-storage-failure-zero-contact', 'E6-typed-role-native-dispatch',
-    'E6-parent-user-native-notices',
+    'E6-parent-user-native-notices', 'E6-zero-depth-native-denial',
     'E2-idle-switched-native-resume',
     'E2-later-legacy-missing-failed-first', 'E2-running', 'E2-preyield', 'E2-public-moved-target',
     'E3-new-unicode-relational-parts', 'E3-old-action-full-content-oracle',
@@ -684,7 +684,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
                            'recipient': {'kind': 'role', 'id': 'research'}, 'blocking': True})
             dispatch = typed_q['dispatch']
             require(dispatch['status'] == 'admission-observed' and
-                    dispatch['reason'] == 'native-prompt-admitted' and
+                    dispatch['reason'] == 'native-subagent-admitted' and
                     dispatch['target_agent'] == 'question-specialist', 'Typed OQ dispatch not admitted: ' + str(dispatch))
             child_id = dispatch['target_session_id']
             idle(host, [typed_asker, child_id])
@@ -767,6 +767,34 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
                                      'qualification': 'Native parent delivery verified; actual human reply is unproven in scripted host'})
 
 
+
+
+            # Native subagent_depth=0 must refuse a new direct OQ child even when
+            # delegation permission is otherwise allowed. Prove zero child creation.
+            host.close(); host = None
+            config['experimental'] = {'subagent_depth': 0}
+            (Path(env['OPENCODE_CONFIG_DIR']) / 'opencode.json').write_text(json.dumps(config))
+            host = start('zero-depth-policy')
+            s = Scenario(host, root)
+            zero_asker = s.session('asker')
+            zero_before = request(host, 'GET', f'/api/session?parentID={zero_asker}')
+            native_before = len([e for e in events(root) if e['type'] == 'model-request'
+                                 and e['data']['agent'] == 'question-specialist'])
+            depth_q = s.invoke(zero_asker, 'record', {'operation': 'ask', 'question': 'Depth is disabled',
+                               'recipient': {'kind': 'agent', 'id': 'question-specialist'}, 'blocking': True})
+            require(depth_q['dispatch']['status'] != 'admission-observed',
+                    'Depth zero wrongly permitted native OQ delegation')
+            zero_after = request(host, 'GET', f'/api/session?parentID={zero_asker}')
+            require(zero_after == zero_before, 'Depth zero created an unauthorized child Session')
+            require(len([e for e in events(root) if e['type'] == 'model-request'
+                         and e['data']['agent'] == 'question-specialist']) == native_before,
+                    'Depth zero started a specialist model request')
+            untouched = s.invoke(zero_asker, 'record', {'operation': 'query', 'view': 'thread',
+                                   'question_id': depth_q['id']})
+            require(not untouched['answers'], 'Depth-zero OQ gained an unauthorized answer')
+            report['checks'].append({'name': 'E6-zero-depth-native-denial', 'status': 'PASS',
+                                     'question': depth_q['id'], 'observed_dispatch': depth_q['dispatch'],
+                                     'qualification': 'Native 2.2.0 host uses configured subagent_depth=0'})
 
             require(not any(e['type'] == 'observer-failure' for e in events(root)), 'Passive native admission observation failed; zero-event claims invalid')
             report['checks'].append(dict(READ_DENIAL_APPLICABILITY))
