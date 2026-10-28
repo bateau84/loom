@@ -155,7 +155,7 @@ export default Plugin.define({
       // Native subagent owns depth and permission checks. Its prompt hook supplies
       // the exact child identity BEFORE OpenCode can admit that child's input.
       disposers.push(await ctx.session.hook("prompt", async event => {
-        const token = /(?:^|\\n)Loom OQ dispatch token: ([0-9a-f-]{36})(?:\\n|$)/.exec(event.prompt.text)?.[1]
+        const token = /(?:^|\n)Loom OQ dispatch token: ([0-9a-f-]{36})(?:\n|$)/.exec(event.prompt.text)?.[1]
         const pending = token ? awaitingNativePrompt.get(token) : undefined
         if (!pending) return
         if (pending.bound) throw new Error("OQ recipient has already been bound")
