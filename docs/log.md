@@ -4,6 +4,36 @@ type: Log
 
 # Update Log
 
+## 2026-10-28
+
+**Final-review routing safeguards, draft #190:** The independent re-review
+identified residual ambiguity when an earlier auxiliary retry arrives after
+a newer primary Session request: native retry callbacks have neither request
+kind nor attempt ID. The candidate adapter now retains an ambiguity fence
+after any managed auxiliary dispatch until Session deletion or plugin
+restart. A later primary still needs a pre-dispatch quota reservation, but
+its retry cannot update shared account quota while an old auxiliary
+failure may own the callback. Known quota/auth failures stop native
+retry without speculative account attribution. The 512-Session bound also
+covers auxiliary-only Sessions; focused tests reproduce auxiliary account B,
+newer primary account A and delayed B failure, plus fresh-Session accounting
+and capacity/deletion behavior.
+
+**SDK/host safety:** The packaged SDK is 2.2.0. The historical 2.1.4
+routing implementation is retained as an *internal mock-host contract*
+but the production `registerModelRouting()` does not activate managed
+routing on any unqualified host/SDK pair, including CLI 2.1.4 + SDK 2.2.0.
+The early native request guard rejects such requests before provider
+transport, while an expressly disabled, valid policy leaves native
+OpenCode unchanged. Documentation and routing CI descriptions now
+distinguish current 2.2.0 host acceptance from historical 2.1.4 findings.
+
+**Current mainline:** Merged PR #200's delegated Plan authorship and
+Session-activity changes were integrated into the #190 branch with
+both merge parents preserved. #190 remains a draft and was **not**
+merged to `main`. Final-head CI, independent review and the user's
+merge decision are still required.
+
 ## 2026-10-27
 
 **Critic safety corrections:** [Shared quota](shared-subscription-quota.md)
