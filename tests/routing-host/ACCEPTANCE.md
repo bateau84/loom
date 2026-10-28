@@ -55,8 +55,10 @@ Native adapter tests use **test-only attestations** and are labelled as
 mocked. Quota child-process tests use synthetic reported failures and
 synthetic completed probe success and are labelled state-level.
 
-OpenCode Go subscription eligibility, real-provider quota accounting, matched
-2.2.0 SDK qualification, managed post-tool failure affinity and live automatic
-provider switching remain **UNPROVEN**. In-flight switching is not a criterion
+OpenCode Go subscription eligibility, real-provider quota accounting,
+**positive managed routing** on any version-matched host/SDK pair,
+managed post-tool failure affinity and live automatic provider switching
+remain **UNPROVEN**. Exact CLI/SDK 2.2.0 matching is proven for the
+routing-disabled and host-unqualified-denial controls only. In-flight switching is not a criterion
 of this PR and must not be silently added. Do not merge this draft based only
 on passing synthetic tests.
