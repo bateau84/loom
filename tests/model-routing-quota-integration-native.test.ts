@@ -326,16 +326,27 @@ test("auxiliary account changes cannot contaminate retained primary quota eviden
     const auxiliaryFailure = { ...request(), error: { type: "provider.rate-limit", status: 429 },
       attempt: 1, decision: { retry: true, delay: 0 } }
     await retry(auxiliaryFailure)
-    expect(auxiliaryFailure.decision.retry).toBe(true)
+    expect(auxiliaryFailure.decision.retry).toBe(false)
     expect(store.eligibility(go("account-a")).eligible).toBe(true)
 
-    // A new primary reservation after the auxiliary request is identifiable
-    // and its own failure is still recorded against account A.
+    // A later primary in the same Session is allowed at pre-dispatch, but
+    // cannot attribute a retry while an old auxiliary callback may be late.
     await dispatch(request())
-    const primaryFailure = { ...request(), error: { type: "provider.rate-limit", status: 429 },
+    const ambiguousPrimary = { ...request(), error: { type: "provider.rate-limit", status: 429 },
       attempt: 2, decision: { retry: true, delay: 0 } }
-    await retry(primaryFailure)
-    expect(primaryFailure.decision.retry).toBe(false)
+    await retry(ambiguousPrimary)
+    expect(ambiguousPrimary.decision.retry).toBe(false)
+    expect(store.eligibility(go("account-a")).eligible).toBe(true)
+    expect(store.eligibility(go("account-b")).eligible).toBe(true)
+
+    // A fresh Session has no prior auxiliary collision and may account for
+    // its own classified failure, still without assuming stream affinity.
+    await dispatch({ ...request(), sessionID: "new-session" })
+    const attributable = { ...request(), sessionID: "new-session",
+      error: { type: "provider.rate-limit", status: 429 },
+      attempt: 1, decision: { retry: true, delay: 0 } }
+    await retry(attributable)
+    expect(attributable.decision.retry).toBe(false)
     expect(store.eligibility(go("account-a")).reason).toBe("throttled")
     expect(store.eligibility(go("account-b")).eligible).toBe(true)
   } finally { store.close() }
