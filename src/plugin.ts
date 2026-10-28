@@ -80,12 +80,12 @@ const specs = [
 export default Plugin.define({
   id: "loom",
   async setup(ctx) {
-    // An unmodified OpenCode 2.1.4 host can continue native dispatch after
-    // a plugin setup error. Install an early pre-transport deny guard before
-    // ANY quota/ledger I/O, but only on the version whose guard was installed-
-    // host qualified. Older/partial hosts retain the existing plugin lifecycle
-    // and are NOT evidence of safe managed routing.
-    const guardedHost = ctx.app?.version === "2.1.4" || ctx.app?.version === "2.2.0"
+    // A real OpenCode host may keep running after plugin setup fails.
+    // Register an early pre-transport deny hook BEFORE quota/ledger I/O on
+    // any versioned native host. No host/SDK profile is currently qualified
+    // for managed routing; unknown future versions must not fail open.
+    // Versionless partial test hosts retain their historical setup behavior.
+    const guardedHost = typeof ctx.app?.version === "string" && ctx.app.version.length > 0
     let startupDispatch: "deny" | "delegated" | "disabled" = "deny"
     let startupDenial = "LOOM_MODEL_ROUTING_STARTUP_BLOCKED: routing has not completed initialization"
     const startupGuard = guardedHost ? await ctx.session.hook("model.request", () => {
