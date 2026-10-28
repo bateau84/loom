@@ -36,8 +36,9 @@ export function questionRoute(recipient: QuestionRecipient, config: Config, rost
 }
 
 type Native = {
-  create: (agent: string, parentID: string, title: string, model?: NativeModel) => Promise<unknown>
-  prompt: (sessionID: string, text: string) => Promise<unknown>
+  // Delegation runs OpenCode's native subagent tool, which owns its depth and permission policy.
+  // Its prompt hook must bind the verified child to this OQ before input admission.
+  delegate: (agent: string, parentID: string, questionID: string, prompt: string) => Promise<{ sessionID: string }>
   synthetic: (sessionID: string, text: string, metadata: Record<string, string>) => Promise<unknown>
 }
 type Dispatch = { status: "admission-observed" | "not-attempted" | "outcome-unknown"; reason: string; target_session_id?: string; target_agent?: string; attempted: boolean }
@@ -50,25 +51,18 @@ export async function sendQuestion(store: Store, question: LedgerRecord, route: 
   try {
     signal.throwIfAborted()
     if (route.mode === "delegate" && route.agent) {
-      outcome = { status: "outcome-unknown", reason: "native-create-or-prompt", target_agent: route.agent, attempted: true }
-      const child = record(unwrap(await api.create(route.agent, question.session_id, `Loom question ${question.id}`, route.model)))
-      if (typeof child.id !== "string" || child.parentID !== question.session_id || child.agent !== route.agent)
-        throw new Error("Native child Session identity could not be confirmed")
-      outcome.target_session_id = child.id
-      signal.throwIfAborted()
-      // Append-only authority binding must commit BEFORE native prompt admission.
-      store.collaboration.bindRespondent(question.id, child.id, route.agent)
-      signal.throwIfAborted()
-      const ack = record(unwrap(await api.prompt(child.id,
-        `You are being asked a Loom Open Question (ID: ${question.id}). Read it with loom_record query view=thread and question_id, investigate within your responsibility, then submit the answer using loom_record operation=answer with this exact question_id. A chat response alone does not save an answer. Do not claim authority outside your role. Do not create another Action just to answer.`)))
-      if (ack.type !== "user" || ack.sessionID !== child.id || typeof ack.id !== "string")
-        throw new Error("Native prompt admission could not be confirmed")
-      outcome = { ...outcome, status: "admission-observed", reason: "native-prompt-admitted" }
+      outcome = { status: "outcome-unknown", reason: "native-subagent-delegation", target_agent: route.agent, attempted: true }
+      const admitted = await api.delegate(route.agent, question.session_id, question.id,
+        `You are being asked a Loom Open Question (ID: ${question.id}). Read it with loom_record query view=thread and question_id, investigate within your responsibility, then submit the answer using loom_record operation=answer with this exact question_id. A chat response alone does not save an answer. Do not claim authority outside your role. Do not create another Action just to answer.`)
+      if (typeof admitted.sessionID !== "string" || !admitted.sessionID)
+        throw new Error("Native subagent did not return a verified Session")
+      outcome = { ...outcome, target_session_id: admitted.sessionID,
+        status: "admission-observed", reason: "native-subagent-admitted" }
     } else if (route.mode === "notify" && route.session) {
       outcome = { status: "outcome-unknown", reason: "native-parent-notice", target_session_id: route.session,
         ...(route.agent ? { target_agent: route.agent } : {}), attempted: true }
       const ack = record(unwrap(await api.synthetic(route.session,
-        `Loom Open Question ${question.id} requires ${route.agent ? `agent ${route.agent}` : (question.data.recipient as QuestionRecipient).kind}. Retrieve its full thread with loom_record. If this is for the user, ask the user directly and relay the actual decision with its source. Otherwise delegate natively to a specialist child of your Session with the question ID; only a matching specialist Session under you may answer. Do not answer outside your authority. The question is only recorded, not resolved.`,
+        `Loom Open Question ${question.id} requires ${route.agent ? `agent ${route.agent}` : (question.data.recipient as QuestionRecipient).kind}. Retrieve its full thread with loom_record. If this is for the user, ask the user directly and relay the actual decision with its source. Otherwise delegate natively to the specialist and then call loom_record bind-respondent with question_id and respondent_session_id from the native subagent result. Only that selected Session may answer. Do not answer outside your authority. The question is recorded, not resolved.`,
         { format: "loom-question-notice/v1", question_id: question.id })))
       if (ack.type !== "synthetic" || ack.sessionID !== route.session || typeof ack.id !== "string")
         throw new Error("Native parent notice admission could not be confirmed")
