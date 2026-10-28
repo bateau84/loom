@@ -39,7 +39,9 @@ READ_DENIAL_APPLICABILITY = {
     'authority': 'Tagged v2.2.0 source inspection for this upgrade; PR #182 only qualifies the historical 2.0.32 host. This is not installed execution or permission.assert evidence.',
 }
 REQUIRED_INSTALLED_CHECKS = {
-    'E1-no-plan-manual-question', 'E1-storage-failure-zero-contact', 'E2-idle-switched-native-resume',
+    'E1-no-plan-manual-question', 'E1-storage-failure-zero-contact', 'E6-typed-role-native-dispatch',
+    'E6-parent-user-native-notices', 'E6-forwarded-exact-respondent', 'E6-zero-depth-native-denial',
+    'E2-idle-switched-native-resume',
     'E2-later-legacy-missing-failed-first', 'E2-running', 'E2-preyield', 'E2-public-moved-target',
     'E3-new-unicode-relational-parts', 'E3-old-action-full-content-oracle',
     'E3-node-session-oracles-cursor-corrupt-no-advance', 'E3-populated-startup-raw-preservation',
@@ -331,10 +333,13 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
         agents = {'question-' + role: {'description': role + ' fixture', 'mode': 'primary', 'model': 'question-fixture/' + role,
                   'system': 'Follow the deterministic local verification script.'} for role in roles}
         agents['question-switched']['permissions'] = [{'action': '*', 'resource': '*', 'effect': 'deny'}]
+        agents['question-specialist'] = {'description': 'Scoped OQ specialist fixture',
+                                         'mode': 'subagent', 'model': 'question-fixture/respondent',
+                                         'system': 'Read the question and store an evidence-backed answer.'}
         config = {'plugins': ['*', str(plugin), str(repo / 'tests/question-host')], 'agents': agents,
                   'model': 'question-fixture/asker', 'update': 'disable', 'share': 'disabled'}
         (Path(env['OPENCODE_CONFIG_DIR']) / 'opencode.json').write_text(json.dumps(config))
-        (project / '.loom.yaml').write_text('agents: {}\ninstructions: {enabled: false}\nledger: {capture: off}\n')
+        (project / '.loom.yaml').write_text('agents:\n  question-specialist:\n    roles: [research]\ninstructions: {enabled: false}\nledger: {capture: off}\n')
         (root / 'jobs.json').write_text('{}')
         report['configuration_sha256'] = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
         try:
@@ -377,6 +382,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             require(all(x in page['markdown'] for x in [q['id'], a['id'], respondent, 'fixture://question', 'fixture://answer']), 'Incomplete relational read')
             require(not page['next_cursor'], 'Unexpected short-history continuation')
             report['checks'].append({'name': 'E1-no-plan-manual-question', 'status': 'PASS', 'question': q['id'], 'answer': a['id']})
+
             invalid = [dict(operation='ask', question='Invalid', to_agent='question-respondent', blocking=False, **extra)
                        for extra in [{'attachments': ['fixture://alias']}, {'attachments': [], 'context_attachments': []},
                                      {'reference': {'action_id': 'missing', 'kind': 'action', 'id': 'missing'}}, {'session_id': respondent}]]
@@ -590,7 +596,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             model_before = sum(e['type'] == 'model-request' for e in events(root))
             host.close(); host = None
             (project / '.loom.yaml').write_text(
-                'agents:\n  question-reader:\n    roles: [implementation]\n'
+                'agents:\n  question-reader:\n    roles: [implementation]\n  question-specialist:\n    roles: [research]\n'
                 'ledger:\n  capture: automatic\n')
             host = start('compaction-fresh-capture')
             require(len(synthetic_events(root)) == admission_before and
@@ -668,6 +674,168 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             require(len(synthetic_events(root)) == count and sum(e['type'] == 'model-request' for e in events(root)) == model_count, 'Startup replayed native work')
             unchanged_rows(ledger, saved)
             report['checks'].append({'name': 'E2-E3-restart-no-reconstruction', 'status': 'PASS'})
+            s = Scenario(host, root)
+            typed_asker, typed_reader = s.session('asker'), s.session('reader')
+            # Fully installed typed-OQ path: real native child, model request,
+            # Loom callback, durable answer and exact-typed_asker synthetic admission.
+            typed_start = len(events(root))
+            typed_q = s.invoke(typed_asker, 'record', {'operation': 'ask',
+                           'question': 'Which boundary needs research?',
+                           'recipient': {'kind': 'role', 'id': 'research'}, 'blocking': True})
+            dispatch = typed_q['dispatch']
+            require(dispatch['status'] == 'admission-observed' and
+                    dispatch['reason'] == 'native-subagent-admitted' and
+                    dispatch['target_agent'] == 'question-specialist', 'Typed OQ dispatch not admitted: ' + str(dispatch))
+            child_id = dispatch['target_session_id']
+            idle(host, [typed_asker, child_id])
+            child = request(host, 'GET', f'/api/session/{child_id}')
+            require(child['parentID'] == typed_asker and child['agent'] == 'question-specialist',
+                    'Native OQ recipient was not the expected child Session')
+            selected_model = child.get('model') or {}
+            require(selected_model.get('providerID') == 'question-fixture' and selected_model.get('id') == 'respondent',
+                    'Native delegation ignored specialist model precedence: ' + json.dumps(selected_model))
+            require(any(e['data']['agent'] == 'question-specialist' for e in target_requests(root, child_id)),
+                    'No installed native specialist model request observed')
+            retrieved = [e for e in events(root)[typed_start:] if e['type'] == 'tool-before'
+                         and e['data']['sessionID'] == child_id
+                         and e['data']['tool'] in ('loom_record', 'loom.record')
+                         and e['data'].get('input', {}).get('operation') == 'query'
+                         and e['data']['input'].get('view') == 'thread'
+                         and e['data']['input'].get('question_id') == typed_q['id']]
+            require(retrieved, 'Specialist did not retrieve its authoritative stored question')
+            typed_thread = s.invoke(typed_reader, 'record', {'operation': 'query', 'view': 'thread', 'question_id': typed_q['id']})
+            typed_answers = typed_thread['answers']
+            require(len(typed_answers) == 1 and typed_answers[0]['agent'] == 'question-specialist' and
+                    typed_answers[0]['session_id'] == child_id and
+                    typed_answers[0]['data']['format'] == 'loom-answer/v2',
+                    'Native specialist did not persist one attributed typed answer')
+            typed_notices = [e['data'] for e in events(root)[typed_start:] if e['type'] == 'native-event'
+                             and e['data']['type'] == 'session.inbox.enqueued'
+                             and e['data']['data']['item']['type'] == 'synthetic'
+                             and e['data']['data']['item']['payload'].get('metadata', {}).get('question_id') == typed_q['id']]
+            verify_single_admission(typed_notices, typed_asker, typed_answers[0]['id'])
+            unrelated = request(host, 'POST', '/api/session', {'agent': 'question-specialist',
+                         'title': 'unrelated specialist', 'model': {'providerID': 'question-fixture', 'id': 'respondent'},
+                         'location': {'directory': str(project)}})['id']
+            assert_rejected(s, unrelated, [{'operation': 'answer', 'question_id': typed_q['id'],
+                                            'answer': 'Same agent from wrong native Session'}])
+            require(len(s.invoke(typed_reader, 'record', {'operation': 'query', 'view': 'thread',
+                         'question_id': typed_q['id']})['answers']) == 1,
+                    'Wrong Session contaminated typed OQ answer history')
+            report['checks'].append({'name': 'E6-typed-role-native-dispatch', 'status': 'PASS',
+                                     'question': typed_q['id'], 'child_session': child_id,
+                                     'answer': typed_answers[0]['id'], 'native_admissions': len(typed_notices),
+                                     'qualification': 'Installed OpenCode 2.2.0 scripted-model run; no production provider'})
+
+            # Delegated work can ask its actual dispatcher or request a user
+            # decision. Verify durable native parent notices, not invented approval.
+            def parent_notice(question_id, after):
+                return [e['data'] for e in events(root)[after:]
+                        if e['type'] == 'native-event'
+                        and e['data']['type'] == 'session.inbox.enqueued'
+                        and e['data']['data']['item']['type'] == 'synthetic'
+                        and e['data']['data']['item']['payload'].get('metadata', {}).get('question_id') == question_id]
+            dispatcher_from = len(events(root))
+            forwarded = s.invoke(child_id, 'record', {'operation': 'ask', 'question': 'Clarify my task scope',
+                           'recipient': {'kind': 'dispatcher'}, 'blocking': False})
+            require(forwarded['dispatch']['status'] == 'admission-observed'
+                    and forwarded['dispatch']['target_session_id'] == typed_asker,
+                    'Child dispatcher question did not target its native parent')
+            dispatcher_notice = parent_notice(forwarded['id'], dispatcher_from)
+            require(len(dispatcher_notice) == 1 and dispatcher_notice[0]['data']['sessionID'] == typed_asker,
+                    'No exact native dispatcher notice')
+            dispatcher_answer = s.invoke(typed_asker, 'record', {
+                'operation': 'answer', 'question_id': forwarded['id'], 'answer': 'Scope explained by dispatcher'})
+            require(dispatcher_answer['session_id'] == typed_asker and 'resume' not in dispatcher_answer,
+                    'Nonblocking dispatcher answer did not preserve expected authorship')
+
+            user_from = len(events(root))
+            user_question = s.invoke(child_id, 'record', {'operation': 'ask',
+                            'question': 'What does the user prefer?', 'recipient': {'kind': 'user'},
+                            'blocking': False})
+            require(user_question['dispatch']['status'] == 'admission-observed'
+                    and user_question['dispatch']['target_session_id'] == typed_asker,
+                    'Child user question was not routed to its parent')
+            user_notice = parent_notice(user_question['id'], user_from)
+            require(len(user_notice) == 1 and user_notice[0]['data']['sessionID'] == typed_asker,
+                    'No exact native user-question relay')
+            unanswered = s.invoke(typed_reader, 'record', {'operation': 'query',
+                                'view': 'thread', 'question_id': user_question['id']})
+            require(not unanswered['answers'], 'A user decision was fabricated without user interaction')
+            report['checks'].append({'name': 'E6-parent-user-native-notices', 'status': 'PASS',
+                                     'dispatcher_question': forwarded['id'], 'user_question': user_question['id'],
+                                     'qualification': 'Native parent delivery verified; actual human reply is unproven in scripted host'})
+
+            # A real parent can have two native specialist children with the same
+            # agent. Only the child explicitly bound for this OQ may answer.
+            specialist_q = s.invoke(child_id, 'record', {
+                'operation': 'ask', 'question': 'Which specialist has this OQ?',
+                'recipient': {'kind': 'agent', 'id': 'question-specialist'}, 'blocking': False})
+            require(specialist_q['dispatch']['target_session_id'] == typed_asker,
+                    'Forwarded specialist question did not reach the dispatcher')
+            def specialist_child(label):
+                return request(host, 'POST', '/api/session', {
+                    'parentID': typed_asker, 'agent': 'question-specialist',
+                    'title': label,
+                    'model': {'providerID': 'question-fixture', 'id': 'respondent'}})['id']
+            chosen, sibling = specialist_child('selected specialist'), specialist_child('unrelated sibling')
+            attempt = {'operation': 'answer', 'question_id': specialist_q['id'],
+                       'answer': 'Unbound sibling answer'}
+            assert_rejected(s, sibling, [attempt])
+            assert_rejected(s, child_id, [{'operation': 'bind-respondent',
+                             'question_id': specialist_q['id'], 'respondent_session_id': chosen}])
+            binding = s.invoke(typed_asker, 'record', {'operation': 'bind-respondent',
+                             'question_id': specialist_q['id'], 'respondent_session_id': chosen})
+            require(binding['data']['session_id'] == chosen and
+                    binding['data']['parent_session_id'] == typed_asker,
+                    'Dispatcher did not persist the exact native child binding')
+            assert_rejected(s, sibling, [attempt])
+            assert_rejected(s, typed_asker, [{'operation': 'bind-respondent',
+                            'question_id': specialist_q['id'], 'respondent_session_id': sibling}])
+            answer = s.invoke(chosen, 'record', {'operation': 'answer',
+                             'question_id': specialist_q['id'], 'answer': 'Selected specialist answer'})
+            require(answer['session_id'] == chosen and 'resume' not in answer,
+                    'Bound nonblocking specialist answer was not saved accurately')
+            thread = s.invoke(typed_reader, 'record', {'operation': 'query',
+                              'view': 'thread', 'question_id': specialist_q['id']})
+            require(len(thread['answers']) == 1 and thread['answers'][0]['id'] == answer['id'],
+                    'Wrong sibling was able to append an answer')
+            report['checks'].append({'name': 'E6-forwarded-exact-respondent', 'status': 'PASS',
+                                     'question': specialist_q['id'], 'respondent_session': chosen,
+                                     'sibling_session': sibling,
+                                     'qualification': 'Installed host native Session parent/agent and Loom binding; child creation via private native API'})
+
+
+
+
+
+            # Native subagent_depth=0 must refuse a new direct OQ child even when
+            # delegation permission is otherwise allowed. Prove zero child creation.
+            host.close(); host = None
+            config['experimental'] = {'subagent_depth': 0}
+            (Path(env['OPENCODE_CONFIG_DIR']) / 'opencode.json').write_text(json.dumps(config))
+            host = start('zero-depth-policy')
+            s = Scenario(host, root)
+            zero_asker = s.session('asker')
+            zero_before = request(host, 'GET', f'/api/session?parentID={zero_asker}')
+            native_before = len([e for e in events(root) if e['type'] == 'model-request'
+                                 and e['data']['agent'] == 'question-specialist'])
+            depth_q = s.invoke(zero_asker, 'record', {'operation': 'ask', 'question': 'Depth is disabled',
+                               'recipient': {'kind': 'agent', 'id': 'question-specialist'}, 'blocking': True})
+            require(depth_q['dispatch']['status'] != 'admission-observed',
+                    'Depth zero wrongly permitted native OQ delegation')
+            zero_after = request(host, 'GET', f'/api/session?parentID={zero_asker}')
+            require(zero_after == zero_before, 'Depth zero created an unauthorized child Session')
+            require(len([e for e in events(root) if e['type'] == 'model-request'
+                         and e['data']['agent'] == 'question-specialist']) == native_before,
+                    'Depth zero started a specialist model request')
+            untouched = s.invoke(zero_asker, 'record', {'operation': 'query', 'view': 'thread',
+                                   'question_id': depth_q['id']})
+            require(not untouched['answers'], 'Depth-zero OQ gained an unauthorized answer')
+            report['checks'].append({'name': 'E6-zero-depth-native-denial', 'status': 'PASS',
+                                     'question': depth_q['id'], 'observed_dispatch': depth_q['dispatch'],
+                                     'qualification': 'Native 2.2.0 host uses configured subagent_depth=0'})
+
             require(not any(e['type'] == 'observer-failure' for e in events(root)), 'Passive native admission observation failed; zero-event claims invalid')
             report['checks'].append(dict(READ_DENIAL_APPLICABILITY))
             report['component_obligation'] = {'status': 'SEPARATE COMPONENT PROOF REQUIRED',

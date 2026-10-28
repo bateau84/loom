@@ -8,10 +8,10 @@ Blocking is stored collaboration intent, not a workflow gate or forced wait.
 ## Current collaboration boundary
 
 Questions and answers are durable and attributed to the actual calling agent and
-Session. No Action, Plan or assignment is required. Recipient dispatch is
-fail-closed on the supported OpenCode 2.0.32 host; manual native handling is
-required. Installed-host boot evidence is separate from installed-question
-qualification.
+Session. No Action, Plan or assignment is required. Legacy `to_agent` dispatch
+is fail-closed; new typed recipients on OpenCode 2.2.0 request native delivery.
+Native permission remains authoritative. Installed-host boot evidence is separate
+from installed-question qualification.
 Only the first committed answer to a new-format blocking question qualifies for
 one best-effort exact-asker resume. General assignment/delivery/authorization/retry
 operations AND views are retired; their history remains readable and inert.
@@ -71,11 +71,16 @@ sequence: the latest explicit report is the current report, not an approval deci
 
 `loom_record` supports:
 
-- `ask`: required `question`, `to_agent`, explicit Boolean `blocking`; optional
-  `context`, `context_attachments`, `reference:{action_id,kind,id}`. Reference kinds
-  are action, phase, wave, task, subtask. The returned record ID is the question ID.
+- `ask`: required `question`, explicit Boolean `blocking` and exactly one of
+  `recipient:{kind,id?}` (agent/role requires id, dispatcher/user no id) or legacy
+  `to_agent`; optional `context`, `context_attachments`,
+  `reference:{action_id,kind,id}`. Reference kinds are action, phase, wave, task,
+  subtask. The returned record ID is the question ID.
 - `answer`: required `question_id`, `answer`; optional `context_attachments`.
   The original question supplies its nullable Action/node association.
+- `bind-respondent`: `question_id` and `respondent_session_id`. After native
+  specialist delegation, only the dispatching Session can bind one matching
+  native child. Only that child may answer; siblings cannot.
 
 Both canonical attachment fields are arrays of at most 50 string references,
 each at most 2,000 characters. They are pointers, not verified content.
@@ -89,29 +94,46 @@ the question belongs only to its asking Session; no Action or selection is creat
 Action references require `id=action_id`; node references require matching ID and
 kind in that Action. Invalid explicit reference never silently falls back.
 
-`to_agent` is an intended native agent ID or user label, not a dispatch command
-or an authority restriction. Answers record the actual calling agent and Session.
-A different agent may respond without impersonating the intended respondent.
-Research can answer a Worker's question without selecting the Worker's task, even
-when Research has an unrelated or unreadable selection. Removed tasks retain their
-threads and can receive answers. Sources, background and qualifications remain in
-the full ledger records; multiple or conflicting responses are not overwritten.
+Legacy `to_agent` remains an intended label, not a dispatch command or answer
+authority. Its answers can come from any calling agent for historical compatibility.
+Typed direct agent/role OQs persist the verified native child Session ID as
+an append-only SYSTEM binding before prompt admission. Both the exact
+Session and agent must match to record an answer. If binding fails, no prompt
+is sent. Forwarded specialist OQs require the dispatcher's explicit `bind-respondent`
+selection of a verified native child after delegation. Answers require that
+exact Session plus matching agent and parent. Another sibling cannot answer. This checks identity, not the validity of the decision or whether an
+agent genuinely consulted the user. A parent/General relaying a user decision
+must cite the actual user response. Removed Plan nodes retain question threads.
 
-**Answered means at least one response exists.** It does not mean resolved,
-approved, independently verified or permitted to proceed. Use native delegation or
-user interaction to bring a respondent in. Ask returns
-`dispatch:{status:"not-attempted",reason:"policy-capability-unavailable"}`:
-the recipient is NOT contacted. There is no permission prompt, child creation,
-native executor or policy probe inside ask. If manual handling has been arranged,
-a blocking asker may naturally yield; this does not force a wait.
+For new agent/role recipients, exactly one enabled, visible, available,
+subagent-capable target must match. Loom invokes OpenCode 2.2.0's native
+subagent tool, which enforces its effective depth and permission rules and
+selects the specialist or asking Session model. A scoped prompt hook checks
+parent and agent and binds the native child before input admission.
+With `subagent_depth=0`, OpenCode refuses delegation without creating a child. When the asker is a
+child, Loom notifies the parent; the parent must delegate natively, respecting
+OpenCode's depth and permission checks. Dispatcher targets use that parent; user targets also notify the parent,
+or require native user interaction in a primary Session. A failed/missing/ambiguous
+target stays recorded without invented receipt. The dispatch result is
+a separate SYSTEM record. Native policy failures cannot claim successful
+contact. The stored question remains available. A native background subagent
+can also notify its parent on completion, distinct from Loom's answer notice.
+
+**Answered means an authorized response was stored (or, for legacy questions,
+any response).** It does not mean resolved, approved, independently verified
+or permitted to proceed. `dispatch.status:admission-observed` means a native
+prompt/notice was durably admitted, not run or consumed. Unknown results are
+not retried; partial native side effects cannot be assumed absent.
+Blocking is collaboration intent, never a forced wait or execution gate.
 
 ## One-shot first-answer resume
 
 In one `BEGIN IMMEDIATE` transaction, answer validates the question, checks for
-ANY committed answer and appends/commits the response. Only the FIRST committed
-answer to a new-format blocking question receives immediate in-memory eligibility
-for one postcommit best-effort resume of the exact stored asking Session.
-Later, nonblocking and legacy answers never submit input or wake the asker.
+ANY committed answer and appends/commits the response. Only the FIRST committed answer to a blocking legacy v1 or typed v2
+question receives in-memory eligibility for one postcommit best-effort
+resume of the exact asking Session. Later and nonblocking answers never
+wake the asker. Legacy question delivery is manual, but its first blocking
+answer retains the existing resumption behavior.
 Storage failure sends nothing. No retry, eligibility transfer, recovery replay,
 startup/read reconstruction or consumption guarantee exists; a crash after commit
 can permanently lose liveness. Do not repeat an answer to try delivery.

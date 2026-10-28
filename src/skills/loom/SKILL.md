@@ -117,41 +117,51 @@ Completion does not complete parents or Actions and does not establish independe
 `reopen` appends a reason without erasing history or undoing native side effects.
 Update Action state separately; paused/cancelled labels do not stop execution.
 
-## Questions and manual native handling
+## Questions: route material unknowns
 
-Ask with `question`, `to_agent`, explicit Boolean `blocking`; optional `context`,
-`context_attachments` (references), `reference:{action_id,kind:action|phase|wave|task|subtask,id}`.
-Association defaults to selection, otherwise asking Session only; no Action/Plan
-required. Invalid explicit references never fall back: Action/node IDs and kind
-must match.
+Raise an OQ only for a material decision outside your responsibility, not
+routine investigation. Target the dispatcher for task scope, a specialist
+role for technical decisions, or the user for their intent and approval.
+`blocking:true` means safe work cannot proceed; otherwise continue.
+
+`loom_record ask` requires `question`, Boolean `blocking`, and exactly one of
+`recipient:{kind:"agent"|"role"|"dispatcher"|"user",id?:string}` or legacy
+`to_agent`. Agent/role needs `id` from `loom_agents`, dispatcher/user none.
+Optional `context`, `context_attachments`, `reference:{action_id,kind,id}`.
+Association defaults to selection, otherwise the asking Session.
+Invalid explicit references fail; no Action or Plan needed.
+
+Typed agents use OpenCode's native subagent tool, including its depth
+and permission checks. Children route OQs to their parent. When the
+dispatcher delegates a specialist OQ, it must call `loom_record` with
+`operation:"bind-respondent"`, `question_id`, and the native child's
+`respondent_session_id`. Only that exact child can answer, not a sibling.
+Ambiguous roles and user questions need native/manual handling; cite the
+real user's answer. `dispatch` means input admission, not approval.
+
+Legacy `to_agent` remains manual:
 
 ```json
-{"operation":"ask","question":"Which limit applies here?","to_agent":"research","blocking":false,"context_attachments":["SOURCE_REFERENCE"]}
+{"operation":"ask","question":"Which limit applies?","to_agent":"research","blocking":false,"context_attachments":["SOURCE_REFERENCE"]}
 ```
 
-On pinned OpenCode 2.1.1 the question is saved, but the recipient is NOT contacted.
-Inspect `dispatch:{status:not-attempted,reason:policy-capability-unavailable}`.
-Arrange manual handling outside ask; a blocking asker may yield after it is
-arranged. Blocking is intent, not a wait, approval or gate; nonblocking work continues.
+Legacy `dispatch:{status:"not-attempted",reason:"policy-capability-unavailable"}`
+means the recipient is NOT contacted. Arrange native handling yourself.
 
-Answer with `question_id`, `answer`, optional `context_attachments`. Caller supplies
-actual author/Session. Original nullable association survives node removal without
-selecting asker's work. Conflicting answers remain. `attachments` is never an alias;
-old statement/respondent/background/artifact_refs are not ask/answer inputs.
+Answer with `question_id`, `answer`, optional `context_attachments`:
 
 ```json
 {"operation":"answer","question_id":"QUESTION_ID","answer":"Read the source and its limitations.","context_attachments":["SOURCE_REFERENCE"]}
 ```
 
-Only the FIRST committed answer to a new blocking question can attempt one best-effort resume of the original asking Session. Later, nonblocking and legacy answers do not retry. Missing or moved targets fail closed; native agent/model/permissions stay unchanged. Target validation is not an atomic lease; the 5000ms limit bounds waiting, not cancellation of started input. Admission is not processing or completion; timeout can leave outcome unknown. No retries or startup replay: a crash may lose resume. Do not repeat an answer to try delivery.
-
-The answer remains durable independently. An eligible response includes `resume`
-status/IDs/qualification and a separate SYSTEM annotation; annotation failure
-does not erase the answer. Read `view:thread` for authoritative answers.
-Answered means response, not resolution, approval or permission.
-
-Assignment/delivery operations AND views are retired. Historical records stay
-readable/inert, not current consent. No startup sender or retry engine exists.
+Only the FIRST committed answer to a new blocking question attempts
+best-effort resume of its exact asking Session. Later/nonblocking answers
+do not. No retries or crash replay; missing/moved targets are not retargeted.
+Target validation is not an atomic lease; the 5000ms wait does not cancel
+native I/O. Admission is not processing or completion. Do not repeat an
+answer to try delivery. Read `view:thread`; answered is not resolution
+or approval. Historical records remain readable; retired assignment/delivery
+operations and views remain unavailable.
 
 ## Complete stored history
 

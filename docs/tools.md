@@ -187,34 +187,50 @@ No concern lifecycle, structured record links, automatic escalation or gates.
 {"operation":"ask","question":"Does the finding cover empty input?","to_agent":"research","blocking":true,"context":"The cited source is ambiguous.","context_attachments":["SOURCE_REFERENCE"],"reference":{"action_id":"ACTION_ID","kind":"task","id":"TASK_ID"}}
 ```
 
-Required: `question`, `to_agent`, explicit Boolean `blocking`. Optional: `context`,
-`context_attachments`, `reference`. Without reference, selection supplies association;
-without either, the question belongs only to its asking Session. No Action, Plan,
-assignment or selection is created for an unscoped ask. Explicit Action reference
-requires `id=action_id`; node ID and kind must match. Invalid explicit reference
-never falls back. Reference kinds are action/phase/wave/task/subtask.
+Required: `question`, explicit Boolean `blocking`, and exactly one of
+`recipient` (new) or `to_agent` (legacy/manual). The recipient is one of
+`{kind:"agent",id:"AGENT_ID"}`, `{kind:"role",id:"ROLE_ID"}`,
+`{kind:"dispatcher"}`, `{kind:"user"}`. Optional `context`,
+`context_attachments`, `reference`. Without reference, selection supplies
+association; without either, it belongs only to the asking Session. Explicit
+Action/node references are validated, never silently changed.
 
-On the supported OpenCode 2.0.32 host, ask stores
-the question and returns
-`dispatch:{status:"not-attempted",reason:"policy-capability-unavailable"}`.
-The recipient is **NOT contacted**. Arrange manual native handling outside ask.
-If that is arranged, a blocking asker may naturally yield. Blocking is intent,
-not a gate, forced wait or statement that the recipient is working.
+On OpenCode 2.2.0, a question directed to a single eligible agent/role from a
+primary Session invokes OpenCode's native subagent tool with built-in
+permission and depth checks; a prompt hook binds the verified child before
+native admission. A question from a child is relayed to its
+dispatching Session. If it delegates to a specialist, it then calls
+`loom_record` with `operation:"bind-respondent"`, `question_id`, and the
+`respondent_session_id` returned by native delegation. Only that child
+Session can answer, not a sibling. A user-targeted question from a child reaches the parent for user
+interaction; a primary agent must ask the user itself through the native
+interface. Unavailable or ambiguous role assignments are not auto-dispatched.
+Legacy `to_agent` is still stored with no native contact. For automatic native routing instead, replace `to_agent`
+with `recipient:{"kind":"role","id":"research"}` after discovering an eligible
+role through `loom_agents`.
+
+`dispatch.status:"admission-observed"` means OpenCode confirmed native input,
+not that another agent ran, answered, or obtained user approval. Unknown outcomes
+are not retried automatically. `blocking` is intent, not a forced wait or gate.
 
 ```json
 {"operation":"answer","question_id":"QUESTION_ID","answer":"Empty input is excluded; see the source limits.","context_attachments":["SOURCE_REFERENCE"]}
 ```
 
 Answer requires `question_id`, `answer`; optional `context_attachments`. Actual
-author/Session derive from the caller. Association is inherited from the question,
+author/Session derive from the caller. Typed direct questions enforce the bound native child Session and agent;
+forwarded specialist questions require the dispatcher's exact binding
+and the native child relationship. Legacy questions preserve their previous behavior. An agent
+relaying a user decision must include the real user source; identity checks alone
+do not verify it. Association is inherited from the question,
 even if nullable or its node was removed; answering does not select the asker's
 work. Both canonical attachment fields are string-reference arrays. `attachments`
 is never an alias, alone or alongside the canonical field. Old statement,
 respondent, background and artifact_refs are not ask/answer inputs.
 
-Only the FIRST committed answer to a new-format blocking question qualifies for
-one immediate postcommit best-effort exact-asking-Session resume. Later,
-nonblocking and legacy answers never submit asker input. No retries, eligibility
+Only the FIRST committed answer to a blocking legacy v1 or typed v2 question
+qualifies for one immediate postcommit best-effort exact-asking-Session
+resume. Later and nonblocking answers never submit asker input. No retries, eligibility
 transfer, recovery replay or startup/read reconstruction exists; crash after
 commit can permanently lose liveness. Missing/moved/inaccessible targets fail
 visibly without retargeting; current native agent/model/permissions stay unchanged.

@@ -1,5 +1,6 @@
 import { Plugin } from "@opencode/plugin"
 import { Database } from "bun:sqlite"
+import { randomUUID } from "node:crypto"
 import { decodeConfigYaml } from "./config-parser.js"
 import { mkdir, open, realpath } from "node:fs/promises"
 import { homedir } from "node:os"
@@ -13,7 +14,8 @@ import { digest, PROCESSING_LIMITS, type Actor, type Focus } from "./model.js"
 import { renderFullHistory } from "./history-renderer.js"
 import { fullThreadMarkdown } from "./response-format.js"
 import { Store } from "./store.js"
-import { QUESTION_DISPATCH } from "./collaboration.js"
+import { QUESTION_DISPATCH, questionRecipient } from "./collaboration.js"
+import { questionRoute, sendQuestion, type NativeModel, type QuestionRoute } from "./question-routing.js"
 import { resumeAnswer } from "./answer-resume.js"
 import { TOOL_HELP, LOOM_NAMESPACE_HELP } from "./tool-help.js"
 
@@ -42,6 +44,16 @@ function contextConfigDiagnostics(errors: string[], maxChars: number): { config_
   diagnostics.config_errors = errors.map(error => error.slice(0, low))
   return diagnostics
 }
+function nativeModel(value: unknown): NativeModel | undefined {
+  if (value === undefined || value === null) return undefined
+  const ref = payload(value)
+  if (typeof ref.providerID !== "string" || !ref.providerID ||
+      typeof ref.id !== "string" || !ref.id ||
+      (ref.variant !== undefined && (typeof ref.variant !== "string" || !ref.variant)))
+    throw new Error("OpenCode returned an invalid native model reference")
+  return { providerID: ref.providerID, id: ref.id,
+    ...(typeof ref.variant === "string" ? { variant: ref.variant } : {}) }
+}
 function agents(value: unknown): NativeAgent[] {
   const items = unwrapped(value)
   if (!Array.isArray(items)) throw new Error("OpenCode returned an unsupported agent registry shape")
@@ -55,18 +67,26 @@ const choice = (...values: string[]) => ({ type: "string", enum: values })
 const workRefInput = obj({ action_id: str, node_id: str, action_revision: { type: "integer", minimum: 1 }, plan_revision: { type: "integer", minimum: 1 }, hash: str },
   ["action_id", "node_id", "action_revision", "plan_revision", "hash"])
 const contextAttachments = { type: "array", items: { type: "string", maxLength: 2000 }, maxItems: 50 }
-const askInput = { question: str, to_agent: str, blocking: { type: "boolean" }, context: str, context_attachments: contextAttachments,
+const recipientInput = obj({ kind: choice("agent", "role", "dispatcher", "user"), id: str }, ["kind"])
+const askInput = { question: str, to_agent: str, recipient: recipientInput, blocking: { type: "boolean" }, context: str, context_attachments: contextAttachments,
   reference: obj({ action_id: str, kind: choice("action", "phase", "wave", "task", "subtask"), id: str }, ["action_id", "kind", "id"]) }
 const answerInput = { question_id: str, answer: str, context_attachments: contextAttachments }
+const bindInput = { question_id: str, respondent_session_id: str }
 const specs = [
   { name: "agents", description: TOOL_HELP.agents, input: obj({}) },
   { name: "action", description: TOOL_HELP.action, input: obj({ operation: choice("list", "create", "update", "sessions"), action_id: str, title: str, goal: str, state: choice("active", "paused", "completed", "cancelled"), expected_revision: num, offset: num, archived: { type: "boolean" }, cursor: { type: "string", minLength: 1, maxLength: 4096 }, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
   { name: "plan", description: TOOL_HELP.plan, input: obj({ operation: choice("read", "save"), action_id: str, revision: num, expected_revision: num, nodes: { type: "array", maxItems: 300, items: obj({ id: str, kind: choice("phase", "wave", "task", "subtask"), title: str, parent: str, depends_on: list, outcome: str, context: str, criteria: list, skills: list, roles: list, agent: str }, ["id", "kind", "title"]) } }, ["operation", "action_id"]) },
   { name: "context", description: TOOL_HELP.context, input: obj({ action_id: str, node_id: str, clear: { type: "boolean" }, mode: choice("continuation", "independent"), handoff_id: { type: ["string", "null"] } }) },
-  { name: "record", description: TOOL_HELP.record, input: { ...obj({ operation: choice("add", "query", "complete", "reopen", "ask", "answer"), view: choice("ledger", "progress", "questions", "thread", "full_thread"), response_format: choice("markdown", "json"), session_id: str, cursor: str, work_ref: workRefInput, ...askInput, ...answerInput, respondent: str, question_state: choice("open", "answered", "all"), offset: num, action_id: str, node_id: str, kind: choice("claim", "result", "concern", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]),
+  { name: "record", description: TOOL_HELP.record, input: { ...obj({ operation: choice("add", "query", "complete", "reopen", "ask", "answer", "bind-respondent"), view: choice("ledger", "progress", "questions", "thread", "full_thread"), response_format: choice("markdown", "json"), session_id: str, cursor: str, work_ref: workRefInput, ...askInput, ...answerInput, ...bindInput, respondent: str, question_state: choice("open", "answered", "all"), offset: num, action_id: str, node_id: str, kind: choice("claim", "result", "concern", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]),
     allOf: [
-      { if: { properties: { operation: { const: "ask" } } }, then: obj({ operation: { const: "ask" }, ...askInput }, ["operation", "question", "to_agent", "blocking"]) },
+      { if: { properties: { operation: { const: "ask" } } }, then: {
+          ...obj({ operation: { const: "ask" }, ...askInput }, ["operation", "question", "blocking"]),
+          oneOf: [{ required: ["to_agent"], not: { required: ["recipient"] } }, { required: ["recipient"], not: { required: ["to_agent"] } }],
+        } },
       { if: { properties: { operation: { const: "answer" } } }, then: obj({ operation: { const: "answer" }, ...answerInput }, ["operation", "question_id", "answer"]) },
+        { if: { properties: { operation: { const: "bind-respondent" } } }, then:
+          obj({ operation: { const: "bind-respondent" }, ...bindInput },
+            ["operation", "question_id", "respondent_session_id"]) },
       { if: { properties: { view: { const: "full_thread" } }, required: ["view"] }, then: {
         ...obj({ operation: { const: "query" }, view: { const: "full_thread" }, action_id: str, node_id: str, session_id: str, cursor: str, response_format: choice("markdown", "json"),
           limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation", "view"]),
@@ -109,6 +129,8 @@ export default Plugin.define({
       throw new Error(`Loom startup failed (stage=${stage}, database=${JSON.stringify(filename)}): ${error instanceof Error ? error.message : String(error)}`, { cause: error })
     }
     const database = db
+    // Scoped to one live plugin instance; never recover a dispatch token from untrusted history.
+    const awaitingNativePrompt = new Map<string, { question: string; parent: string; agent: string; bound?: string }>()
     const disposers: Array<{ dispose(): Promise<void> }> = []
     let lastWarning = ""
     const warn = (error: unknown) => {
@@ -130,6 +152,20 @@ export default Plugin.define({
       return saved ? { action_id: saved.action_id, ...(saved.node_id === undefined ? {} : { node_id: saved.node_id }) } : undefined
     }
     try {
+      // Native subagent owns depth and permission checks. Its prompt hook supplies
+      // the exact child identity BEFORE OpenCode can admit that child's input.
+      disposers.push(await ctx.session.hook("prompt", async event => {
+        const token = /(?:^|\n)Loom OQ dispatch token: ([0-9a-f-]{36})(?:\n|$)/.exec(event.prompt.text)?.[1]
+        const pending = token ? awaitingNativePrompt.get(token) : undefined
+        if (!pending) return
+        if (pending.bound) throw new Error("OQ recipient has already been bound")
+        const child = payload(unwrapped(await ctx.session.get({ sessionID: event.sessionID })))
+        if (child.id !== event.sessionID || child.parentID !== pending.parent ||
+            child.agent !== pending.agent || !await sessionIsLocal(child))
+          throw new Error("Native OQ prompt recipient is not the intended local child")
+        store.collaboration.bindRespondent(pending.question, event.sessionID, pending.agent)
+        pending.bound = event.sessionID
+      }))
       disposers.push(await ctx.tool.transform(editor => {
         editor.namespace({ name: "loom", description: LOOM_NAMESPACE_HELP })
         for (const spec of specs) editor.add({
@@ -237,24 +273,119 @@ export default Plugin.define({
                     (input.operation !== "query" && input.operation !== "add")))
                   throw new Error("session_only is a query option or Session-scoped add option and cannot be combined with work IDs")
                 // Explicit work/thread identity must not depend on saved selection.
-                const identityScoped = ["complete", "answer"].includes(String(input.operation))
+                const identityScoped = ["complete", "answer", "bind-respondent"].includes(String(input.operation))
                   || (input.operation === "query" && input.view === "thread")
                 const focus = identityScoped || input.session_only || (input.operation === "ask" && input.reference !== undefined) ? undefined : focusFor(input, actor.session_id)
+                if (input.operation === "bind-respondent") {
+                  const question = store.collaboration.thread(String(input.question_id)).question
+                  if (question.data.format !== "loom-question/v2" ||
+                      typeof question.data.expected_agent !== "string" ||
+                      question.data.expected_parent_session !== actor.session_id)
+                    throw new Error("Only the question's dispatching Session can bind this forwarded specialist")
+                  const receiverID = String(input.respondent_session_id) as Parameters<typeof ctx.session.get>[0]["sessionID"]
+                  const receiver = payload(unwrapped(await ctx.session.get({ sessionID: receiverID })))
+                  if (receiver.id !== receiverID || receiver.parentID !== actor.session_id ||
+                      receiver.agent !== question.data.expected_agent || !await sessionIsLocal(receiver))
+                    throw new Error("Respondent must be the intended native specialist child of this dispatching Session")
+                  result = store.collaboration.bindRespondent(question.id, receiverID,
+                    receiver.agent as string, actor.session_id)
+                  break
+                }
                 if (input.operation === "answer") {
                   const { operation: _operation, ...answer } = input
-                  const committed = store.collaboration.answer(actor, answer)
+                  const original = store.collaboration.thread(String(input.question_id)).question
+                  let verifiedParent: string | undefined
+                  if (original.data.format === "loom-question/v2" &&
+                      typeof original.data.expected_parent_session === "string") {
+                    const candidate = payload(unwrapped(await ctx.session.get({ sessionID: actor.session_id })))
+                    if (candidate.id !== actor.session_id ||
+                        candidate.parentID !== original.data.expected_parent_session ||
+                        candidate.agent !== actor.agent || !await sessionIsLocal(candidate) ||
+                        !await owns(candidate.parentID as Parameters<typeof ctx.session.get>[0]["sessionID"]))
+                      throw new Error("Answering Session is not a verified child of the dispatching Session")
+                    verifiedParent = candidate.parentID as string
+                  }
+                  const committed = store.collaboration.answer(actor, answer, verifiedParent)
                   result = await resumeAnswer(store, committed, async sessionID => {
                     const target = payload(unwrapped(await ctx.session.get({ sessionID })))
                     return target.id === sessionID && await sessionIsLocal(target)
                   }, notice => ctx.session.synthetic(notice), AbortSignal.any([toolContext.signal, lifetime.signal]))
                   break
                 }
-                if (["complete", "reopen", "ask"].includes(String(input.operation)) || (input.operation === "query" && input.view !== undefined && input.view !== "ledger")) {
+                if (input.operation === "ask") {
+                  if (input.recipient === undefined) {
+                    result = { ...store.collaboration.execute(actor, input, focus) as object, dispatch: QUESTION_DISPATCH,
+                      guidance: input.blocking === true
+                        ? "Recipient not contacted. Manual/native handling is required. If manual handling has been arranged, you may naturally yield for a response; blocking intent does not force a wait."
+                        : "Recipient not contacted. Manual/native handling is required; continue your work and retrieve answers later." }
+                    break
+                  }
+                  const recipient = questionRecipient(input.recipient)
+                  const asker = payload(unwrapped(await ctx.session.get({ sessionID: actor.session_id })))
+                  if (asker.id !== actor.session_id || !await sessionIsLocal(asker))
+                    throw new Error("Cannot route a question from an unverified local Session")
+                  // The native registry carries execution mode; the Loom config carries responsibility.
+                  const all = unwrapped(await ctx.agent.list())
+                  if (!Array.isArray(all)) throw new Error("OpenCode returned an unsupported agent registry shape")
+                  const roster = all.map(raw => {
+                    const a = payload(raw)
+                    if (typeof a.id !== "string" || typeof a.mode !== "string")
+                      throw new Error("OpenCode agent registry lacks an ID or mode")
+                    return { id: a.id, mode: a.mode, hidden: a.hidden === true, model: nativeModel(a.model) }
+                  })
+                  const asking = { id: actor.session_id,
+                    ...(typeof asker.parentID === "string" ? { parentID: asker.parentID } : {}),
+                    model: nativeModel(asker.model) }
+                  let route: QuestionRoute = snapshot.errors.length
+                    ? { mode: "manual", reason: "loom-config-unavailable" }
+                    : questionRoute(recipient, snapshot.config, roster, asking)
+                  if (route.mode === "notify" && route.session && !await owns(route.session))
+                    route = { mode: "manual", reason: "parent-not-local" }
+                  const { operation: _askOperation, ...askFields } = input
+                  const stored = store.collaboration.ask(actor, focus, askFields, {
+                    ...(route.expected_agent ? { expected_agent: route.expected_agent } : {}),
+                    ...(route.expected_session ? { expected_session: route.expected_session } : {}),
+                    ...(route.expected_parent_session ? { expected_parent_session: route.expected_parent_session } : {}),
+                  })
+                  const dispatch = await sendQuestion(store, stored, route, {
+                    delegate: async (agent, parentID, questionID, prompt) => {
+                      const native = (await ctx.tool.list()).find(info => info.name === "subagent")
+                      if (!native) throw new Error("OpenCode native subagent tool unavailable; no direct child creation")
+                      const token = randomUUID()
+                      const pending: { question: string; parent: string; agent: string; bound?: string } =
+                        { question: questionID, parent: parentID, agent }
+                      awaitingNativePrompt.set(token, pending)
+                      try {
+                        // Invoking the native tool preserves the effective depth limit,
+                        // native permission checks, and model selection semantics.
+                        const result = await native.execute({
+                          agent, description: `Resolve Loom OQ ${questionID.slice(0, 8)}`,
+                          prompt: `Loom OQ dispatch token: ${token}\n${prompt}`, background: true,
+                        }, toolContext)
+                        const output = payload(result.output)
+                        if (typeof output.sessionID !== "string" || pending.bound !== output.sessionID ||
+                            !["running", "completed"].includes(String(output.status)))
+                          throw new Error("Native subagent completion did not match the verified pre-admission binding")
+                        return { sessionID: output.sessionID }
+                      } finally {
+                        awaitingNativePrompt.delete(token)
+                      }
+                    },
+                    synthetic: (sessionID, text, metadata) => ctx.session.synthetic({
+                      sessionID: sessionID as Parameters<typeof ctx.session.synthetic>[0]["sessionID"],
+                      text, metadata, description: "Loom Open Question", resume: true, delivery: "steer",
+                    }),
+                  }, AbortSignal.any([toolContext.signal, lifetime.signal]))
+                  result = { ...stored, dispatch,
+                    guidance: dispatch.status === "admission-observed"
+                      ? "Native input admitted; recipient execution/answer is not guaranteed. Read the question thread for a real answer; blocking is advisory."
+                      : recipient.kind === "user" && route.mode === "manual"
+                        ? "Ask the user using native interaction; record the actual user decision with its source. No user was contacted by Loom."
+                        : "Automatic delivery was not confirmed. Inspect the dispatch result and use native handling; do not assume the question was answered." }
+                  break
+                }
+                if (["complete", "reopen"].includes(String(input.operation)) || (input.operation === "query" && input.view !== undefined && input.view !== "ledger")) {
                   result = store.collaboration.execute(actor, input, focus)
-                  if (input.operation === "ask") result = { ...result as object, dispatch: QUESTION_DISPATCH,
-                    guidance: input.blocking === true
-                      ? "Recipient not contacted. Manual/native handling is required. If manual handling has been arranged, you may naturally yield for a response; blocking intent does not force a wait."
-                      : "Recipient not contacted. Manual/native handling is required; continue your work and retrieve answers later." }
                   break
                 }
                 if (input.operation === "query") result = store.records({ action_id: input.session_only ? undefined : focus?.action_id, session_id: actor.session_id, node_id: input.session_only ? undefined : focus?.node_id, record_id: input.record_id as string | undefined, after: input.after as number | undefined, limit: input.limit as number | undefined })

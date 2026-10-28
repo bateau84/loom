@@ -5,6 +5,22 @@ import type { SQL, Store } from "./store.js"
 /** A reference to read work, not execution authority or proof that it was performed. */
 export type WorkRef = { action_id: string; node_id: string; action_revision: number; plan_revision: number; hash: string }
 export type QuestionReference = { action_id: string; kind: "action" | PlanNode["kind"]; id: string }
+export type QuestionRecipient = { kind: "agent" | "role" | "dispatcher" | "user"; id?: string }
+export type QuestionTarget = { expected_agent?: string; expected_session?: string; expected_parent_session?: string }
+export function questionRecipient(raw: unknown): QuestionRecipient {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("recipient must be an object")
+  const value = raw as Record<string, unknown>
+  fields(value, ["kind", "id"])
+  if (value.kind !== "agent" && value.kind !== "role" && value.kind !== "dispatcher" && value.kind !== "user")
+    throw new Error("recipient.kind must be agent, role, dispatcher or user")
+  if (value.kind === "agent" || value.kind === "role") {
+    const id = text(value.id, "recipient.id", 100)
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,99}$/.test(id)) throw new Error("Invalid recipient.id")
+    return { kind: value.kind, id }
+  }
+  if (value.id !== undefined) throw new Error("recipient.id is only valid for agent and role")
+  return { kind: value.kind }
+}
 /** Ephemeral post-COMMIT handoff only. Never stored, exposed by reads, or reconstructed. */
 export type AnswerCommit = { record: LedgerRecord; resume?: { question_id: string; answer_id: string; asking_session_id: string } }
 export const QUESTION_DISPATCH = { status: "not-attempted", reason: "policy-capability-unavailable" } as const
@@ -86,7 +102,8 @@ export class Collaboration {
       CREATE INDEX IF NOT EXISTS ledger_progress ON ledger(action_id,json_extract(data,'$.node_id'),seq)
         WHERE kind IN ('completion','reopen');
       CREATE INDEX IF NOT EXISTS ledger_questions ON ledger(action_id,seq) WHERE kind='question';
-      CREATE INDEX IF NOT EXISTS ledger_answers ON ledger(action_id,json_extract(data,'$.data.question_id'),seq) WHERE kind='answer';`)
+      CREATE INDEX IF NOT EXISTS ledger_answers ON ledger(action_id,json_extract(data,'$.data.question_id'),seq) WHERE kind='answer';
+`)
 
   }
   /** Called inside the Action update transaction, before mutating the old object. */
@@ -149,10 +166,14 @@ export class Collaboration {
       return this.store.append({ ...actor, ...focus, kind: "reopen", data: { statement: reason, previous_report_id: previous?.id, plan_revision: plan.revision } })
     })
   }
-  ask(actor: Actor, focus: Focus | undefined, input: Record<string, unknown>): LedgerRecord {
+  ask(actor: Actor, focus: Focus | undefined, input: Record<string, unknown>, target: QuestionTarget = {}): LedgerRecord {
     canonical(input, new ProcessingBudget(PROCESSING_LIMITS.recordChars))
-    fields(input, ["question", "to_agent", "blocking", "context", "context_attachments", "reference"])
-    const question = text(input.question, "question"), to_agent = text(input.to_agent, "to_agent", 100)
+    fields(input, ["question", "to_agent", "recipient", "blocking", "context", "context_attachments", "reference"])
+    const question = text(input.question, "question")
+    if ((input.to_agent === undefined) === (input.recipient === undefined))
+      throw new Error("Supply exactly one of to_agent (legacy manual) or recipient")
+    const to_agent = input.to_agent === undefined ? undefined : text(input.to_agent, "to_agent", 100)
+    const recipient = input.recipient === undefined ? undefined : questionRecipient(input.recipient)
     if (typeof input.blocking !== "boolean") throw new Error("blocking must be an explicit Boolean")
     const blocking = input.blocking, context = input.context === undefined ? undefined : text(input.context, "context", 8000)
     const context_attachments = references(input.context_attachments, "context_attachments")
@@ -182,27 +203,74 @@ export class Collaboration {
         association = { action_id: action.id, ...(reference.kind !== "action" ? { node_id: reference.id } : {}) }
         revisions = { action_revision: action.revision, plan_revision: plan.revision }
       }
-      return this.store.append({ ...actor, ...association, kind: "question", data: { format: "loom-question/v1", question, to_agent, blocking,
+      return this.store.append({ ...actor, ...association, kind: "question", data: { format: recipient ? "loom-question/v2" : "loom-question/v1",
+        question, ...(recipient ? { recipient, ...target } : { to_agent }), blocking,
         context, context_attachments, reference, ...revisions } })
     })
   }
-  answer(actor: Actor, input: Record<string, unknown>): AnswerCommit {
+  /** Bind one verified native child before allowing it to receive or answer the question. */
+  bindRespondent(questionID: string, sessionID: string, agent: string, dispatcherSession?: string): LedgerRecord {
+    uid(sessionID, "respondent Session"); uid(questionID, "question ID")
+    return this.atomic(true, () => {
+      const question = this.record(questionID, "question")
+      if (question.data.format !== "loom-question/v2" || question.data.expected_agent !== agent ||
+          question.data.expected_session || question.data.expected_parent_session !== dispatcherSession)
+        throw new Error("Question is not owned by this dispatching Session or respondent")
+      const bound = this.db.prepare(`SELECT 1 FROM ledger WHERE kind='result'
+        AND json_extract(data,'$.data.format')='loom-question-respondent-binding/v1'
+        AND json_extract(data,'$.data.question_id')=? LIMIT 1`).get(questionID)
+      if (bound) throw new Error("Question respondent is already bound")
+      return this.store.append({ session_id: question.session_id, agent: "system",
+        ...(question.action_id ? { action_id: question.action_id } : {}),
+        ...(question.node_id ? { node_id: question.node_id } : {}),
+        kind: "result", data: { format: "loom-question-respondent-binding/v1",
+          question_id: questionID, session_id: sessionID, agent,
+          ...(dispatcherSession ? { parent_session_id: dispatcherSession } : {}),
+          qualification: "Verified respondent Session identity, not proof of delivery, execution or answer" } })
+    })
+  }
+  answer(actor: Actor, input: Record<string, unknown>, verifiedParentSession?: string): AnswerCommit {
     canonical(input, new ProcessingBudget(PROCESSING_LIMITS.recordChars))
     fields(input, ["question_id", "answer", "context_attachments"])
     const answer = text(input.answer, "answer"), context_attachments = references(input.context_attachments, "context_attachments")
     const committed = this.atomic(true, () => {
       const question = this.record(input.question_id as string, "question")
+      if (question.data.format === "loom-question/v2") {
+        const expectedAgent = question.data.expected_agent
+        let expectedSession = question.data.expected_session
+        if (!expectedAgent && !expectedSession) throw new Error("Question has no authorized respondent; arrange routing first")
+        if (expectedAgent && actor.agent !== expectedAgent) throw new Error("Answering agent does not match the intended respondent")
+        if (question.data.expected_parent_session !== undefined &&
+            verifiedParentSession !== question.data.expected_parent_session)
+          throw new Error("Answering Session is not a verified child of the dispatching Session")
+        if (expectedAgent) {
+          const bound = this.db.prepare(`SELECT json_extract(data,'$.data.session_id') AS session_id
+            FROM ledger WHERE kind='result'
+            AND json_extract(data,'$.data.format')='loom-question-respondent-binding/v1'
+            AND json_extract(data,'$.data.question_id')=? LIMIT 1`).get(question.id) as { session_id?: string } | undefined
+          if (typeof bound?.session_id !== "string") {
+            if (question.data.expected_parent_session) throw new Error("Forwarded question is not bound to an intended specialist Session")
+            throw new Error("Question has no verified receiving Session")
+          }
+          expectedSession = bound.session_id
+        }
+        if (expectedSession && actor.session_id !== expectedSession)
+          throw new Error("Answering Session does not match the intended respondent")
+      }
       const prior = this.db.prepare("SELECT 1 FROM ledger WHERE kind='answer' AND json_extract(data,'$.data.question_id')=? LIMIT 1").get(question.id)
       // No selection, current node, Plan or host availability is required to preserve an answer.
       const record = this.store.append({ ...actor, action_id: question.action_id, node_id: question.node_id, kind: "answer",
-        data: { format: "loom-answer/v1", question_id: question.id, answer, context_attachments,
-          verification: "Response only; not resolution, approval or execution permission" } })
+        data: { format: question.data.format === "loom-question/v2" ? "loom-answer/v2" : "loom-answer/v1",
+          question_id: question.id, answer, context_attachments,
+          verification: question.data.format === "loom-question/v2"
+            ? "Intended respondent identity checked; response only, not resolution, approval, user provenance or execution permission"
+            : "Response only; not resolution, approval or execution permission" } })
       return { record, question, first: !prior }
     })
     // atomic() has returned only after COMMIT succeeded. No callback or native I/O
     // runs inside the transaction. Later answers never inherit a lost handoff.
     const { record, question, first } = committed
-    return { record, ...(first && question.data.format === "loom-question/v1" && question.data.blocking === true
+    return { record, ...(first && (question.data.format === "loom-question/v1" || question.data.format === "loom-question/v2") && question.data.blocking === true
       ? { resume: { question_id: question.id, answer_id: record.id, asking_session_id: question.session_id } } : {}) }
   }
   private latest(action: string, node: string, allowance: ReadAllowance = { bytes: 0 }) {
@@ -248,12 +316,13 @@ export class Collaboration {
     const params: unknown[] = [q.action_id, after]
     let filter = "q.action_id=? AND q.kind='question' AND q.seq>?"
     if (q.node_id !== undefined) { filter += " AND json_extract(q.data,'$.node_id')=?"; params.push(q.node_id) }
-    const recipient = "COALESCE(json_extract(q.data,'$.data.to_agent'),json_extract(q.data,'$.data.respondent'))"
-    if (q.respondent !== undefined) { filter += ` AND ${recipient}=?`; params.push(q.respondent) }
+    const recipient = "(json_extract(q.data,'$.data.to_agent')=? OR json_extract(q.data,'$.data.respondent')=? OR json_extract(q.data,'$.data.recipient.id')=? OR json_extract(q.data,'$.data.expected_agent')=?)"
+    const agentRecipient = "(json_extract(q.data,'$.data.to_agent')=? OR json_extract(q.data,'$.data.respondent')=? OR json_extract(q.data,'$.data.expected_agent')=?)"
+    if (q.respondent !== undefined) { filter += ` AND ${recipient}`; params.push(...Array(4).fill(q.respondent)) }
     if (relevant !== undefined) {
       if (relevant.length > 300) throw new ProcessingLimitError("question context exceeds 300 nodes")
-      filter += ` AND (json_extract(q.data,'$.node_id') IS NULL${relevant.length ? ` OR json_extract(q.data,'$.node_id') IN (${relevant.map(() => "?").join(",")})` : ""}${agent ? ` OR ${recipient}=?` : ""})`
-      params.push(...relevant); if (agent) params.push(agent)
+      filter += ` AND (json_extract(q.data,'$.node_id') IS NULL${relevant.length ? ` OR json_extract(q.data,'$.node_id') IN (${relevant.map(() => "?").join(",")})` : ""}${agent ? ` OR ${agentRecipient}` : ""})`
+      params.push(...relevant); if (agent) params.push(...Array(3).fill(agent))
     }
     if (state !== "all") filter += ` AND ${state === "open" ? "NOT " : ""}EXISTS (SELECT 1 FROM ledger a
       WHERE a.kind='answer' AND a.action_id=q.action_id AND json_extract(a.data,'$.data.question_id')=q.id)`
@@ -270,7 +339,8 @@ export class Collaboration {
     const answers = this.answerRows(question, 0, 1, true)
     const latest = this.load(answers.slice(0, 1), allowance)[0]
     return { question_id: question.id, node_id: question.node_id, asked_by: question.agent, asking_session_id: question.session_id,
-      respondent: question.data.to_agent ?? question.data.respondent,
+      respondent: question.data.to_agent ?? question.data.respondent ?? question.data.expected_agent ?? (question.data.recipient as QuestionRecipient | undefined)?.kind,
+      ...(question.data.recipient ? { recipient: question.data.recipient } : {}),
       state: answers.length ? "answered" : "open", asked_plan_revision: question.data.plan_revision, question: String(question.data.question ?? question.data.statement).slice(0, preview),
       ...(latest ? { answer: { record_id: latest.id, author: latest.agent, session_id: latest.session_id, statement: String(latest.data.answer ?? latest.data.statement).slice(0, preview) } } : {}),
       answers_have_more: answers.length > 1, excerpted: true }
@@ -302,7 +372,7 @@ export class Collaboration {
     const allowed: Record<string, string[]> = {
       complete: ["operation", "work_ref", "statement", "artifact_refs", "action_id", "node_id"],
       reopen: ["operation", "action_id", "node_id", "statement"],
-      ask: ["operation", "question", "to_agent", "blocking", "context", "context_attachments", "reference"],
+      ask: ["operation", "question", "to_agent", "recipient", "blocking", "context", "context_attachments", "reference"],
       answer: ["operation", "question_id", "answer", "context_attachments"],
       "query:progress": ["operation", "view", "action_id", "node_id", "offset", "limit"],
       "query:questions": ["operation", "view", "action_id", "node_id", "respondent", "question_state", "after", "limit"],
@@ -317,7 +387,7 @@ export class Collaboration {
     }
     if (operation === "answer") return this.answer(actor, { question_id: input.question_id, answer: input.answer, context_attachments: input.context_attachments }).record
     if (view === "thread") return this.thread(input.question_id as string, input.after as number | undefined, input.limit as number | undefined, input.action_id as string | undefined)
-    if (operation === "ask") return this.ask(actor, focus, { question: input.question, to_agent: input.to_agent, blocking: input.blocking,
+    if (operation === "ask") return this.ask(actor, focus, { question: input.question, to_agent: input.to_agent, recipient: input.recipient, blocking: input.blocking,
       context: input.context, context_attachments: input.context_attachments, reference: input.reference })
     if (!focus) throw new Error("Provide action_id or select an Action for this operation")
     if (operation === "reopen") return this.reopen(actor, focus, input.statement as string)
