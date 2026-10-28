@@ -230,14 +230,14 @@ export default Plugin.define({
                   result = {
                     sessions, scanned: native.data.length, matched: sessions.length,
                     next_cursor: typeof cursors.next === "string" ? cursors.next : null,
-                    note: "Read-only native Session inventory page. A selection or ledger record does not prove execution, task completion, or recipient contact. Follow next_cursor; filtered/empty pages do not prove absence.",
+                    note: "Read-only native Session inventory page. A selection, Plan revision or ledger record does not prove execution, task completion, or recipient contact. Follow next_cursor; filtered/empty pages do not prove absence.",
                   }
                 }
                 else throw new Error("Unknown Action operation")
                 break
               case "plan":
                 if (input.operation === "read") result = store.plan(String(input.action_id), input.revision as number | undefined)
-                else if (input.operation === "save") result = store.savePlan(String(input.action_id), Number(input.expected_revision), input.nodes)
+                else if (input.operation === "save") result = store.savePlan(String(input.action_id), Number(input.expected_revision), input.nodes, actor)
                 else throw new Error("Unknown plan operation")
                 break
               case "context": {

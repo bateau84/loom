@@ -65,8 +65,8 @@ With OpenCode 2.1.1, use the same tool to browse **read-only native Sessions**:
 
 `{"operation":"sessions","action_id":"ACTION_ID","limit":20}`
 
-The optional Action ID filters for a current Session selection or authored
-Action ledger activity; omit it to list local native Sessions without an Action
+The optional Action ID filters for a current Session selection, authored
+Action ledger activity or a saved Plan revision; omit it to list local native Sessions without an Action
 filter. The result contains `sessions`, `scanned`, `matched`, and
 `next_cursor`. Follow the opaque `next_cursor` with `cursor` until null,
 including when a filtered page is empty. An optional `archived:true/false`
@@ -88,6 +88,20 @@ fields: `outcome`, `criteria`, `context`, `depends_on`, `parent`, `agent`, `role
 `skills`. At most 300 nodes; cycles/invalid references fail. Siblings do not
 implicitly depend on each other. Plan saves do not dispatch, load skills, enforce
 order or complete work. Reread/reconcile stale revisions, never guess a replacement.
+
+When General delegates planning for an existing Action, include its `action_id`.
+The planning agent selects it with `loom_context`, reads the existing Plan,
+saves the complete revision through `loom_plan`, and returns the Action ID,
+saved revision and node IDs. General reads that revision to verify it before
+delegating planned work. A chat response or `docs/plan/` document can be a
+proposal or supplement, not a saved Loom Plan. Without an Action ID, a
+proposal can remain in chat; do not invent an Action to store it. Failed saves
+must be reported, not presented as completed planning.
+
+A saved revision includes `saved_by: {session_id, agent}` from the native
+caller; older revisions can omit it. `loom_action sessions` can discover
+that Session from its Plan write, even after it clears selection. This is
+traceability, not proof that the plan was reviewed or executed.
 
 Select work through `loom_context`:
 

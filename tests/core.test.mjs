@@ -100,6 +100,16 @@ test('unknown plan keys do not turn into hidden authority', () => assert.throws(
 test('Action can exist with no plan and selects only its creator Session', t => {
  const s=fixture(t),a=s.create('Fix','Resolve the defect',actor); assert.equal(s.plan(a.id).revision,0); assert.equal(s.selected(actor.session_id).action_id,a.id); assert.equal(s.selected('other'),undefined)
 })
+test('legacy Plan revisions remain readable without writer metadata', t => {
+ const s = fixture(t), a = s.create('Plan legacy', 'Goal', actor)
+ const old = s.savePlan(a.id, 0, [task('first')])
+ assert.equal(old.saved_by, undefined)
+ const writer = { session_id: 'planning-session', agent: 'task-manager' }
+ const revised = s.savePlan(a.id, 1, [task('first'), task('second')], writer)
+ assert.deepEqual(revised.saved_by, writer)
+ assert.equal(s.plan(a.id, 1).saved_by, undefined)
+ assert.deepEqual(s.plan(a.id).saved_by, writer)
+})
 test('Action edits use a revision check and do not infer completion from reviews', t => {
  const s=fixture(t),a=s.create('Fix','Goal',actor); s.update(a.id,1,{state:'paused'}); assert.throws(()=>s.update(a.id,1,{state:'completed'})); assert.equal(s.action(a.id).state,'paused')
 })
