@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { registerModelRouting } from "../src/model-routing-adapter.js"
+import { registerModelRouting as registerHostModelRouting, registerModelRoutingCandidate as registerModelRouting } from "../src/model-routing-adapter.js"
 import { defaults, mergeConfig } from "../src/config.js"
 
 const MODEL = {
@@ -196,14 +196,14 @@ test("lost native terminal-event subscription blocks further managed requests an
 test("unqualified 2.2.0 host never installs live managed routing; valid disabled policy remains native", async () => {
   const managed = host()
   managed.ctx.app.version = "2.2.0"
-  const runtime = await registerModelRouting(managed.ctx, managed.load, [], new AbortController().signal, undefined, fakeQuota)
+  const runtime = await registerHostModelRouting(managed.ctx, managed.load, [], new AbortController().signal, undefined, fakeQuota)
   expect(runtime.status).toBe("not-connected")
   expect(managed.hooks.size).toBe(0)
   expect(managed.agents.architect.model).toBeUndefined()
 
   const disabled = host(policy(false))
   disabled.ctx.app.version = "2.2.0"
-  const baseline = await registerModelRouting(disabled.ctx, disabled.load, [], new AbortController().signal, undefined, fakeQuota)
+  const baseline = await registerHostModelRouting(disabled.ctx, disabled.load, [], new AbortController().signal, undefined, fakeQuota)
   expect(baseline.status).toBe("disabled")
   expect(disabled.hooks.size).toBe(0)
 })
@@ -213,14 +213,14 @@ test("no native managed-routing host is qualified against the current 2.2.0 SDK,
   for (const version of ["2.1.4", "2.2.0", "2.3.0"]) {
     const f = host()
     f.ctx.app.version = version
-    const runtime = await registerModelRouting(f.ctx, f.load, [], new AbortController().signal, undefined, fakeQuota)
+    const runtime = await registerHostModelRouting(f.ctx, f.load, [], new AbortController().signal, undefined, fakeQuota)
     expect(runtime.status).toBe("not-connected")
     expect(runtime.selected).toEqual({})
     expect(f.hooks.size).toBe(0)
     expect(f.agents.architect.model).toBeUndefined()
     const disabled = host(policy(false))
     disabled.ctx.app.version = version
-    const native = await registerModelRouting(disabled.ctx, disabled.load, [], new AbortController().signal, undefined, fakeQuota)
+    const native = await registerHostModelRouting(disabled.ctx, disabled.load, [], new AbortController().signal, undefined, fakeQuota)
     expect(native.status).toBe("disabled")
     expect(disabled.hooks.size).toBe(0)
   }
