@@ -313,7 +313,7 @@ test("native OQ delegation uses specialist model before the asking Session model
   } finally { await f.close() }
 })
 
-test("a forwarded role OQ can only be answered by a specialist Session belonging to its dispatcher", async () => {
+test("forwarded specialist OQ requires an explicit dispatcher-selected Session, not sibling membership", async () => {
   const f = await registeredLoom()
   try {
     f.sessions.set("asking-child", { id: "asking-child", parentID: "dispatcher", agent: "author",
@@ -332,10 +332,50 @@ test("a forwarded role OQ can only be answered by a specialist Session belonging
       "wrong-parent-child", "investigator")).rejects.toThrow("dispatching Session")
     await expect(f.invoke("record", { operation: "answer", question_id: q.id, answer: "Not a specialist" },
       "dispatcher", "author")).rejects.toThrow("dispatching Session")
+    await expect(f.invoke("record", { operation: "answer", question_id: q.id, answer: "Unbound sibling" },
+      "right-parent-child", "investigator")).rejects.toThrow("bound")
+    f.sessions.set("another-right-sibling", { id: "another-right-sibling", parentID: "dispatcher", agent: "investigator",
+      projectID: "tool-help", location: { directory: f.directory } })
+    await expect(f.invoke("record", { operation: "bind-respondent", question_id: q.id,
+      respondent_session_id: "right-parent-child" }, "asking-child", "author")).rejects.toThrow("dispatching")
+    const bound = (await f.invoke("record", { operation: "bind-respondent", question_id: q.id,
+      respondent_session_id: "right-parent-child" }, "dispatcher", "author")).result
+    expect(bound.data).toMatchObject({ format: "loom-question-respondent-binding/v1", question_id: q.id,
+      session_id: "right-parent-child", parent_session_id: "dispatcher", agent: "investigator" })
+    await expect(f.invoke("record", { operation: "answer", question_id: q.id, answer: "Wrong sibling" },
+      "another-right-sibling", "investigator")).rejects.toThrow("Session")
+    await expect(f.invoke("record", { operation: "bind-respondent", question_id: q.id,
+      respondent_session_id: "another-right-sibling" }, "dispatcher", "author")).rejects.toThrow("already bound")
     const a = (await f.invoke("record", { operation: "answer", question_id: q.id, answer: "Specialist answer" },
       "right-parent-child", "investigator")).result
     expect(a.data.format).toBe("loom-answer/v2")
     expect(a.resume.asking_session_id).toBe("asking-child")
+  } finally { await f.close() }
+})
+
+test("cross-task OQ context matches the actual agent, not a colliding role ID", async () => {
+  const f = await registeredLoom()
+  try {
+    await writeFile(join(f.directory, ".loom.yaml"), [
+      "agents:", "  investigator: {roles: [research]}", "  research: {roles: [analysis]}",
+      "instructions: {enabled: false}", "ledger: {capture: off}", ""].join("\n"))
+    f.nativeAgents.push({ id: "research", mode: "subagent", hidden: false })
+    const action = (await f.invoke("action", { operation: "create", title: "Role collision", goal: "Find the real recipient" })).result
+    await f.invoke("plan", { operation: "save", action_id: action.id, expected_revision: 0,
+      nodes: [{ id: "ask", kind: "task", title: "Ask" }, { id: "receive", kind: "task", title: "Receive" }] })
+    await f.invoke("context", { action_id: action.id, node_id: "ask" }, "asker", "author")
+    const q = (await f.invoke("record", { operation: "ask", question: "Which API?",
+      recipient: { kind: "role", id: "research" }, blocking: false }, "asker", "author")).result
+    expect(q.data.expected_agent).toBe("investigator")
+    const shownToWrong = (await f.invoke("context", { action_id: action.id, node_id: "receive" },
+      "other-task", "research")).result
+    expect(shownToWrong.questions.some((item: any) => item.question_id === q.id)).toBe(false)
+    const shownToRight = (await f.invoke("context", { action_id: action.id, node_id: "receive" },
+      "real-agent", "investigator")).result
+    expect(shownToRight.questions.some((item: any) => item.question_id === q.id)).toBe(true)
+    const roleMatches = (await f.invoke("record", { operation: "query", view: "questions",
+      action_id: action.id, respondent: "research" }, "reader", "research")).result.items
+    expect(roleMatches.some((item: any) => item.question_id === q.id)).toBe(true)
   } finally { await f.close() }
 })
 
