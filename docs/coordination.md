@@ -9,8 +9,10 @@ required to ask a question.
 Use [the tool walkthrough](tools.md), live tool search for exact schemas,
 and [collaboration semantics](collaboration.md). On OpenCode 2.2.0, a new
 `recipient` can target a role, named agent, dispatcher or user. A single eligible
-agent is contacted through a native child after OpenCode permission approval;
-children relay requests to their parent, who can delegate or ask the user.
+agent is contacted through OpenCode's native subagent tool, which enforces
+permissions and depth. Children relay to their parent; after specialist
+delegation, the dispatcher binds the exact child with `bind-respondent`.
+Other siblings cannot answer.
 Primary Sessions use native user interaction for user-targeted questions.
 Legacy `to_agent` questions remain manual. A delivered notice is not an answer.
 Blocking is intent, not an enforced wait or execution gate.

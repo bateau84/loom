@@ -196,10 +196,13 @@ association; without either, it belongs only to the asking Session. Explicit
 Action/node references are validated, never silently changed.
 
 On OpenCode 2.2.0, a question directed to a single eligible agent/role from a
-primary Session creates a native child Session and submits a prompt after native
-`subagent` permission approval. A question from a child is relayed to its
-dispatching Session; that agent can answer within its authority or delegate
-further. A user-targeted question from a child reaches the parent for user
+primary Session invokes OpenCode's native subagent tool with built-in
+permission and depth checks; a prompt hook binds the verified child before
+native admission. A question from a child is relayed to its
+dispatching Session. If it delegates to a specialist, it then calls
+`loom_record` with `operation:"bind-respondent"`, `question_id`, and the
+`respondent_session_id` returned by native delegation. Only that child
+Session can answer, not a sibling. A user-targeted question from a child reaches the parent for user
 interaction; a primary agent must ask the user itself through the native
 interface. Unavailable or ambiguous role assignments are not auto-dispatched.
 Legacy `to_agent` is still stored with no native contact. For automatic native routing instead, replace `to_agent`
@@ -216,8 +219,8 @@ are not retried automatically. `blocking` is intent, not a forced wait or gate.
 
 Answer requires `question_id`, `answer`; optional `context_attachments`. Actual
 author/Session derive from the caller. Typed direct questions enforce the bound native child Session and agent;
-forwarded specialist questions verify the replying specialist is a native
-child of the dispatcher. Legacy questions preserve their previous behavior. An agent
+forwarded specialist questions require the dispatcher's exact binding
+and the native child relationship. Legacy questions preserve their previous behavior. An agent
 relaying a user decision must include the real user source; identity checks alone
 do not verify it. Association is inherited from the question,
 even if nullable or its node was removed; answering does not select the asker's

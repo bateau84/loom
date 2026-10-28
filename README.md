@@ -220,12 +220,13 @@ Answer uses `question_id`, `answer`, optional `context_attachments`;
 Action association is optional and unchanged by answering.
 
 On OpenCode 2.2.0, a typed agent/role OQ from a top-level Session attempts
-native subagent delegation after the usual `subagent` permission check.
+native subagent delegation, including the host's depth and permission checks.
 Questions raised inside child Sessions reach the dispatching Session, which
 can delegate to a suitable role or ask the user. A primary agent must ask
 the user via native interaction; Loom cannot independently verify that a
 relayed user answer genuinely came from the user. New typed OQs accept answers from the verified direct child Session and agent,
-or from a specialist child of the actual dispatcher for forwarded questions.
+or, for forwarded OQs, only from the child explicitly bound by the dispatcher
+using `loom_record bind-respondent` after native delegation.
 Native model choice prefers the specialist's configured model over the
 asker's. Legacy `to_agent` questions
 stay fail-closed and manual. Dispatch admission is not execution, answer,
