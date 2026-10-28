@@ -70,18 +70,22 @@ const recipientInput = obj({ kind: choice("agent", "role", "dispatcher", "user")
 const askInput = { question: str, to_agent: str, recipient: recipientInput, blocking: { type: "boolean" }, context: str, context_attachments: contextAttachments,
   reference: obj({ action_id: str, kind: choice("action", "phase", "wave", "task", "subtask"), id: str }, ["action_id", "kind", "id"]) }
 const answerInput = { question_id: str, answer: str, context_attachments: contextAttachments }
+const bindInput = { question_id: str, respondent_session_id: str }
 const specs = [
   { name: "agents", description: TOOL_HELP.agents, input: obj({}) },
   { name: "action", description: TOOL_HELP.action, input: obj({ operation: choice("list", "create", "update", "sessions"), action_id: str, title: str, goal: str, state: choice("active", "paused", "completed", "cancelled"), expected_revision: num, offset: num, archived: { type: "boolean" }, cursor: { type: "string", minLength: 1, maxLength: 4096 }, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
   { name: "plan", description: TOOL_HELP.plan, input: obj({ operation: choice("read", "save"), action_id: str, revision: num, expected_revision: num, nodes: { type: "array", maxItems: 300, items: obj({ id: str, kind: choice("phase", "wave", "task", "subtask"), title: str, parent: str, depends_on: list, outcome: str, context: str, criteria: list, skills: list, roles: list, agent: str }, ["id", "kind", "title"]) } }, ["operation", "action_id"]) },
   { name: "context", description: TOOL_HELP.context, input: obj({ action_id: str, node_id: str, clear: { type: "boolean" }, mode: choice("continuation", "independent"), handoff_id: { type: ["string", "null"] } }) },
-  { name: "record", description: TOOL_HELP.record, input: { ...obj({ operation: choice("add", "query", "complete", "reopen", "ask", "answer"), view: choice("ledger", "progress", "questions", "thread", "full_thread"), response_format: choice("markdown", "json"), session_id: str, cursor: str, work_ref: workRefInput, ...askInput, ...answerInput, respondent: str, question_state: choice("open", "answered", "all"), offset: num, action_id: str, node_id: str, kind: choice("claim", "result", "concern", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]),
+  { name: "record", description: TOOL_HELP.record, input: { ...obj({ operation: choice("add", "query", "complete", "reopen", "ask", "answer", "bind-respondent"), view: choice("ledger", "progress", "questions", "thread", "full_thread"), response_format: choice("markdown", "json"), session_id: str, cursor: str, work_ref: workRefInput, ...askInput, ...answerInput, respondent: str, question_state: choice("open", "answered", "all"), offset: num, action_id: str, node_id: str, kind: choice("claim", "result", "concern", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]),
     allOf: [
       { if: { properties: { operation: { const: "ask" } } }, then: {
           ...obj({ operation: { const: "ask" }, ...askInput }, ["operation", "question", "blocking"]),
           oneOf: [{ required: ["to_agent"], not: { required: ["recipient"] } }, { required: ["recipient"], not: { required: ["to_agent"] } }],
         } },
       { if: { properties: { operation: { const: "answer" } } }, then: obj({ operation: { const: "answer" }, ...answerInput }, ["operation", "question_id", "answer"]) },
+        { if: { properties: { operation: { const: "bind-respondent" } } }, then:
+          obj({ operation: { const: "bind-respondent" }, ...bindInput },
+            ["operation", "question_id", "respondent_session_id"]) },
       { if: { properties: { view: { const: "full_thread" } }, required: ["view"] }, then: {
         ...obj({ operation: { const: "query" }, view: { const: "full_thread" }, action_id: str, node_id: str, session_id: str, cursor: str, response_format: choice("markdown", "json"),
           limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation", "view"]),
@@ -252,9 +256,24 @@ export default Plugin.define({
                     (input.operation !== "query" && input.operation !== "add")))
                   throw new Error("session_only is a query option or Session-scoped add option and cannot be combined with work IDs")
                 // Explicit work/thread identity must not depend on saved selection.
-                const identityScoped = ["complete", "answer"].includes(String(input.operation))
+                const identityScoped = ["complete", "answer", "bind-respondent"].includes(String(input.operation))
                   || (input.operation === "query" && input.view === "thread")
                 const focus = identityScoped || input.session_only || (input.operation === "ask" && input.reference !== undefined) ? undefined : focusFor(input, actor.session_id)
+                if (input.operation === "bind-respondent") {
+                  const question = store.collaboration.thread(String(input.question_id)).question
+                  if (question.data.format !== "loom-question/v2" ||
+                      typeof question.data.expected_agent !== "string" ||
+                      question.data.expected_parent_session !== actor.session_id)
+                    throw new Error("Only the question's dispatching Session can bind this forwarded specialist")
+                  const receiverID = String(input.respondent_session_id) as Parameters<typeof ctx.session.get>[0]["sessionID"]
+                  const receiver = payload(unwrapped(await ctx.session.get({ sessionID: receiverID })))
+                  if (receiver.id !== receiverID || receiver.parentID !== actor.session_id ||
+                      receiver.agent !== question.data.expected_agent || !await sessionIsLocal(receiver))
+                    throw new Error("Respondent must be the intended native specialist child of this dispatching Session")
+                  result = store.collaboration.bindRespondent(question.id, receiverID,
+                    receiver.agent as string, actor.session_id)
+                  break
+                }
                 if (input.operation === "answer") {
                   const { operation: _operation, ...answer } = input
                   const original = store.collaboration.thread(String(input.question_id)).question
