@@ -8,17 +8,19 @@ timestamp: 2026-10-24T00:00:00Z
 
 # Draft: role model classes and provider-first subscription routing
 
-> **Initial routing only on OpenCode 2.1.4.** Loom can now assign a
-> verified eligible model and exact reasoning variant to a native agent using
-> `ctx.agent.transform`. A `model.request` guard stops unverified and
-> unexpected requests before provider transport. It does **not** rotate
-> providers after a quota failure or resume/replay a running stream.
+> **Disabled-by-default foundation, not operational routing approval.**
+> The guarded initial-routing adapter was developed with OpenCode CLI
+> **2.1.4 and SDK 2.1.1**. It can select exact native models in isolated
+> candidate tests, but cannot switch providers during a failed stream.
 >
-> This plugin branch still pins the **2.1.1 SDK** for PR #190 compatibility.
-> The isolated **2.1.4 CLI** negative-control workflow proves a rejected
-> unverified request never reached the scripted provider and disabling routing
-> leaves native execution available. Actual paid/subscription provider
-> acceptance remains a separate unproven task.
+> The repository now pins **SDK and CLI 2.2.0**. No exact host/SDK pair
+> is currently qualified for positive managed-subscription requests and
+> native account affinity. The production adapter therefore returns
+> `not-connected` for enabled routing on **CLI 2.1.4, 2.2.0, and other
+> unqualified native hosts**. The early native guard rejects those
+> requests before transport. A valid explicitly disabled routing policy
+> preserves normal native execution. The 2.2.0 installed tests verify
+> this refusal, **not** positive subscription model selection.
 >
 > OpenCode's V2 retry hook still cannot safely change providers and does not
 > expose the host's internal output/tool-effect boundary.
@@ -35,18 +37,19 @@ these routes remain `billing: unknown`, even when the catalog lists them.
 See also the [OpenCode safe fallback proposal](opencode-v2-safe-live-fallback.md)
 for the separate native retry/account-lease blocker.
 
-## Current OpenCode 2.2.0 host boundary
+## Current SDK 2.2.0 host-qualification boundary
 
-Loom's ordinary SDK/CLI was updated to 2.2.0 in merged PR #199, but
-the separate guarded model-routing adapter was qualified only with
-OpenCode CLI 2.1.4. On a 2.2.0 host, **opt-in managed routing remains
-host-unqualified and is denied by the early pre-transport guard** until
-its native model/account/billing behavior is requalified; valid explicitly
-disabled routing leaves normal native execution unchanged. This restriction
-is deliberate: 2.1.4 subscription heuristics must not authorize paid
-2.2.0 traffic without independent evidence.
+The normal plugin SDK/CLI moved to 2.2.0 in merged PR #199.
+The **production** `registerModelRouting()` never enables the historical
+candidate adapter for an unqualified host, including **CLI 2.1.4 running
+SDK 2.2.0**. Old 2.1.4 compatibility evidence cannot be carried across
+the SDK upgrade. The internal candidate adapter remains directly
+testable through deterministic mocked providers; these tests do not
+authorize actual native managed requests. Future host/SDK activation
+requires independent version-matched, positive billing and account
+affinity acceptance before production routing admission changes.
 
-## Initial routing on OpenCode 2.1.4 (implemented, opt-in)
+## Historical 2.1.4 initial-routing adapter (not active on current SDK)
 
 **Startup failure protection:** In a qualified 2.1.4 host, Loom installs an
 early `model.request` denial hook **before** initializing the Action ledger,
@@ -97,18 +100,20 @@ machine-wide across this user's OpenCode processes; it does **not**
 attest billing or provide native credentials. The adapter does not inspect
 secret material or create another quota database.
 
-**Auxiliary attribution:** On the supported 2.1.4 path, compaction/title/
-generate requests using the same provider as the managed primary request
-cannot silently switch to a different native account. The hook rejects
-that mismatch before transport. Because native retry events omit request
-kind and attempt identity, accepting an auxiliary model request discards
-the preceding primary's pending failure permit rather than attributing
-an auxiliary failure to the wrong account. Only the next primary request
-establishes a fresh attributable permit. Pending records are keyed by
-Session, so alternating configured agents do not exhaust the distinct
-512-Session cap prematurely. Session deletion reclaims that slot.
-Native account/stream leasing and positive managed-provider acceptance
-are still unproven.
+**Auxiliary retry attribution (candidate implementation):** Managed
+compaction/title/generate calls cannot switch the account on the pinned
+primary provider. Native retry callbacks also lack request kind or
+attempt identity: an auxiliary failure can arrive *after* a later primary
+reservation with the same Session/agent/model fields. After any managed
+auxiliary request is dispatched, Loom therefore leaves **all subsequent
+retries in that Session unattributed**, including retries from newer
+primary calls. Known quota/auth failures stop native retries but do not
+change shared account state without reliable attribution. The ambiguity
+clears only on `session.deleted` or plugin restart. A fresh Session can
+again record attributable primary failures. This intentionally trades
+some quota knowledge for account integrity, pending a native attempt ID.
+All managed primary and auxiliary-only Sessions share a 512-Session
+fail-closed limit, including multi-agent continuations.
 
 **Dispatch guard:** Every managed primary request is checked against
 the planned model, current shared quota eligibility, the latest verified
@@ -144,11 +149,11 @@ written by other processes before choosing a model. Existing active
 sessions keep their initial selected model and fail closed if a different
 process exhausts that route; they do **not** silently switch to the next
 provider or model. OpenCode currently supplies only the active native
-connection for each provider, not a switchable pool of inactive accounts. The model policy reported by
-`loom_agents` includes `model_routing_runtime: initial-only`,
-`model_routing_selected` and `model_routing_unavailable_agents`
-when the full native host is available. A partial/older host shows
-`not-connected` and is not evidence of live routing.
+connection for each provider, not a switchable pool of inactive accounts. A historical candidate can produce `model_routing_runtime: initial-only`
+and the `model_routing_selected` / `model_routing_unavailable_agents`
+policy previews, but the **current production SDK 2.2.0** returns
+`not-connected` when managed routing is enabled. This never establishes
+a live model-selection or billing guarantee.
 
 **Limits:** This is initial native agent selection, **not** per-request
 replanning or safe live provider fallback. An existing explicitly selected
