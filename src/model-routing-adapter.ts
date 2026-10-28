@@ -1,7 +1,7 @@
 import { Model, Plugin, Provider } from "@opencode/plugin"
 import { openSharedQuotaState } from "./quota-state.js"
 import {
-  quotaIdentity, reserveNativeRoute, recordNativeFailure,
+  quotaIdentity, reserveNativeRoute, recordNativeFailure, classifiedNativeFailure,
   type QuotaGate, type PendingQuotaRequest,
 } from "./model-routing-shared-quota.js"
 import type { Config, ConfigSnapshot } from "./config.js"
@@ -202,9 +202,16 @@ export async function registerModelRouting(
   const pending = new Map<string, PendingQuotaRequest & {
     sessionID: string; agent: string; providerID: string; modelID: string
   }>()
+  // SessionRetry contains neither kind nor attempt identity. After even one
+  // managed auxiliary request, a delayed auxiliary retry can collide with a
+  // later primary permit. Keep this Session's failure accounting unattributed
+  // until deletion/restart; terminal execution events cannot clear ambiguity.
+  const ambiguousRetries = new Set<string>()
   const MAX_TRACKED_SESSIONS = 512
   let eventsHealthy = true
-  disposers.push({ dispose: async () => { eventsHealthy = false; leases.clear(); pending.clear() } })
+  disposers.push({ dispose: async () => {
+    eventsHealthy = false; leases.clear(); pending.clear(); ambiguousRetries.clear()
+  } })
   // Keep callback synchronous to dispatch: hook registration is a supported
   // pre-transport boundary, but thrown rejections need installed-host proof.
   const managedSession = async (sessionID: string) => {
@@ -255,8 +262,14 @@ export async function registerModelRouting(
       // slip through an earlier read-only eligibility snapshot.
       const reservation = reserveNativeRoute(quota,
         quotaIdentity(event.model.providerID, event.model.id, nativeID))
-      pending.set(event.sessionID, { ...reservation, sessionID: event.sessionID,
-        agent: event.agent, providerID: event.model.providerID, modelID: event.model.id })
+      if (!ambiguousRetries.has(event.sessionID)) {
+        pending.set(event.sessionID, { ...reservation, sessionID: event.sessionID,
+          agent: event.agent, providerID: event.model.providerID, modelID: event.model.id })
+      } else {
+        // Reservation still protects dispatch, but cannot identify a future
+        // retry against an earlier compaction/title/generate failure.
+        pending.delete(event.sessionID)
+      }
       leases.set(event.sessionID, lease)
     } else if (event.kind !== "primary" && await managedSession(event.sessionID)) {
       if (!eventsHealthy) throw new Error("LOOM_MODEL_ROUTING_EVENTS_UNAVAILABLE: restart required")
@@ -275,17 +288,25 @@ export async function registerModelRouting(
       }
       reserveNativeRoute(quota, quotaIdentity(event.model.providerID, event.model.id, nativeID))
       // The host's retry event does not distinguish primary from auxiliary.
-      // Once an auxiliary request is dispatched, an earlier primary permit
-      // no longer identifies the owner of a matching retry. Discard it rather
-      // than ever applying the auxiliary failure to the primary account.
+      // Once an auxiliary request is dispatched, even later primary retries
+      // can collide with its delayed retry callback. Native host events have
+      // no matching attempt ID, so retain ambiguity until Session deletion.
+      ambiguousRetries.add(event.sessionID)
       pending.delete(event.sessionID)
       // Do not invent successful or auxiliary failure accounting.
     }
   }))
   disposers.push(await ctx.session.hook("retry", event => {
     // OpenCode's normalized provider error type is authoritative enough to
-    // classify a failed primary request; raw HTTP success is not. The hook
-    // does NOT establish that it is safe to change models.
+    // classify a failed primary request only when there is no possible older
+    // auxiliary callback with the same Session/agent/model identity.
+    if (ambiguousRetries.has(event.sessionID)) {
+      // Never write a speculative account-wide quota failure. A known quota,
+      // rate-limit or 401 failure also must not initiate repeated native
+      // retries on this ambiguous Session.
+      if (classifiedNativeFailure(event.error)) event.decision = { retry: false }
+      return
+    }
     const found = pending.get(event.sessionID)
     if (!found || found.agent !== event.agent ||
         found.providerID !== event.model.providerID || found.modelID !== event.model.id) return
@@ -308,6 +329,7 @@ export async function registerModelRouting(
             "sessionID" in event.data && typeof event.data.sessionID === "string") {
           leases.delete(event.data.sessionID)
           pending.delete(event.data.sessionID)
+          ambiguousRetries.delete(event.data.sessionID)
         }
       }
     } catch {
@@ -318,6 +340,7 @@ export async function registerModelRouting(
         eventsHealthy = false
         leases.clear()
         pending.clear()
+        ambiguousRetries.clear()
         console.warn("Loom routing event subscription ended unexpectedly; managed model requests are blocked until restart")
       }
     }
