@@ -12,6 +12,7 @@ export async function registeredLoom(initialSkills: any[] = []) {
   const sessions = new Map<string, any>()
   const nativeInputs: unknown[] = [], sessionReads: string[] = [], nativeListRequests: any[] = []
   const sessionCreates: any[] = [], sessionPrompts: any[] = []
+  const nativeSubagent = { depth: 1 }
   const nativeAgents: any[] = [{ id: "investigator", mode: "subagent", hidden: false },
     { id: "author", mode: "primary", hidden: false }]
   const nativePages = new Map<string, any>()
@@ -52,6 +53,32 @@ export async function registeredLoom(initialSkills: any[] = []) {
     tool: {
       transform: async (fn: any) => { fn({ namespace: (n: any) => namespaces.set(n.name, n), add: (t: any) => tools.set(t.name, t) }); return registration() },
       hook: async (name: string, fn: any) => { hooks.set(name, fn); return registration() },
+      list: async () => [{
+        name: "subagent", id: "subagent",
+        execute: async (input: any, context: any) => {
+          let current = await ctx.session.get({ sessionID: context.sessionID })
+          let depth = 0
+          while (current.parentID) {
+            depth++
+            current = await ctx.session.get({ sessionID: current.parentID })
+          }
+          if (depth >= nativeSubagent.depth)
+            throw new Error(`Subagent depth limit reached (${nativeSubagent.depth})`)
+          const agent = nativeAgents.find(a => a.id === input.agent)
+          if (!agent || !["subagent", "all"].includes(agent.mode))
+            throw new Error("Invalid native subagent")
+          await ctx.permission.assert({ action: "subagent", resources: [input.agent], save: [input.agent],
+            sessionID: context.sessionID, agent: context.agent })
+          const parent = await ctx.session.get({ sessionID: context.sessionID })
+          const created = await ctx.session.create({ parentID: context.sessionID, agent: input.agent,
+            model: input.model ?? agent.model ?? parent.model, title: input.description })
+          const text = "You are a subagent spawned by another session.\n" + input.prompt
+          await hooks.get("prompt")?.({ sessionID: created.id, messageID: "native-prompt", prompt: { text }, delivery: "steer" })
+          await ctx.session.prompt({ sessionID: created.id, text, delivery: "steer", resume: false })
+          return { output: { sessionID: created.id, status: "running", output: "Native simulated background" },
+            content: "Native simulated background" }
+        },
+      }],
     },
     session: {
       list: async (query: any) => { nativeListRequests.push(query); return nativePages.get(query.cursor ?? "") ?? { data: [], cursor: { next: null, previous: null } } },
@@ -93,7 +120,7 @@ export async function registeredLoom(initialSkills: any[] = []) {
     dispose = await (plugin as any).setup(ctx)
     return {
       tools, namespaces, close, directory, hooks, sessions, skills, reloadSkills, nativeInputs, sessionReads, nativeListRequests, nativePages,
-      nativeAgents, sessionCreates, sessionPrompts,
+      nativeAgents, sessionCreates, sessionPrompts, nativeSubagent,
       permission, permissionRequests, skillRequests,
       context: async (sessionID: string, agent: string) => {
         const event = { sessionID, agent, system: [] as Array<{ type: string; text: string }>, messages: [], tools: {}, options: {} }
