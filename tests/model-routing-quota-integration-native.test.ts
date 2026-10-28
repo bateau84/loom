@@ -405,12 +405,13 @@ test("delayed auxiliary retry after a newer primary never contaminates its accou
   const store = await openSharedQuotaState({ path })
   try {
     const f = fixture("account-a")
-    // Auxiliary compaction runs against account B before any primary lease.
+    // Initial native agent planning selects account A. No primary Session
+    // lease exists yet, so an auxiliary call can still use account B.
+    await registerModelRouting(f.ctx, f.config, [], new AbortController().signal, f.billing, store)
     f.ctx.integration.connection.active = async (providerID: string) => ({
       type: "credential", method: "oauth",
       id: providerID === "opencode-go" ? "account-b" : "openai-secondary",
     })
-    await registerModelRouting(f.ctx, f.config, [], new AbortController().signal, f.billing, store)
     const dispatch = f.hooks.get("model.request")!
     const retry = f.hooks.get("retry")!
     await dispatch({ ...request(), kind: "compaction" })
