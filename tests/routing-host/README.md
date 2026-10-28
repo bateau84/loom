@@ -72,12 +72,13 @@ category, not merely zero transport.
 | Unknown billing (routing enabled) | No local provider `doStream` invocation | Session fails before transport or tools |
 | Metered route (paid fallback disabled) | No local paid-labelled provider `doStream` invocation | Session fails; the previously proven local route is never reached |
 | Unsupported requested `high` | Only `medium` advertised in fixture | No transport; does not alone prove the reason for denial |
-| Native compaction after a completed tool | Compaction model request, native tool hook counts and selected provider | One native tool; compaction completes on same model/provider |\n| Restart and disabled compatibility | Fresh real OpenCode processes | Guard continues to deny, disabled mode continues to run |
+| Native compaction after a completed tool | Compaction model request, native tool hook counts and selected provider | One native tool; compaction completes on same model/provider |
+| Restart and disabled compatibility | Fresh real OpenCode processes | Guard continues to deny, disabled mode continues to run |
 | Unqualified 2.2.0 host routing | Real isolated host, enabled Loom policy | No native provider transport or new quota database; native routing-disabled requests still run |
 | Independent quota processes | Separate Bun child processes using PR #194 SQLite manager | Cross-process block, account/provider isolation, single recovery probe and observable recovery |
 | Unexpected native global default | Host configured with a paid-labelled default in a managed Session | No transport; without an eligible primary route the exact mismatch reason remains UNPROVEN |
-| Invalid routing configuration | Host startup with malformed `.loom.yaml` | Native request rejected with `LOOM_MODEL_ROUTING_CONFIG_UNREADABLE` before any provider transport |
-| Corrupt quota DB and broken Action-ledger startup | Separate fresh installed 2.1.4 hosts, routing enabled and a callable metered global default | Native request rejected by retained early `LOOM_MODEL_ROUTING_STARTUP_FAILED` guard, zero provider transport |
+| Invalid routing configuration | Host startup with malformed `.loom.yaml` | Current unqualified-host guard denies model transport; the historical 2.1.4 candidate used a config-specific error |
+| Corrupt quota DB and broken Action-ledger startup | Separate fresh installed 2.2.0 hosts, enabled routing and a callable metered global default | Host guard denies provider transport; the Action-ledger error is explicit and unqualified routing does not open the quota DB |
 | Trace oracle mutations | Synthetic corrupted trace inputs | Leak, duplicate tool calls, provider changes and model-only changes are rejected by the oracle |
 
 The negative controls are deliberately independent of the production
