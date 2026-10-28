@@ -230,10 +230,18 @@ export async function registerModelRoutingCandidate(
   // later primary permit. Keep this Session's failure accounting unattributed
   // until deletion/restart; terminal execution events cannot clear ambiguity.
   const ambiguousRetries = new Set<string>()
+  // Include auxiliary-only Sessions; their possible delayed retry also needs
+  // attribution fencing and must not escape the 512-Session memory budget.
+  const trackedSessions = new Set<string>()
   const MAX_TRACKED_SESSIONS = 512
   let eventsHealthy = true
+  const admitSession = (sessionID: string) => {
+    if (!trackedSessions.has(sessionID) && trackedSessions.size >= MAX_TRACKED_SESSIONS) {
+      throw new Error("LOOM_MODEL_ROUTING_STATE_LIMIT: tracked Sessions reached capacity; close/delete old Sessions or restart Loom")
+    }
+  }
   disposers.push({ dispose: async () => {
-    eventsHealthy = false; leases.clear(); pending.clear(); ambiguousRetries.clear()
+    eventsHealthy = false; leases.clear(); pending.clear(); ambiguousRetries.clear(); trackedSessions.clear()
   } })
   // Keep callback synchronous to dispatch: hook registration is a supported
   // pre-transport boundary, but thrown rejections need installed-host proof.
@@ -268,9 +276,7 @@ export async function registerModelRoutingCandidate(
       if (!agentPlan || agentPlan.status === "no-policy")
         throw new Error("LOOM_MODEL_ROUTE_AFFINITY: managed Session switched to an unconfigured agent")
       if (!eventsHealthy) throw new Error("LOOM_MODEL_ROUTING_EVENTS_UNAVAILABLE: restart required")
-      if (!leases.has(event.sessionID) && leases.size >= MAX_TRACKED_SESSIONS) {
-        throw new Error("LOOM_MODEL_ROUTING_STATE_LIMIT: tracked Sessions reached capacity; close/delete old Sessions or restart Loom")
-      }
+      admitSession(event.sessionID)
       assertInitialRoute(agentPlan, event.model)
       // A newly exhausted or unverified route fails *before* calling the provider.
       const nativeID = assertAllowedRequest(fresh, event.model, config.modelRouting.paidFallback)
@@ -294,8 +300,10 @@ export async function registerModelRoutingCandidate(
         pending.delete(event.sessionID)
       }
       leases.set(event.sessionID, lease)
+      trackedSessions.add(event.sessionID)
     } else if (event.kind !== "primary" && await managedSession(event.sessionID)) {
       if (!eventsHealthy) throw new Error("LOOM_MODEL_ROUTING_EVENTS_UNAVAILABLE: restart required")
+      admitSession(event.sessionID)
       // Guard title/compaction/generate for managed Sessions, without changing
       // native utility behavior for *explicitly unconfigured* Session agents.
       const nativeID = assertAllowedRequest(fresh, event.model, config.modelRouting.paidFallback)
@@ -315,6 +323,7 @@ export async function registerModelRoutingCandidate(
       // can collide with its delayed retry callback. Native host events have
       // no matching attempt ID, so retain ambiguity until Session deletion.
       ambiguousRetries.add(event.sessionID)
+      trackedSessions.add(event.sessionID)
       pending.delete(event.sessionID)
       // Do not invent successful or auxiliary failure accounting.
     }
@@ -353,6 +362,7 @@ export async function registerModelRoutingCandidate(
           leases.delete(event.data.sessionID)
           pending.delete(event.data.sessionID)
           ambiguousRetries.delete(event.data.sessionID)
+          trackedSessions.delete(event.data.sessionID)
         }
       }
     } catch {
@@ -364,6 +374,7 @@ export async function registerModelRoutingCandidate(
         leases.clear()
         pending.clear()
         ambiguousRetries.clear()
+        trackedSessions.clear()
         console.warn("Loom routing event subscription ended unexpectedly; managed model requests are blocked until restart")
       }
     }
