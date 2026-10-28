@@ -131,13 +131,13 @@ Optional `context`, `context_attachments`, `reference:{action_id,kind,id}`.
 Association defaults to selection, otherwise the asking Session.
 Invalid explicit references fail; no Action or Plan needed.
 
-Typed recipients request native OpenCode 2.2.0 delivery. An eligible agent
-may receive a native child Session after `subagent` permission. Children
-forward to their actual parent; ambiguous roles and primary user questions
-need native/manual handling. Record the real user's answer and source;
-a forwarded question is not permission. `dispatch` confirms input admission,
-not execution, answer or approval. Typed replies check agent/Session identity,
-not factual correctness or human provenance.
+Typed agents use OpenCode's native subagent tool, including its depth
+and permission checks. Children route OQs to their parent. When the
+dispatcher delegates a specialist OQ, it must call `loom_record` with
+`operation:"bind-respondent"`, `question_id`, and the native child's
+`respondent_session_id`. Only that exact child can answer, not a sibling.
+Ambiguous roles and user questions need native/manual handling; cite the
+real user's answer. `dispatch` means input admission, not approval.
 
 Legacy `to_agent` remains manual:
 
