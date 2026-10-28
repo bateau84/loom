@@ -1,7 +1,7 @@
 """Isolated OpenCode 2.2.0 model-routing negative control.
 
 Actual packed Loom plugin and unmodified native 2.2.0 host. A separate,
-local-only provider script proves that unknown billing NEVER reaches doStream.
+local-only provider script proves unqualified managed routing never reaches doStream.
 This does not prove real ChatGPT OAuth, real quotas, or live failover.
 """
 from __future__ import annotations
@@ -23,11 +23,11 @@ def run(cli: Path, repo: Path, plugin: Path, artifact: Path, output: Path, versi
               'sdk': '2.2.0', 'checks': [], 'limits': [
                   'No live subscription or genuine billing attestation',
                   'No real same-model provider fallback or tool-side-effect replay acceptance',
-                  'Only pre-dispatch host-unqualified rejection is tested',
+                  'Only host-unqualified pre-dispatch refusal is tested, not individual billing policy decisions',
               ]}
     try:
         report['candidate'] = installed_plugin_inventory(artifact, plugin, version, '2.2.0')
-        with tempfile.TemporaryDirectory(prefix='loom-model-route-v214-') as temp:
+        with tempfile.TemporaryDirectory(prefix='loom-model-route-v220-') as temp:
             root = Path(temp).resolve()
             project = root / 'project'
             project.mkdir()
