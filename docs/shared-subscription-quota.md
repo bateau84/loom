@@ -8,7 +8,13 @@ timestamp: 2026-10-24T00:00:00Z
 
 # Shared subscription quota state
 
-**Status:** Implemented in `src/quota-state.ts` and connected to the guarded OpenCode 2.1.4 **initial** model-selection path through `src/model-routing-adapter.ts` and `src/model-routing-shared-quota.ts`. This does **not** provide seamless live provider fallback or authenticated stream/account affinity.
+**Status:** The shared quota manager is implemented in `src/quota-state.ts`
+and is exercised by real SQLite and separate-process tests. Its connection
+to guarded **initial** model selection was developed as a historical
+OpenCode 2.1.4 adapter candidate in `src/model-routing-adapter.ts`.
+With the current SDK 2.2.0, the production adapter blocks managed routing
+on all unqualified hosts, including CLI 2.1.4. It does **not** establish
+successful live subscription routing, stream/account affinity or failover.
 
 ## Integrated initial routing and outcome evidence
 
@@ -72,9 +78,12 @@ may be removed. A delayed terminal event for execution A can arrive after B
 has reserved in the same Session. Pending reservations and route affinity
 are therefore kept across terminal events and released only on
 `session.deleted` or plugin shutdown, with an explicit 512-Session
-fail-closed memory bound. The newest native request replaces the matching
-reservation, and its provider failure can still update shared state.
-Native unique request/attempt correlation remains unproven.
+fail-closed memory bound. A later **primary** request can replace the
+matching pending reservation only if no managed auxiliary request has
+made retry attribution ambiguous in that Session. Once an auxiliary
+request has run, even newer primary failures stay unattributed until
+Session deletion or plugin restart. Native unique request/attempt
+correlation remains unproven.
 
 **Authentication recovery and provider observations:** Provider-reported
 positive remaining allowance cannot lift an account authentication block
@@ -85,14 +94,16 @@ until a distinct verified credential refresh explicitly calls
 also fails closed even if SQLite's structural integrity check reports OK.
 
 **Auxiliary request attribution:** Native retry events lack kind/attempt
-identity. Managed auxiliary model requests must not change the active
-account on the same provider as the pinned primary route. A successful
-auxiliary dispatch invalidates the stale primary pending permit for that
-Session, so a utility retry cannot poison its previous account's quota
-state. A future primary request gets a new permit. The pending map stores
-one latest primary record per Session (not per agent/model); 512 distinct
-Sessions are supported, with Session deletion allowing readmission.
-Full transport-level account pinning remains an upstream limitation.
+identity. Managed auxiliary calls must not change the active account on
+the pinned primary provider. After any managed auxiliary request, even a
+later primary permit cannot reliably distinguish an old auxiliary retry
+from its own error. Such retries are **not written** to shared quota
+state; known quota/auth errors stop automatic native retry but remain
+unattributed until Session deletion or plugin restart. New Sessions can
+record unambiguous primary failures. The pending map stores at most one
+primary record per Session; the shared 512-Session limit includes
+auxiliary-only Sessions, and deletion allows readmission. Full native
+transport/account pinning remains an upstream limitation.
 
 **No invented success:** OpenCode 2.1.4's plugin request/retry hooks do not
 provide a stable, attempt-identified successful stream completion tied to the
@@ -111,10 +122,11 @@ library tests; they are not claimed as live-provider accounting.
 **Limits:** Shared quota applies to OpenCode processes of the same OS user
 on one machine (not several machines). It does not grant credentials, prove
 subscription coverage, safely rotate a running stream, or override native
-permissions. Existing installed-host acceptance proves only the 2.1.4
-unknown-billing negative control and normal routing-disabled path. Cross-
-process provider/account exhaustion and safe rejection are exercised with
-isolated SQLite/Bun-process and mocked native-host tests, not real paid traffic.
+permissions. The historical 2.1.4 installed acceptance tested guarded negative controls.
+Current SDK/CLI 2.2.0 acceptance proves that **unqualified** managed routing
+is rejected before transport and routing-disabled native behavior still
+works. Cross-process provider/account exhaustion is exercised with isolated
+SQLite/Bun-process and mock candidate-host tests, not live paid traffic.
 
 ## Persistence and safety
 
@@ -186,7 +198,11 @@ quota.close()
 
 The model planner now preserves optional accountID and deduplicates by provider/model/account, rather than accidentally discarding a second subscription under the same provider. Old pure planner callers can omit accountID; **managed** route inventory must include it. Do not construct permits manually.
 
-The adapter classifies only the trusted native error tags described above. Authentication, unobserved successful outcomes, live provider switching and native stream/account affinity remain outside its proven capability. Retry and reset timestamps are accepted only when reported or normalized reliably; the library does not fetch them. Do not replay tool side effects. Never treat provider name or a configured model alias as proof that billing is included. paid-fallback remains off by default; unknown billing is never eligible. When model routing is explicitly disabled in a valid configuration, do not open the quota store or change native OpenCode behavior. If configuration loading fails on a capable 2.1.4 host, the adapter blocks native model requests before transport rather than interpreting unreadable policy as intentionally disabled. A lost native terminal-event subscription also blocks subsequent managed requests until restart.
+The adapter classifies only the trusted native error tags described above. Authentication, unobserved successful outcomes, live provider switching and native stream/account affinity remain outside its proven capability. Retry and reset timestamps are accepted only when reported or normalized reliably; the library does not fetch them. Do not replay tool side effects. Never treat provider name or a configured model alias as proof that billing is included. paid-fallback remains off by default; unknown billing is never eligible. When model routing is explicitly disabled in a valid configuration, do not open the quota store or change native OpenCode behavior. On a native host where Loom's first guard registered successfully,
+enabled/unreadable routing is blocked before transport on an unqualified
+host; a valid explicitly disabled policy remains native. The historical
+candidate also blocks a lost native terminal-event subscription until
+restart.
 
 ## Verification and current limitations
 
@@ -197,4 +213,5 @@ If a provider supplies no quota endpoint or trustworthy scope, use observed erro
 ## Depends on
 
 - [Model class routing contract](model-routing.md) defines the planner and verified billing requirements.
-- [OpenCode 2.1.1 compatibility](opencode-2.1.1.md) defines the installed host integration constraints.
+- [OpenCode 2.2.0 host migration](opencode-2.2.0.md) records the current SDK/CLI baseline, separate from managed routing acceptance.
+- [OpenCode 2.1.1 compatibility](opencode-2.1.1.md) is historical host integration evidence.
