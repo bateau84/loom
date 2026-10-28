@@ -1,3 +1,11 @@
+---
+type: Architecture
+title: "OpenCode 2.1.1 compatibility and native feature audit"
+description: "Audits OpenCode 2.1.1 host compatibility and available native features."
+tags: [loom, opencode, compatibility]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # OpenCode 2.1.1 compatibility and native feature audit
 
 Scope: Loom's Action-based plugin, migrating from the qualified OpenCode 2.0.32
@@ -65,6 +73,11 @@ evidence and Assessment/QA semantics. **Do not mirror or synchronize TODOs
 automatically**: that would create two authors of progress and reintroduce a
 scheduler. Evaluate visual usefulness separately; the plugin does not alter
 OpenCode's `experimental.todo` setting or register a competing TODO tool.
+
+The [model-dispatch investigation](model-routing-v2-dispatch.md) separately
+shows why the existing V2 hooks do not yet prove safe live provider switching
+or per-account affinity. This is a source-only blocker, not installed-host
+model-routing acceptance.
 
 ## Qualification and limits
 

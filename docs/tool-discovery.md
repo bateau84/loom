@@ -1,3 +1,11 @@
+---
+type: Architecture
+title: "Tool help is part of discovery"
+description: "Describes how native tool discovery exposes useful Loom instructions."
+tags: [loom, discovery, tooling]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Tool help is part of discovery
 
 Each of Loom's seven registered tool descriptions contains its own usage,

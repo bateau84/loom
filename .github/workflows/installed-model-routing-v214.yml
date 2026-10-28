@@ -1,0 +1,44 @@
+name: Installed OpenCode 2.2.0 unqualified routing guard
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  routing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .bun-version
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - name: Pack and install exact candidate plugin (SDK 2.2.0)
+        run: |
+          mkdir -p "$RUNNER_TEMP/loom-routing-artifact"
+          npm pack --json --pack-destination "$RUNNER_TEMP/loom-routing-artifact" > "$RUNNER_TEMP/loom-routing-artifact/pack.json"
+          ARTIFACT=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))[0].filename)' "$RUNNER_TEMP/loom-routing-artifact/pack.json")
+          npm install --prefix "$RUNNER_TEMP/loom-routing-install" --no-audit --no-fund "$RUNNER_TEMP/loom-routing-artifact/$ARTIFACT"
+      - name: Install isolated unmodified OpenCode 2.2.0 CLI
+        run: npm install --prefix "$RUNNER_TEMP/loom-routing-host" --no-audit --no-fund @opencode/cli@2.2.0
+      - name: Actual native request negative control and routing-disabled control
+        run: >-
+          python3 tests/installed_model_routing.py
+          --opencode "$RUNNER_TEMP/loom-routing-host/node_modules/.bin/opencode"
+          --plugin "$RUNNER_TEMP/loom-routing-install/node_modules/loom-plugin"
+          --artifact "$(find "$RUNNER_TEMP/loom-routing-artifact" -maxdepth 1 -name 'loom-plugin-*.tgz' -print -quit)"
+          --expect-plugin-version "$(node -p 'require("./package.json").version')"
+          --report-directory "$RUNNER_TEMP/loom-routing-report"
+          --repository "$GITHUB_WORKSPACE"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: installed-model-routing-v220-${{ github.sha }}
+          path: ${{ runner.temp }}/loom-routing-report/
+          if-no-files-found: warn
+          retention-days: 7

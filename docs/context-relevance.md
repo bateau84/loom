@@ -1,3 +1,11 @@
+---
+type: Architecture
+title: "Useful context without more orchestration"
+description: "Describes how Loom selects useful context without creating workflow gates."
+tags: [loom, context, retrieval]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Useful context without more orchestration
 
 This follow-up to `e6fef59` addresses review finding B: routine observations

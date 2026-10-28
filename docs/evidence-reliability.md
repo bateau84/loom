@@ -1,3 +1,11 @@
+---
+type: Architecture
+title: "Evidence pairing and capture recovery"
+description: "Explains evidence capture pairing, failure gaps and recovery limits."
+tags: [loom, evidence, reliability]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Evidence pairing and capture recovery
 
 This change addresses findings **A** (same-tool Code Mode cross-pairing) and

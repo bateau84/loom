@@ -1,3 +1,11 @@
+---
+type: Architecture
+title: "Historical handback comparison"
+description: "Preserves a historical comparison of handback approaches and their limits."
+tags: [loom, historical, handoff]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Historical handback comparison
 
 The comparison at `c2db6e7` evaluated answer-to-primary followed by native

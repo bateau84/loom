@@ -1,0 +1,51 @@
+name: Installed V2 routing acceptance (local providers)
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  installed-routing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .bun-version
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Install pinned Loom dependencies and run unit protection controls
+        run: |
+          bun install --frozen-lockfile
+          bun run typecheck
+          bun run test:core
+          bun run test:native
+          bun run test:python
+          python3 tests/routing_acceptance_oracle.py
+      - name: Pack and install the exact candidate, never modify the runner user config
+        run: |
+          mkdir -p "$RUNNER_TEMP/loom-acceptance-artifact"
+          npm pack --json --pack-destination "$RUNNER_TEMP/loom-acceptance-artifact" > "$RUNNER_TEMP/loom-acceptance-artifact/pack.json"
+          ARTIFACT=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))[0].filename)' "$RUNNER_TEMP/loom-acceptance-artifact/pack.json")
+          npm install --prefix "$RUNNER_TEMP/loom-acceptance-install" --no-audit --no-fund "$RUNNER_TEMP/loom-acceptance-artifact/$ARTIFACT"
+      - name: Install unmodified OpenCode CLI pinned to V2.2.0
+        run: npm install --prefix "$RUNNER_TEMP/loom-acceptance-host" --no-audit --no-fund @opencode/cli@2.2.0
+      - name: Installed-host negative controls, continuation and restart
+        run: >-
+          python3 tests/installed_routing_acceptance.py
+          --opencode "$RUNNER_TEMP/loom-acceptance-host/node_modules/.bin/opencode"
+          --plugin "$RUNNER_TEMP/loom-acceptance-install/node_modules/loom-plugin"
+          --artifact "$(find "$RUNNER_TEMP/loom-acceptance-artifact" -maxdepth 1 -name 'loom-plugin-*.tgz' -print -quit)"
+          --expect-plugin-version "$(node -p 'require("./package.json").version')"
+          --report-directory "$RUNNER_TEMP/loom-acceptance-report"
+          --repository "$GITHUB_WORKSPACE"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: installed-routing-acceptance-${{ github.sha }}
+          path: ${{ runner.temp }}/loom-acceptance-report/
+          if-no-files-found: warn
+          retention-days: 7

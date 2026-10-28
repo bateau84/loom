@@ -1,3 +1,11 @@
+---
+type: Playbook
+title: "Manual stopped-writers backup and restore"
+description: "Describes manual stopped-writer backup and restore of Loom state."
+tags: [loom, backup, recovery]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Manual stopped-writers backup and restore
 
 This is an offline, operator-initiated procedure for the Action Store, not the
@@ -6,9 +14,9 @@ legacy configuration exporter. It preserves the original files and restores to a
 state into a running host, migrate schemas, or repair damaged data.
 
 This is the manual procedure referenced by the [alpha operating policy](operating-policy.md)
-and [README](../README.md). Keep it separate from the configuration exporter and
+and the repository `README.md`. Keep it separate from the configuration exporter and
 the narrow empty-sender-table startup compatibility upgrade described in
-[migration and rollback](migration.md#state-and-rollback). A successful restore
+[migration guide](migration.md) (section **State and rollback**). A successful restore
 comparison is not authorization to start a sender or evidence of general legacy
 schema compatibility.
 

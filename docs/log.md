@@ -4,6 +4,197 @@ type: Log
 
 # Update Log
 
+## 2026-10-28
+
+**Final-review routing safeguards, draft #190:** The independent re-review
+identified residual ambiguity when an earlier auxiliary retry arrives after
+a newer primary Session request: native retry callbacks have neither request
+kind nor attempt ID. The candidate adapter now retains an ambiguity fence
+after any managed auxiliary dispatch until Session deletion or plugin
+restart. A later primary still needs a pre-dispatch quota reservation, but
+its retry cannot update shared account quota while an old auxiliary
+failure may own the callback. Known quota/auth failures stop native
+retry without speculative account attribution. The 512-Session bound also
+covers auxiliary-only Sessions; focused tests reproduce auxiliary account B,
+newer primary account A and delayed B failure, plus fresh-Session accounting
+and capacity/deletion behavior.
+
+**SDK/host safety:** The packaged SDK is 2.2.0. The historical 2.1.4
+routing implementation is retained as an *internal mock-host contract*
+but the production `registerModelRouting()` does not activate managed
+routing on any unqualified host/SDK pair, including CLI 2.1.4 + SDK 2.2.0.
+The early native request guard rejects such requests before provider
+transport, while an expressly disabled, valid policy leaves native
+OpenCode unchanged. Documentation and routing CI descriptions now
+distinguish current 2.2.0 host acceptance from historical 2.1.4 findings.
+
+**Current mainline:** Merged PR #200's delegated Plan authorship and
+Session-activity changes were integrated into the #190 branch with
+both merge parents preserved. #190 remains a draft and was **not**
+merged to `main`. Final-head CI, independent review and the user's
+merge decision are still required.
+
+## 2026-10-27
+
+**Critic safety corrections:** [Shared quota](shared-subscription-quota.md)
+now refuses positive quota evidence while an account remains blocked by
+a confirmed HTTP 401, and rejects contradictory persisted provider-available
+rows with zero/missing allowance. [Model routing](model-routing.md) rejects
+an auxiliary request that changes the active native account on the managed
+provider; auxiliary dispatch invalidates stale primary retry attribution.
+One pending primary record per Session makes the 512-Session limit accurate,
+including Session deletion and readmission. The native and real-SQLite
+regression tests exercise these cross-boundary cases.
+
+**Host upgrade integration:** Mainline PR #199 migrated Loom's packaged
+`@opencode/plugin` SDK and installed native CLI tests to 2.2.0. This
+foundation now incorporates that host upgrade without assuming that the
+version-specific 2.1.4 model-routing attestation or dispatch semantics were
+also qualified on 2.2.0. A valid disabled policy preserves native execution;
+opt-in managed routing on 2.2.0 is explicitly host-unqualified and blocked
+before provider transport pending independent qualification. The
+[2.2.0 host audit](opencode-2.2.0.md) is an indexed OKF concept.
+This does not establish live subscription billing or seamless fallback.
+
+## 2026-10-25
+
+**Cold-review startup and terminal-event corrections (PR #190):**
+The [routing adapter](model-routing.md) installs an early native model
+request deny hook before Action-ledger or quota initialization in OpenCode
+2.1.4. If guarded startup fails, the denial hook remains installed instead
+of letting native dispatch fall through to a potentially metered default.
+An unactivated plugin still cannot protect native dispatch without host-level
+enforcement. Per-Session quota reservations no longer disappear on delayed
+`session.execution.*` terminal events that lack execution identity; entries
+persist until native Session deletion or plugin restart, subject to a
+fail-closed capacity bound. Focused native and actual installed-host
+regressions cover these cases. New routing CI workflows now pin third-party
+actions to immutable commit hashes. OpenCode Go included billing,
+provider/account streaming leases and live fallback remain unproven.
+
+**Consolidation into PR #190 (draft):** The previously separate initial native
+routing, shared per-account SQLite quota implementation, installed-host
+acceptance tests and independent-review remediation now share one candidate
+branch. The [OpenCode Go entitlement audit](opencode-go-eligibility.md) and
+[safe V2 live-fallback proposal](opencode-v2-safe-live-fallback.md) have also
+been incorporated with the Go fail-closed regression tests. The local
+OpenCode 2.1.4 acceptance suite proves its scoped protective controls,
+not positive authorized subscription dispatch or in-flight provider
+switching. No changes have been merged into `main`; previous dated
+entries describe their original separate PRs for historical context.
+
+**Review remediation (draft, pending CI and independent re-review):**
+[Shared subscription quota](shared-subscription-quota.md) now validates all
+persisted numeric/lease fields before route eligibility, migrates existing
+quota schema v1 to v2 without resetting state, and preserves concurrent
+confirmed exhaustion against weaker negative reports. Recovery revisions
+still reject older failures and stale success. Native provider
+`retryAfterMs` is retained, with the later trusted deadline winning;
+ambiguous HTTP 403 is not account-wide authentication evidence.
+[Model routing](model-routing.md) now blocks dispatch when its startup
+configuration is unreadable, or when the native terminal-event stream
+ends unexpectedly; valid explicit disabling remains unchanged.
+Quota/native-adapter regression tests cover these failure sequences.
+[Installed acceptance](../tests/routing-host/ACCEPTANCE.md) now checks
+provider AND model continuity, native guard error categories, preserves
+sanitized per-case traces, and adds an invalid-config negative control.
+Positive real included-billing dispatch, native account affinity and
+live provider fallback remain unproven.
+
+**Integration**: [Shared subscription quota](shared-subscription-quota.md) now
+feeds [guarded initial model routing](model-routing.md). Imported the
+unmodified account-aware planner and quota manager from draft PR #192 onto
+the separate integration branch stacked on #191. Native account IDs are
+read from non-secret credential-record metadata, and active OpenCode
+2.1.4 model requests use atomic SQLite reservations. Known native provider
+quota, rate-limit and authentication error types can update shared cooldowns;
+a failed committed route is rejected, never silently retried on another model.
+Added isolated cross-process/native-hook integration tests. No automatic
+provider-success, reset or remaining-quota accounting is claimed, because
+OpenCode does not expose a safe request/account correlation for it. Existing
+PRs #190/#191/#192 remain unchanged; live fallback stays blocked.
+[Model-dispatch investigation](model-routing-v2-dispatch.md) retains the
+unsupported V2 interface boundary.
+
+## 2026-10-24
+
+**Implementation**: [Initial OpenCode 2.1.4 model routing](model-routing.md)
+added `src/model-routing-runtime.ts` and
+`src/model-routing-adapter.ts` to apply role-selected eligible native models
+with exact reasoning variants, opaque native connection and verified-billing
+checks, cooldown/attestation interface, and a pre-dispatch guard that rejects
+unexpected or ineligible provider calls. Added focused pure and mock V2
+adapter tests plus the isolated 2.1.4 installed-host negative-control workflow.
+Native stream/account leasing and live fallback remain unproven and are not
+implemented. [V2 dispatch investigation](model-routing-v2-dispatch.md)
+records the updated seam and restrictions; [README](../README.md) explains
+the host/SDK combination. Routing disabled preserves native behavior.
+
+
+**Creation**: [OpenCode 2.1.1 model-dispatch investigation](model-routing-v2-dispatch.md) —
+Audited the pinned V2 request, retry, model resolver and stream/tool boundaries.
+Recorded the absent atomic pre-output route-change seam, unproven account affinity,
+rejected unsafe workarounds, the separate opaque quota-attestation interface and
+minimal upstream host changes required. Source-only; no live failover or host
+qualification claimed. [Model routing](model-routing.md), the
+[compatibility guide](opencode-2.1.1.md), and this [index](index.md) now link
+that blocker. No runtime behavior changed.
+
+
+**Update**: [`design.md`](design.md) now links to the three indexed
+concern requirements rather than the reserved nested `index.md`.
+[`installed-host-validation.md`](installed-host-validation.md),
+[`manual-backup-restore.md`](manual-backup-restore.md),
+[`read-consistency.md`](read-consistency.md),
+[`retrieval-limits.md`](retrieval-limits.md), and
+[`tools.md`](tools.md) now link to indexed files while preserving intended
+section titles in prose. The backup guide refers to the repository `README.md`
+without treating it as an OKF concept. [`handoffs.md`](handoffs.md) and
+[`reviewer-corrections.md`](reviewer-corrections.md) gained grounded references
+to their existing implementation contracts. No new dependency obligations.
+
+**Creation**: [Repository OKF profile](../.okf-profile.yaml) — Declared
+the observed concept types and evidence-backed `references` and `depends-on`
+heading relationships. No unsupported cardinality obligations were added.
+
+**Update**: [`model-routing.md`](model-routing.md) — Linked the actual
+configuration decoder and OpenCode compatibility contracts under
+`Depends on`, establishing typed edges grounded in the draft implementation.
+
+**Update**: [`index.md`](index.md) and [README](../README.md) —
+Documented profile discovery at the repository scan root, restart semantics,
+and the distinction between local source checks and live graph verification.
+
+**Verification**: Extended `tests/okf-native.test.ts` with a profile
+vocabulary/alias and grounded-link regression check. Real `okf-mcp`
+profile loading and graph-integrity acceptance remain unverified.
+
+**Update**: Added OKF concept metadata (type, title, description, tags and
+timestamp) to 24 previously unindexed documents, in three groups:
+
+- [assignment-delivery.md](assignment-delivery.md), [collaboration.md](collaboration.md), [configuration-limits.md](configuration-limits.md), [configuration-parser.md](configuration-parser.md), [context-relevance.md](context-relevance.md), [coordination.md](coordination.md), [design.md](design.md), [evidence-reliability.md](evidence-reliability.md).
+- [handback-comparison.md](handback-comparison.md), [handback-experiment.md](handback-experiment.md), [handoffs.md](handoffs.md), [manual-backup-restore.md](manual-backup-restore.md), [migration.md](migration.md), [model-routing.md](model-routing.md), [opencode-2.1.1.md](opencode-2.1.1.md), [processing-limits.md](processing-limits.md).
+- [read-consistency.md](read-consistency.md), [retrieval-limits.md](retrieval-limits.md), [review-companions.md](review-companions.md), [reviewer-corrections.md](reviewer-corrections.md), [sender-qualification.md](sender-qualification.md), [task-selection-recovery.md](task-selection-recovery.md), [tool-discovery.md](tool-discovery.md), [tools.md](tools.md).
+
+**Update**: [`index.md`](index.md) now inventories every direct concept
+(28 documents), the nested [requirements bundle](requirements/index.md), and the
+change log. This replaces the old four-concept classification: earlier
+2026-10-24 notes describing `model-routing.md` as outside that bundle are
+superseded. Existing nested bundle ownership is unchanged.
+
+**Creation**: `model-routing.md` — Documented the draft role-based model
+classes, provider-first fallback policy, billing guardrails, and the separate
+runtime adapter work still required. This is supporting Markdown outside the
+four-source OKF bundle; it does not claim live OpenCode V2 quota failover —
+[Draft: provider-first model routing](/docs/model-routing.md).
+
+**Update**: `index.md` — Added the model-routing guide to the supporting-
+document inventory without adding it to the OKF source bundle —
+[bundle index](/docs/index.md).
+
+**Update**: `log.md` — Recorded the new supporting guide and index change —
+[change log](/docs/log.md).
+
 ## 2026-10-22
 
 **Update**: `review-companions.md`, `README.md`, the companion loader and

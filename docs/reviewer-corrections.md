@@ -1,3 +1,11 @@
+---
+type: Architecture
+title: "Corrections from the independent review of `5f51baf`"
+description: "Records independent review corrections and their verification boundaries."
+tags: [loom, review, corrections]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Corrections from the independent review of `5f51baf`
 
 The review reported two defects and three surviving mutations. These are different
@@ -108,3 +116,12 @@ tools and native execution/permission boundary.
 
 Pinned source: [SDK failed-finish interface](https://github.com/anomalyco/opencode/blob/v2.0.18/packages/plugin/src/promise/tool.ts)
 and [Tool.Error definition](https://github.com/anomalyco/opencode/blob/v2.0.18/packages/schema/src/tool.ts).
+
+## Implementation references
+
+- [Evidence pairing](evidence-reliability.md) explains the recorded
+  start/finish capture semantics affected by the failed-tool correction.
+- [Read consistency](read-consistency.md) describes selection-read and
+  persistence boundaries relevant to independent recovery.
+- [Configuration read limits](configuration-limits.md) documents timestamp
+  checking and the bounded file reader tested by the ctime regression.

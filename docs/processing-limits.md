@@ -1,3 +1,11 @@
+---
+type: Architecture
+title: "Processing limits: first bounded E correction"
+description: "Details processing limits and their supported verification boundaries."
+tags: [loom, processing, resource-safety]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Processing limits: first bounded E correction
 
 Input baseline: `ca93dd3`. The original review correctly distinguished small

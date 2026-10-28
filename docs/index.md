@@ -1,29 +1,67 @@
-# Documentation bundle
+# Loom documentation
 
-This OKF bundle contains four source documents: the current test/support inventory,
-installed-host validation scope, historical version analysis, and alpha operating
-policy. Its change log is also listed below.
+This `docs/` directory is Loom's OKF documentation bundle. Each non-reserved Markdown
+file in this directory is a documented concept, not an exempt "supporting" file.
+Use this index to find the relevant contract and its evidence; a document's
+historical status does not imply current runtime support.
 
-- [Tests, scripts and CI](/docs/testing.md)
-- [Installed-host validation: separate boot from acceptance](/docs/installed-host-validation.md)
-- [Historical OpenCode 2.0.29 analysis](/docs/opencode-2.0.29.md)
-- [Alpha operating policy: useful context, honest history](/docs/operating-policy.md)
-- [Documentation change log](/docs/log.md)
+The nested `requirements/` tree maintains its own index and history. Its
+concepts are inventoried in that bundle rather than duplicated here.
 
-## Supporting Markdown outside this OKF bundle
+The repository-root [OKF profile](../.okf-profile.yaml) defines a small,
+evidence-based relationship vocabulary. It is a scanner configuration asset,
+not a corpus concept document. Start `okf-mcp` with this repository as its
+scan root so the profile is discovered; it declares no mandatory link counts.
 
-The following ordinary Markdown files are supporting documentation, not source
-documents in this four-document OKF bundle. They have also been updated and are
-listed here for discoverability; they remain without OKF frontmatter and typed
-relationships.
+## Core architecture and tools
 
-- [OpenCode 2.1.1 migration and native opportunities](/docs/opencode-2.1.1.md)
-- [Retired assignment/delivery protocol](/docs/assignment-delivery.md)
-- [Reported progress and contextual questions](/docs/collaboration.md)
-- [Simple collaboration, native execution](/docs/coordination.md)
-- [Useful handoffs and independent review](/docs/handoffs.md)
-- [Implementation boundaries](/docs/design.md)
-- [Historical handback experiment](/docs/handback-experiment.md)
-- [Tool help is part of discovery](/docs/tool-discovery.md)
-- [Seven tools, optional structure](/docs/tools.md)
-- [Assessment and QA skill companions](/docs/review-companions.md): optional role-scoped loaders for installed review instructions.
+- [Implementation boundaries](design.md) — Current plugin architecture and non-goals
+- [Loom tool reference](tools.md) — Tool inputs, scopes and failures
+- [Tool discovery](tool-discovery.md) — How agents find registered help
+- [Coordination](coordination.md) — Optional agent coordination using OpenCode
+
+## Agent work and evidence
+
+- [Collaboration](collaboration.md) — Progress reports and contextual questions
+- [Context relevance](context-relevance.md) — Bounded useful context and scope
+- [Evidence reliability](evidence-reliability.md) — Pairing, capture gaps and recovery
+- [Handoffs](handoffs.md) — Continuation and independent review
+- [Review companions](review-companions.md) — Assessment and QA skill companion loaders
+- [Task selection recovery](task-selection-recovery.md) — Recovery when plans change
+
+## Configuration and compatibility
+
+- [Configuration file limits](configuration-limits.md) — Bounded reads and error handling
+- [Configuration parser](configuration-parser.md) — YAML decoding and allocation limits
+- [Migration](migration.md) — Moving out of the legacy OpenCode bundle
+- [Model routing (draft)](model-routing.md) — Guarded native 2.1.4 initial selection with shared quota; no live failover
+- [Shared subscription quota](shared-subscription-quota.md) — Cross-process SQLite quota state, atomic reservation, recovery and evidence limits
+- [V2 model dispatch investigation](model-routing-v2-dispatch.md) — 2.1.1 blocker and 2.1.4 initial-routing update
+- [OpenCode Go subscription eligibility](opencode-go-eligibility.md) — Missing native no-paid-overage guarantee; Go remains unverified
+- [Safe native fallback proposal](opencode-v2-safe-live-fallback.md) — OpenCode host changes required before live switching
+- [OpenCode 2.2.0 upgrade](opencode-2.2.0.md) — Current matched SDK/CLI host compatibility and limits
+- [OpenCode 2.1.1 compatibility](opencode-2.1.1.md) — Historical native host audit
+
+## Operations and verification
+
+- [Testing and CI](testing.md) — Test inventory and qualification scope
+- [Installed-host validation](installed-host-validation.md) — Separates boot evidence from acceptance
+- [Operating policy](operating-policy.md) — Supported alpha behavior and limits
+- [Manual backup and restore](manual-backup-restore.md) — Stopped-writer recovery procedure
+- [Processing limits](processing-limits.md) — Boundaries for bounded processing
+- [Read consistency](read-consistency.md) — Scoped storage-read guarantees and gaps
+- [Retrieval limits](retrieval-limits.md) — Bounded retrieval and configuration audit
+- [Reviewer corrections](reviewer-corrections.md) — Historical independent review follow-ups
+
+## Historical reference (not current runtime guarantees)
+
+- [Retired assignment/delivery](assignment-delivery.md) — Retired protocol background
+- [Handback comparison](handback-comparison.md) — Historical handback evaluation
+- [Handback experiment](handback-experiment.md) — Historical trial
+- [OpenCode 2.0.29](opencode-2.0.29.md) — Superseded compatibility research
+- [Sender qualification](sender-qualification.md) — Historical delivery qualification
+
+## Requirements and history
+
+- [Requirements bundle](requirements/index.md) — Requirements and their own nested concept inventories
+- [Documentation change log](log.md) — Changes to this documentation bundle

@@ -5,6 +5,8 @@ import { mkdir, open, realpath } from "node:fs/promises"
 import { homedir } from "node:os"
 import { isAbsolute, join } from "node:path"
 import { configPaths, loadConfig } from "./config.js"
+import { resolveModelPolicy } from "./model-routing.js"
+import { registerModelRouting } from "./model-routing-adapter.js"
 import { configLoadStatus } from "./config-admission.js"
 import { injectInstructions, registry, roleDescriptions, type NativeAgent } from "./agents.js"
 import { Observer } from "./context.js"
@@ -78,6 +80,24 @@ const specs = [
 export default Plugin.define({
   id: "loom",
   async setup(ctx) {
+    // A real OpenCode host may keep running after plugin setup fails.
+    // Register an early pre-transport deny hook BEFORE quota/ledger I/O on
+    // any versioned native host. No host/SDK profile is currently qualified
+    // for managed routing; unknown future versions must not fail open.
+    // Versionless partial test hosts retain their historical setup behavior.
+    const guardedHost = typeof ctx.app?.version === "string" && ctx.app.version.length > 0
+    let startupDispatch: "deny" | "delegated" | "disabled" = "deny"
+    let startupDenial = "LOOM_MODEL_ROUTING_STARTUP_BLOCKED: routing has not completed initialization"
+    const startupGuard = guardedHost ? await ctx.session.hook("model.request", () => {
+      if (startupDispatch === "deny") throw new Error(startupDenial)
+    }) : undefined
+    let startupGuardDisposed = false
+    const disposeStartupGuard = async () => {
+      if (startupGuardDisposed) return
+      startupGuardDisposed = true
+      await startupGuard?.dispose()
+    }
+    try {
     const directory = await realpath(ctx.location.directory)
     const configuredPaths = configPaths(directory)
     const lifetime = new AbortController()
@@ -129,7 +149,10 @@ export default Plugin.define({
       const saved = store.selected(session)
       return saved ? { action_id: saved.action_id, ...(saved.node_id === undefined ? {} : { node_id: saved.node_id }) } : undefined
     }
+    let routingStatus: "disabled" | "not-connected" | "initial-only" | "blocked-config" = "not-connected"
     try {
+      const routing = await registerModelRouting(ctx, () => getConfig(), disposers, lifetime.signal)
+      routingStatus = routing.status
       disposers.push(await ctx.tool.transform(editor => {
         editor.namespace({ name: "loom", description: LOOM_NAMESPACE_HELP })
         for (const spec of specs) editor.add({
@@ -147,7 +170,26 @@ export default Plugin.define({
             switch (spec.name) {
               case "agents": {
                 const entries = registry(snapshot.config, agents(await ctx.agent.list()))
-                result = { agents: entries, role_descriptions: roleDescriptions(snapshot.config), config_loads: configLoadStatus(), evidence: { capture: snapshot.config.ledger.capture, ...observer.status() }, config_sources: snapshot.sources, errors: snapshot.errors, warnings: entries.filter(a => a.configured && !a.available).map(a => `Configured agent is unavailable: ${a.id}`) }; break
+                const modelPolicies = snapshot.config.modelRouting.enabled
+                  ? Object.fromEntries(entries.filter(a => a.configured && a.enabled).map(a => [a.id, resolveModelPolicy(snapshot.config, a.id)]))
+                  : undefined
+                result = {
+                  agents: entries, role_descriptions: roleDescriptions(snapshot.config), config_loads: configLoadStatus(),
+                  evidence: { capture: snapshot.config.ledger.capture, ...observer.status() },
+                  config_sources: snapshot.sources, errors: snapshot.errors,
+                  warnings: entries.filter(a => a.configured && !a.available).map(a => `Configured agent is unavailable: ${a.id}`),
+                  ...(modelPolicies || routing.status === "blocked-config" ? {
+                    ...(modelPolicies ? { model_policy_preview: modelPolicies } : {}),
+                    model_routing_runtime: routing.status,
+                    model_routing_selected: routing.selected,
+                    model_routing_unavailable_agents: routing.unavailable,
+                    model_routing_note: routing.status === "blocked-config"
+                      ? "Configuration is unreadable: native model requests are blocked before transport until config repair and plugin restart. Valid disabled routing is unaffected."
+                      : routing.status === "initial-only"
+                      ? "Native 2.1.4 agent selection only. Only verified included routes (or explicitly opted-in verified metered routes) are dispatched. No live provider failover; unavailable routes fail closed."
+                      : "Policy preview only: Loom does not yet route native provider requests in this host. No model-routing adapter is installed.",
+                  } : {}),
+                }; break
               }
               case "action":
                 if (input.operation === "list") result = store.list(input.offset as number | undefined)
@@ -335,6 +377,52 @@ export default Plugin.define({
       lifetime.abort()
       await Promise.allSettled(disposers.map(d => d.dispose())); database.close(); throw error
     }
-    return async () => { lifetime.abort(); await Promise.allSettled(disposers.map(d => d.dispose())); database.close() }
+    // The early guard remains restrictive until the entire plugin initialized.
+    // A valid, explicitly disabled policy removes it; a guarded runtime
+    // delegates to the fully registered model.request hook. Unknown hosts
+    // and partial runtimes remain denied instead of falling through.
+    if (routingStatus === "disabled") {
+      startupDispatch = "disabled"
+      await disposeStartupGuard()
+    } else if (routingStatus === "initial-only" || routingStatus === "blocked-config") {
+      startupDispatch = "delegated"
+    } else {
+      // A capable real host with no working adapter must not silently fall
+      // through to its global model. Incomplete legacy mocks have no early
+      // guard and retain their existing setup behavior.
+      startupDenial = "LOOM_MODEL_ROUTING_HOST_UNQUALIFIED: no proven native request guard"
+    }
+    return async () => {
+      startupDispatch = "deny"
+      lifetime.abort()
+      await Promise.allSettled(disposers.map(d => d.dispose()))
+      database.close()
+      await disposeStartupGuard()
+    }
+    } catch (error) {
+      startupDispatch = "deny"
+      startupDenial = "LOOM_MODEL_ROUTING_STARTUP_FAILED: plugin initialization failed; native dispatch blocked"
+      // If the host does not expose the qualified early guard, we cannot
+      // truthfully retain protection. Preserve the original startup failure.
+      if (!startupGuard) throw error
+      // Preserve pre-existing startup failure reporting and native fallback
+      // when routing was demonstrably disabled by a successfully loaded config.
+      // Unreadable config is NEVER interpreted as deliberate disabling.
+      let safelyDisabled = false
+      try {
+        const root = await realpath(ctx.location.directory)
+        const snapshot = await loadConfig(configPaths(root), decodeConfigYaml)
+        safelyDisabled = snapshot.errors.length === 0 && !snapshot.config.modelRouting.enabled
+      } catch { /* Unknown routing intent stays denied. */ }
+      if (safelyDisabled) {
+        startupDispatch = "disabled"
+        await disposeStartupGuard()
+        throw error
+      }
+      console.error("Loom startup failed; keeping native model dispatch denied:", error instanceof Error ? error.message : String(error))
+      // Resolving setup retains the installed deny hook. Throwing would let
+      // OpenCode unload that hook and continue with an unguarded global model.
+      return async () => { startupDispatch = "deny"; await disposeStartupGuard() }
+    }
   },
 })
