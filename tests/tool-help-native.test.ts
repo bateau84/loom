@@ -106,7 +106,7 @@ test("canonical collaboration help matches conditional schemas and rejects alias
         await expect(f.invoke("record", invalid)).rejects.toThrow("attachments is not supported")
     }
     for (const text of ["FIRST committed", "legacy", "single", "No retries", "not an atomic lease", "not perpetual", "No recursive evidence expansion"]) expect(tool.description).toContain(text)
-    expect(tool.input.properties.operation.enum).toEqual(["add", "query", "complete", "reopen", "ask", "answer"])
+    expect(tool.input.properties.operation.enum).toEqual(["add", "query", "complete", "reopen", "ask", "answer", "bind-respondent"])
     expect(tool.input.properties.view.enum).toEqual(["ledger", "progress", "questions", "thread", "full_thread"])
     const history = (await f.invoke("record", { operation: "query", view: "full_thread", session_id: "asker", limit: 1 })).result
     expect(history.format).toBe("loom-full-thread/v1")
