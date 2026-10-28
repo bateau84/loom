@@ -183,11 +183,11 @@ test("typed OQ delegates to one eligible agent and only that native agent can an
   try {
     const q = (await f.invoke("record", { operation: "ask", question: "Which API boundary?", recipient: { kind: "agent", id: "investigator" }, blocking: true }, "asker", "author")).result
     expect(q.data).toMatchObject({ format: "loom-question/v2", recipient: { kind: "agent", id: "investigator" }, expected_agent: "investigator" })
-    expect(q.dispatch).toMatchObject({ status: "admission-observed", reason: "native-prompt-admitted", target_agent: "investigator", attempted: true })
+    expect(q.dispatch).toMatchObject({ status: "admission-observed", reason: "native-subagent-admitted", target_agent: "investigator", attempted: true })
     expect(f.permissionRequests[0]).toMatchObject({ action: "subagent", resources: ["investigator"], sessionID: "asker", agent: "author" })
     expect(f.sessionCreates).toHaveLength(1)
     expect(f.sessionCreates[0]).toMatchObject({ agent: "investigator", parentID: "asker" })
-    expect(f.sessionPrompts[0]).toMatchObject({ sessionID: "ses_questionchild_1", resume: true, delivery: "steer" })
+    expect(f.sessionPrompts[0]).toMatchObject({ sessionID: "ses_questionchild_1", resume: false, delivery: "steer" })
     expect(f.sessionPrompts[0].text).toContain(q.id)
     await expect(f.invoke("record", { operation: "answer", question_id: q.id, answer: "Unqualified guess" }, "someone-else", "author")).rejects.toThrow("intended respondent")
     const threadBefore = (await f.invoke("record", { operation: "query", view: "thread", question_id: q.id })).result
@@ -214,7 +214,8 @@ test("role OQs fail closed for ambiguous candidates and never bypass explicit su
     expect(f.sessionCreates).toHaveLength(1)
     await expect(f.invoke("record", { operation: "answer", question_id: ambiguous.id, answer: "Guessed", }, "ses_questionchild_1", "investigator")).rejects.toThrow("no authorized respondent")
     f.permission.error = new Error("denied by native policy")
-    await expect(f.invoke("record", { operation: "ask", question: "Denied?", recipient: { kind: "agent", id: "investigator" }, blocking: true }, "asker", "author")).rejects.toThrow("denied by native policy")
+    const denied = (await f.invoke("record", { operation: "ask", question: "Denied?", recipient: { kind: "agent", id: "investigator" }, blocking: true }, "asker", "author")).result
+    expect(denied.dispatch).toMatchObject({ status: "outcome-unknown", attempted: true })
     expect(f.sessionCreates).toHaveLength(1)
     expect(f.sessionPrompts).toHaveLength(1)
   } finally { await f.close() }
