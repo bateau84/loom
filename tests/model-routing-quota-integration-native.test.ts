@@ -388,3 +388,46 @@ test("512 distinct Sessions admit repeated agent requests, reject 513th and reco
     await expect(dispatch(blocked)).resolves.toBeUndefined()
   } finally { controller.abort(); store.close() }
 }))
+
+
+test("delayed auxiliary retry after a newer primary never contaminates its account quota", async () => withState(async path => {
+  const store = await openSharedQuotaState({ path })
+  try {
+    const f = fixture("account-a")
+    // Auxiliary compaction runs against account B before any primary lease.
+    f.ctx.integration.connection.active = async (providerID: string) => ({
+      type: "credential", method: "oauth",
+      id: providerID === "opencode-go" ? "account-b" : "openai-secondary",
+    })
+    await registerModelRouting(f.ctx, f.config, [], new AbortController().signal, f.billing, store)
+    const dispatch = f.hooks.get("model.request")!
+    const retry = f.hooks.get("retry")!
+    await dispatch({ ...request(), kind: "compaction" })
+
+    // A later primary on the exact same Session, agent and native model is
+    // now routed through account A. The old auxiliary retry has no kind or
+    // attempt identity, so it cannot be charged to A's newer permit.
+    f.ctx.integration.connection.active = async (providerID: string) => ({
+      type: "credential", method: "oauth",
+      id: providerID === "opencode-go" ? "account-a" : "openai-secondary",
+    })
+    await dispatch(request())
+    const delayed = { ...request(), error: { type: "provider.quota", status: 429 },
+      attempt: 1, decision: { retry: true, delay: 0 } }
+    await retry(delayed)
+    expect(store.eligibility(go("account-a")).eligible).toBe(true)
+    expect(store.eligibility(go("account-b")).eligible).toBe(true)
+    // Do not blindly repeat a known quota failure even when accounting is
+    // deliberately unattributed.
+    expect(delayed.decision.retry).toBe(false)
+
+    // Unattributable state persists across primary requests in this Session;
+    // a host execution terminal event has no attempt ID to clear it safely.
+    await dispatch(request())
+    const newer = { ...request(), error: { type: "provider.rate-limit", status: 429 },
+      attempt: 2, decision: { retry: true, delay: 0 } }
+    await retry(newer)
+    expect(store.eligibility(go("account-a")).eligible).toBe(true)
+    expect(newer.decision.retry).toBe(false)
+  } finally { store.close() }
+}))
