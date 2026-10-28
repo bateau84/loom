@@ -40,7 +40,7 @@ READ_DENIAL_APPLICABILITY = {
 }
 REQUIRED_INSTALLED_CHECKS = {
     'E1-no-plan-manual-question', 'E1-storage-failure-zero-contact', 'E6-typed-role-native-dispatch',
-    'E6-parent-user-native-notices', 'E6-zero-depth-native-denial',
+    'E6-parent-user-native-notices', 'E6-forwarded-exact-respondent', 'E6-zero-depth-native-denial',
     'E2-idle-switched-native-resume',
     'E2-later-legacy-missing-failed-first', 'E2-running', 'E2-preyield', 'E2-public-moved-target',
     'E3-new-unicode-relational-parts', 'E3-old-action-full-content-oracle',
@@ -765,6 +765,46 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             report['checks'].append({'name': 'E6-parent-user-native-notices', 'status': 'PASS',
                                      'dispatcher_question': forwarded['id'], 'user_question': user_question['id'],
                                      'qualification': 'Native parent delivery verified; actual human reply is unproven in scripted host'})
+
+            # A real parent can have two native specialist children with the same
+            # agent. Only the child explicitly bound for this OQ may answer.
+            specialist_q = s.invoke(child_id, 'record', {
+                'operation': 'ask', 'question': 'Which specialist has this OQ?',
+                'recipient': {'kind': 'agent', 'id': 'question-specialist'}, 'blocking': False})
+            require(specialist_q['dispatch']['target_session_id'] == typed_asker,
+                    'Forwarded specialist question did not reach the dispatcher')
+            def specialist_child(label):
+                return request(host, 'POST', '/api/session', {
+                    'parentID': typed_asker, 'agent': 'question-specialist',
+                    'title': label,
+                    'model': {'providerID': 'question-fixture', 'id': 'respondent'}})['id']
+            chosen, sibling = specialist_child('selected specialist'), specialist_child('unrelated sibling')
+            attempt = {'operation': 'answer', 'question_id': specialist_q['id'],
+                       'answer': 'Unbound sibling answer'}
+            assert_rejected(s, sibling, [attempt])
+            assert_rejected(s, child_id, [{'operation': 'bind-respondent',
+                             'question_id': specialist_q['id'], 'respondent_session_id': chosen}])
+            binding = s.invoke(typed_asker, 'record', {'operation': 'bind-respondent',
+                             'question_id': specialist_q['id'], 'respondent_session_id': chosen})
+            require(binding['data']['session_id'] == chosen and
+                    binding['data']['parent_session_id'] == typed_asker,
+                    'Dispatcher did not persist the exact native child binding')
+            assert_rejected(s, sibling, [attempt])
+            assert_rejected(s, typed_asker, [{'operation': 'bind-respondent',
+                            'question_id': specialist_q['id'], 'respondent_session_id': sibling}])
+            answer = s.invoke(chosen, 'record', {'operation': 'answer',
+                             'question_id': specialist_q['id'], 'answer': 'Selected specialist answer'})
+            require(answer['session_id'] == chosen and 'resume' not in answer,
+                    'Bound nonblocking specialist answer was not saved accurately')
+            thread = s.invoke(typed_reader, 'record', {'operation': 'query',
+                              'view': 'thread', 'question_id': specialist_q['id']})
+            require(len(thread['answers']) == 1 and thread['answers'][0]['id'] == answer['id'],
+                    'Wrong sibling was able to append an answer')
+            report['checks'].append({'name': 'E6-forwarded-exact-respondent', 'status': 'PASS',
+                                     'question': specialist_q['id'], 'respondent_session': chosen,
+                                     'sibling_session': sibling,
+                                     'qualification': 'Installed host native Session parent/agent and Loom binding; child creation via private native API'})
+
 
 
 
