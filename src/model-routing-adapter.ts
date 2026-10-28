@@ -115,7 +115,41 @@ export type ModelRoutingRuntime = {
  * The model.request guard runs before the native transport; when OpenCode
  * falls back to its global default, it blocks instead of risking a paid call.
  */
+/**
+ * Production admission is intentionally separate from the historical
+ * 2.1.4 routing adapter below. The published SDK is now 2.2.0 and no
+ * native host/SDK pair has yet received positive managed-subscription and
+ * account-affinity qualification. In particular, CLI 2.1.4 + SDK 2.2.0
+ * MUST NOT accidentally re-enable the older routing implementation.
+ *
+ * The plugin's early model.request guard denies "not-connected" on actual
+ * hosts; valid explicitly disabled policies continue normal native use.
+ * Do not add a host version here without a new installed acceptance gate.
+ */
 export async function registerModelRouting(
+  ctx: Context,
+  getConfig: () => Promise<ConfigSnapshot>,
+  _disposers: Registration[],
+  _signal: AbortSignal,
+  _source?: RouteEligibilitySource,
+  _injectedQuota?: QuotaGate,
+): Promise<ModelRoutingRuntime> {
+  // Preserve the old no-I/O behavior of partial/mock hosts, including
+  // configuration-admission tests with a full queue of readers.
+  if (!ctx.model?.list || !ctx.provider?.list || !ctx.integration?.connection?.active) {
+    return { status: "not-connected", selected: {}, unavailable: [] }
+  }
+  const snapshot = await getConfig()
+  return { status: snapshot.errors.length === 0 && !snapshot.config.modelRouting.enabled
+      ? "disabled" : "not-connected", selected: {}, unavailable: [] }
+}
+
+/**
+ * @internal Historical adapter contract exercised by deterministic mocked-host
+ * tests only. NOT a production routing entrypoint and not qualification for
+ * any current host/SDK pair. Real plugin setup calls registerModelRouting().
+ */
+export async function registerModelRoutingCandidate(
   ctx: Context,
   getConfig: () => Promise<ConfigSnapshot>,
   disposers: Registration[],
@@ -123,17 +157,6 @@ export async function registerModelRouting(
   source?: RouteEligibilitySource,
   injectedQuota?: QuotaGate,
 ): Promise<ModelRoutingRuntime> {
-  // OpenCode 2.2.0 has been qualified for the ordinary Loom host path, NOT
-  // for this version-specific subscription routing/attestation adapter.
-  // Refuse opt-in managed routing until its native billing and request
-  // semantics receive independent qualification. The early request hook in
-  // plugin.ts remains deny-all for this status on the real 2.2.0 host.
-  // Explicitly disabled, valid configurations retain native OpenCode use.
-  if (ctx.app?.version === "2.2.0") {
-    const snapshot = await getConfig()
-    return { status: !snapshot.errors.length && !snapshot.config.modelRouting.enabled
-        ? "disabled" : "not-connected", selected: {}, unavailable: [] }
-  }
   // Native 2.1.4 runtime routing is not present on old/partial host mocks.
   // Check capability before consuming an admitted config I/O slot; legacy
   // Loom tool tests intentionally saturate that separate admission boundary.
