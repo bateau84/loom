@@ -1,5 +1,6 @@
 import { Plugin } from "@opencode/plugin"
 import { Database } from "bun:sqlite"
+import { randomUUID } from "node:crypto"
 import { decodeConfigYaml } from "./config-parser.js"
 import { mkdir, open, realpath } from "node:fs/promises"
 import { homedir } from "node:os"
@@ -128,6 +129,8 @@ export default Plugin.define({
       throw new Error(`Loom startup failed (stage=${stage}, database=${JSON.stringify(filename)}): ${error instanceof Error ? error.message : String(error)}`, { cause: error })
     }
     const database = db
+    // Scoped to one live plugin instance; never recover a dispatch token from untrusted history.
+    const awaitingNativePrompt = new Map<string, { question: string; parent: string; agent: string; bound?: string }>()
     const disposers: Array<{ dispose(): Promise<void> }> = []
     let lastWarning = ""
     const warn = (error: unknown) => {
@@ -149,6 +152,20 @@ export default Plugin.define({
       return saved ? { action_id: saved.action_id, ...(saved.node_id === undefined ? {} : { node_id: saved.node_id }) } : undefined
     }
     try {
+      // Native subagent owns depth and permission checks. Its prompt hook supplies
+      // the exact child identity BEFORE OpenCode can admit that child's input.
+      disposers.push(await ctx.session.hook("prompt", async event => {
+        const token = /(?:^|\\n)Loom OQ dispatch token: ([0-9a-f-]{36})(?:\\n|$)/.exec(event.prompt.text)?.[1]
+        const pending = token ? awaitingNativePrompt.get(token) : undefined
+        if (!pending) return
+        if (pending.bound) throw new Error("OQ recipient has already been bound")
+        const child = payload(unwrapped(await ctx.session.get({ sessionID: event.sessionID })))
+        if (child.id !== event.sessionID || child.parentID !== pending.parent ||
+            child.agent !== pending.agent || !await sessionIsLocal(child))
+          throw new Error("Native OQ prompt recipient is not the intended local child")
+        store.collaboration.bindRespondent(pending.question, event.sessionID, pending.agent)
+        pending.bound = event.sessionID
+      }))
       disposers.push(await ctx.tool.transform(editor => {
         editor.namespace({ name: "loom", description: LOOM_NAMESPACE_HELP })
         for (const spec of specs) editor.add({
@@ -330,25 +347,30 @@ export default Plugin.define({
                     ...(route.expected_session ? { expected_session: route.expected_session } : {}),
                     ...(route.expected_parent_session ? { expected_parent_session: route.expected_parent_session } : {}),
                   })
-                  // Use the SAME permission action as OpenCode's built-in subagent tool.
-                  // Denial must reject the tool call, not be turned into a successful dispatch result.
-                  if (route.mode === "delegate" && route.agent) {
-                    await ctx.permission.assert({ action: "subagent", resources: [route.agent], save: [route.agent],
-                      sessionID: actor.session_id, agent: actor.agent,
-                      source: { type: "tool", messageID: toolContext.messageID, id: toolContext.id } })
-                  }
                   const dispatch = await sendQuestion(store, stored, route, {
-                    create: async (agent, parentID, title, model) => {
-                      const child = payload(unwrapped(await ctx.session.create({
-                        parentID: parentID as NonNullable<Parameters<typeof ctx.session.create>[0]>["parentID"],
-                        agent: agent as NonNullable<Parameters<typeof ctx.session.create>[0]>["agent"], title,
-                        ...(model ? { model: model as NonNullable<Parameters<typeof ctx.session.create>[0]>["model"] } : {}),
-                      })))
-                      if (!await sessionIsLocal(child)) throw new Error("Created child is not in the local project")
-                      return child
+                    delegate: async (agent, parentID, questionID, prompt) => {
+                      const native = (await ctx.tool.list()).find(info => info.name === "subagent")
+                      if (!native) throw new Error("OpenCode native subagent tool unavailable; no direct child creation")
+                      const token = randomUUID()
+                      const pending: { question: string; parent: string; agent: string; bound?: string } =
+                        { question: questionID, parent: parentID, agent }
+                      awaitingNativePrompt.set(token, pending)
+                      try {
+                        // Invoking the native tool preserves the effective depth limit,
+                        // native permission checks, and model selection semantics.
+                        const result = await native.execute({
+                          agent, description: `Resolve Loom OQ ${questionID.slice(0, 8)}`,
+                          prompt: `Loom OQ dispatch token: ${token}\\n${prompt}`, background: true,
+                        }, toolContext)
+                        const output = payload(result.output)
+                        if (typeof output.sessionID !== "string" || pending.bound !== output.sessionID ||
+                            !["running", "completed"].includes(String(output.status)))
+                          throw new Error("Native subagent completion did not match the verified pre-admission binding")
+                        return { sessionID: output.sessionID }
+                      } finally {
+                        awaitingNativePrompt.delete(token)
+                      }
                     },
-                    prompt: (sessionID, text) => ctx.session.prompt({ sessionID: sessionID as Parameters<typeof ctx.session.prompt>[0]["sessionID"],
-                      text, resume: true, delivery: "steer" }),
                     synthetic: (sessionID, text, metadata) => ctx.session.synthetic({
                       sessionID: sessionID as Parameters<typeof ctx.session.synthetic>[0]["sessionID"],
                       text, metadata, description: "Loom Open Question", resume: true, delivery: "steer",
