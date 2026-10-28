@@ -207,3 +207,21 @@ test("unqualified 2.2.0 host never installs live managed routing; valid disabled
   expect(baseline.status).toBe("disabled")
   expect(disabled.hooks.size).toBe(0)
 })
+
+
+test("no native managed-routing host is qualified against the current 2.2.0 SDK, including older 2.1.4", async () => {
+  for (const version of ["2.1.4", "2.2.0", "2.3.0"]) {
+    const f = host()
+    f.ctx.app.version = version
+    const runtime = await registerModelRouting(f.ctx, f.load, [], new AbortController().signal, undefined, fakeQuota)
+    expect(runtime.status).toBe("not-connected")
+    expect(runtime.selected).toEqual({})
+    expect(f.hooks.size).toBe(0)
+    expect(f.agents.architect.model).toBeUndefined()
+    const disabled = host(policy(false))
+    disabled.ctx.app.version = version
+    const native = await registerModelRouting(disabled.ctx, disabled.load, [], new AbortController().signal, undefined, fakeQuota)
+    expect(native.status).toBe("disabled")
+    expect(disabled.hooks.size).toBe(0)
+  }
+})
