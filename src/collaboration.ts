@@ -209,13 +209,13 @@ export class Collaboration {
     })
   }
   /** Bind one verified native child before allowing it to receive or answer the question. */
-  bindRespondent(questionID: string, sessionID: string, agent: string): LedgerRecord {
+  bindRespondent(questionID: string, sessionID: string, agent: string, dispatcherSession?: string): LedgerRecord {
     uid(sessionID, "respondent Session"); uid(questionID, "question ID")
     return this.atomic(true, () => {
       const question = this.record(questionID, "question")
       if (question.data.format !== "loom-question/v2" || question.data.expected_agent !== agent ||
-          question.data.expected_parent_session || question.data.expected_session)
-        throw new Error("Question does not permit a direct respondent binding")
+          question.data.expected_session || question.data.expected_parent_session !== dispatcherSession)
+        throw new Error("Question is not owned by this dispatching Session or respondent")
       const bound = this.db.prepare(`SELECT 1 FROM ledger WHERE kind='result'
         AND json_extract(data,'$.data.format')='loom-question-respondent-binding/v1'
         AND json_extract(data,'$.data.question_id')=? LIMIT 1`).get(questionID)
@@ -225,7 +225,8 @@ export class Collaboration {
         ...(question.node_id ? { node_id: question.node_id } : {}),
         kind: "result", data: { format: "loom-question-respondent-binding/v1",
           question_id: questionID, session_id: sessionID, agent,
-          qualification: "Verified native child identity, not proof of prompt delivery or an answer" } })
+          ...(dispatcherSession ? { parent_session_id: dispatcherSession } : {}),
+          qualification: "Verified respondent Session identity, not proof of delivery, execution or answer" } })
     })
   }
   answer(actor: Actor, input: Record<string, unknown>, verifiedParentSession?: string): AnswerCommit {
@@ -239,15 +240,18 @@ export class Collaboration {
         let expectedSession = question.data.expected_session
         if (!expectedAgent && !expectedSession) throw new Error("Question has no authorized respondent; arrange routing first")
         if (expectedAgent && actor.agent !== expectedAgent) throw new Error("Answering agent does not match the intended respondent")
-        if (question.data.expected_parent_session !== undefined) {
-          if (verifiedParentSession !== question.data.expected_parent_session)
-            throw new Error("Answering Session is not a verified child of the dispatching Session")
-        } else if (expectedAgent && expectedSession === undefined) {
+        if (question.data.expected_parent_session !== undefined &&
+            verifiedParentSession !== question.data.expected_parent_session)
+          throw new Error("Answering Session is not a verified child of the dispatching Session")
+        if (expectedAgent) {
           const bound = this.db.prepare(`SELECT json_extract(data,'$.data.session_id') AS session_id
             FROM ledger WHERE kind='result'
             AND json_extract(data,'$.data.format')='loom-question-respondent-binding/v1'
             AND json_extract(data,'$.data.question_id')=? LIMIT 1`).get(question.id) as { session_id?: string } | undefined
-          if (typeof bound?.session_id !== "string") throw new Error("Question has no verified receiving Session")
+          if (typeof bound?.session_id !== "string") {
+            if (question.data.expected_parent_session) throw new Error("Forwarded question is not bound to an intended specialist Session")
+            throw new Error("Question has no verified receiving Session")
+          }
           expectedSession = bound.session_id
         }
         if (expectedSession && actor.session_id !== expectedSession)
@@ -313,11 +317,12 @@ export class Collaboration {
     let filter = "q.action_id=? AND q.kind='question' AND q.seq>?"
     if (q.node_id !== undefined) { filter += " AND json_extract(q.data,'$.node_id')=?"; params.push(q.node_id) }
     const recipient = "(json_extract(q.data,'$.data.to_agent')=? OR json_extract(q.data,'$.data.respondent')=? OR json_extract(q.data,'$.data.recipient.id')=? OR json_extract(q.data,'$.data.expected_agent')=?)"
+    const agentRecipient = "(json_extract(q.data,'$.data.to_agent')=? OR json_extract(q.data,'$.data.respondent')=? OR json_extract(q.data,'$.data.expected_agent')=?)"
     if (q.respondent !== undefined) { filter += ` AND ${recipient}`; params.push(...Array(4).fill(q.respondent)) }
     if (relevant !== undefined) {
       if (relevant.length > 300) throw new ProcessingLimitError("question context exceeds 300 nodes")
-      filter += ` AND (json_extract(q.data,'$.node_id') IS NULL${relevant.length ? ` OR json_extract(q.data,'$.node_id') IN (${relevant.map(() => "?").join(",")})` : ""}${agent ? ` OR ${recipient}` : ""})`
-      params.push(...relevant); if (agent) params.push(...Array(4).fill(agent))
+      filter += ` AND (json_extract(q.data,'$.node_id') IS NULL${relevant.length ? ` OR json_extract(q.data,'$.node_id') IN (${relevant.map(() => "?").join(",")})` : ""}${agent ? ` OR ${agentRecipient}` : ""})`
+      params.push(...relevant); if (agent) params.push(...Array(3).fill(agent))
     }
     if (state !== "all") filter += ` AND ${state === "open" ? "NOT " : ""}EXISTS (SELECT 1 FROM ledger a
       WHERE a.kind='answer' AND a.action_id=q.action_id AND json_extract(a.data,'$.data.question_id')=q.id)`
