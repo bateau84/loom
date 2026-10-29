@@ -132,7 +132,7 @@ test("consolidation cites two immutable originals from a different selected task
     expect((await progress()).result).toEqual(before)
     expect((await f.invoke("action", { operation: "list" })).result.items[0].state).toBe("active")
     expect(f.nativeInputs).toEqual([])
-    expect(f.tools.size).toBe(7)
+    expect(f.tools.size).toBe(8)
   } finally { await f.close() }
 })
 
