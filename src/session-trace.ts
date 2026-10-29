@@ -16,7 +16,7 @@ const local = (root: string, path: string) => path !== root && !relative(root, p
 
 /** Read one explicitly supplied OpenCode export without accessing the host database or other projects.
  * The full untrusted transcript is never returned to the tool caller or stored in Loom. */
-export async function readSessionExport(directory: string, path: string, sessionID: string, projectID: string): Promise<unknown[]> {
+export async function readSessionExport(directory: string, path: string, sessionID: string, projectID: string, authorize: (canonicalPath: string) => Promise<void>): Promise<unknown[]> {
   if (typeof path !== "string" || !path || path.length > 4096 || isAbsolute(path) || path.includes("\0"))
     throw new Error("export_path must be a relative path under the current project")
   const root = await realpath(directory)
@@ -24,8 +24,12 @@ export async function readSessionExport(directory: string, path: string, session
   if (!local(root, candidate)) throw new Error("Export must stay within the current project")
   const canonical = await realpath(candidate)
   if (!local(root, canonical)) throw new Error("Export resolves outside the current project")
+  // Native permission is required even for a file under this project. Approval can yield;
+  // recheck both the path and the Session identity after it returns.
+  await authorize(canonical)
+  if (await realpath(candidate) !== canonical) throw new Error("Export path changed during permission approval")
   // Avoid following the final component if it changes between validation and opening.
-  const file = await open(candidate, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+  const file = await open(canonical, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
   let content: string
   try {
     const stat = await file.stat()
@@ -53,7 +57,7 @@ export async function readSessionExport(directory: string, path: string, session
 
 export type TimelineOptions = {
   sessionID: string
-  source: "native-context" | "verified-export"
+  source: "native-context" | "provided-export"
   offset?: number
   limit?: number
   includeText?: boolean
@@ -167,8 +171,8 @@ export function traceTimeline(input: unknown, options: TimelineOptions) {
     session_id: options.sessionID,
     source: options.source,
     coverage: options.source === "native-context"
-      ? { full_history: false, detail: "Only the active messages after the latest completed compaction. Earlier history and child Sessions are NOT included." }
-      : { full_history: true, detail: "An explicitly supplied, identity-checked OpenCode export projection. May be sanitized or stale; child Sessions are NOT included." },
+      ? { full_history: false, detail: "Only active messages after the latest completed compaction. Earlier history and child Sessions are NOT included." }
+      : { full_history: null, detail: "Provided export matches the requested Session identity and location but completeness/integrity cannot be established. It may be sanitized, stale or incomplete. Child Sessions are NOT included." },
     metrics, tool_statuses: toolStatuses,
     offset, events: events.slice(offset, offset + limit),
     next_offset: offset + limit < events.length ? offset + limit : null,
