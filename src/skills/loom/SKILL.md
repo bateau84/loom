@@ -140,7 +140,7 @@ Answers survive resume or annotation failure. Use `view:thread` for replies. Ans
 
 ## Deep retrospective evidence
 
-Use `loom_trace` `timeline` for user/tool/skill/dispatch events and `children` for direct child Sessions; page relevant results. Native context is post-compaction only. A local `export_path` requires read permission; completeness is unverified (`coverage.full_history:null`). `include_text:true` adds excerpts. Cite IDs and missing evidence; never store raw transcripts or secrets.
+`loom_trace timeline` reads only the caller's post-compaction context; other Sessions need authorized exports. `loom_trace children` lists direct children of the caller's Session family. Page with `next_cursor`; counts are page-scoped. Code Mode may hide nested calls. `include_text:true` adds excerpts. Cite IDs, identify missing evidence and never store raw transcripts or secrets.
 
 ## Complete stored history
 
