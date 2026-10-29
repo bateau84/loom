@@ -6,7 +6,7 @@ import { registeredLoom } from "./helpers/registered-loom.js"
 test("assignment/delivery operations, views and fields are not registered and fail explicitly", async () => {
   const f = await registeredLoom()
   try {
-    expect(f.tools.size).toBe(7)
+    expect(f.tools.size).toBe(8)
     const schema = f.tools.get("record").input.properties
     for (const operation of ["assign", "authorize-continuation", "withdraw-continuation", "retry-delivery"]) {
       expect(schema.operation.enum).not.toContain(operation)
