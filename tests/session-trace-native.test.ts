@@ -133,6 +133,21 @@ test("export requires native permission and never claims verified completeness",
     await expect(f.invoke("trace", { operation: "timeline", session_id: "session-a",
       export_path: "exports/original.json" })).rejects.toThrow("denied")
     f.permission.error = undefined
+    const redacted = { ...fixture, data: { ...fixture.data, info: { ...fixture.data.info,
+      location: { directory: "/[redacted:session-directory:session-a]" },
+    } } }
+    await writeFile(join(f.directory, "exports", "sanitized.json"), JSON.stringify(redacted))
+    const sanitized = (await f.invoke("trace", { operation: "timeline", session_id: "session-a",
+      export_path: "exports/sanitized.json" })).result
+    expect(sanitized.coverage.full_history).toBeNull()
+    expect(sanitized.events.some((x: any) => x.source_message_id === "msg_old")).toBe(true)
+    await writeFile(join(f.directory, "exports", "forged-redaction.json"), JSON.stringify({
+      ...redacted, data: { ...redacted.data, info: { ...redacted.data.info,
+        location: { directory: "/[redacted:session-directory:another-session]" },
+      } },
+    }))
+    await expect(f.invoke("trace", { operation: "timeline", session_id: "session-a",
+      export_path: "exports/forged-redaction.json" })).rejects.toThrow("cannot be verified")
     await writeFile(join(f.directory, "exports", "wrong.json"), JSON.stringify({ ...fixture, data: { ...fixture.data,
       info: { id: "other-session", projectID: "tool-help", location: { directory: f.directory } } } }))
     await expect(f.invoke("trace", { operation: "timeline", session_id: "session-a",
