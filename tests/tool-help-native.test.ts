@@ -203,7 +203,7 @@ test("Plan rejects missing required and invented lifecycle fields without writin
 test("search-visible help explains awaited writes and independent-call failure handling", async () => {
   const f = await registeredLoom()
   try {
-    expect(f.tools.size).toBe(7)
+    expect(f.tools.size).toBe(8)
     for (const tool of f.tools.values()) {
       expect(tool.description).toContain("Await writes before using IDs or ending Code Mode")
       expect(tool.description).toContain("Promise.allSettled and inspect every outcome")
