@@ -5,12 +5,35 @@ import { isAbsolute, relative, resolve, sep } from "node:path"
 const MAX_EXPORT_BYTES = 16 * 1024 * 1024
 const MAX_MESSAGES = 20000
 const MAX_EVENTS = 60000
+const MAX_TRACE_RESULT_BYTES = 256 * 1024
 
 type Obj = Record<string, unknown>
 const obj = (value: unknown): Obj => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Obj : {}
 const string = (value: unknown): string | undefined => typeof value === "string" ? value : undefined
 const num = (value: unknown): number => typeof value === "number" && Number.isFinite(value) ? value : 0
-const excerpt = (value: unknown, limit = 700): string | undefined => typeof value === "string" ? value.slice(0, limit) : undefined
+/** Model-visible metadata is untrusted too; never echo arbitrary host/JSON fields. */
+const small = (value: unknown, max = 120): string | undefined =>
+  typeof value === "string" ? value.slice(0, max) : undefined
+function sourceId(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 120 ||
+      !/^[A-Za-z0-9_.:-]+$/.test(value))
+    throw new Error(`Trace ${label} identifier must be 1-120 safe characters`)
+  return value
+}
+
+/** Best-effort credential masking for optional excerpts.
+ * Full source text is never returned, and masking cannot detect every private value. */
+function redactText(value: string): string {
+  return value
+    .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/gi, "[REDACTED]")
+    .replace(/\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{6,}\b/g, "[REDACTED]")
+    .replace(/\b(?:sk-(?:proj-|svc-)?[A-Za-z0-9_-]{12,}|github_pat_[A-Za-z0-9_]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9_-]{12,}|AKIA[A-Z0-9]{16})\b/g, "[REDACTED]")
+    .replace(/\b((?:Bearer|Basic)\s+)[^\s"',;]{8,}/gi, "$1[REDACTED]")
+    .replace(/\b((?:api[_-]?key|auth(?:orization)?|access[_-]?token|secret|password|passwd|client[_-]?secret|private[_-]?key|[\w]+_TOKEN)\s*[:=]\s*["']?)[^\s"',;]{4,}/gi, "$1[REDACTED]")
+    .replace(/\b[A-Za-z0-9_+/-]{48,}\b/g, "[REDACTED]")
+}
+const excerpt = (value: unknown, limit = 700): string | undefined =>
+  typeof value === "string" ? redactText(value).slice(0, limit) : undefined
 const local = (root: string, path: string) => path !== root && !relative(root, path).startsWith(".." + sep) &&
   relative(root, path) !== ".." && !isAbsolute(relative(root, path))
 
