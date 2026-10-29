@@ -21,6 +21,10 @@ function sourceId(value: unknown, label: string): string {
   return value
 }
 
+/** Credential assignment names are checked against a simple suffix pattern after
+ * one bounded lexical match. Never nest repeated identifier-prefix alternatives. */
+const sensitiveCredentialKey = /(?:^|[_-])(?:api[_-]?key|secret[_-]?access[_-]?key|access[_-]?key|client[_-]?secret|private[_-]?key|auth(?:orization)?|secret|password|passwd|pwd|token|credentials?|database[_-]?url|connection[_-]?(?:url|string)|dsn)$/i
+
 /** Best-effort credential masking for optional excerpts.
  * Full source text is never returned, and masking cannot detect every private value. */
 function redactText(value: string): string {
@@ -30,11 +34,33 @@ function redactText(value: string): string {
     .replace(/\b((?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis(?:s)?|amqps?|mssql|sqlserver|https?|ftps?|sftp):\/\/)[^\s/?#@"'<>]+@/gi, "$1[REDACTED]@")
     .replace(/\b(?:sk-(?:proj-|svc-)?[A-Za-z0-9_-]{12,}|github_pat_[A-Za-z0-9_]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9_-]{12,}|AKIA[A-Z0-9]{16})\b/g, "[REDACTED]")
     .replace(/\b((?:Bearer|Basic)\s+)[^\s"',;]{8,}/gi, "$1[REDACTED]")
-    .replace(/\b((?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|secret[_-]?access[_-]?key|access[_-]?key|client[_-]?secret|private[_-]?key|auth(?:orization)?|secret|password|passwd|pwd|token|credentials?|database[_-]?url|connection[_-]?(?:url|string)|dsn)\s*[:=]\s*["']?)[^\s"',;]+/gi, "$1[REDACTED]")
+    .replace(/(^|[\s;,(])([A-Za-z_][A-Za-z0-9_-]{0,127})(\s*[:=]\s*["']?)([^\s"',;]+)/gm,
+      (whole, prefix: string, key: string, separator: string) =>
+        sensitiveCredentialKey.test(key) ? prefix + key + separator + "[REDACTED]" : whole)
     .replace(/\b[A-Za-z0-9_+/-]{48,}\b/g, "[REDACTED]")
 }
-const excerpt = (value: unknown, limit = 700): string | undefined =>
-  typeof value === "string" ? redactText(value).slice(0, limit) : undefined
+const TRUNCATED = "[TRUNCATED]"
+function wholeWordPrefix(value: string, limit: number): string {
+  const clipped = value.slice(0, limit)
+  const cut = Math.max(clipped.lastIndexOf(" "), clipped.lastIndexOf("\n"),
+    clipped.lastIndexOf("\t"), clipped.lastIndexOf("\r"))
+  // If the source's final word crosses the boundary, omit it entirely:
+  // a partial unknown-format credential must not be exposed.
+  return cut < 0 ? "" : clipped.slice(0, cut)
+}
+function excerpt(value: unknown, limit = 700): string | undefined {
+  if (typeof value !== "string") return undefined
+  // Raw input is bounded BEFORE any regex processing. Never inspect full
+  // messages just to return a short excerpt (max 1,600 characters).
+  const clipped = value.slice(0, limit)
+  const sourceTruncated = value.length > limit
+  const complete = sourceTruncated ? wholeWordPrefix(clipped, clipped.length) : clipped
+  const masked = redactText(complete)
+  if (!sourceTruncated && masked.length <= limit) return masked
+  const available = Math.max(0, limit - TRUNCATED.length - 1)
+  const output = masked.length > available ? wholeWordPrefix(masked, available) : masked
+  return output ? output + " " + TRUNCATED : TRUNCATED
+}
 const local = (root: string, path: string) => path !== root && !relative(root, path).startsWith(".." + sep) &&
   relative(root, path) !== ".." && !isAbsolute(relative(root, path))
 
