@@ -7,7 +7,7 @@ Loom exposes a **read-only** `loom_trace` tool for inspecting original native ev
 | Source | How obtained | What can be stated |
 |---|---|---|
 | `operation:timeline` without `export_path` | Native `ctx.session.context` **for the caller's own Session only** | Active context after the latest compaction **only**. Original earlier messages may be absent. `coverage.full_history:false`. |
-| `operation:timeline` with `export_path` | Explicit project-relative export JSON, opened after host read permission | Native export *shape* with matching Session ID/project/location. It may be stale, shortened, sanitized or modified: `coverage.full_history:null` (unknown). |
+| `operation:timeline` with `export_path` | Explicit project-relative export JSON, opened after host read permission | Native export *shape* with matching Session ID/project; unsanitized directory is verified, but OpenCode's exact sanitized marker hides that location. It may be stale, shortened or modified: `coverage.full_history:null` (unknown). |
 | `operation:children` | Native `ctx.session.list` filtered by parent | Direct local children from the caller's bounded Session family only. Follow `next_cursor` and inspect descendants separately. |
 
 The pinned Promise SDK does **not** expose a full native message history method. OpenCode's separate `/api/experimental/session/:sessionID/export` endpoint exports a projected transcript with `sanitize` support, but `loom_trace` deliberately does not call this endpoint or assume authority to extract it. Produce a sanitized export with your existing authorized OpenCode client or UI, then place it in a temporary, private file *within the current project* and provide its relative path. Remove the file after use. Do not commit exports.
@@ -18,7 +18,7 @@ For every relevant Session, follow `next_cursor` until null. Each page has page-
 
 - Native message context is limited to the calling Session. Another Session requires a separately supplied authorized export; shared project/workspace membership does not grant direct context access. Child enumeration is restricted to the caller's native Session family, with bounded ancestor checks.
 - Every exported file requires a separate OpenCode `read` permission assertion with the native requesting Session/agent/tool source. Rejection propagates. It is not bypassed by a path under the project.
-- File paths must be relative and resolve within the project, with canonicalization, size limit (16 MiB), regular-file check, descriptor identity checks before and after the bounded read, and final no-follow open. Export Session ID, project ID and directory must match the requested native Session.
+- File paths must be relative and resolve within the project, with canonicalization, size limit (16 MiB), regular-file check, descriptor identity checks before and after the bounded read, and final no-follow open. Export Session ID and project ID must match the requested native Session. Unsanitized directories must resolve to the current project; the exact OpenCode 2.2.0 sanitized-directory marker is accepted as **unverified location**, never as proof.
 - Approval can pause execution. Revalidate source Session, path and file identity after approval. Reject replacements and detected content changes; identity checks cannot cryptographically prove provenance or detect malicious content forged with identical metadata.
 - Trace reads never change Loom selection, append records, spawn workers or contact agents. Errors leave the original work untouched.
 
