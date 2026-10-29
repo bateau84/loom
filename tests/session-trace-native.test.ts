@@ -94,11 +94,20 @@ test("verified export projects full original history and blocks identity, path a
       operation: "timeline", session_id: "session-a", export_path: "exports/original.json",
     })).result
     expect(result).toMatchObject({
-      source: "verified-export", coverage: { full_history: true },
+      source: "provided-export", coverage: { full_history: null },
       metrics: { messages: 3, compactions: 1, tool_calls: 1 },
     })
     expect(JSON.stringify(result)).not.toContain("very secret output")
     expect(JSON.stringify(result)).not.toContain("/private/file")
+    expect(f.permissionRequests).toEqual([{
+      action: "read", resources: [join(f.directory, "exports", "original.json")],
+      sessionID: "s", agent: "author",
+      source: { type: "tool", messageID: "message", id: "tool-call" },
+    }])
+    f.permission.error = new Error("denied")
+    await expect(f.invoke("trace", { operation: "timeline", session_id: "session-a",
+      export_path: "exports/original.json" })).rejects.toThrow("denied")
+    f.permission.error = undefined
     const candidate = join(f.directory, "exports", "wrong.json")
     await writeFile(candidate, JSON.stringify({ ...fixture, data: { ...fixture.data,
       info: { id: "other-session", projectID: "tool-help", location: { directory: f.directory } } } }))
