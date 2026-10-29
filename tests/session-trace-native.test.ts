@@ -341,3 +341,57 @@ test("admitted forged export fails before amplifying its oversized message ID", 
     expect(f.permissionRequests).toHaveLength(1)
   } finally { await f.close() }
 })
+
+
+test("credentialed connection URLs and prefixed environment secrets are masked in optional excerpts", () => {
+  const aws = "SYNTHETIC_AWS_SECRET_741529OnlyFixture"
+  const db = "SYNTHETIC_DATABASE_PASSWORD_246810"
+  const connPass = "SYNTHETIC_URL_PASSWORD_9101112"
+  const jwtLike = "postgres://sample_user:" + connPass + "@db.invalid:5432/app"
+  const quotedDb = 'DB_PASSWORD="' + db + '"'
+  const awsEnv = "AWS_SECRET_ACCESS_KEY=" + aws
+  const assistantContent = "The test source mentions " + awsEnv
+  const shellCommand = 'echo ' + quotedDb
+  const history = [
+    { id: "msg_env", type: "user", text: "Developer supplied " + awsEnv + " and " + quotedDb },
+    { id: "msg_url", type: "user", text: "Database location " + jwtLike },
+    { id: "msg_assistant", type: "assistant", agent: "general", content: [
+      { type: "text", text: assistantContent },
+      { type: "tool", id: "call_delegate", name: "task",
+        state: { status: "completed", input: { subagent_type: "researcher", prompt: "Investigate " + jwtLike } } },
+    ] },
+    { id: "msg_shell", type: "shell", command: shellCommand, status: "completed" },
+    { id: "msg_synthetic", type: "synthetic", text: "Injected: " + awsEnv },
+  ]
+  const result = traceTimeline(history, { sessionID: "s", source: "native-context", includeText: true })
+  const body = JSON.stringify(result)
+  for (const secret of [aws, db, connPass, "sample_user:" + connPass]) expect(body).not.toContain(secret)
+  const users = result.events.filter(x => x.kind === "user_prompt")
+  expect(users).toHaveLength(2)
+  for (const event of users) expect(String(event.text_excerpt)).toContain("[REDACTED]")
+  expect(result.events.find(x => x.kind === "agent_dispatch")?.dispatch_prompt_excerpt).toContain("[REDACTED]")
+  expect(result.events.find(x => x.kind === "shell")?.command_excerpt).toContain("[REDACTED]")
+  expect(result.events.find(x => x.kind === "synthetic_input")?.text_excerpt).toContain("[REDACTED]")
+})
+
+test("OpenCode skill attachment identifiers preserve slashes and bounded Unicode without failing the trace", () => {
+  const longId = "team/" + "a".repeat(320)
+  const history = [
+    { id: "msg_requested", type: "user", text: "load skills", skills: [
+      { id: "team/retrospective", name: "Retrospective" },
+      { id: "@team/researcher", name: "Researcher" },
+      { id: "group/résumé", name: "Internationalized" },
+      { id: longId, name: "Oversized but valid ID" },
+    ] },
+    { id: "msg_loaded", type: "skill", skill: "team/retrospective", name: "Retrospective" },
+    { id: "msg_end", type: "idle", outcome: "succeeded" },
+  ]
+  const result = traceTimeline(history, { sessionID: "s", source: "native-context" })
+  expect(result.events[0]).toMatchObject({
+    kind: "user_prompt",
+    requested_skills: ["team/retrospective", "@team/researcher", "group/résumé", longId.slice(0, 120)],
+    requested_skill_ids_excerpted: true,
+  })
+  expect(result.events[1]).toMatchObject({ kind: "skill_loaded", skill: "team/retrospective" })
+  expect(result.events[2]).toMatchObject({ kind: "turn_finished", outcome: "succeeded" })
+})
