@@ -320,3 +320,24 @@ test("a regular export replaced by a FIFO cannot block descriptor open", async (
     })).rejects.toThrow(/Export file changed|Export path changed|regular JSON file/)
   } finally { await f.close() }
 })
+
+
+test("admitted forged export fails before amplifying its oversized message ID", async () => {
+  const f = await registeredLoom()
+  try {
+    await mkdir(join(f.directory, "exports"))
+    const input = { data: {
+      info: { id: "session-a", projectID: "tool-help", location: { directory: f.directory } },
+      messages: [{ id: "msg_" + "X".repeat(1024 * 1024), type: "assistant",
+        content: Array.from({ length: 49 }, (_, i) => ({
+          id: "call_" + i, type: "tool", name: "read",
+          state: { status: "completed", input: {}, content: [{ type: "text", text: "ok" }] },
+        })) }],
+    } }
+    await writeFile(join(f.directory, "exports", "forged.json"), JSON.stringify(input))
+    await expect(f.invoke("trace", {
+      operation: "timeline", session_id: "session-a", export_path: "exports/forged.json", limit: 50,
+    })).rejects.toThrow(/source.*identifier/i)
+    expect(f.permissionRequests).toHaveLength(1)
+  } finally { await f.close() }
+})
