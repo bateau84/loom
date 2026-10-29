@@ -119,7 +119,7 @@ test("export requires native permission and never claims verified completeness",
       operation: "timeline", session_id: "session-a", export_path: "exports/original.json",
     })).result
     expect(result).toMatchObject({
-      source: "provided-export", coverage: { full_history: null },
+      source: "provided-export", coverage: { full_history: null, location_verified: true },
       source_messages: 3, metrics: { compactions: 1, tool_calls: 1 }, total_events: 4,
     })
     expect(JSON.stringify(result)).not.toContain("very secret output")
@@ -140,6 +140,7 @@ test("export requires native permission and never claims verified completeness",
     const sanitized = (await f.invoke("trace", { operation: "timeline", session_id: "session-a",
       export_path: "exports/sanitized.json" })).result
     expect(sanitized.coverage.full_history).toBeNull()
+    expect(sanitized.coverage.location_verified).toBe(false)
     expect(sanitized.events.some((x: any) => x.source_message_id === "msg_old")).toBe(true)
     await writeFile(join(f.directory, "exports", "forged-redaction.json"), JSON.stringify({
       ...redacted, data: { ...redacted.data, info: { ...redacted.data.info,
@@ -236,4 +237,62 @@ test("trace rejects malformed requests and cannot mutate work selection or recor
     expect((await f.invoke("context", {})).result.action.id).toBe(selected)
     expect((await f.invoke("record", { operation: "query", session_only: true })).result.items).toEqual([])
   } finally { await f.close() }
+})
+
+
+test("forged source IDs and projected escaped bytes cannot amplify a trace page", () => {
+  const huge = "m".repeat(1024 * 1024)
+  const parts = Array.from({ length: 49 }, (_, i) => ({
+    id: "call_" + i, type: "tool", name: "read",
+    state: { status: "completed", input: {}, content: [{ type: "text", text: "ok" }] },
+  }))
+  expect(() => traceTimeline([{ id: huge, type: "assistant", content: parts }], {
+    sessionID: "s", source: "provided-export", limit: 50,
+  })).toThrow(/source.*(ID|identifier)|identifier.*source/i)
+  const escaped = Array.from({ length: 50 }, (_, i) => ({
+    id: "msg_" + i, type: "user", text: "\u0000".repeat(1100),
+  }))
+  expect(() => traceTimeline(escaped, {
+    sessionID: "s", source: "provided-export", limit: 50, includeText: true,
+  })).toThrow(/output.*limit|response.*limit|page.*limit/i)
+})
+
+test("text excerpts redact secret-bearing patterns before they reach the result", () => {
+  const apiToken = "sk-proj-RETROSECRET000111222333444555666"
+  const bearer = "Authorization: Bearer v8Z37-secretToken938163c"
+  const assignment = "api_key = ultraPrivateToken-ABC123"
+  const jwt = [
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+    "eyJzdWIiOiIxMjM0NTY3ODkwIn0",
+    "test-signature-ABC123456789",
+  ].join(".")
+  const history = [
+    { id: "msg_user", type: "user", text: apiToken + " asked for " + bearer + "; " + assignment },
+    { id: "msg_assistant", type: "assistant", agent: "general", content: [
+      { type: "text", text: jwt + " was mentioned in conversation" },
+      { type: "tool", id: "call_1", name: "task", state: {
+        status: "completed", input: { subagent_type: "researcher", prompt: "Check " + apiToken },
+      } },
+    ] },
+    { id: "msg_shell", type: "shell", command: "export AUTH_TOKEN=" + apiToken, status: "completed" },
+  ]
+  const response = traceTimeline(history, { sessionID: "s", source: "native-context", includeText: true })
+  const rendered = JSON.stringify(response)
+  for(const secret of [apiToken, "v8Z37-secretToken938163c", "ultraPrivateToken-ABC123", jwt])
+    expect(rendered).not.toContain(secret)
+  expect(rendered).toContain("[REDACTED]")
+  expect(response.events.some(x => x.kind === "agent_dispatch")).toBe(true)
+})
+
+test("requested skill attachment IDs reflect actual OpenCode Prompt.SkillAttachment schema", () => {
+  const history = [{ id: "msg_user", type: "user", text: "Use retrospective",
+    skills: [
+      { id: "skill_1", name: "retrospective", text: "secret skill content" },
+      { id: "skill_2", name: "researcher", text: "secret researcher content" },
+    ] }]
+  const response = traceTimeline(history, { sessionID: "s", source: "native-context" })
+  expect(response.events[0]).toMatchObject({
+    kind: "user_prompt", requested_skills: ["skill_1", "skill_2"],
+  })
+  expect(JSON.stringify(response)).not.toContain("secret skill content")
 })
