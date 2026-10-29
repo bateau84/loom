@@ -183,8 +183,8 @@ export default Plugin.define({
                   // Do not silently expose another native Session's private context.
                   if (targetID !== actor.session_id && input.export_path === undefined)
                     throw new Error("Another Session's native context is not authorized; supply a project-local export with explicit native read permission")
-                  const messages = input.export_path === undefined
-                    ? unwrapped(await ctx.session.context({ sessionID: targetID }))
+                  const traceSource = input.export_path === undefined
+                    ? { messages: unwrapped(await ctx.session.context({ sessionID: targetID })), locationVerified: true }
                     : await readSessionExport(directory, String(input.export_path), targetID, ctx.location.project.id, async canonicalPath => {
                         await ctx.permission.assert({
                           action: "read", resources: [canonicalPath], sessionID: actor.session_id,
@@ -193,12 +193,13 @@ export default Plugin.define({
                         })
                         if (!await owns(targetID)) throw new Error("Source Session moved during export permission approval")
                         toolContext.signal.throwIfAborted()
-                      })
+                      }, toolContext.signal)
                   toolContext.signal.throwIfAborted()
                   if (!await owns(targetID)) throw new Error("Source Session moved during trace read")
-                  result = traceTimeline(messages, {
+                  result = traceTimeline(traceSource.messages, {
                     sessionID: targetID,
                     source: input.export_path === undefined ? "native-context" : "provided-export",
+                    locationVerified: traceSource.locationVerified,
                     cursor: input.cursor as string | undefined, limit: input.limit as number | undefined,
                     includeText: input.include_text as boolean | undefined,
                   })
@@ -350,6 +351,8 @@ export default Plugin.define({
                 ? { ...r.data, statement: r.data.statement.slice(0,600), truncated: true, read_full: "Pass this record_id to loom_record query" } : r.data })) }
             }
             const content = JSON.stringify({ result, ...diagnostics })
+            if (spec.name === "trace" && Buffer.byteLength(content, "utf8") > 262144)
+              throw new Error("Trace response exceeds the 262144-byte limit; reduce limit or disable include_text")
             if (spec.name === "record" && input.view === "full_thread") {
               if (content.length > PROCESSING_LIMITS.valueChars)
                 throw new Error("Full thread serialized response exceeds processing limit; cursor not advanced; reduce limit")
