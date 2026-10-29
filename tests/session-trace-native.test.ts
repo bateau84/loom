@@ -1,9 +1,10 @@
 import { test, expect } from "bun:test"
-import { mkdir, symlink, writeFile } from "node:fs/promises"
+import { mkdir, rename, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
+import { traceTimeline } from "../src/session-trace.js"
 import { registeredLoom } from "./helpers/registered-loom.js"
 
-test("registered trace projects original native tool/skill/dispatch events without exposing raw output", async () => {
+test("registered timeline pages original evidence without releasing tool outputs or reasoning", async () => {
   const f = await registeredLoom()
   try {
     const messages = [
@@ -22,36 +23,58 @@ test("registered trace projects original native tool/skill/dispatch events witho
         ] },
       { id: "msg_idle", type: "idle", time: { created: 4 }, outcome: "succeeded" },
     ]
-    f.nativeContexts.set("source-session", { data: messages })
-    const page = (await f.invoke("trace", { operation: "timeline", session_id: "source-session", limit: 3 })).result
-    expect(page).toMatchObject({
-      session_id: "source-session", source: "native-context",
-      coverage: { full_history: false }, metrics: { user_prompts: 1, tool_calls: 2, tool_errors: 1, dispatches: 1, skills_loaded: 1 },
-      total_events: 8, offset: 0, next_offset: 3, text_included: false,
+    f.nativeContexts.set("s", { data: messages })
+    const first = (await f.invoke("trace", { operation: "timeline", limit: 3 })).result
+    expect(first).toMatchObject({
+      session_id: "s", source: "native-context",
+      coverage: { full_history: false, delegation_complete: false },
+      metrics_scope: "page", metrics: { user_prompts: 1, skills_loaded: 1, assistant_steps: 1, tool_calls: 0 },
+      source_messages: 4, total_events: null, text_included: false,
     })
-    expect(page.tool_statuses.grep.error).toBe(1)
-    const raw = JSON.stringify(page)
+    expect(first.events).toHaveLength(3)
+    expect(typeof first.next_cursor).toBe("string")
     for (const hidden of ["private user request", "hidden-skill-body", "secret tool output", "internal-only-reasoning-sentinel-9472"]) {
-      expect(raw).not.toContain(hidden)
+      expect(JSON.stringify(first)).not.toContain(hidden)
     }
-    const rest = (await f.invoke("trace", {
-      operation: "timeline", session_id: "source-session", offset: page.next_offset, limit: 20, include_text: true,
+    const second = (await f.invoke("trace", {
+      operation: "timeline", cursor: first.next_cursor, limit: 20, include_text: true,
     })).result
-    expect(rest.next_offset).toBeNull()
-    const dispatch = rest.events.find((e: any) => e.kind === "agent_dispatch")
-    expect(dispatch).toMatchObject({ source_message_id: "msg_assistant", call_id: "call_1",
-      recipient: "researcher", dispatch_prompt_excerpt: "Check source session messages" })
-    expect(JSON.stringify(rest)).not.toContain("internal-only-reasoning-sentinel-9472")
-    expect(JSON.stringify(rest)).not.toContain("secret tool output")
-    expect(JSON.stringify(rest)).not.toContain("secret runtime failure")
+    expect(second.next_cursor).toBeNull()
+    expect(second.total_events).toBe(8)
+    expect(second.metrics).toMatchObject({ tool_calls: 2, tool_errors: 1, dispatches: 1 })
+    expect(second.tool_statuses.grep.error).toBe(1)
+    expect(second.events.find((e: any) => e.kind === "agent_dispatch")).toMatchObject({
+      source_message_id: "msg_assistant", call_id: "call_1", recipient: "researcher",
+      dispatch_prompt_excerpt: "Check source session messages",
+    })
+    const output = JSON.stringify(second)
+    for (const hidden of ["secret tool output", "secret runtime failure", "internal-only-reasoning-sentinel-9472"]) expect(output).not.toContain(hidden)
     expect(f.nativeListRequests).toHaveLength(0)
   } finally { await f.close() }
 })
 
-test("child trace is strictly direct, same-project and pagination-aware", async () => {
+test("native context of another Session is denied, including same-project peers and children", async () => {
+  const f = await registeredLoom()
+  try {
+    f.nativeContexts.set("s", { data: [{ type: "user", id: "msg_own", text: "own request" }] })
+    f.nativeContexts.set("peer", { data: [{ type: "user", id: "msg_peer", text: "peer secret" }] })
+    f.nativeContexts.set("child", { data: [{ type: "user", id: "msg_child", text: "child secret" }] })
+    f.sessions.set("child", { id: "child", projectID: "tool-help", parentID: "s", location: { directory: f.directory } })
+    for (const target of ["peer", "child"]) {
+      await expect(f.invoke("trace", { operation: "timeline", session_id: target, include_text: true }))
+        .rejects.toThrow("native context is not authorized")
+    }
+    expect(f.permissionRequests).toEqual([])
+    expect((await f.invoke("trace", { operation: "timeline", include_text: true })).result.events[0].text_excerpt).toBe("own request")
+  } finally { await f.close() }
+})
+
+test("direct-child inventory permits the caller's family only, with exact paging and scope checks", async () => {
   const f = await registeredLoom()
   try {
     const location = { directory: f.directory }
+    f.sessions.set("s", { id: "s", parentID: "parent", projectID: "tool-help", location })
+    f.sessions.set("parent", { id: "parent", projectID: "tool-help", location })
     f.nativePages.set("", { data: [
       { id: "c1", parentID: "parent", projectID: "tool-help", location, title: "Researcher" },
       { id: "wrong", parentID: "other", projectID: "tool-help", location },
@@ -67,12 +90,14 @@ test("child trace is strictly direct, same-project and pagination-aware", async 
     expect(next.sessions.map((x: any) => x.id)).toEqual(["c2"])
     expect(next.next_cursor).toBeNull()
     expect(f.nativeListRequests[0]).toMatchObject({ parentID: "parent", project: "tool-help", directory: f.directory })
+    await expect(f.invoke("trace", { operation: "children", session_id: "other" }))
+      .rejects.toThrow("unrelated Session family")
     await expect(f.invoke("trace", { operation: "children", session_id: "parent", export_path: "foo" }))
       .rejects.toThrow("children does not accept")
   } finally { await f.close() }
 })
 
-test("verified export projects full original history and blocks identity, path and scope escapes", async () => {
+test("export requires native permission and never claims verified completeness", async () => {
   const f = await registeredLoom()
   try {
     await mkdir(join(f.directory, "exports"))
@@ -95,7 +120,7 @@ test("verified export projects full original history and blocks identity, path a
     })).result
     expect(result).toMatchObject({
       source: "provided-export", coverage: { full_history: null },
-      metrics: { messages: 3, compactions: 1, tool_calls: 1 },
+      source_messages: 3, metrics: { compactions: 1, tool_calls: 1 }, total_events: 4,
     })
     expect(JSON.stringify(result)).not.toContain("very secret output")
     expect(JSON.stringify(result)).not.toContain("/private/file")
@@ -108,8 +133,7 @@ test("verified export projects full original history and blocks identity, path a
     await expect(f.invoke("trace", { operation: "timeline", session_id: "session-a",
       export_path: "exports/original.json" })).rejects.toThrow("denied")
     f.permission.error = undefined
-    const candidate = join(f.directory, "exports", "wrong.json")
-    await writeFile(candidate, JSON.stringify({ ...fixture, data: { ...fixture.data,
+    await writeFile(join(f.directory, "exports", "wrong.json"), JSON.stringify({ ...fixture, data: { ...fixture.data,
       info: { id: "other-session", projectID: "tool-help", location: { directory: f.directory } } } }))
     await expect(f.invoke("trace", { operation: "timeline", session_id: "session-a",
       export_path: "exports/wrong.json" })).rejects.toThrow("identity")
@@ -124,16 +148,72 @@ test("verified export projects full original history and blocks identity, path a
   } finally { await f.close() }
 })
 
+test("same-path export replacement during permission approval fails before reading", async () => {
+  const f = await registeredLoom()
+  try {
+    await mkdir(join(f.directory, "exports"))
+    const path = join(f.directory, "exports", "original.json")
+    const copy = join(f.directory, "exports", "old.json")
+    const fixture = (text: string) => JSON.stringify({ data: { info: {
+      id: "session-a", projectID: "tool-help", location: { directory: f.directory },
+    }, messages: [{ type: "user", id: "msg_original", text }] } })
+    await writeFile(path, fixture("first"))
+    f.permission.beforeReturn = async () => {
+      await rename(path, copy)
+      await writeFile(path, fixture("replaced"))
+      f.permission.beforeReturn = undefined
+    }
+    await expect(f.invoke("trace", { operation: "timeline", session_id: "session-a",
+      export_path: "exports/original.json", include_text: true })).rejects.toThrow("Export file changed")
+    expect(f.permissionRequests).toHaveLength(1)
+  } finally { await f.close() }
+})
+
+test("opaque Code Mode tools and namespaced native delegation must not be misclassified as no delegation", () => {
+  const input = [{ type: "assistant", id: "msg_opaque", agent: "general",
+    content: [
+      { type: "tool", id: "call_opaque", name: "functions.exec",
+        state: { status: "completed", input: { code: "const result = await tools.some_tool()" } } },
+      { type: "tool", id: "call_named", name: "opencode.delegate",
+        state: { status: "completed", input: { prompt: "Inspect evidence", to_agent: "researcher" } } },
+    ] }]
+  const result = traceTimeline(input, { sessionID: "own", source: "native-context", includeText: true })
+  expect(result.metrics).toMatchObject({ tool_calls: 2, dispatches: 1, opaque_tools: 1 })
+  expect(result.coverage.delegation_complete).toBe(false)
+  expect(result.events.find(x => x.kind === "opaque_tool")).toMatchObject({
+    tool: "functions.exec", call_id: "call_opaque", delegation_visibility: "unknown-inner-calls",
+  })
+  expect(result.events.find(x => x.kind === "agent_dispatch")).toMatchObject({
+    call_id: "call_named", recipient: "researcher", dispatch_prompt_excerpt: "Inspect evidence",
+  })
+})
+
+test("cursor-based pages do not revisit earlier messages or claim a mutable snapshot", () => {
+  const input: Record<string, unknown>[] = []
+  for (let i = 0; i < 300; i++) input.push({ id: "msg_" + i, type: "user", text: "message " + i })
+  const first = traceTimeline(input, { sessionID: "own", source: "native-context", limit: 1 })
+  expect(first.total_events).toBeNull()
+  expect(first.events[0].source_message_id).toBe("msg_0")
+  Object.defineProperty(input[0], "type", { get: () => { throw new Error("Old message was rescanned") } })
+  const second = traceTimeline(input, { sessionID: "own", source: "native-context", limit: 1, cursor: first.next_cursor! })
+  expect(second.events[0].source_message_id).toBe("msg_1")
+  expect(second.total_events).toBeNull()
+  expect(() => traceTimeline(input, { sessionID: "different", source: "native-context", cursor: first.next_cursor! }))
+    .toThrow("does not match")
+  expect(() => traceTimeline(input, { sessionID: "own", source: "provided-export", cursor: first.next_cursor! }))
+    .toThrow("does not match")
+})
+
 test("trace rejects malformed requests and cannot mutate work selection or records", async () => {
   const f = await registeredLoom()
   try {
     const selected = (await f.invoke("action", { operation: "create", title: "Other", goal: "Preserve selection" })).result.id
     f.nativeContexts.set("s", { data: [{ type: "user", id: "msg1", text: "test" }] })
     for (const invalid of [
-      { operation: "timeline", offset: -1 },
+      { operation: "timeline", offset: 1 },
       { operation: "timeline", limit: 51 },
       { operation: "timeline", include_text: "yes" },
-      { operation: "timeline", cursor: "unexpected" },
+      { operation: "timeline", cursor: "bad" },
       { operation: "unknown" },
     ]) await expect(f.invoke("trace", invalid)).rejects.toThrow()
     const result = (await f.invoke("trace", { operation: "timeline" })).result
