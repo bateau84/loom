@@ -18,7 +18,7 @@ test("registered trace projects original native tool/skill/dispatch events witho
           { id: "call_2", type: "tool", name: "grep", state: { status: "error",
             input: { pattern: "foo" }, error: { message: "secret runtime failure" } } },
           { type: "text", text: "Agent's user-visible reply" },
-          { type: "reasoning", text: "private reasoning never emitted" },
+          { type: "reasoning", text: "internal-only-reasoning-sentinel-9472" },
         ] },
       { id: "msg_idle", type: "idle", time: { created: 4 }, outcome: "succeeded" },
     ]
@@ -31,7 +31,7 @@ test("registered trace projects original native tool/skill/dispatch events witho
     })
     expect(page.tool_statuses.grep.error).toBe(1)
     const raw = JSON.stringify(page)
-    for (const hidden of ["private user request", "hidden-skill-body", "secret tool output", "private reasoning"]) {
+    for (const hidden of ["private user request", "hidden-skill-body", "secret tool output", "internal-only-reasoning-sentinel-9472"]) {
       expect(raw).not.toContain(hidden)
     }
     const rest = (await f.invoke("trace", {
@@ -41,7 +41,7 @@ test("registered trace projects original native tool/skill/dispatch events witho
     const dispatch = rest.events.find((e: any) => e.kind === "agent_dispatch")
     expect(dispatch).toMatchObject({ source_message_id: "msg_assistant", call_id: "call_1",
       recipient: "researcher", dispatch_prompt_excerpt: "Check source session messages" })
-    expect(JSON.stringify(rest)).not.toContain("private reasoning")
+    expect(JSON.stringify(rest)).not.toContain("internal-only-reasoning-sentinel-9472")
     expect(JSON.stringify(rest)).not.toContain("secret tool output")
     expect(JSON.stringify(rest)).not.toContain("secret runtime failure")
     expect(f.nativeListRequests).toHaveLength(0)
