@@ -46,7 +46,7 @@ REQUIRED_INSTALLED_CHECKS = {
     'E2-E3-restart-no-reconstruction',
     'E4-native-session-discovery', 'E4-native-archive-status',
     'E5-compaction-context-and-observation',
-    'E6-native-trace-and-scope', 'E6-exported-child-history',
+    'E6-native-trace-and-scope', 'E6-exported-child-history', 'E6-native-text-redaction',
 }
 
 
@@ -414,6 +414,23 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
                                      'parent': reader, 'child': child,
                                      'source_messages': projected['source_messages'],
                                      'qualification': 'Actual OpenCode child export shape; no cryptographic completeness proof'})
+            sentinel = 'sk-proj-NOTAREALKEYLOCALRETRO123456789'
+            request(host, 'POST', f'/api/session/{reader}/prompt',
+                    {'text': 'Harmless test sentinel: ' + sentinel})
+            idle(host, [reader])
+            redaction_start = len(events(root))
+            redacted = s.invoke(reader, 'trace',
+                                {'operation': 'timeline', 'limit': 50, 'include_text': True})
+            require(sentinel not in json.dumps(redacted)
+                    and '[REDACTED]' in json.dumps(redacted),
+                    'Native Session text excerpt leaked the secret-pattern test sentinel')
+            completed = [e for e in events(root)[redaction_start:]
+                         if e['type'] == 'tool-after'
+                         and e['data']['tool'] in ('loom_trace', 'loom.trace')]
+            require(len(completed) == 1 and sentinel not in json.dumps(completed[0]['data'].get('result', {})),
+                    'Native trace result persisted the secret-pattern sentinel in its tool output')
+            report['checks'].append({'name': 'E6-native-text-redaction', 'status': 'PASS',
+                                     'qualification': 'Harmless synthetic credential-pattern sentinel in a real user prompt; does not prove all secret formats are detected'})
             start_index = len(events(root))
             q = s.invoke(asker, 'record', {'operation': 'ask', 'question': '# <tag> Unicode 雪🙂 [not approval]',
                          'to_agent': 'question-respondent', 'blocking': False, 'context_attachments': ['fixture://question']})
