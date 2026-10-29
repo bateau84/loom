@@ -1,6 +1,11 @@
 /** Registered discovery help. No guide-file read or extra tool call is required. */
 export const TOOL_EXAMPLES = {
   agents: [{}],
+  trace: [
+    { operation: "timeline", session_id: "SESSION_ID", offset: 0, limit: 25 },
+    { operation: "timeline", session_id: "SESSION_ID", export_path: "private-retro/session.json", include_text: true, limit: 25 },
+    { operation: "children", session_id: "SESSION_ID", limit: 20 },
+  ],
   action: [
     { operation: "create", title: "Explain a setting", goal: "Record a source-backed explanation and its qualifications." },
     { operation: "list", offset: 0 },
@@ -44,6 +49,12 @@ const entries: Record<LoomToolName, { summary: string; usage: string; returns: s
     usage: "Use {} to find the actual roster before native delegation. Choose by available=true, enabled=true and relevant roles; configured=true alone does not establish availability. Match agents[].roles with role_descriptions by role ID. Agent and role descriptions are coordination hints, not permissions or automatic matching. Agents and skills are defined outside Loom.",
     returns: "result.agents contains id, description when present, roles, configured, available and enabled. result.role_descriptions maps configured role IDs to their descriptions when provided; roles without a description have no entry, and unassigned roles may appear. Also returns config_sources, errors, warnings, evidence.capture/pairing and config_loads (active, waiting and limits).",
     caution: "Does not create or dispatch agents, load skills or grant authority. Configuration errors disable Loom injection and new capture, not native work. Queue length is bounded, waiting time is not; a diagnostic request can itself wait. Use native OpenCode delegation with the Action/task IDs and retrieve work through loom_context.",
+  },
+  trace: {
+    summary: "Read an original native Session timeline, or list direct child Sessions, for evidence-based retrospectives.",
+    usage: "operation=timeline reads the requested same-project, same-workspace Session (defaults to the caller) from native session.context. This context contains only messages after the last compaction: it is NOT the complete transcript. For full projected history, first create an authorized sanitized OpenCode session export under the current project, then supply its relative export_path. The file's Session ID, project and canonical directory are verified before projection. Use offset/next_offset and limit=1-50 (default 25). include_text:true explicitly requests bounded excerpts of user messages, assistant replies and dispatch prompts; false by default. operation=children lists only direct native child Sessions of the requested parent, limit=1-50, cursor/next_cursor. Follow child IDs individually. Neither operation creates an Action.",
+    returns: "timeline returns result.source, coverage, metrics, tool_statuses, events with original message/tool-call IDs, total_events, next_offset and truncation/privacy notes. children returns result.sessions, scanned, matched, next_cursor and direct-child coverage. Neither returns raw tool input/output, private reasoning or full skill contents; source projection and exports can omit media and may be stale.",
+    caution: "Read-only and restricted to the plugin's project, workspace and canonical directory. An export must be a regular JSON file within the project (maximum 16 MiB); path escapes and mismatched Session identity fail closed. Export contents can be sensitive: prefer --sanitize and remove temporary exports after use. include_text can still expose private prompt excerpts; do not copy secrets into durable reports. Native context cannot prove what happened before compaction; child listing is not recursive, and per-Session exports are not family exports. Output is bounded and not a snapshot across pages; inspect completeness explicitly and never treat call counts or agent claims as proven causes.",
   },
   action: {
     summary: "Create, list or update Actions, or list native Sessions associated with local work.",
