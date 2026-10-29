@@ -67,9 +67,16 @@ export async function readSessionExport(directory: string, path: string, session
   const location = obj(info.location)
   if (typeof location.directory !== "string")
     throw new Error("Export Session location is missing")
-  let exportedDirectory: string
-  try { exportedDirectory = await realpath(location.directory) } catch { throw new Error("Export Session directory cannot be verified") }
-  if (exportedDirectory !== root) throw new Error("Export belongs to a different Session location")
+  // OpenCode 2.2.0 sanitize=true deliberately replaces the original
+  // directory with this exact marker. Treat it as unknown location, not a
+  // verified path; the native requested Session is separately location-checked.
+  const redactedDirectory = `/[redacted:session-directory:${sessionID}]`
+  if (location.directory !== redactedDirectory) {
+    let exportedDirectory: string
+    try { exportedDirectory = await realpath(location.directory) }
+    catch { throw new Error("Export Session directory cannot be verified") }
+    if (exportedDirectory !== root) throw new Error("Export belongs to a different Session location")
+  }
   if (!Array.isArray(transfer.messages) || transfer.messages.length > MAX_MESSAGES)
     throw new Error("Export messages are absent or exceed the processing budget")
   return transfer.messages
