@@ -414,23 +414,72 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
                                      'parent': reader, 'child': child,
                                      'source_messages': projected['source_messages'],
                                      'qualification': 'Actual OpenCode child export shape; no cryptographic completeness proof'})
+            # A real native user message must be identified by its original ID
+            # BEFORE tracing. An unrelated redaction marker cannot pass this oracle.
+            marker = 'RETRO_TRACE_SENTINEL_SOURCE_20261029'
             sentinel = 'sk-proj-NOTAREALKEYLOCALRETRO123456789'
-            request(host, 'POST', f'/api/session/{reader}/prompt',
-                    {'text': 'Harmless test sentinel: ' + sentinel})
+            aws_secret = 'SYNTHETIC_AWS_SECRET_VALUE_20261029'
+            db_secret = 'SYNTHETIC_DB_PASSWORD_VALUE_20261029'
+            uri_secret = 'SYNTHETIC_POSTGRES_PASSWORD_VALUE_20261029'
+            credential_text = (
+                f'{marker}: {sentinel} AWS_SECRET_ACCESS_KEY={aws_secret} '
+                f'DB_PASSWORD={db_secret} postgres://audit:{uri_secret}@db.invalid/retro'
+            )
+            request(host, 'POST', f'/api/session/{reader}/prompt', {'text': credential_text})
             idle(host, [reader])
+            raw_messages = request(host, 'GET', f'/api/session/{reader}/message?order=desc&limit=200')
+            require(isinstance(raw_messages, list), 'Native source message listing is not an array')
+            sources = [row for row in raw_messages if row.get('type') == 'user'
+                       and marker in row.get('text', '')]
+            require(len(sources) == 1 and isinstance(sources[0].get('id'), str),
+                    'Source credential fixture was not uniquely found in native Session history')
+            source_id = sources[0]['id']
             redaction_start = len(events(root))
-            redacted = s.invoke(reader, 'trace',
-                                {'operation': 'timeline', 'limit': 50, 'include_text': True})
-            require(sentinel not in json.dumps(redacted)
-                    and '[REDACTED]' in json.dumps(redacted),
-                    'Native Session text excerpt leaked the secret-pattern test sentinel')
-            completed = [e for e in events(root)[redaction_start:]
-                         if e['type'] == 'tool-after'
-                         and e['data']['tool'] in ('loom_trace', 'loom.trace')]
-            require(len(completed) == 1 and sentinel not in json.dumps(completed[0]['data'].get('result', {})),
-                    'Native trace result persisted the secret-pattern sentinel in its tool output')
+            all_pages = []
+            token_event = None
+            cursor = None
+            for _ in range(20):
+                query = {'operation': 'timeline', 'limit': 50, 'include_text': True}
+                if cursor is not None:
+                    query['cursor'] = cursor
+                page = s.invoke(reader, 'trace', query)
+                all_pages.append(page)
+                for secret in (sentinel, aws_secret, db_secret, uri_secret):
+                    require(secret not in json.dumps(page),
+                            'Native Session trace response leaked credential fixture bytes')
+                matching = [entry for entry in page['events'] if entry['source_message_id'] == source_id]
+                if matching:
+                    require(len(matching) == 1 and matching[0]['kind'] == 'user_prompt',
+                            'Found wrong source event for native credential message')
+                    token_event = matching[0]
+                    break
+                cursor = page.get('next_cursor')
+                if not cursor:
+                    break
+            require(token_event is not None, 'The credential fixture source message was not visited')
+            excerpt = token_event.get('text_excerpt', '')
+            require(marker in excerpt and excerpt.count('[REDACTED]') >= 4,
+                    'The exact source message was not included with all four credentials masked')
+            completed = [event for event in events(root)[redaction_start:]
+                         if event['type'] == 'tool-after' and
+                         event['data']['tool'] in ('loom_trace', 'loom.trace')]
+            require(len(completed) == len(all_pages),
+                    'Native trace result evidence missing for one or more inspected pages')
+            stored_matches = []
+            for completed_event in completed:
+                actual = result_value(completed_event)
+                for secret in (sentinel, aws_secret, db_secret, uri_secret):
+                    require(secret not in json.dumps(actual),
+                            'Native trace tool output persisted sensitive fixture bytes')
+                stored_matches.extend(entry for entry in actual['events']
+                                      if entry['source_message_id'] == source_id)
+            require(len(stored_matches) == 1 and stored_matches[0].get('text_excerpt') == excerpt,
+                    'Persisted native tool result did not contain the exact masked source event')
             report['checks'].append({'name': 'E6-native-text-redaction', 'status': 'PASS',
-                                     'qualification': 'Harmless synthetic credential-pattern sentinel in a real user prompt; does not prove all secret formats are detected'})
+                                     'source_message': source_id,
+                                     'source_events_matched': len(stored_matches),
+                                     'patterns_checked': 4,
+                                     'qualification': 'Real native user message and trace tool result, including common env credentials and connection URI. Synthetic values only; unknown secret formats remain unproven'})
             start_index = len(events(root))
             q = s.invoke(asker, 'record', {'operation': 'ask', 'question': '# <tag> Unicode 雪🙂 [not approval]',
                          'to_agent': 'question-respondent', 'blocking': False, 'context_attachments': ['fixture://question']})
