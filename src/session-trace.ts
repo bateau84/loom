@@ -120,6 +120,7 @@ export type TimelineOptions = {
   cursor?: string
   limit?: number
   includeText?: boolean
+  locationVerified?: boolean
 }
 
 type Event = Obj & { kind: string; source_message_id: string; created_at?: number | string }
@@ -152,67 +153,69 @@ const opaqueExecutor = (name: string) =>
  * A tool wrapper may hide delegated calls: flag the limitation, do not guess activity.
  */
 function projectEvent(message: Obj, partIndex: number, includeText: boolean): Event {
-  const id = string(message.id)
-  if (!id) throw new Error("Native Session message is missing its source ID")
+  const id = sourceId(message.id, "source message")
   const time = obj(message.time)
   const created = time.created
   const base = { source_message_id: id,
-    ...(typeof created === "number" || typeof created === "string" ? { created_at: created } : {}) }
+    ...(typeof created === "number" && Number.isFinite(created)
+      ? { created_at: created } : typeof created === "string" ? { created_at: small(created, 48) } : {}) }
   const type = string(message.type)
   if (type === "user") return { ...base, kind: "user_prompt",
     ...(includeText ? { text_excerpt: excerpt(message.text, 1100) } : { text_withheld: true }),
-    ...(Array.isArray(message.skills) ? { requested_skills: message.skills.filter(x => typeof x === "string").slice(0, 40) } : {}) }
+    ...(Array.isArray(message.skills) ? { requested_skills: message.skills.slice(0, 40)
+      .map(x => obj(x).id).filter(x => x !== undefined).map(x => sourceId(x, "requested skill")) } : {}) }
   if (type === "assistant") {
     const agent = string(message.agent)
     if (partIndex === 0) {
       const model = obj(message.model)
-      return { ...base, kind: "assistant_step", agent,
-        provider: string(model.providerID), model: string(model.id),
-        ...(typeof message.cost === "number" ? { cost_usd: message.cost } : {}),
+      return { ...base, kind: "assistant_step", agent: small(agent),
+        provider: small(model.providerID), model: small(model.id, 160),
+        ...(typeof message.cost === "number" && Number.isFinite(message.cost) ? { cost_usd: message.cost } : {}),
         ...(message.error ? { reported_error: true } : {}),
-        ...(message.retry ? { retry_attempt: obj(message.retry).attempt } : {}),
-        ...(message.finish ? { finish_reason: string(message.finish) } : {}),
+        ...(message.retry && Number.isSafeInteger(obj(message.retry).attempt) ? { retry_attempt: obj(message.retry).attempt } : {}),
+        ...(message.finish ? { finish_reason: small(message.finish, 40) } : {}),
         ...(message.tokens ? { tokens_input: num(obj(message.tokens).input), tokens_output: num(obj(message.tokens).output) } : {}) }
     }
     const content = Array.isArray(message.content) ? message.content : []
     const part = obj(content[partIndex - 1])
     if (part.type === "tool") {
       const state = obj(part.state)
-      const status = string(state.status) ?? "unknown"
-      const name = string(part.name) ?? "unknown"
+      const status = small(state.status, 40) ?? "unknown"
+      const name = small(part.name, 120) ?? "unknown"
       const input = obj(state.input)
       const dispatch = directDispatch(name, input)
       const opaque = !dispatch && opaqueExecutor(name)
       const prompt = string(input.prompt) ?? string(input.task) ?? string(input.instructions)
-      const recipient = string(input.subagent_type) ?? string(input.agent) ?? string(input.to_agent)
+      const recipient = small(input.subagent_type) ?? small(input.agent) ?? small(input.to_agent)
       return { ...base, kind: dispatch ? "agent_dispatch" : opaque ? "opaque_tool" : "tool_call",
-        tool: name, call_id: string(part.id), status, agent,
+        tool: name, ...(part.id === undefined ? {} : { call_id: sourceId(part.id, "tool call") }),
+        status, agent: small(agent),
         ...(recipient ? { recipient } : {}),
-        ...(Object.keys(input).length ? { input_fields: Object.keys(input).slice(0, 30) } : {}),
+        ...(Object.keys(input).length ? { input_fields: Object.keys(input).slice(0, 30).map(x => x.slice(0, 64)) } : {}),
         ...(dispatch && prompt !== undefined ? (includeText
           ? { dispatch_prompt_excerpt: excerpt(prompt, 1600), prompt_truncated: prompt.length > 1600 }
           : { dispatch_prompt_withheld: true }) : {}),
         ...(opaque ? { delegation_visibility: "unknown-inner-calls" } : {}),
         ...(state.error ? { error_recorded: true } : {}) }
     }
-    if (part.type === "text") return { ...base, kind: "assistant_text", agent,
+    if (part.type === "text") return { ...base, kind: "assistant_text", agent: small(agent),
       ...(includeText ? { text_excerpt: excerpt(part.text, 1100) } : { text_withheld: true }) }
     if (part.type === "reasoning") return { ...base, kind: "reasoning_present", text_withheld: true }
-    return { ...base, kind: "assistant_other_part", part_type: string(part.type) }
+    return { ...base, kind: "assistant_other_part", part_type: small(part.type, 48) }
   }
-  if (type === "skill") return { ...base, kind: "skill_loaded", skill: string(message.skill), name: string(message.name) }
-  if (type === "compaction") return { ...base, kind: "compaction", status: string(message.status), reason: string(message.reason) }
-  if (type === "agent-switched") return { ...base, kind: "agent_switched", agent: string(message.agent), previous: string(message.previous) }
+  if (type === "skill") return { ...base, kind: "skill_loaded", skill: small(message.skill), name: small(message.name) }
+  if (type === "compaction") return { ...base, kind: "compaction", status: small(message.status, 40), reason: small(message.reason, 40) }
+  if (type === "agent-switched") return { ...base, kind: "agent_switched", agent: small(message.agent), previous: small(message.previous) }
   if (type === "model-switched") {
     const model = obj(message.model)
-    return { ...base, kind: "model_switched", provider: string(model.providerID), model: string(model.id) }
+    return { ...base, kind: "model_switched", provider: small(model.providerID), model: small(model.id, 160) }
   }
-  if (type === "idle") return { ...base, kind: "turn_finished", outcome: string(message.outcome) }
-  if (type === "shell") return { ...base, kind: "shell", status: string(message.status), exit: message.exit,
+  if (type === "idle") return { ...base, kind: "turn_finished", outcome: small(message.outcome, 40) }
+  if (type === "shell") return { ...base, kind: "shell", status: small(message.status, 40), exit: typeof message.exit === "number" && Number.isFinite(message.exit) ? message.exit : undefined,
     ...(includeText ? { command_excerpt: excerpt(message.command, 900) } : { command_withheld: true }) }
   if (type === "synthetic") return { ...base, kind: "synthetic_input",
     ...(includeText ? { text_excerpt: excerpt(message.text, 900) } : { text_withheld: true }) }
-  return { ...base, kind: type === "system" ? "system_instruction" : "other", type }
+  return { ...base, kind: type === "system" ? "system_instruction" : "other", type: small(type, 48) }
 }
 
 export function traceTimeline(input: unknown, options: TimelineOptions) {
@@ -222,6 +225,9 @@ export function traceTimeline(input: unknown, options: TimelineOptions) {
   if (!isIndex(limit, 50) || limit < 1) throw new Error("Trace limit must be 1-50")
   if (options.includeText !== undefined && typeof options.includeText !== "boolean")
     throw new Error("include_text must be Boolean")
+  sourceId(options.sessionID, "session")
+  if (options.source !== "native-context" && options.source !== "provided-export")
+    throw new Error("Invalid trace source")
   const initial: Position = options.cursor === undefined
     ? { version: 1, session_id: options.sessionID, source: options.source, message: 0, part: 0, seen: 0 }
     : decodePosition(options.cursor, options)
@@ -273,16 +279,22 @@ export function traceTimeline(input: unknown, options: TimelineOptions) {
     }
   }
   metrics.cost_usd = Math.round(metrics.cost_usd * 1e6) / 1e6
-  return {
+  const locationVerified = options.source === "native-context" || options.locationVerified === true
+  const result = {
     session_id: options.sessionID, source: options.source,
     coverage: options.source === "native-context"
-      ? { full_history: false, delegation_complete: false,
-          detail: "Only active messages after the latest completed compaction. Earlier history, nested Code Mode tools and child Sessions are NOT included." }
-      : { full_history: null, delegation_complete: false,
-          detail: "Provided export identity and location match, but completeness/integrity are unverified. Nested Code Mode tools and child Sessions are NOT included." },
+      ? { full_history: false, delegation_complete: false, location_verified: true,
+          detail: "Only the caller's post-compaction context. Earlier history, nested Code Mode tools and child Sessions are NOT included." }
+      : { full_history: null, delegation_complete: false, location_verified: locationVerified,
+          detail: locationVerified
+            ? "Export declares matching Session/project, and its directory resolves to this project. Its completeness and authenticity are unverified."
+            : "Export declares matching Session/project but OpenCode redacted the original directory. Source location, completeness and authenticity are unverified." },
     source_messages: input.length, metrics_scope: "page", metrics, tool_statuses: toolStatuses,
     events, next_cursor: next ? encodePosition(next) : null,
     total_events: next ? null : seen, text_included: options.includeText === true,
-    note: "Bounded per-page projection. Tool output, raw inputs, skill contents, attachments and private reasoning are withheld. Unknown wrappers may hide delegation; follow native child Sessions and Loom observations. An export JSON file is reparsed on each page; the cursor is not a consistent snapshot.",
+    note: "Bounded per-page projection with best-effort credential masking, not guaranteed secret removal. Tool output, raw inputs, skill contents, attachments and private reasoning are withheld. Unknown wrappers may hide delegation; follow child Sessions and Loom observations. Export JSON is reparsed on each page and cursors are not a consistent snapshot.",
   }
+  if (Buffer.byteLength(JSON.stringify(result), "utf8") > MAX_TRACE_RESULT_BYTES)
+    throw new Error("Trace output exceeds the 262144-byte page limit; reduce limit or disable include_text")
+  return result
 }
