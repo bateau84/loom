@@ -120,47 +120,27 @@ Update Action state separately; paused/cancelled labels do not stop execution.
 
 ## Questions and manual native handling
 
-Ask with `question`, `to_agent`, explicit Boolean `blocking`; optional `context`,
-`context_attachments` (references), `reference:{action_id,kind:action|phase|wave|task|subtask,id}`.
-Association defaults to selection, otherwise asking Session only; no Action/Plan
-required. Invalid explicit references never fall back: Action/node IDs and kind
-must match.
+Ask with `question`, `to_agent`, Boolean `blocking`; optional `context`, `context_attachments`, `reference:{action_id,kind:action|phase|wave|task|subtask,id}`. Defaults to selected work or asking Session. Invalid references fail closed.
 
 ```json
 {"operation":"ask","question":"Which limit applies here?","to_agent":"research","blocking":false,"context_attachments":["SOURCE_REFERENCE"]}
 ```
 
-On pinned OpenCode 2.1.1 the question is saved, but the recipient is NOT contacted.
-Inspect `dispatch:{status:not-attempted,reason:policy-capability-unavailable}`.
-Arrange manual handling outside ask; a blocking asker may yield after it is
-arranged. Blocking is intent, not a wait, approval or gate; nonblocking work continues.
+On pinned OpenCode 2.1.1 the recipient is NOT contacted: `dispatch:{status:not-attempted,reason:policy-capability-unavailable}`. Arrange manual/native handling separately. Blocking intent is not a wait or approval.
 
-Answer with `question_id`, `answer`, optional `context_attachments`. Caller supplies
-actual author/Session. Original nullable association survives node removal without
-selecting asker's work. Conflicting answers remain. `attachments` is never an alias;
-old statement/respondent/background/artifact_refs are not ask/answer inputs.
+Answer with `question_id`, `answer`, optional `context_attachments`; actual author/Session come from the host. Association survives task removal; conflicting answers remain. No `attachments` alias or legacy answer inputs.
 
 ```json
 {"operation":"answer","question_id":"QUESTION_ID","answer":"Read the source and its limitations.","context_attachments":["SOURCE_REFERENCE"]}
 ```
 
-Only the FIRST committed answer to a new blocking question can attempt one best-effort resume of the original asking Session. Later, nonblocking and legacy answers do not retry. Missing or moved targets fail closed; native agent/model/permissions stay unchanged. Target validation is not an atomic lease; the 5000ms limit bounds waiting, not cancellation of started input. Admission is not processing or completion; timeout can leave outcome unknown. No retries or startup replay: a crash may lose resume. Do not repeat an answer to try delivery.
+Only the FIRST committed answer to a new blocking question may attempt one best-effort resume of the exact asker Session. No retries or startup replay; later/nonblocking/legacy answers do not resume. Missing or moved targets fail closed; agent/model/permissions unchanged. Validation is not an atomic lease. The 5000ms bound limits waiting, not started input. Admission is not processing or completion; timeout may leave outcome unknown. Do not repeat an answer to try delivery.
 
-The answer remains durable independently. An eligible response includes `resume`
-status/IDs/qualification and a separate SYSTEM annotation; annotation failure
-does not erase the answer. Read `view:thread` for authoritative answers.
-Answered means response, not resolution, approval or permission.
+Answers survive resume or annotation failure. Use `view:thread` for replies. Answered is not resolution, approval or permission. Assignment/delivery operations AND views are retired. Historical records remain readable/inert, never current consent. No automatic sender exists.
 
-Assignment/delivery operations AND views are retired. Historical records stay
-readable/inert, not current consent. No startup sender or retry engine exists.
+## Deep retrospective evidence
 
-## Deep retrospective source evidence
-
-One deep retrospective method: reconstruct original Session and child-Session evidence before interpreting General's handoff. Use `loom_trace` operation=`timeline` on a named local Session (or omit the ID for the caller) and follow `next_offset` for relevant events: user prompts, agent dispatches and prompts, tool calls/retries, skill loads, model usage and outcomes. `include_text:true` requests bounded user/assistant/dispatch excerpts; do not store secrets or private transcripts.
-
-Default `timeline` uses native `session.context`, containing only post-compaction messages. If original pre-compaction messages matter, obtain an **authorized sanitized native OpenCode export** outside this tool and supply its project-relative `export_path`; this requests native read permission, and denial propagates. A provided export is checked for Session identity and location, not its integrity or completeness: `coverage.full_history:null` means **unverified**. Never present either source as a verified entire history. Use `loom_trace` operation=`children` to discover direct native child Sessions, page with `next_cursor` and inspect descendants separately.
-
-The tool projects original source/message/call IDs, summaries and outcomes, never raw tool inputs/outputs, full skill text or private reasoning. It does not dispatch or mutate work, bypass permissions, read a cross-project Session, recursively reconstruct missing history or turn many tool calls into a proven efficiency problem. Missing source coverage and user perspectives remain open questions.
+Use `loom_trace` `timeline` for user/tool/skill/dispatch events and `children` for direct child Sessions; page relevant results. Native context is post-compaction only. A local `export_path` requires read permission; completeness is unverified (`coverage.full_history:null`). `include_text:true` adds excerpts. Cite IDs and missing evidence; never store raw transcripts or secrets.
 
 ## Complete stored history
 
