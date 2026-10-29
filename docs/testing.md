@@ -10,8 +10,8 @@ timestamp: 2026-10-19T00:00:00Z
 
 Run commands from the repository root. This is the maintained inventory of every
 tracked path under `tests/`, `tools/` and `.github/workflows/`, plus the seven
-runner/example supports below: **73 + 7 = 80 paths**. There are 41 test entry files
-(18 Node, 20 Bun, 3 Python); file counts are not case counts. Update this guide
+runner/example supports below: **74 + 7 = 81 paths**. There are 42 test entry files
+(18 Node, 21 Bun, 3 Python); file counts are not case counts. Update this guide
 when adding, removing or renaming an entrypoint or support input.
 
 ## Environment and commands
@@ -99,6 +99,7 @@ additional maintained tests. Do not publish private host reports without inspect
 | tests/resume-native.test.ts | Exact-asker one-shot admission, interruption/deadline/uncertainty/malformed acknowledgements; no retry/transfer, simulated host with real persistence. |
 | tests/retired-protocol-native.test.ts | Registered schema/tool rejects retired operations/views/fields/kinds without writes. |
 | tests/review-findings-native.test.ts | SDK error projection, selection failure/navigation/recovery/context budget; mutation utility consumes filename/titles. |
+| tests/session-trace-native.test.ts | Registered read-only source timeline, dispatch/skill projections, direct child paging, export scope/permission and privacy guards; simulated host, not a live installed export. |
 | tests/skill-native.test.ts | Bundled guide metadata/registration/disposal, user skill preservation, callback examples and guidance; reads production guide/docs. |
 | tests/tool-help-native.test.ts | Search-visible manuals/examples, plan fields/hierarchy/dependencies, recovery and async write guidance. |
 | tests/tool-search-codemode.test.ts | **S**: actual external search over real registered help/signatures/examples and independent-call failure behavior. |
