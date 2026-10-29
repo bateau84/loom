@@ -140,7 +140,7 @@ Answers survive resume or annotation failure. Use `view:thread` for replies. Ans
 
 ## Deep retrospective evidence
 
-`loom_trace timeline` reads only the caller's post-compaction context; other Sessions need authorized exports. `loom_trace children` lists direct children of the caller's Session family. Page with `next_cursor`; counts are page-scoped. Code Mode may hide nested calls. `include_text:true` adds excerpts. Cite IDs, identify missing evidence and never store raw transcripts or secrets.
+`loom_trace timeline` reads the caller's post-compaction context; other Sessions require authorized exports. `loom_trace children` lists direct children in the caller's Session family. Page via `next_cursor` (counts are per page). Code Mode can hide nested calls. `include_text:true` adds best-effort masked excerpts; unknown secrets may remain. Cite IDs, disclose gaps, and never store raw transcripts or secrets.
 
 ## Complete stored history
 
