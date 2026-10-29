@@ -434,3 +434,25 @@ test("a private-key block extending past the excerpt boundary is entirely withhe
   expect(text).toContain("[REDACTED]")
   expect(text.length).toBeLessThanOrEqual(1100)
 })
+
+
+test("registered trace bounds CPU and output for a megabyte of adversarial original text", async () => {
+  const f = await registeredLoom()
+  try {
+    f.nativeContexts.set("s", { data: [{
+      id: "msg_megabyte", type: "user", text: "a-".repeat(500_000),
+    }] })
+    const start = performance.now()
+    const page = (await f.invoke("trace", {
+      operation: "timeline", include_text: true, limit: 1,
+    })).result
+    const elapsedMs = performance.now() - start
+    expect(elapsedMs).toBeLessThan(750)
+    expect(page.events).toHaveLength(1)
+    expect(page.events[0]).toMatchObject({
+      source_message_id: "msg_megabyte", kind: "user_prompt",
+      text_excerpt: "[TRUNCATED]",
+    })
+    expect(JSON.stringify(page).length).toBeLessThan(10000)
+  } finally { await f.close() }
+})
