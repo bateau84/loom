@@ -39,7 +39,8 @@ const local = (root: string, path: string) => path !== root && !relative(root, p
 
 /** Read one explicitly supplied OpenCode export without accessing the host database or other projects.
  * The full untrusted transcript is never returned to the tool caller or stored in Loom. */
-export async function readSessionExport(directory: string, path: string, sessionID: string, projectID: string, authorize: (canonicalPath: string) => Promise<void>): Promise<unknown[]> {
+export async function readSessionExport(directory: string, path: string, sessionID: string, projectID: string, authorize: (canonicalPath: string) => Promise<void>, signal?: AbortSignal): Promise<{ messages: unknown[]; locationVerified: boolean }> {
+  signal?.throwIfAborted()
   if (typeof path !== "string" || !path || path.length > 4096 || isAbsolute(path) || path.includes("\0"))
     throw new Error("export_path must be a relative path under the current project")
   const root = await realpath(directory)
@@ -58,23 +59,29 @@ export async function readSessionExport(directory: string, path: string, session
     now.size === before.size && now.mtimeMs === before.mtimeMs && now.ctimeMs === before.ctimeMs
 
   await authorize(canonical)
+  signal?.throwIfAborted()
   if (await realpath(candidate) !== canonical)
     throw new Error("Export path changed during permission approval")
 
   // Open the exact checked candidate, without following a final symlink.
   // Use the descriptor for both identity checks and a size-bounded read.
-  const file = await open(candidate, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+  // O_NONBLOCK prevents a replaced FIFO from hanging before descriptor stat.
+  // It does not change reads from regular files; stat below rejects all other types.
+  const file = await open(candidate, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0))
   let content: string
   try {
+    signal?.throwIfAborted()
     if (!unchanged(await file.stat())) throw new Error("Export file changed during permission approval")
     if (await realpath(candidate) !== canonical) throw new Error("Export path changed during open")
     const buffer = Buffer.alloc(before.size + 1)
     let count = 0
     while (count < buffer.length) {
+      signal?.throwIfAborted()
       const { bytesRead } = await file.read(buffer, count, buffer.length - count, count)
       if (bytesRead === 0) break
       count += bytesRead
     }
+    signal?.throwIfAborted()
     if (count !== before.size || !unchanged(await file.stat()))
       throw new Error("Export file changed during reading")
     content = buffer.subarray(0, count).toString("utf8")
@@ -94,7 +101,8 @@ export async function readSessionExport(directory: string, path: string, session
   // directory with this exact marker. Treat it as unknown location, not a
   // verified path; the native requested Session is separately location-checked.
   const redactedDirectory = `/[redacted:session-directory:${sessionID}]`
-  if (location.directory !== redactedDirectory) {
+  const locationVerified = location.directory !== redactedDirectory
+  if (locationVerified) {
     let exportedDirectory: string
     try { exportedDirectory = await realpath(location.directory) }
     catch { throw new Error("Export Session directory cannot be verified") }
@@ -102,7 +110,8 @@ export async function readSessionExport(directory: string, path: string, session
   }
   if (!Array.isArray(transfer.messages) || transfer.messages.length > MAX_MESSAGES)
     throw new Error("Export messages are absent or exceed the processing budget")
-  return transfer.messages
+  signal?.throwIfAborted()
+  return { messages: transfer.messages, locationVerified }
 }
 
 export type TimelineOptions = {
