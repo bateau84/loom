@@ -170,7 +170,7 @@ test("plugin integration: configured roles, five tools, reload, scoping, capture
   try {
     await writeFile(path, "version: 1\nagents:\n  external:\n    roles: [planning]\nroles:\n  planning:\n    description: Plans and delegates work\n  unassigned:\n    description: Future specialization\n")
     cleanup = await (plugin as any).setup(ctx)
-    expect([...tools.keys()].sort()).toEqual(["action", "agents", "context", "plan", "record"])
+    expect([...tools.keys()].sort()).toEqual(["action", "agents", "context", "plan", "record", "trace"])
     const roster = await invoke("agents", {})
     expect(roster.agents[0].roles).toEqual(["planning"])
     expect(roster.agents[0].description).toBe("Native description")
