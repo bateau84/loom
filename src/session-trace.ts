@@ -21,10 +21,6 @@ function sourceId(value: unknown, label: string): string {
   return value
 }
 
-/** Credential assignment names are checked against a simple suffix pattern after
- * one bounded lexical match. Never nest repeated identifier-prefix alternatives. */
-const sensitiveCredentialKey = /(?:^|[_-])(?:api[_-]?key|secret[_-]?access[_-]?key|access[_-]?key|client[_-]?secret|private[_-]?key|auth(?:orization)?|secret|password|passwd|pwd|token|credentials?|database[_-]?url|connection[_-]?(?:url|string)|dsn)$/i
-
 /** Best-effort credential masking for optional excerpts.
  * Full source text is never returned, and masking cannot detect every private value. */
 function redactText(value: string): string {
@@ -34,9 +30,10 @@ function redactText(value: string): string {
     .replace(/\b((?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis(?:s)?|amqps?|mssql|sqlserver|https?|ftps?|sftp):\/\/)[^\s/?#@"'<>]+@/gi, "$1[REDACTED]@")
     .replace(/\b(?:sk-(?:proj-|svc-)?[A-Za-z0-9_-]{12,}|github_pat_[A-Za-z0-9_]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9_-]{12,}|AKIA[A-Z0-9]{16})\b/g, "[REDACTED]")
     .replace(/\b((?:Bearer|Basic)\s+)[^\s"',;]{8,}/gi, "$1[REDACTED]")
-    .replace(/(^|[\s;,(])([A-Za-z_][A-Za-z0-9_-]{0,127})(\s*[:=]\s*["']?)([^\s"',;]+)/gm,
-      (whole, prefix: string, key: string, separator: string) =>
-        sensitiveCredentialKey.test(key) ? prefix + key + separator + "[REDACTED]" : whole)
+    // Only match known sensitive assignment names; a generic "Label:" must
+    // not consume a credential inside its value. The optional prefix has one
+    // fixed maximum, not nested repeated groups.
+    .replace(/\b((?:[A-Za-z0-9_-]{0,96}[_-])?(?:api[_-]?key|secret[_-]?access[_-]?key|access[_-]?key|client[_-]?secret|private[_-]?key|auth(?:orization)?|secret|password|passwd|pwd|token|credentials?|database[_-]?url|connection[_-]?(?:url|string)|dsn)\s*[:=]\s*["']?)[^\s"',;]+/gi, "$1[REDACTED]")
     .replace(/\b[A-Za-z0-9_+/-]{48,}\b/g, "[REDACTED]")
 }
 const TRUNCATED = "[TRUNCATED]"
