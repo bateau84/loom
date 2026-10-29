@@ -163,11 +163,19 @@ export default Plugin.define({
                   if (input.cursor !== undefined) throw new Error("cursor is only valid for trace children")
                   const messages = input.export_path === undefined
                     ? unwrapped(await ctx.session.context({ sessionID: targetID }))
-                    : await readSessionExport(directory, String(input.export_path), targetID, ctx.location.project.id)
+                    : await readSessionExport(directory, String(input.export_path), targetID, ctx.location.project.id, async canonicalPath => {
+                        await ctx.permission.assert({
+                          action: "read", resources: [canonicalPath], sessionID: actor.session_id,
+                          agent: actor.agent,
+                          source: { type: "tool", messageID: toolContext.messageID, id: toolContext.id },
+                        })
+                        if (!await owns(targetID)) throw new Error("Source Session moved during export permission approval")
+                        toolContext.signal.throwIfAborted()
+                      })
                   toolContext.signal.throwIfAborted()
                   result = traceTimeline(messages, {
                     sessionID: targetID,
-                    source: input.export_path === undefined ? "native-context" : "verified-export",
+                    source: input.export_path === undefined ? "native-context" : "provided-export",
                     offset: input.offset as number | undefined, limit: input.limit as number | undefined,
                     includeText: input.include_text as boolean | undefined,
                   })
