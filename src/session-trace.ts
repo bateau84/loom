@@ -1,5 +1,5 @@
 import { constants } from "node:fs"
-import { open, realpath } from "node:fs/promises"
+import { open, realpath, stat } from "node:fs/promises"
 import { isAbsolute, relative, resolve, sep } from "node:path"
 
 const MAX_EXPORT_BYTES = 16 * 1024 * 1024
@@ -24,19 +24,39 @@ export async function readSessionExport(directory: string, path: string, session
   if (!local(root, candidate)) throw new Error("Export must stay within the current project")
   const canonical = await realpath(candidate)
   if (!local(root, canonical)) throw new Error("Export resolves outside the current project")
-  // Native permission is required even for a file under this project. Approval can yield;
-  // recheck both the path and the Session identity after it returns.
+
+  // Approval can suspend execution. Pin file identity and metadata before approval:
+  // path equality alone does not detect same-path replacement or in-place writes.
+  const before = await stat(canonical)
+  if (!before.isFile() || before.size < 1 || before.size > MAX_EXPORT_BYTES)
+    throw new Error("Export must be a regular JSON file of 1-16777216 bytes")
+  const unchanged = (now: typeof before) =>
+    now.isFile() && now.dev === before.dev && now.ino === before.ino &&
+    now.size === before.size && now.mtimeMs === before.mtimeMs && now.ctimeMs === before.ctimeMs
+
   await authorize(canonical)
-  if (await realpath(candidate) !== canonical) throw new Error("Export path changed during permission approval")
-  // Avoid following the final component if it changes between validation and opening.
-  const file = await open(canonical, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+  if (await realpath(candidate) !== canonical)
+    throw new Error("Export path changed during permission approval")
+
+  // Open the exact checked candidate, without following a final symlink.
+  // Use the descriptor for both identity checks and a size-bounded read.
+  const file = await open(candidate, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
   let content: string
   try {
-    const stat = await file.stat()
-    if (!stat.isFile() || stat.size < 1 || stat.size > MAX_EXPORT_BYTES) throw new Error("Export must be a regular JSON file of 1-16777216 bytes")
-    content = await file.readFile({ encoding: "utf8" })
-    if (Buffer.byteLength(content) > MAX_EXPORT_BYTES) throw new Error("Export exceeded the byte budget")
+    if (!unchanged(await file.stat())) throw new Error("Export file changed during permission approval")
+    if (await realpath(candidate) !== canonical) throw new Error("Export path changed during open")
+    const buffer = Buffer.alloc(before.size + 1)
+    let count = 0
+    while (count < buffer.length) {
+      const { bytesRead } = await file.read(buffer, count, buffer.length - count, count)
+      if (bytesRead === 0) break
+      count += bytesRead
+    }
+    if (count !== before.size || !unchanged(await file.stat()))
+      throw new Error("Export file changed during reading")
+    content = buffer.subarray(0, count).toString("utf8")
   } finally { await file.close() }
+
   let raw: unknown
   try { raw = JSON.parse(content) } catch { throw new Error("Export is not valid JSON") }
   const top = obj(raw)
