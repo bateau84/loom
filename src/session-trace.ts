@@ -27,9 +27,10 @@ function redactText(value: string): string {
   return value
     .replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/gi, "[REDACTED]")
     .replace(/\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{6,}\b/g, "[REDACTED]")
+    .replace(/\b((?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis(?:s)?|amqps?|mssql|sqlserver|https?|ftps?|sftp):\/\/)[^\s/?#@"'<>]+@/gi, "$1[REDACTED]@")
     .replace(/\b(?:sk-(?:proj-|svc-)?[A-Za-z0-9_-]{12,}|github_pat_[A-Za-z0-9_]{12,}|gh[pousr]_[A-Za-z0-9_]{12,}|xox[baprs]-[A-Za-z0-9_-]{12,}|AKIA[A-Z0-9]{16})\b/g, "[REDACTED]")
     .replace(/\b((?:Bearer|Basic)\s+)[^\s"',;]{8,}/gi, "$1[REDACTED]")
-    .replace(/\b((?:api[_-]?key|auth(?:orization)?|access[_-]?token|secret|password|passwd|client[_-]?secret|private[_-]?key|[\w]+_TOKEN)\s*[:=]\s*["']?)[^\s"',;]{4,}/gi, "$1[REDACTED]")
+    .replace(/\b((?:[A-Za-z0-9]+[_-])*(?:api[_-]?key|secret[_-]?access[_-]?key|access[_-]?key|client[_-]?secret|private[_-]?key|auth(?:orization)?|secret|password|passwd|pwd|token|credentials?|database[_-]?url|connection[_-]?(?:url|string)|dsn)\s*[:=]\s*["']?)[^\s"',;]+/gi, "$1[REDACTED]")
     .replace(/\b[A-Za-z0-9_+/-]{48,}\b/g, "[REDACTED]")
 }
 const excerpt = (value: unknown, limit = 700): string | undefined =>
@@ -160,10 +161,18 @@ function projectEvent(message: Obj, partIndex: number, includeText: boolean): Ev
     ...(typeof created === "number" && Number.isFinite(created)
       ? { created_at: created } : typeof created === "string" ? { created_at: small(created, 48) } : {}) }
   const type = string(message.type)
-  if (type === "user") return { ...base, kind: "user_prompt",
-    ...(includeText ? { text_excerpt: excerpt(message.text, 1100) } : { text_withheld: true }),
-    ...(Array.isArray(message.skills) ? { requested_skills: message.skills.slice(0, 40)
-      .map(x => obj(x).id).filter(x => x !== undefined).map(x => sourceId(x, "requested skill")) } : {}) }
+  if (type === "user") {
+    // Prompt.SkillAttachment.id is a branded string, NOT a Session.Message.ID.
+    // Preserve valid slashes, Unicode and namespaced IDs while bounding output.
+    const requested = Array.isArray(message.skills)
+      ? message.skills.slice(0, 40).map(item => obj(item).id).filter((id): id is string => typeof id === "string")
+      : []
+    return { ...base, kind: "user_prompt",
+      ...(includeText ? { text_excerpt: excerpt(message.text, 1100) } : { text_withheld: true }),
+      ...(Array.isArray(message.skills) ? { requested_skills: requested.map(id => id.slice(0, 120)),
+        ...(requested.some(id => id.length > 120) ? { requested_skill_ids_excerpted: true } : {}),
+        ...(message.skills.length > 40 ? { requested_skills_omitted: true } : {}) } : {}) }
+  }
   if (type === "assistant") {
     const agent = string(message.agent)
     if (partIndex === 0) {
