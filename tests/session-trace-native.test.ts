@@ -420,3 +420,17 @@ test("text excerpt truncation cannot expose a credential split by its boundary",
   expect(excerpt).toContain("[TRUNCATED]")
   expect(excerpt.length).toBeLessThanOrEqual(1100)
 })
+
+
+test("a private-key block extending past the excerpt boundary is entirely withheld", () => {
+  const marker = "SYNTHETIC_PRIVATE_KEY_BYTES_12345"
+  const pem = "-----BEGIN RSA PRIVATE KEY-----\n" +
+    marker + "\n" + "Q".repeat(1300) + "\n-----END RSA PRIVATE KEY-----"
+  const result = traceTimeline([{ id: "msg_partial_pem", type: "user", text: pem }], {
+    sessionID: "s", source: "native-context", includeText: true,
+  })
+  const text = String(result.events[0].text_excerpt)
+  expect(text).not.toContain(marker)
+  expect(text).toContain("[REDACTED]")
+  expect(text.length).toBeLessThanOrEqual(1100)
+})
