@@ -12,6 +12,7 @@ export async function registeredLoom(initialSkills: any[] = []) {
   const sessions = new Map<string, any>()
   const nativeInputs: unknown[] = [], sessionReads: string[] = [], nativeListRequests: any[] = []
   const nativePages = new Map<string, any>()
+  const nativeContexts = new Map<string, unknown>()
   const tools = new Map<string, any>(), namespaces = new Map<string, any>()
   const hooks = new Map<string, any>()
   const skills = new Map<string, any>(), skillTransforms = new Set<(editor: any) => void>()
@@ -53,7 +54,7 @@ export async function registeredLoom(initialSkills: any[] = []) {
     session: {
       list: async (query: any) => { nativeListRequests.push(query); return nativePages.get(query.cursor ?? "") ?? { data: [], cursor: { next: null, previous: null } } },
       synthetic: async (r:any) => { nativeInputs.push(r); return {id:r.id,sessionID:r.sessionID,type:"synthetic",delivery:r.delivery,payload:{text:r.text,description:r.description,metadata:r.metadata}} },
-      context: async () => [],
+      context: async ({ sessionID }: { sessionID: string }) => nativeContexts.get(sessionID) ?? { data: [] },
       get: async ({ sessionID }: { sessionID: string }) => {
         sessionReads.push(sessionID)
         if (sessions.has(sessionID)) {
@@ -80,7 +81,7 @@ export async function registeredLoom(initialSkills: any[] = []) {
     await writeFile(join(directory, ".loom.yaml"), "agents: {}\ninstructions: {enabled: false}\nledger: {capture: off}\n")
     dispose = await (plugin as any).setup(ctx)
     return {
-      tools, namespaces, close, directory, hooks, sessions, skills, reloadSkills, nativeInputs, sessionReads, nativeListRequests, nativePages,
+      tools, namespaces, close, directory, hooks, sessions, skills, reloadSkills, nativeInputs, sessionReads, nativeListRequests, nativePages, nativeContexts,
       permission, permissionRequests, skillRequests,
       context: async (sessionID: string, agent: string) => {
         const event = { sessionID, agent, system: [] as Array<{ type: string; text: string }>, messages: [], tools: {}, options: {} }
