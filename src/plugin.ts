@@ -175,6 +175,7 @@ export default Plugin.define({
                 result = { agents: entries, role_descriptions: roleDescriptions(snapshot.config), config_loads: configLoadStatus(), evidence: { capture: snapshot.config.ledger.capture, ...observer.status() }, config_sources: snapshot.sources, errors: snapshot.errors, warnings: entries.filter(a => a.configured && !a.available).map(a => `Configured agent is unavailable: ${a.id}`) }; break
               }
               case "trace": {
+                if ("offset" in input) throw new Error("Trace offset is not supported; follow next_cursor instead")
                 const targetID = input.session_id === undefined ? actor.session_id : String(input.session_id)
                 await checkedSession(targetID)
                 if (input.operation === "timeline") {
