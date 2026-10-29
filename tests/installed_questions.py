@@ -46,6 +46,7 @@ REQUIRED_INSTALLED_CHECKS = {
     'E2-E3-restart-no-reconstruction',
     'E4-native-session-discovery', 'E4-native-archive-status',
     'E5-compaction-context-and-observation',
+    'E6-native-trace-and-scope', 'E6-exported-child-history',
 }
 
 
@@ -62,7 +63,9 @@ def qualification_status(checks, version):
 
 
 def request(host, method, path, body=None):
-    require(path.startswith('/api/session'), 'Only owned private Session endpoints permitted')
+    allow_export = method == 'GET' and path.startswith('/api/experimental/session/') and path.endswith('/export?sanitize=true')
+    require(path.startswith('/api/session') or allow_export,
+            'Only owned private Session endpoints and sanitized export reads are permitted')
     token = base64.b64encode(f'opencode:{host.password}'.encode()).decode()
     req = Request(host.url + path, data=None if body is None else json.dumps(body).encode(), method=method,
                   headers={'Authorization': 'Basic ' + token, 'Content-Type': 'application/json'})
@@ -364,6 +367,53 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             asker, respondent, reader = [s.session(role) for role in roles[:3]]
             report['sessions'] = {'asker': asker, 'respondent': respondent, 'reader': reader}
             s.command(reader, 'const x=search({namespace:"loom",limit:10}); if(x.items.length!==5) throw new Error("Expected five tools"); return x')
+            # Execute the real installed plugin's trace against native host messages,
+            # not a fabricated response or a component-only copy.
+            own_trace = s.invoke(reader, 'trace', {'operation': 'timeline', 'limit': 50})
+            require(own_trace['session_id'] == reader and own_trace['source'] == 'native-context'
+                    and own_trace['coverage']['full_history'] is False
+                    and own_trace['coverage']['delegation_complete'] is False,
+                    'Native timeline returned an unqualified source or wrong Session')
+            require(any(e['kind'] == 'user_prompt' for e in own_trace['events'])
+                    and any(e['kind'] == 'opaque_tool' and e.get('tool') == 'execute'
+                            for e in own_trace['events']),
+                    'Installed OpenCode context did not expose a real user prompt and Code Mode wrapper')
+            # The same project is not permission to read another Session's
+            # native context; this must fail through the real plugin.
+            refused = 'let denied=false;try{await tools.loom.trace({operation:"timeline",session_id:' + json.dumps(asker) + '})}catch(e){denied=true}if(!denied)throw new Error("cross-session native context escaped");return true'
+            denied_events = s.command(reader, refused)
+            require(any(e['type'] == 'tool-after' and e['data']['tool'] in ('loom_trace', 'loom.trace')
+                        and e['data']['status'] == 'error' for e in denied_events),
+                    'Cross-session rejection did not reach native trace authorization')
+            report['checks'].append({'name': 'E6-native-trace-and-scope', 'status': 'PASS',
+                                     'session': reader,
+                                     'source_messages': own_trace['source_messages'],
+                                     'observed_opaque': True,
+                                     'qualification': 'Real native postcompaction context and negative same-project read, not full history'})
+            child = request(host, 'POST', '/api/session', {'parentID': reader, 'agent': 'question-reader',
+                'title': 'deep retro child', 'model': {'providerID': 'question-fixture', 'id': 'reader'},
+                'location': {'directory': str(root / 'project')}})['id']
+            s.command(child, 'return await tools.loom.agents({})')
+            inventory = s.invoke(reader, 'trace', {'operation': 'children', 'session_id': reader, 'limit': 50})
+            require(any(x['id'] == child and x['parent_id'] == reader for x in inventory['sessions']),
+                    'Real native parent-child Session inventory did not include delegated child')
+            # Read the child's *real* sanitized native export. The content must
+            # traverse the actual host export API -> private file -> Loom read ACL -> trace.
+            exported = request(host, 'GET', f'/api/experimental/session/{child}/export?sanitize=true')
+            require(exported.get('info', {}).get('id') == child and isinstance(exported.get('messages'), list),
+                    'Native sanitized Session export is unavailable or malformed')
+            (root / 'project' / 'child-trace.json').write_text(json.dumps({'data': exported}))
+            projected = s.invoke(reader, 'trace', {'operation': 'timeline', 'session_id': child,
+                'export_path': 'child-trace.json', 'limit': 50})
+            require(projected['source'] == 'provided-export' and projected['coverage']['full_history'] is None
+                    and any(e['kind'] == 'user_prompt' for e in projected['events'])
+                    and any(e['kind'] == 'opaque_tool' and e.get('tool') == 'execute'
+                            for e in projected['events']),
+                    'Loom did not project the installed child history through an authorized export')
+            report['checks'].append({'name': 'E6-exported-child-history', 'status': 'PASS',
+                                     'parent': reader, 'child': child,
+                                     'source_messages': projected['source_messages'],
+                                     'qualification': 'Actual OpenCode child export shape; no cryptographic completeness proof'})
             start_index = len(events(root))
             q = s.invoke(asker, 'record', {'operation': 'ask', 'question': '# <tag> Unicode 雪🙂 [not approval]',
                          'to_agent': 'question-respondent', 'blocking': False, 'context_attachments': ['fixture://question']})
