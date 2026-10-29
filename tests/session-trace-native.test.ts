@@ -1,4 +1,5 @@
 import { test, expect } from "bun:test"
+import { spawnSync } from "node:child_process"
 import { mkdir, rename, symlink, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { traceTimeline } from "../src/session-trace.js"
@@ -295,4 +296,27 @@ test("requested skill attachment IDs reflect actual OpenCode Prompt.SkillAttachm
     kind: "user_prompt", requested_skills: ["skill_1", "skill_2"],
   })
   expect(JSON.stringify(response)).not.toContain("secret skill content")
+})
+
+
+test("a regular export replaced by a FIFO cannot block descriptor open", async () => {
+  if (process.platform !== "linux") return
+  const f = await registeredLoom()
+  try {
+    await mkdir(join(f.directory, "exports"))
+    const path = join(f.directory, "exports", "source.json")
+    await writeFile(path, JSON.stringify({ data: { info: {
+      id: "session-a", projectID: "tool-help", location: { directory: f.directory },
+    }, messages: [{ id: "msg_1", type: "user", text: "safe" }] } }))
+    f.permission.beforeReturn = async () => {
+      await rename(path, join(f.directory, "exports", "original.json"))
+      const fifo = spawnSync("mkfifo", [path], { encoding: "utf8" })
+      expect(fifo.status).toBe(0)
+      f.permission.beforeReturn = undefined
+    }
+    // O_NONBLOCK ensures the test cannot remain pending on a FIFO read open.
+    await expect(f.invoke("trace", {
+      operation: "timeline", session_id: "session-a", export_path: "exports/source.json",
+    })).rejects.toThrow(/Export file changed|Export path changed|regular JSON file/)
+  } finally { await f.close() }
 })
