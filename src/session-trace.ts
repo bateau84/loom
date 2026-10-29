@@ -104,7 +104,7 @@ const directDispatch = (name: string, input: Obj) =>
   /^(task|delegate|dispatch|spawn_agent|subagent|run_agent)$/i.test(toolBase(name)) ||
   typeof input.subagent_type === "string" || typeof input.to_agent === "string"
 const opaqueExecutor = (name: string) =>
-  /^(functions\.exec|code|codemode|execute_code|multi_tool_use\.parallel|batch_tools|batch|parallel)$/i.test(name) ||
+  /^(functions\.exec|execute|code|codemode|execute_code|multi_tool_use\.parallel|batch_tools|batch|parallel)$/i.test(name) ||
   /^(codemode|execute_code|multi_tool_use)$/i.test(toolBase(name))
 
 /**
