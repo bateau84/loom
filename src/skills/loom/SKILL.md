@@ -13,6 +13,7 @@ companion loaders, not native execution.
 | --- | --- |
 | `loom_agents` | Native IDs, roles and diagnostics; no permission grants. |
 | `loom_action` | Goals and Session inventory; state labels are not execution controls or proof. |
+| `loom_trace` | Read-only native Session timeline or direct child Session inventory; never claims full history from post-compaction context. |
 | `loom_plan` | Read/replace optional nodes; no dispatch or skill loading. |
 | `loom_context` | Select work, pin a result handoff or limit prior opinions during independent review. |
 | `loom_record` | Store/query concerns, claims, results, reviews, progress, questions and history. |
@@ -152,6 +153,14 @@ Answered means response, not resolution, approval or permission.
 
 Assignment/delivery operations AND views are retired. Historical records stay
 readable/inert, not current consent. No startup sender or retry engine exists.
+
+## Deep retrospective source evidence
+
+One deep retrospective method: reconstruct original Session and child-Session evidence before interpreting General's handoff. Use `loom_trace` operation=`timeline` on a named local Session (or omit the ID for the caller) and follow `next_offset` for relevant events: user prompts, agent dispatches and prompts, tool calls/retries, skill loads, model usage and outcomes. `include_text:true` requests bounded user/assistant/dispatch excerpts; do not store secrets or private transcripts.
+
+Default `timeline` uses native `session.context`, containing only post-compaction messages. If original pre-compaction messages matter, obtain an **authorized sanitized native OpenCode export** outside this tool and supply its project-relative `export_path`; this requests native read permission, and denial propagates. A provided export is checked for Session identity and location, not its integrity or completeness: `coverage.full_history:null` means **unverified**. Never present either source as a verified entire history. Use `loom_trace` operation=`children` to discover direct native child Sessions, page with `next_cursor` and inspect descendants separately.
+
+The tool projects original source/message/call IDs, summaries and outcomes, never raw tool inputs/outputs, full skill text or private reasoning. It does not dispatch or mutate work, bypass permissions, read a cross-project Session, recursively reconstruct missing history or turn many tool calls into a proven efficiency problem. Missing source coverage and user perspectives remain open questions.
 
 ## Complete stored history
 
