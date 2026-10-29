@@ -404,7 +404,7 @@ test("adversarial long source text has bounded excerpt cost in Bun", () => {
   const start = performance.now()
   const result = traceTimeline(input, { sessionID: "s", source: "native-context", includeText: true })
   const elapsedMs = performance.now() - start
-  expect(elapsedMs).toBeLessThan(900)
+  expect(elapsedMs).toBeLessThan(250)
   expect(String(result.events[0].text_excerpt).length).toBeLessThanOrEqual(1100)
   expect(result.events[0].kind).toBe("user_prompt")
 })
