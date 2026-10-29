@@ -395,3 +395,28 @@ test("OpenCode skill attachment identifiers preserve slashes and bounded Unicode
   expect(result.events[1]).toMatchObject({ kind: "skill_loaded", skill: "team/retrospective" })
   expect(result.events[2]).toMatchObject({ kind: "turn_finished", outcome: "succeeded" })
 })
+
+
+test("adversarial long source text has bounded excerpt cost in Bun", () => {
+  // The old prefixed-credential regex can exhibit superlinear work on a- repeats.
+  // Keep RED input small enough to avoid stalling CI before the fix.
+  const input = [{ id: "msg_adversarial", type: "user", text: "a-".repeat(24_576) }]
+  const start = performance.now()
+  const result = traceTimeline(input, { sessionID: "s", source: "native-context", includeText: true })
+  const elapsedMs = performance.now() - start
+  expect(elapsedMs).toBeLessThan(900)
+  expect(String(result.events[0].text_excerpt).length).toBeLessThanOrEqual(1100)
+  expect(result.events[0].kind).toBe("user_prompt")
+})
+
+test("text excerpt truncation cannot expose a credential split by its boundary", () => {
+  const benign = "context ".repeat(135)
+  const crossed = "opaque_boundary_secret_1234567_AND_MORE_SECRET_BYTES"
+  const input = [{ id: "msg_crossed", type: "user", text: benign + crossed + " with trailing context" }]
+  const result = traceTimeline(input, { sessionID: "s", source: "native-context", includeText: true })
+  const excerpt = String(result.events[0].text_excerpt)
+  expect(excerpt).toContain("context")
+  expect(excerpt).not.toContain("opaque_boundary")
+  expect(excerpt).toContain("[TRUNCATED]")
+  expect(excerpt.length).toBeLessThanOrEqual(1100)
+})
