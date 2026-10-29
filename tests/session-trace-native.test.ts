@@ -400,7 +400,7 @@ test("OpenCode skill attachment identifiers preserve slashes and bounded Unicode
 test("adversarial long source text has bounded excerpt cost in Bun", () => {
   // The old prefixed-credential regex can exhibit superlinear work on a- repeats.
   // Keep RED input small enough to avoid stalling CI before the fix.
-  const input = [{ id: "msg_adversarial", type: "user", text: "a-".repeat(24_576) }]
+  const input = [{ id: "msg_adversarial", type: "user", text: "a-".repeat(49_152) }]
   const start = performance.now()
   const result = traceTimeline(input, { sessionID: "s", source: "native-context", includeText: true })
   const elapsedMs = performance.now() - start
