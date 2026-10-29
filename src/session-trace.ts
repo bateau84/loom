@@ -78,125 +78,172 @@ export async function readSessionExport(directory: string, path: string, session
 export type TimelineOptions = {
   sessionID: string
   source: "native-context" | "provided-export"
-  offset?: number
+  cursor?: string
   limit?: number
   includeText?: boolean
 }
+
+type Event = Obj & { kind: string; source_message_id: string; created_at?: number | string }
+type Position = { version: 1; session_id: string; source: TimelineOptions["source"]; message: number; part: number; seen: number }
+const isIndex = (x: unknown, max: number): x is number => Number.isSafeInteger(x) && (x as number) >= 0 && (x as number) <= max
+const encodePosition = (value: Position) => Buffer.from(JSON.stringify(value)).toString("base64url")
+function decodePosition(encoded: string, options: TimelineOptions): Position {
+  if (typeof encoded !== "string" || encoded.length > 4096 || !/^[A-Za-z0-9_-]+$/.test(encoded))
+    throw new Error("Invalid trace cursor")
+  let data: Obj
+  try { data = obj(JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"))) }
+  catch { throw new Error("Invalid trace cursor") }
+  if (data.version !== 1 || data.session_id !== options.sessionID || data.source !== options.source ||
+    !isIndex(data.message, MAX_MESSAGES) || !isIndex(data.part, MAX_EVENTS) || !isIndex(data.seen, MAX_EVENTS))
+    throw new Error("Trace cursor does not match this Session/source or exceeds limits")
+  return data as Position
+}
+
+const toolBase = (name: string) => name.split(/[.:/]/).at(-1) ?? name
+const directDispatch = (name: string, input: Obj) =>
+  /^(task|delegate|dispatch|spawn_agent|subagent|run_agent)$/i.test(toolBase(name)) ||
+  typeof input.subagent_type === "string" || typeof input.to_agent === "string"
+const opaqueExecutor = (name: string) =>
+  /^(functions\.exec|code|codemode|execute_code|multi_tool_use\.parallel|batch_tools|batch|parallel)$/i.test(name) ||
+  /^(codemode|execute_code|multi_tool_use)$/i.test(toolBase(name))
+
+/**
+ * Project one event. Cursor positions are native message index and (for assistant)
+ * content index. No raw tool arguments, tool outputs or provider reasoning leave Loom.
+ * A tool wrapper may hide delegated calls: flag the limitation, do not guess activity.
+ */
+function projectEvent(message: Obj, partIndex: number, includeText: boolean): Event {
+  const id = string(message.id)
+  if (!id) throw new Error("Native Session message is missing its source ID")
+  const time = obj(message.time)
+  const created = time.created
+  const base = { source_message_id: id,
+    ...(typeof created === "number" || typeof created === "string" ? { created_at: created } : {}) }
+  const type = string(message.type)
+  if (type === "user") return { ...base, kind: "user_prompt",
+    ...(includeText ? { text_excerpt: excerpt(message.text, 1100) } : { text_withheld: true }),
+    ...(Array.isArray(message.skills) ? { requested_skills: message.skills.filter(x => typeof x === "string").slice(0, 40) } : {}) }
+  if (type === "assistant") {
+    const agent = string(message.agent)
+    if (partIndex === 0) {
+      const model = obj(message.model)
+      return { ...base, kind: "assistant_step", agent,
+        provider: string(model.providerID), model: string(model.id),
+        ...(typeof message.cost === "number" ? { cost_usd: message.cost } : {}),
+        ...(message.error ? { reported_error: true } : {}),
+        ...(message.retry ? { retry_attempt: obj(message.retry).attempt } : {}),
+        ...(message.finish ? { finish_reason: string(message.finish) } : {}),
+        ...(message.tokens ? { tokens_input: num(obj(message.tokens).input), tokens_output: num(obj(message.tokens).output) } : {}) }
+    }
+    const content = Array.isArray(message.content) ? message.content : []
+    const part = obj(content[partIndex - 1])
+    if (part.type === "tool") {
+      const state = obj(part.state)
+      const status = string(state.status) ?? "unknown"
+      const name = string(part.name) ?? "unknown"
+      const input = obj(state.input)
+      const dispatch = directDispatch(name, input)
+      const opaque = !dispatch && opaqueExecutor(name)
+      const prompt = string(input.prompt) ?? string(input.task) ?? string(input.instructions)
+      const recipient = string(input.subagent_type) ?? string(input.agent) ?? string(input.to_agent)
+      return { ...base, kind: dispatch ? "agent_dispatch" : opaque ? "opaque_tool" : "tool_call",
+        tool: name, call_id: string(part.id), status, agent,
+        ...(recipient ? { recipient } : {}),
+        ...(Object.keys(input).length ? { input_fields: Object.keys(input).slice(0, 30) } : {}),
+        ...(dispatch && prompt !== undefined ? (includeText
+          ? { dispatch_prompt_excerpt: excerpt(prompt, 1600), prompt_truncated: prompt.length > 1600 }
+          : { dispatch_prompt_withheld: true }) : {}),
+        ...(opaque ? { delegation_visibility: "unknown-inner-calls" } : {}),
+        ...(state.error ? { error_recorded: true } : {}) }
+    }
+    if (part.type === "text") return { ...base, kind: "assistant_text", agent,
+      ...(includeText ? { text_excerpt: excerpt(part.text, 1100) } : { text_withheld: true }) }
+    if (part.type === "reasoning") return { ...base, kind: "reasoning_present", text_withheld: true }
+    return { ...base, kind: "assistant_other_part", part_type: string(part.type) }
+  }
+  if (type === "skill") return { ...base, kind: "skill_loaded", skill: string(message.skill), name: string(message.name) }
+  if (type === "compaction") return { ...base, kind: "compaction", status: string(message.status), reason: string(message.reason) }
+  if (type === "agent-switched") return { ...base, kind: "agent_switched", agent: string(message.agent), previous: string(message.previous) }
+  if (type === "model-switched") {
+    const model = obj(message.model)
+    return { ...base, kind: "model_switched", provider: string(model.providerID), model: string(model.id) }
+  }
+  if (type === "idle") return { ...base, kind: "turn_finished", outcome: string(message.outcome) }
+  if (type === "shell") return { ...base, kind: "shell", status: string(message.status), exit: message.exit,
+    ...(includeText ? { command_excerpt: excerpt(message.command, 900) } : { command_withheld: true }) }
+  if (type === "synthetic") return { ...base, kind: "synthetic_input",
+    ...(includeText ? { text_excerpt: excerpt(message.text, 900) } : { text_withheld: true }) }
+  return { ...base, kind: type === "system" ? "system_instruction" : "other", type }
+}
+
 export function traceTimeline(input: unknown, options: TimelineOptions) {
   if (!Array.isArray(input)) throw new Error("Native Session history must be an array")
   if (input.length > MAX_MESSAGES) throw new Error("Session message processing budget exceeded")
-  const offset = options.offset ?? 0
   const limit = options.limit ?? 25
-  if (!Number.isSafeInteger(offset) || offset < 0 || offset > MAX_EVENTS ||
-      !Number.isSafeInteger(limit) || limit < 1 || limit > 50)
-    throw new Error("Trace offset must be 0-60000; limit must be 1-50")
+  if (!isIndex(limit, 50) || limit < 1) throw new Error("Trace limit must be 1-50")
   if (options.includeText !== undefined && typeof options.includeText !== "boolean")
     throw new Error("include_text must be Boolean")
-  type Entry = Obj & { kind: string; source_message_id: string; created_at?: unknown }
-  const events: Entry[] = []
+  const initial: Position = options.cursor === undefined
+    ? { version: 1, session_id: options.sessionID, source: options.source, message: 0, part: 0, seen: 0 }
+    : decodePosition(options.cursor, options)
+  if (initial.message >= input.length && (initial.message !== input.length || initial.part !== 0))
+    throw new Error("Trace cursor is outside the source messages")
+
+  const events: Event[] = []
+  const metrics = { user_prompts: 0, assistant_steps: 0, tool_calls: 0, tool_errors: 0,
+    dispatches: 0, opaque_tools: 0, skills_loaded: 0, compactions: 0,
+    cost_usd: 0, tokens_input: 0, tokens_output: 0 }
   const toolStatuses: Record<string, { completed: number; error: number; in_progress: number }> = Object.create(null)
-  const metrics = { messages: input.length, user_prompts: 0, assistant_steps: 0, tool_calls: 0,
-    tool_errors: 0, dispatches: 0, skills_loaded: 0, compactions: 0, cost_usd: 0, tokens_input: 0, tokens_output: 0 }
-  const add = (event: Entry) => {
-    if (events.length >= MAX_EVENTS) throw new Error("Session trace event processing budget exceeded")
-    events.push(event)
-  }
-  for (const raw of input) {
-    const msg = obj(raw)
-    const type = string(msg.type) ?? "unknown"
-    const id = string(msg.id) ?? "unknown"
-    const time = obj(msg.time)
-    const base = { source_message_id: id, ...(time.created !== undefined ? { created_at: time.created } : {}) }
-    if (type === "user") {
-      metrics.user_prompts++
-      add({ ...base, kind: "user_prompt", ...(options.includeText ? { text_excerpt: excerpt(msg.text, 1100) } : { text_withheld: true }),
-        ...(Array.isArray(msg.skills) ? { requested_skills: msg.skills.filter(x => typeof x === "string").slice(0, 40) } : {}) })
-      continue
-    }
-    if (type === "assistant") {
-      metrics.assistant_steps++
-      const model = obj(msg.model), tokens = obj(msg.tokens)
-      metrics.cost_usd += num(msg.cost)
-      metrics.tokens_input += num(tokens.input)
-      metrics.tokens_output += num(tokens.output)
-      const agent = string(msg.agent)
-      add({ ...base, kind: "assistant_step", agent, provider: string(model.providerID), model: string(model.id),
-        ...(typeof msg.cost === "number" ? { cost_usd: msg.cost } : {}),
-        ...(msg.error ? { reported_error: true } : {}),
-        ...(msg.retry ? { retry_attempt: obj(msg.retry).attempt } : {}),
-        ...(msg.finish ? { finish_reason: string(msg.finish) } : {}) })
-      for (const rawPart of Array.isArray(msg.content) ? msg.content : []) {
-        const part = obj(rawPart)
-        if (part.type === "tool") {
-          metrics.tool_calls++
-          const state = obj(part.state)
-          const status = string(state.status) ?? "unknown"
-          if (status === "error") metrics.tool_errors++
-          const name = string(part.name) ?? "unknown"
-          if (Object.keys(toolStatuses).length < 80 || toolStatuses[name]) {
-            const counts = toolStatuses[name] ?? (toolStatuses[name] = { completed: 0, error: 0, in_progress: 0 })
-            if (status === "completed") counts.completed++
-            else if (status === "error") counts.error++
-            else counts.in_progress++
-          }
-          const argumentsObject = obj(state.input)
-          const dispatch = /^(task|delegate|dispatch|spawn_agent|subagent)$/i.test(name) ||
-            typeof argumentsObject.subagent_type === "string"
-          if (dispatch) metrics.dispatches++
-          const prompt = string(argumentsObject.prompt) ?? string(argumentsObject.task) ?? string(argumentsObject.instructions)
-          const recipient = string(argumentsObject.subagent_type) ?? string(argumentsObject.agent) ?? string(argumentsObject.to_agent)
-          add({ ...base, kind: dispatch ? "agent_dispatch" : "tool_call", tool: name, call_id: string(part.id),
-            status, agent, ...(recipient ? { recipient } : {}),
-            ...(Object.keys(argumentsObject).length ? { input_fields: Object.keys(argumentsObject).slice(0, 30) } : {}),
-            ...(dispatch && prompt !== undefined ? (options.includeText
-              ? { dispatch_prompt_excerpt: excerpt(prompt, 1600), prompt_truncated: prompt.length > 1600 }
-              : { dispatch_prompt_withheld: true }) : {}),
-            ...(state.error ? { error_recorded: true } : {}),
-          })
-        } else if (part.type === "text") {
-          add({ ...base, kind: "assistant_text", agent,
-            ...(options.includeText ? { text_excerpt: excerpt(part.text, 1100) } : { text_withheld: true }) })
-        } else if (part.type === "reasoning") {
-          // Never project private model reasoning, even in include_text mode.
-          add({ ...base, kind: "reasoning_present", text_withheld: true })
+  let seen = initial.seen
+  let next: Position | null = null
+  for (let i = initial.message; i < input.length && !next; i++) {
+    const msg = obj(input[i])
+    const count = msg.type === "assistant" && Array.isArray(msg.content) ? 1 + msg.content.length : 1
+    const start = i === initial.message ? initial.part : 0
+    if (start >= count) throw new Error("Trace cursor has invalid message part")
+    for (let part = start; part < count; part++) {
+      if (events.length === limit) {
+        next = { ...initial, message: i, part, seen }
+        break
+      }
+      if (seen >= MAX_EVENTS) throw new Error("Session trace event processing budget exceeded")
+      const event = projectEvent(msg, part, options.includeText === true)
+      events.push(event); seen++
+      if (event.kind === "user_prompt") metrics.user_prompts++
+      if (event.kind === "assistant_step") {
+        metrics.assistant_steps++
+        metrics.cost_usd += num(event.cost_usd)
+        metrics.tokens_input += num(event.tokens_input)
+        metrics.tokens_output += num(event.tokens_output)
+      }
+      if (["agent_dispatch", "opaque_tool", "tool_call"].includes(event.kind)) {
+        metrics.tool_calls++
+        if (event.kind === "agent_dispatch") metrics.dispatches++
+        if (event.kind === "opaque_tool") metrics.opaque_tools++
+        if (event.status === "error") metrics.tool_errors++
+        const name = string(event.tool) ?? "unknown"
+        if (Object.keys(toolStatuses).length < 80 || toolStatuses[name]) {
+          const entry = toolStatuses[name] ?? (toolStatuses[name] = { completed: 0, error: 0, in_progress: 0 })
+          if (event.status === "completed") entry.completed++
+          else if (event.status === "error") entry.error++
+          else entry.in_progress++
         }
       }
-      continue
-    }
-    if (type === "skill") {
-      metrics.skills_loaded++
-      add({ ...base, kind: "skill_loaded", skill: string(msg.skill), name: string(msg.name) })
-    } else if (type === "compaction") {
-      metrics.compactions++
-      add({ ...base, kind: "compaction", status: string(msg.status), reason: string(msg.reason) })
-    } else if (type === "agent-switched") {
-      add({ ...base, kind: "agent_switched", agent: string(msg.agent), previous: string(msg.previous) })
-    } else if (type === "model-switched") {
-      const model = obj(msg.model)
-      add({ ...base, kind: "model_switched", provider: string(model.providerID), model: string(model.id) })
-    } else if (type === "idle") {
-      add({ ...base, kind: "turn_finished", outcome: string(msg.outcome) })
-    } else if (type === "shell") {
-      add({ ...base, kind: "shell", status: string(msg.status), exit: msg.exit,
-        ...(options.includeText ? { command_excerpt: excerpt(msg.command, 900) } : { command_withheld: true }) })
-    } else if (type === "synthetic") {
-      add({ ...base, kind: "synthetic_input",
-        ...(options.includeText ? { text_excerpt: excerpt(msg.text, 900) } : { text_withheld: true }) })
-    } else {
-      add({ ...base, kind: type === "system" ? "system_instruction" : "other", type })
+      if (event.kind === "skill_loaded") metrics.skills_loaded++
+      if (event.kind === "compaction") metrics.compactions++
     }
   }
   metrics.cost_usd = Math.round(metrics.cost_usd * 1e6) / 1e6
   return {
-    session_id: options.sessionID,
-    source: options.source,
+    session_id: options.sessionID, source: options.source,
     coverage: options.source === "native-context"
-      ? { full_history: false, detail: "Only active messages after the latest completed compaction. Earlier history and child Sessions are NOT included." }
-      : { full_history: null, detail: "Provided export matches the requested Session identity and location but completeness/integrity cannot be established. It may be sanitized, stale or incomplete. Child Sessions are NOT included." },
-    metrics, tool_statuses: toolStatuses,
-    offset, events: events.slice(offset, offset + limit),
-    next_offset: offset + limit < events.length ? offset + limit : null,
-    total_events: events.length, text_included: options.includeText === true,
-    note: "Read-only, bounded projection. Tool output, raw tool inputs, skill contents, attachments and private reasoning are never returned. Original message/call IDs are evidence pointers, not proof of causality. Follow next_offset and inspect relevant child Sessions independently.",
+      ? { full_history: false, delegation_complete: false,
+          detail: "Only active messages after the latest completed compaction. Earlier history, nested Code Mode tools and child Sessions are NOT included." }
+      : { full_history: null, delegation_complete: false,
+          detail: "Provided export identity and location match, but completeness/integrity are unverified. Nested Code Mode tools and child Sessions are NOT included." },
+    source_messages: input.length, metrics_scope: "page", metrics, tool_statuses: toolStatuses,
+    events, next_cursor: next ? encodePosition(next) : null,
+    total_events: next ? null : seen, text_included: options.includeText === true,
+    note: "Bounded per-page projection. Tool output, raw inputs, skill contents, attachments and private reasoning are withheld. Unknown wrappers may hide delegation; follow native child Sessions and Loom observations. An export JSON file is reparsed on each page; the cursor is not a consistent snapshot.",
   }
 }
