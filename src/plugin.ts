@@ -63,7 +63,7 @@ const specs = [
   { name: "agents", description: TOOL_HELP.agents, input: obj({}) },
   { name: "trace", description: TOOL_HELP.trace, input: obj({ operation: choice("timeline", "children"),
       session_id: str, export_path: { type: "string", minLength: 1, maxLength: 4096 },
-      include_text: { type: "boolean" }, offset: num, limit: { type: "integer", minimum: 1, maximum: 50 },
+      include_text: { type: "boolean" }, limit: { type: "integer", minimum: 1, maximum: 50 },
       cursor: { type: "string", minLength: 1, maxLength: 4096 } }, ["operation"]) },
   { name: "action", description: TOOL_HELP.action, input: obj({ operation: choice("list", "create", "update", "sessions"), action_id: str, title: str, goal: str, state: choice("active", "paused", "completed", "cancelled"), expected_revision: num, offset: num, archived: { type: "boolean" }, cursor: { type: "string", minLength: 1, maxLength: 4096 }, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
   { name: "plan", description: TOOL_HELP.plan, input: obj({ operation: choice("read", "save"), action_id: str, revision: num, expected_revision: num, nodes: { type: "array", maxItems: 300, items: obj({ id: str, kind: choice("phase", "wave", "task", "subtask"), title: str, parent: str, depends_on: list, outcome: str, context: str, criteria: list, skills: list, roles: list, agent: str }, ["id", "kind", "title"]) } }, ["operation", "action_id"]) },
@@ -128,6 +128,26 @@ export default Plugin.define({
     }
     const owns = async (sessionID: Parameters<typeof ctx.session.get>[0]["sessionID"]) =>
       sessionIsLocal(payload(unwrapped(await ctx.session.get({ sessionID }))))
+    const checkedSession = async (sessionID: string) => {
+      const session = payload(unwrapped(await ctx.session.get({ sessionID })))
+      if (session.id !== sessionID || !await sessionIsLocal(session))
+        throw new Error("Session is not in this Loom project/workspace/location")
+      return session
+    }
+    // Same-project Sessions are not automatically one user's work. Child discovery
+    // is restricted to the caller's bounded native parent/child tree.
+    const familyRoot = async (sessionID: string): Promise<string> => {
+      const visited = new Set<string>()
+      let current = sessionID
+      for (let depth = 0; depth < 32; depth++) {
+        if (visited.has(current)) throw new Error("Session ancestry cycle")
+        visited.add(current)
+        const session = await checkedSession(current)
+        if (typeof session.parentID !== "string") return current
+        current = session.parentID
+      }
+      throw new Error("Session ancestry exceeds 32 ancestors")
+    }
     const focusFor = (input: Record<string, unknown>, session: string): Focus | undefined => {
       if (input.action_id !== undefined) return { action_id: String(input.action_id), ...(input.node_id !== undefined ? { node_id: String(input.node_id) } : {}) }
       if (input.node_id !== undefined) throw new Error("node_id requires action_id")
@@ -156,11 +176,12 @@ export default Plugin.define({
               }
               case "trace": {
                 const targetID = input.session_id === undefined ? actor.session_id : String(input.session_id)
-                const target = payload(unwrapped(await ctx.session.get({ sessionID: targetID })))
-                // Validate the exact native Session before opening a transcript or listing children.
-                if (target.id !== targetID || !await sessionIsLocal(target)) throw new Error("Session is not in this Loom project/workspace/location")
+                await checkedSession(targetID)
                 if (input.operation === "timeline") {
-                  if (input.cursor !== undefined) throw new Error("cursor is only valid for trace children")
+                  // The 2.2.0 plugin SDK provides no target-Session read authority API.
+                  // Do not silently expose another native Session's private context.
+                  if (targetID !== actor.session_id && input.export_path === undefined)
+                    throw new Error("Another Session's native context is not authorized; supply a project-local export with explicit native read permission")
                   const messages = input.export_path === undefined
                     ? unwrapped(await ctx.session.context({ sessionID: targetID }))
                     : await readSessionExport(directory, String(input.export_path), targetID, ctx.location.project.id, async canonicalPath => {
@@ -173,15 +194,18 @@ export default Plugin.define({
                         toolContext.signal.throwIfAborted()
                       })
                   toolContext.signal.throwIfAborted()
+                  if (!await owns(targetID)) throw new Error("Source Session moved during trace read")
                   result = traceTimeline(messages, {
                     sessionID: targetID,
                     source: input.export_path === undefined ? "native-context" : "provided-export",
-                    offset: input.offset as number | undefined, limit: input.limit as number | undefined,
+                    cursor: input.cursor as string | undefined, limit: input.limit as number | undefined,
                     includeText: input.include_text as boolean | undefined,
                   })
                 } else if (input.operation === "children") {
-                  if (input.export_path !== undefined || input.include_text !== undefined || input.offset !== undefined)
-                    throw new Error("children does not accept export_path, include_text or offset")
+                  if (input.export_path !== undefined || input.include_text !== undefined)
+                    throw new Error("children does not accept export_path or include_text")
+                  if (await familyRoot(actor.session_id) !== await familyRoot(targetID))
+                    throw new Error("Cannot enumerate unrelated Session family")
                   const native = payload(await ctx.session.list({
                     project: ctx.location.project.id, directory, parentID: targetID,
                     limit: input.limit as number | undefined ?? 20,
@@ -196,6 +220,7 @@ export default Plugin.define({
                     sessions.push({ id: child.id, parent_id: targetID,
                       ...(typeof child.title === "string" ? { title: child.title } : {}) })
                   }
+                  if (!await owns(targetID)) throw new Error("Source Session moved during child inventory")
                   result = { parent_session_id: targetID, sessions,
                     scanned: native.data.length, matched: sessions.length,
                     next_cursor: typeof cursors.next === "string" ? cursors.next : null,
