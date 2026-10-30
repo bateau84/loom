@@ -17,14 +17,46 @@ def _items(audit, kind, session):
             and e.get("data", {}).get("sessionID") == session]
 
 
-def _paired_traces(audit, session):
-    before = {e.get("callID"): e for e in _items(audit, "tool-before", session)
-              if e.get("tool") in ("loom_trace", "loom.trace") and e.get("callID")}
-    for result in _items(audit, "tool-after", session):
-        call = before.get(result.get("callID"))
-        if not call or result.get("tool") not in ("loom_trace", "loom.trace"):
+def paired_trace_events(audit, session):
+    """Correlate traces by event order, call ID AND tool name.
+
+    Code Mode can reuse its outer call ID for separate nested tools. Sequential
+    reuse is safe, but overlapping starts with the same key have no reliable
+    identity and MUST NOT be attributed to any completion.
+    """
+    pending = {}
+    for event in audit:
+        if event.get("type") not in ("tool-before", "tool-after"):
             continue
-        yield call, result
+        data = event.get("data")
+        if not isinstance(data, dict) or data.get("sessionID") != session:
+            continue
+        tool = data.get("tool")
+        call_id = data.get("callID")
+        if tool not in ("loom_trace", "loom.trace") or not isinstance(call_id, str) or not call_id:
+            continue
+        key = (session, tool, call_id)
+        if event["type"] == "tool-before":
+            state = pending.get(key)
+            if state is None:
+                pending[key] = {"start": data, "count": 1, "ambiguous": False}
+            else:
+                state["count"] += 1
+                state["ambiguous"] = True
+            continue
+        state = pending.get(key)
+        if state is None:
+            continue
+        state["count"] -= 1
+        if state["count"] > 0:
+            continue
+        del pending[key]
+        if not state["ambiguous"]:
+            yield state["start"], data
+
+
+def _paired_traces(audit, session):
+    yield from paired_trace_events(audit, session)
 
 
 def verify_primary(audit, investigator, model, parent, worker, reviewer, required_events, report):
