@@ -113,7 +113,18 @@ def message_text(message):
 def invoke_model(host, root, session, text, model, timeout):
     before = len(audit_events(root))
     api(host, "POST", "/api/session/" + session + "/prompt", {"text": text})
-    wait_idle(host, session, timeout)
+    # Native prompt acceptance is not model execution. Wait for the passive
+    # installed hook to record a real provider request before polling idle.
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if any(e.get("type") == "model-request" and
+               e.get("data", {}).get("sessionID") == session and
+               e["data"].get("kind") == "primary" for e in audit_events(root)[before:]):
+            break
+        time.sleep(0.05)
+    else:
+        raise RuntimeError("Accepted prompt never produced a real primary model request")
+    wait_idle(host, session, max(1, deadline - time.monotonic()))
     observed = audit_events(root)[before:]
     primary = [event for event in observed if event.get("type") == "model-request"
                and event.get("data", {}).get("sessionID") == session
