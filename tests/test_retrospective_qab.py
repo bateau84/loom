@@ -632,5 +632,21 @@ class QABEvidenceTests(unittest.TestCase):
         self.assertIsNone(gold["retry"])
 
 
+    def test_source_oracle_prefers_intended_patch_error_over_unrelated_shell_denial(self):
+        observations = [
+            {"type": "tool-after", "data": {"sessionID": WORKER, "tool": "shell",
+                "status": "error", "messageID": "msg_unrelated_shell"}},
+            {"type": "tool-after", "data": {"sessionID": WORKER, "tool": "patch",
+                "status": "error", "messageID": "msg_patch_denied"}},
+            {"type": "tool-after", "data": {"sessionID": WORKER, "tool": "patch",
+                "status": "completed", "messageID": "msg_patch_recovered"}},
+            {"type": "tool-after", "data": {"sessionID": WORKER, "tool": "shell",
+                "status": "completed", "messageID": "msg_shell_success"}},
+        ]
+        gold = evidence_oracle(observations, PARENT, WORKER, REVIEWER, [], [], [], [])
+        self.assertEqual(gold["failure"], "msg_patch_denied")
+        self.assertEqual(gold["retry"], "msg_patch_recovered")
+
+
 if __name__ == "__main__":
     unittest.main()
