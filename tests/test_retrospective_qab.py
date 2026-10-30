@@ -36,6 +36,12 @@ def trace(call_id, op, session_id, result):
 
 def sufficient():
     audit = model_audit()
+    audit.extend([
+        {"type": "tool-before", "data": {"sessionID": INVESTIGATOR, "tool": "skill",
+            "callID": "load", "skill_id": "retrospective"}},
+        {"type": "tool-after", "data": {"sessionID": INVESTIGATOR, "tool": "skill",
+            "callID": "load", "status": "completed"}},
+    ])
     audit += trace("discover", "children", PARENT, {"child_ids": [WORKER, REVIEWER]})
     audit += trace("parent", "timeline", PARENT, {"event_ids": ["msg_correction"]})
     audit += trace("worker", "timeline", WORKER,
@@ -63,6 +69,13 @@ class QABEvidenceTests(unittest.TestCase):
         audit = [x for x in audit if x.get("data", {}).get("callID") != "discover"]
         row = self.grade(audit, report)
         self.assertEqual(row["checks"]["model-discovered-children"], "UNPROVEN")
+        self.assertEqual(row["agent"], "UNPROVEN")
+
+    def test_skill_visibility_alone_does_not_count_as_load(self):
+        audit, report = sufficient()
+        audit = [e for e in audit if e.get("data", {}).get("callID") != "load"]
+        row = self.grade(audit, report)
+        self.assertEqual(row["checks"]["retrospective-skill-loaded"], "UNPROVEN")
         self.assertEqual(row["agent"], "UNPROVEN")
 
     def test_unpaired_tool_before_does_not_count_as_source_read(self):
