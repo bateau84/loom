@@ -22,6 +22,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from contextlib import contextmanager
 from urllib.request import ProxyHandler, Request, build_opener
 
 from installed_host_smoke import PrivateHost, isolated_environment, installed_plugin_inventory, require
@@ -36,6 +37,23 @@ def private_write(path: Path, content: str):
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     path.write_text(content, encoding="utf-8")
     path.chmod(0o600)
+
+
+@contextmanager
+def private_scenario(output, active_host):
+    """Always capture a bounded audit before destroying private provider seeds."""
+    with tempfile.TemporaryDirectory(prefix="loom-qab-") as temp:
+        root = Path(temp).resolve()
+        try:
+            yield root
+        finally:
+            host = active_host()
+            if host and host.proc.poll() is None:
+                host.close()
+            audit = root / "audit.ndjson"
+            if audit.exists():
+                # No model text or raw tool output is stored by the passive audit.
+                private_write(output / "audit.ndjson", audit.read_text()[:8 * 1024 * 1024])
 
 
 def api(host, method, path, data=None):
@@ -245,7 +263,7 @@ def run(args):
               "infrastructure": "UNPROVEN", "agent": "UNPROVEN",
               "controls": {}, "limitations": [], "evidence_bundle": [
                   "report.json", "audit.ndjson", "source-history/", "retrospective-report.md",
-                  "oracle.json", "coverage.json"]}
+                  "oracle.json", "coverage.json", "evaluator.json"]}
     host = None
     try:
         require(args.model and "/" in args.model and not args.model.startswith("question-fixture/"),
@@ -261,8 +279,7 @@ def run(args):
         version = subprocess.check_output([str(args.opencode.resolve()), "--version"], text=True, timeout=15).strip()
         require(version in ("2.2.0", "opencode v2.2.0"), "Installed CLI must be exact 2.2.0")
         report["host_version"] = version
-        with tempfile.TemporaryDirectory(prefix="loom-qab-") as temp:
-            root = Path(temp).resolve()
+        with private_scenario(output, lambda: host) as root:
             project = root / "project"
             project.mkdir(mode=0o700)
             env = isolated_environment(root)
@@ -397,7 +414,6 @@ def run(args):
                 correction_id=gold.get("user"))
             report["controls"]["privacy"] = control
             final_audit = audit_events(root)
-            private_write(output / "audit.ndjson", "\n".join(json.dumps(e) for e in final_audit) + "\n")
             report["control_verdicts"] = grade_controls(report["controls"])
             report["status"] = verdict(primary, report["control_verdicts"])
             if not report["source_oracle_complete"] or not report["host_recovery_verified"]:
