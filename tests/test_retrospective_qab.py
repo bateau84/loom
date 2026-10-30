@@ -84,7 +84,7 @@ class QABEvidenceTests(unittest.TestCase):
                 "session_ids": {"parent": PARENT, "worker": WORKER, "reviewer": REVIEWER},
                 "source_events": EVENTS,
             }))
-            (root / "audit.ndjson").write_text("".join(json.dumps(x) + "\\n" for x in audit))
+            (root / "audit.ndjson").write_text("".join(json.dumps(x) + "\n" for x in audit))
             (root / "retrospective-report.md").write_text(retrospective)
             outcome = regrade_existing(root)
             self.assertEqual(outcome["regraded"]["infrastructure"], "PASS")
