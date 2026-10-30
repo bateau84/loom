@@ -186,9 +186,11 @@ class QABEvidenceTests(unittest.TestCase):
                 "tool": "loom_trace", "status": "completed"}},
         ]
         # These stubs exercise ONLY the local evaluator, not an installed host.
-        with patch("retrospective_qab.create_session", return_value=INVESTIGATOR), \\
-             patch("retrospective_qab.invoke_model", return_value=("source available", [])), \\
-             patch("retrospective_qab.audit_events", side_effect=[[], observed]):
+        with (
+            patch("retrospective_qab.create_session", return_value=INVESTIGATOR),
+            patch("retrospective_qab.invoke_model", return_value=("source available", [])),
+            patch("retrospective_qab.audit_events", side_effect=[[], observed]),
+        ):
             check, _ = run_control("foreign-parent-ancestry", None, None, None,
                                    MODEL, PARENT, 30, "investigate", parent_link=False)
         self.assertEqual(check["status"], "FAIL")
