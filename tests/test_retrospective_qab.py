@@ -7,7 +7,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from retrospective_qab import prepare_project, run as run_real_qab
+from retrospective_qab import evidence_oracle, prepare_project, run as run_real_qab
 from retrospective_qab_oracle import CONTROLS, grade_controls, verify_primary, verdict
 
 INVESTIGATOR, PARENT, WORKER, REVIEWER = "investigator", "parent", "worker", "reviewer"
@@ -112,6 +112,34 @@ class QABEvidenceTests(unittest.TestCase):
             (root / "settings.json").write_text('{"mode":"safe","telemetry":false}\n')
             after = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=10)
             self.assertEqual(after.returncode, 0, after.stderr)
+
+    def test_source_retry_oracle_rejects_pre_failure_success_and_wrong_tool(self):
+        # An earlier read completion and later shell success must not count as
+        # a successful retry of a failed edit.
+        def calls(steps):
+            return [{"type": "tool-after", "data": {
+                "sessionID": WORKER, "status": status, "tool": tool,
+                "messageID": msg, "callID": str(i)}} for i, (status, tool, msg) in enumerate(steps)]
+        parent_messages = [{"id": "msg_correction", "type": "user",
+                            "text": "QA-B correction: keep privacy."}]
+        reviewer_messages = [{"id": "msg_review", "type": "assistant",
+                              "text": "Privacy was not validated by the first test."}]
+        worker_messages = [{"id": "msg_verify", "type": "assistant",
+                            "text": "Verified test passed."}]
+        items = [("completed", "read", "pre"),
+                 ("error", "edit", "failed"),
+                 ("completed", "shell", "different_tool")]
+        gold = evidence_oracle(calls(items), PARENT, WORKER, REVIEWER,
+                               parent_messages, worker_messages, reviewer_messages, calls([
+                                   ("completed", "shell", "msg_verify")]))
+        self.assertEqual(gold["failure"], "failed")
+        self.assertIsNone(gold["retry"])
+        items.append(("completed", "edit", "recovered"))
+        gold = evidence_oracle(calls(items), PARENT, WORKER, REVIEWER,
+                               parent_messages, worker_messages, reviewer_messages, calls([
+                                   ("completed", "shell", "msg_verify")]))
+        self.assertEqual(gold["retry"], "recovered")
+
 
     def test_scripted_provider_is_rejected_before_running_any_installed_host(self):
         with tempfile.TemporaryDirectory() as temp:
