@@ -368,6 +368,42 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             asker, respondent, reader = [s.session(role) for role in roles[:3]]
             report['sessions'] = {'asker': asker, 'respondent': respondent, 'reader': reader}
             s.command(reader, 'const x=search({namespace:"loom",limit:10}); if(x.items.length!==5) throw new Error("Expected five tools"); return x')
+            gate = s.session('reader')
+            gate_file = project / 'permission-gate.txt'
+            gate_file.write_text('mode=prototype\n')
+            denied = [{'action': action, 'resource': '*', 'effect': 'deny'}
+                      for action in ('edit', 'write', 'shell')]
+            request(host, 'PATCH', f'/api/session/{gate}', {'permissions': denied})
+            require(request(host, 'GET', f'/api/session/{gate}').get('permissions') == denied,
+                    'Native edit denial did not persist in Session')
+            before_denied = len(events(root))
+            script = ('let rejected=false;try{await tools.edit({path:"permission-gate.txt",'
+                      'oldString:"prototype",newString:"safe"})}catch(e){rejected=true}'
+                      'if(!rejected)throw new Error("native edit escaped denied Session policy");'
+                      'return rejected')
+            s.command(gate, script)
+            denied_calls = [e['data'] for e in events(root)[before_denied:]
+                            if e['type'] == 'tool-after' and e['data'].get('sessionID') == gate
+                            and e['data'].get('tool') == 'edit']
+            require(len(denied_calls) == 1 and denied_calls[0]['status'] == 'error'
+                    and gate_file.read_text() == 'mode=prototype\n',
+                    'OpenCode native edit denial was not an authentic tool error')
+            request(host, 'PATCH', f'/api/session/{gate}', {'permissions': []})
+            require(request(host, 'GET', f'/api/session/{gate}').get('permissions') == [],
+                    'Native worker Session edit policy failed to restore')
+            before_allowed = len(events(root))
+            s.command(gate, 'return await tools.edit({path:"permission-gate.txt",'
+                     'oldString:"prototype",newString:"safe"})')
+            allowed_calls = [e['data'] for e in events(root)[before_allowed:]
+                             if e['type'] == 'tool-after' and e['data'].get('sessionID') == gate
+                             and e['data'].get('tool') == 'edit']
+            require(len(allowed_calls) == 1 and allowed_calls[0]['status'] == 'completed'
+                    and gate_file.read_text() == 'mode=safe\n',
+                    'OpenCode native edit did not recover after Session policy restoration')
+            report['checks'].append({'name': 'E6-native-edit-permission-gate', 'status': 'PASS',
+                                     'qualification': 'Scripted provider invoking real installed OpenCode 2.2.0 edit tool; real native deny and restore, not real-model QA-B acceptance',
+                                     'session': gate, 'failed_tool_message': denied_calls[0]['messageID'],
+                                     'recovered_tool_message': allowed_calls[0]['messageID']})
             # Execute the real installed plugin's trace against native host messages,
             # not a fabricated response or a component-only copy.
             own_trace = s.invoke(reader, 'trace', {'operation': 'timeline', 'limit': 50})
