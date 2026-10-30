@@ -10,7 +10,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from retrospective_qab import (evidence_oracle, prepare_project, run as run_real_qab,
-                               run_control, seed_credential_database, ensure_model_available)
+                               run_control, seed_credential_database, ensure_model_available,
+                               completed_model_text, summarize_native_tools)
 from retrospective_qab_oracle import CONTROLS, grade_controls, verify_primary, verdict
 
 INVESTIGATOR, PARENT, WORKER, REVIEWER = "investigator", "parent", "worker", "reviewer"
@@ -319,6 +320,53 @@ class QABEvidenceTests(unittest.TestCase):
         ensure_model_available(available, "opencode-go/gpt-6-luna")
         with self.assertRaisesRegex(RuntimeError, "opencode-go/gpt-6-luna"):
             ensure_model_available(available, "openai/gpt-6-luna")
+
+
+    def test_model_request_without_new_completed_assistant_is_not_success(self):
+        old = [{"id": "msg_old", "type": "assistant", "finish": "stop",
+                "time": {"completed": 1}, "content": [{"type": "text", "text": "old"}]}]
+        with self.assertRaisesRegex(RuntimeError, "no new assistant"):
+            completed_model_text(old, old)
+        with self.assertRaisesRegex(RuntimeError, "not completed"):
+            completed_model_text(old, [
+                {"id": "msg_new", "type": "assistant", "time": {"created": 2},
+                 "content": [{"type": "text", "text": "partial"}]}, *old])
+
+    def test_failed_provider_turn_is_not_treated_as_completed_response(self):
+        new = [{"id": "msg_failure", "type": "assistant",
+                "error": {"type": "provider.quota",
+                          "message": "DO_NOT_ECHO_PRIVATE_ERROR"},
+                "time": {"created": 2, "completed": 3},
+                "content": [{"type": "text", "text": "I tried"}]}]
+        with self.assertRaisesRegex(RuntimeError, "provider.quota") as raised:
+            completed_model_text([], new)
+        self.assertNotIn("DO_NOT_ECHO_PRIVATE_ERROR", str(raised.exception))
+
+    def test_finished_model_turn_requires_new_message_and_preserves_actual_text(self):
+        old = [{"id": "msg_old", "type": "assistant", "finish": "stop",
+                "time": {"completed": 1}, "content": [{"type": "text", "text": "old"}]}]
+        new = {"id": "msg_new", "type": "assistant", "finish": "stop",
+               "time": {"created": 2, "completed": 3},
+               "content": [{"type": "text", "text": "Actual new answer"}]}
+        self.assertEqual(completed_model_text(old, [new, *old]), "Actual new answer")
+
+    def test_native_tool_summary_does_not_trust_model_prose_or_leak_arguments(self):
+        messages = [
+            {"id": "msg_1", "type": "assistant", "content": [
+                {"type": "text", "text": "PRIVATE_PROMPT_TEXT"},
+                {"type": "tool", "name": "execute", "state": {"status": "completed",
+                  "input": {"command": "PRIVATE_ARGUMENT"}}},
+                {"type": "tool", "name": "execute", "state": {"status": "error",
+                  "error": "PRIVATE_ERROR"}}]},
+        ]
+        summary = summarize_native_tools(messages)
+        self.assertEqual(summary["total"], 2)
+        self.assertEqual(summary["by_tool_status"], [
+            {"tool": "execute", "status": "completed", "count": 1},
+            {"tool": "execute", "status": "error", "count": 1}])
+        self.assertNotIn("PRIVATE_", json.dumps(summary))
+        self.assertEqual(summarize_native_tools([{"type": "assistant",
+            "content": [{"type": "text", "text": "I used edit and it failed"}]}])["total"], 0)
 
 
 if __name__ == "__main__":
