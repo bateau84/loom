@@ -141,6 +141,26 @@ class QABEvidenceTests(unittest.TestCase):
         self.assertEqual(gold["retry"], "recovered")
 
 
+    def test_verified_recovery_requires_correlated_native_test_command(self):
+        parent = [{"id": "msg_correction", "type": "user",
+                   "text": "QA-B correction: preserve privacy."}]
+        worker = [{"id": "msg_verified", "type": "assistant",
+                   "text": "Test passed after verification."}]
+        reviewer = [{"id": "msg_review", "type": "assistant",
+                     "text": "Privacy validation missing in first test."}]
+        observed = [
+            {"type": "tool-before", "data": {"sessionID": WORKER, "callID": "verify",
+                "tool": "shell", "verification_command": True}},
+            {"type": "tool-after", "data": {"sessionID": WORKER, "callID": "verify",
+                "tool": "shell", "status": "completed"}},
+        ]
+        old_only = evidence_oracle([], PARENT, WORKER, REVIEWER, parent, worker, reviewer,
+                                   observed[1:])
+        self.assertIsNone(old_only["verified"])
+        good = evidence_oracle([], PARENT, WORKER, REVIEWER, parent, worker, reviewer, observed)
+        self.assertEqual(good["verified"], "msg_verified")
+
+
     def test_scripted_provider_is_rejected_before_running_any_installed_host(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "new-private-result"
