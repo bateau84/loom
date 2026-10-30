@@ -13,7 +13,8 @@ from retrospective_qab import (evidence_oracle, prepare_project, run as run_real
                                run_control, seed_credential_database, ensure_model_available,
                                completed_model_text, summarize_native_tools,
                                source_gate, skip_unqualified_source,
-                               skip_unqualified_primary, public_summary)
+                               skip_unqualified_primary, public_summary,
+                               set_worker_write_gate, observed_patch_error)
 from retrospective_qab_oracle import CONTROLS, grade_controls, verify_primary, verdict, paired_trace_events
 
 INVESTIGATOR, PARENT, WORKER, REVIEWER = "investigator", "parent", "worker", "reviewer"
@@ -570,6 +571,63 @@ class QABEvidenceTests(unittest.TestCase):
             "sessionID": WORKER, "tool": "patch", "status": "completed",
             "messageID": "msg_success", "callID": "call_1"}}]
         gold = evidence_oracle(success_only, PARENT, WORKER, REVIEWER, [], [], [], [])
+        self.assertIsNone(gold["failure"])
+        self.assertIsNone(gold["retry"])
+
+
+    def test_native_worker_gate_denies_writes_then_restores_session_policy(self):
+        session = "ses_worker"
+        recorded = []
+        current = []
+        def fake_api(host, method, path, data=None):
+            self.assertEqual(path, "/api/session/" + session)
+            if method == "PATCH":
+                current[:] = data["permissions"]
+                recorded.append((method, [dict(x) for x in current]))
+                return {}
+            if method == "GET":
+                return {"id": session, "permissions": list(current)}
+            self.fail("unexpected host operation")
+        with patch("retrospective_qab.api", side_effect=fake_api):
+            set_worker_write_gate(object(), session, denied=True)
+            set_worker_write_gate(object(), session, denied=False)
+        self.assertEqual([r["action"] for r in recorded[0][1]],
+                         ["edit", "write", "shell"])
+        self.assertTrue(all(r["effect"] == "deny" for r in recorded[0][1]))
+        self.assertEqual(recorded[1], ("PATCH", []))
+
+    def test_worker_gate_fail_closed_on_invalid_session_readback(self):
+        with patch("retrospective_qab.api", side_effect=[{}, {"permissions": []}]):
+            with self.assertRaisesRegex(RuntimeError, "permission policy"):
+                set_worker_write_gate(object(), WORKER, denied=True)
+
+    def test_real_patch_error_requires_correlated_native_start_and_terminal(self):
+        events = [
+            {"type": "tool-before", "data": {
+                "sessionID": WORKER, "agent": "qa-worker", "tool": "patch",
+                "callID": "patch-1", "messageID": "msg_failed"}},
+            {"type": "tool-after", "data": {
+                "sessionID": WORKER, "agent": "qa-worker", "tool": "patch",
+                "callID": "patch-1", "messageID": "msg_failed", "status": "error"}},
+        ]
+        self.assertEqual(observed_patch_error(events, WORKER), "msg_failed")
+        success = [events[0], {**events[1], "data": {**events[1]["data"], "status": "completed"}}]
+        self.assertIsNone(observed_patch_error(success, WORKER))
+        no_start = events[1:]
+        self.assertIsNone(observed_patch_error(no_start, WORKER))
+        other_session = [events[0], {**events[1], "data": {**events[1]["data"], "sessionID": "foreign"}}]
+        self.assertIsNone(observed_patch_error(other_session, WORKER))
+        other_tool = [events[0], {**events[1], "data": {**events[1]["data"], "tool": "shell"}}]
+        self.assertIsNone(observed_patch_error(other_tool, WORKER))
+
+    def test_source_oracle_does_not_substitute_completed_patch_for_failure(self):
+        events = [
+            {"type": "tool-after", "data": {"sessionID": WORKER, "tool": "patch",
+                "status": "completed", "messageID": "msg_first"}},
+            {"type": "tool-after", "data": {"sessionID": WORKER, "tool": "patch",
+                "status": "completed", "messageID": "msg_second"}},
+        ]
+        gold = evidence_oracle(events, PARENT, WORKER, REVIEWER, [], [], [], [])
         self.assertIsNone(gold["failure"])
         self.assertIsNone(gold["retry"])
 
