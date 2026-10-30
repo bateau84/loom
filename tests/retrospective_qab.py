@@ -128,6 +128,49 @@ def ensure_model_available(models: list, requested: str) -> None:
 SOURCE_KINDS = ("failure", "retry", "user", "review", "verified")
 
 
+def set_worker_write_gate(host, session: str, denied: bool) -> None:
+    """Apply real OpenCode Session policy, then read back the effective override.
+
+    Only the disposable worker Session is affected. The model still chooses
+    whether to invoke a tool; the harness never fabricates tool events.
+    """
+    permissions = [
+        {"action": action, "resource": "*", "effect": "deny"}
+        for action in ("edit", "write", "shell")
+    ] if denied else []
+    api(host, "PATCH", "/api/session/" + session, {"permissions": permissions})
+    session_info = api(host, "GET", "/api/session/" + session)
+    require(isinstance(session_info, dict) and session_info.get("id") == session
+            and session_info.get("permissions") == permissions,
+            "Native Session permission policy was not confirmed")
+
+
+def observed_patch_error(events: list, session: str) -> str | None:
+    """Require one paired native patch failure in the worker Session."""
+    active = {}
+    for event in events:
+        kind = event.get("type")
+        item = event.get("data")
+        if kind not in ("tool-before", "tool-after") or not isinstance(item, dict):
+            continue
+        if item.get("sessionID") != session or item.get("agent") != "qa-worker":
+            continue
+        if item.get("tool") != "patch":
+            continue
+        call_id = item.get("callID")
+        message_id = item.get("messageID")
+        if not isinstance(call_id, str) or not call_id or not isinstance(message_id, str):
+            continue
+        key = (call_id, message_id)
+        if kind == "tool-before":
+            active[key] = active.get(key, 0) + 1
+        elif active.get(key) == 1 and item.get("status") == "error":
+            return message_id
+        elif active.get(key):
+            active.pop(key, None)
+    return None
+
+
 def source_gate(source_events: dict, verified: bool) -> dict:
     """Report missing *observed* source events, never invented pass evidence."""
     missing = [kind for kind in SOURCE_KINDS
@@ -648,18 +691,42 @@ def run(args):
                          "Do not edit files directly.", args.model, args.timeout)
             announce_phase(report, "source:worker-failed-edit")
             worker = create_session(host, project, args.model, "qa-worker", parent)
+            set_worker_write_gate(host, worker, denied=True)
+            original_settings = hashlib.sha256((project / "settings.json").read_bytes()).hexdigest()
+            failed_attempt_from = len(audit_events(root))
             invoke_model(host, root, worker,
-                         "The proposed change targets missing/settings.json. "
-                         "Attempt the change through the available patch tool on that exact path before "
-                         "any other implementation approach. The missing directory must not be created. "
-                         "Stop after this one attempted patch and report its observed result, "
-                         "whether error or completion. Do not change settings.json in this turn.",
+                         "Try to update the existing settings.json using the native patch tool: "
+                         "change mode from prototype to safe while leaving telemetry false. "
+                         "Attempt the patch exactly once, report the actual tool result, "
+                         "then stop. Do not use shell or another tool to alter the file.",
                          args.model, args.timeout)
+            failed_attempt = audit_events(root)[failed_attempt_from:]
+            failed_patch_id = observed_patch_error(failed_attempt, worker)
+            unchanged = hashlib.sha256((project / "settings.json").read_bytes()).hexdigest() == original_settings
+            report["source_first_attempt"] = {
+                "native_worker_write_gate": "edit/write/shell denied, applied and read back",
+                "patch_error_observed": failed_patch_id is not None,
+                "source_unchanged_under_gate": unchanged,
+            }
+            if not unchanged:
+                report["status"] = "FAIL"
+                report["blocked_reason_code"] = "source-mutated-during-native-write-deny"
+                report["source_gate"] = source_gate({}, False)
+                export_source(host, worker, project, output, "worker")
+                return report
+            if not failed_patch_id:
+                gate = source_gate({}, False)
+                skip_unqualified_source(report, gate)
+                report["blocked_reason_code"] = "native-first-patch-error-not-observed"
+                export_source(host, worker, project, output, "worker")
+                return report
+            set_worker_write_gate(host, worker, denied=False)
             announce_phase(report, "source:worker-retry")
             invoke_model(host, root, worker,
-                         "Now retry the same patch tool on the existing settings.json file: "
-                         "change mode from prototype to safe, keep telemetry false, "
-                         "then run test_settings.py with Python and report the observed result.",
+                         "The previous patch was rejected by the real host's edit policy, "
+                         "which is now restored. Retry the native patch tool on the existing "
+                         "settings.json file: change mode from prototype to safe, keep telemetry "
+                         "false, then run test_settings.py with Python and report its observed result.",
                          args.model, args.timeout)
             announce_phase(report, "source:review")
             reviewer = create_session(host, project, args.model, "qa-reviewer", parent)
