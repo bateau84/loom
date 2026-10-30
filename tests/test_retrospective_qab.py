@@ -11,7 +11,8 @@ from unittest.mock import patch
 
 from retrospective_qab import (evidence_oracle, prepare_project, run as run_real_qab,
                                run_control, seed_credential_database, ensure_model_available,
-                               completed_model_text, summarize_native_tools)
+                               completed_model_text, summarize_native_tools,
+                               source_gate, skip_unqualified_source, public_summary)
 from retrospective_qab_oracle import CONTROLS, grade_controls, verify_primary, verdict
 
 INVESTIGATOR, PARENT, WORKER, REVIEWER = "investigator", "parent", "worker", "reviewer"
@@ -367,6 +368,66 @@ class QABEvidenceTests(unittest.TestCase):
         self.assertNotIn("PRIVATE_", json.dumps(summary))
         self.assertEqual(summarize_native_tools([{"type": "assistant",
             "content": [{"type": "text", "text": "I used edit and it failed"}]}])["total"], 0)
+
+
+    def test_source_gate_names_missing_events_and_failed_verification(self):
+        oracle = {"failure": None, "retry": "msg_retry", "user": "msg_user",
+                  "review": None, "verified": None}
+        gate = source_gate(oracle, False)
+        self.assertFalse(gate["ready"])
+        self.assertEqual(gate["missing_source_events"], ["failure", "review", "verified"])
+        self.assertFalse(gate["host_verification_passed"])
+
+    def test_source_gate_accepts_only_complete_verified_originals(self):
+        evidence = {"failure": "msg_1", "retry": "msg_2", "user": "msg_3",
+                    "review": "msg_4", "verified": "msg_5"}
+        self.assertTrue(source_gate(evidence, True)["ready"])
+        self.assertFalse(source_gate(evidence, False)["ready"])
+
+    def test_unqualified_source_skips_model_controls_without_pass(self):
+        report = {"status": "UNPROVEN", "infrastructure": "UNPROVEN", "agent": "UNPROVEN"}
+        gate = source_gate({"failure": None}, False)
+        skipped = skip_unqualified_source(report, gate)
+        self.assertTrue(skipped)
+        self.assertEqual(set(report["controls"]), set(CONTROLS))
+        self.assertEqual(set(report["control_verdicts"].values()), {"UNPROVEN"})
+        self.assertTrue(all(c["executed"] is False for c in report["controls"].values()))
+        self.assertEqual(report["blocked_reason_code"], "source-unqualified")
+        report2 = {}
+        self.assertFalse(skip_unqualified_source(report2, source_gate({
+            "failure": "a", "retry": "b", "user": "c",
+            "review": "d", "verified": "e"}, True)))
+        self.assertEqual(report2, {})
+
+    def test_public_summary_surfaces_source_blocker_without_private_details(self):
+        report = {"status": "UNPROVEN", "infrastructure": "UNPROVEN", "agent": "UNPROVEN",
+                  "source_gate": {"ready": False, "missing_source_events": ["retry"],
+                                  "host_verification_passed": False},
+                  "source_tool_observability": {"worker_native": {"total": 0}},
+                  "blocked_reason_code": "source-unqualified",
+                  "raw_private_key": "DO_NOT_PRINT",
+                  "controls": {"privacy": {"report_excerpt": "PRIVATE_SOURCE"}}}
+        summary = public_summary(report)
+        self.assertEqual(summary["blocked_reason_code"], "source-unqualified")
+        self.assertEqual(summary["source_gate"]["missing_source_events"], ["retry"])
+        self.assertEqual(summary["source_tool_observability"]["worker_native"]["total"], 0)
+        self.assertNotIn("PRIVATE", json.dumps(summary))
+
+    def test_adversarial_fail_cannot_be_downgraded_to_pass(self):
+        controls = {k: {"status": "PASS", "executed": True, "observed": True,
+                         "model": "real", "native_tool_call_id": "call_" + k}
+                    for k in CONTROLS}
+        controls["foreign-parent-ancestry"]["status"] = "FAIL"
+        graded = grade_controls(controls)
+        self.assertEqual(graded["foreign-parent-ancestry"], "FAIL")
+        self.assertEqual(verdict({"infrastructure":"PASS", "agent":"PASS"}, graded), "FAIL")
+
+    def test_explicit_unproven_control_cannot_pass_from_its_metadata(self):
+        controls = {k: {"status": "PASS", "executed": True, "observed": True,
+                         "model": "real", "native_tool_call_id": "call_" + k}
+                    for k in CONTROLS}
+        controls["read-denied"]["status"] = "UNPROVEN"
+        self.assertEqual(grade_controls(controls)["read-denied"], "UNPROVEN")
 
 
 if __name__ == "__main__":
