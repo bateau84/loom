@@ -406,6 +406,8 @@ class QABEvidenceTests(unittest.TestCase):
                   "source_gate": {"ready": False, "missing_source_events": ["retry"],
                                   "host_verification_passed": False},
                   "source_tool_observability": {"worker_native": {"total": 0}},
+                  "source_first_attempt": {"patch_error_observed": False,
+                                           "source_unchanged_under_gate": True},
                   "blocked_reason_code": "source-unqualified",
                   "raw_private_key": "DO_NOT_PRINT",
                   "controls": {"privacy": {"report_excerpt": "PRIVATE_SOURCE"}}}
@@ -413,6 +415,7 @@ class QABEvidenceTests(unittest.TestCase):
         self.assertEqual(summary["blocked_reason_code"], "source-unqualified")
         self.assertEqual(summary["source_gate"]["missing_source_events"], ["retry"])
         self.assertEqual(summary["source_tool_observability"]["worker_native"]["total"], 0)
+        self.assertEqual(summary["source_first_attempt"]["patch_error_observed"], False)
         self.assertNotIn("PRIVATE", json.dumps(summary))
 
     def test_adversarial_fail_cannot_be_downgraded_to_pass(self):
