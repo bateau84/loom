@@ -210,7 +210,8 @@ class QABEvidenceTests(unittest.TestCase):
                     "tool": "loom_trace", "status": "error", "error_kind": error_kind}},
             ]
         for kind, expected in [("other", "UNPROVEN"), ("permission-denied", "PASS")]:
-            with self.subTest(kind=kind), (
+            with (
+                self.subTest(kind=kind),
                 patch("retrospective_qab.create_session", return_value=INVESTIGATOR),
                 patch("retrospective_qab.invoke_model", return_value=("Source incomplete", [])),
                 patch("retrospective_qab.audit_events", side_effect=[[], audit(kind)]),
@@ -234,7 +235,8 @@ class QABEvidenceTests(unittest.TestCase):
                     "tool": "loom_trace", "status": "error", "error_kind": error_kind}},
             ]
         for kind, expected in [("permission-denied", "UNPROVEN"), ("missing-export", "PASS")]:
-            with self.subTest(kind=kind), (
+            with (
+                self.subTest(kind=kind),
                 patch("retrospective_qab.create_session", return_value=INVESTIGATOR),
                 patch("retrospective_qab.invoke_model", return_value=("Child history unavailable", [])),
                 patch("retrospective_qab.audit_events", side_effect=[[], audit(kind)]),
