@@ -117,9 +117,11 @@ def invoke_model(host, root, session, text, model, timeout):
     observed = audit_events(root)[before:]
     primary = [event for event in observed if event.get("type") == "model-request"
                and event.get("data", {}).get("sessionID") == session
-               and event.get("data", {}).get("kind") == "primary"
-               and (event["data"].get("providerID") + "/" + event["data"].get("modelID")) == model]
-    require(primary, "No actual primary request for the specified real reasoning model")
+               and event.get("data", {}).get("kind") == "primary"]
+    require(primary and all(
+        event["data"].get("providerID") == model.split("/", 1)[0]
+        and event["data"].get("modelID") == model.split("/", 1)[1] for event in primary
+    ), "No actual primary request for the exact real model, or unexpected provider/model fallback")
     parts = session_messages(host, session)
     assistant = next((m for m in parts if m.get("type") == "assistant"), None)
     return (message_text(assistant) if assistant else ""), observed
@@ -319,8 +321,13 @@ def run(args):
                 for role in ("qa-coordinator", "qa-worker", "qa-reviewer", "qa-investigator", "qa-denied")
             }
             # Denied read permission is an isolated negative-control policy.
+            # Keep investigator and control Sessions read-only at the host
+            # permission boundary; agent instructions alone are not authority.
+            no_write = [{"action": action, "resource": "*", "effect": "deny"}
+                        for action in ("write", "edit", "shell")]
+            agents["qa-investigator"]["permissions"] = list(no_write)
             agents["qa-denied"]["permissions"] = [
-                {"action": "read", "resource": "*", "effect": "deny"}]
+                *no_write, {"action": "read", "resource": "*", "effect": "deny"}]
             config = {**provider, "plugins": ["*", str(args.plugin.resolve()),
                 str((args.repository / "tests/retrospective-host").resolve())],
                 "agents": agents, "model": args.model, "update": "disable", "share": "disabled"}
@@ -373,6 +380,10 @@ def run(args):
             report["host_recovery_verified"] = check.returncode == 0
             # Continue exercising negative controls even when the producer model
             # failed to create a qualifying failure/retry. Acceptance stays UNPROVEN.
+            preserved = [project / "settings.json", project / "test_settings.py", project / "README.md"]
+            preserved += list((project / "qa-evidence").glob("*.json"))
+            before_retro = {str(p.relative_to(project)): hashlib.sha256(p.read_bytes()).hexdigest()
+                            for p in preserved}
             investigator = create_session(host, project, args.model, "qa-investigator", parent)
             prompt = ("Conduct one independent deep retrospective of the engineering work associated with "
                       "Session " + parent + ". " + HANDOFF +
@@ -381,6 +392,9 @@ def run(args):
                       "retries, review and verification independently. Clearly mark missing evidence. "
                       "Do not modify anything.")
             answer, _ = invoke_model(host, root, investigator, prompt, args.model, args.timeout)
+            after_retro = {str(p.relative_to(project)): hashlib.sha256(p.read_bytes()).hexdigest()
+                           for p in preserved}
+            report["investigator_read_only_preserved"] = before_retro == after_retro
             private_write(output / "retrospective-report.md", answer + "\n")
             report["investigator_session"] = investigator
             primary = verify_primary(audit_events(root), investigator, args.model, parent, worker,
@@ -435,6 +449,9 @@ def run(args):
             report["status"] = verdict(primary, report["control_verdicts"])
             if not report["source_oracle_complete"] or not report["host_recovery_verified"]:
                 report["status"] = "UNPROVEN"
+            if not report["investigator_read_only_preserved"]:
+                report["status"] = "FAIL"
+                report["failure_reason"] = "Investigator changed original source files"
             private_write(output / "evaluator.json", json.dumps({
                 "kind": "evaluator-oracle-not-independent-model-review",
                 "infrastructure": primary["infrastructure"], "agent": primary["agent"],
