@@ -1,8 +1,8 @@
 # QA-B: installed real-model retrospective acceptance (OpenCode 2.2.0)
 
-**Status: opt-in, never automatic provider inference in CI.**
+**Status: real-model investigator and adversarial controls are opt-in. Source creation is scripted and verified by installed-host CI without provider inference.**
 
-This scenario exercises the actual npm-packed Loom candidate, a private OpenCode 2.2.0 host and a real reasoning model. It is separate from the scripted E6 installed-host checks. It records **two independent results**: infrastructure correctness and whether the retrospective agent actually discovers/interprets the original sources.
+This scenario exercises the actual npm-packed Loom candidate and OpenCode 2.2.0. A separate **scripted external source model** requests native edits, shell verification and reviewer/coordinator statements. OpenCode itself executes tools and records original Session histories and error results. A **real reasoning model** is then used only for the independent retrospective and adversarial controls. Source creation and real-model acceptance have separate results; a scripted source cannot count as independent retrospective behavior.
 
 ## Requirements
 
@@ -25,13 +25,15 @@ Prepare the actual PR artifact, then run (substitute real local paths):
       --database /ABS/PRIVATE/opencode.db \
       --report-directory /ABS/PRIVATE/qab-001 --timeout 120
 
+**Provider-free source qualification:** The installed-question workflow runs `--source-only --model qab-source/scripted` against the packed candidate. It verifies a real native edit error/retry, unchanged source during the failing attempt, review/correction and real test-backed recovery. It deliberately reports QA-B `UNPROVEN` and exits nonzero: this only qualifies source creation. With the local artifact and host installed, you can also run `tests/retrospective_qab.py` with `--source-only --model qab-source/scripted` and the same `--opencode`, `--plugin`, `--artifact`, `--report-directory` flags, omitting credentials and `--skills-repo`.
+
 **Plugin activation diagnostics:** A configured local plugin directory needs a
 `server.ts` or `index.ts` entrypoint. QA-B now supplies
-`tests/retrospective-host/server.ts` and uses the checkout's dependencies
+`tests/retrospective-host/server.ts` and `tests/retrospective-source/server.ts`, using the checkout's dependencies
 (install them with `bun install --frozen-lockfile` before running). If startup
 fails before a model request, inspect the **private** `real-model.plugins.latest.json`
 and `real-model.server.stderr.txt` in the report directory. The plugin roster
-must contain active `loom` and `loom.retrospective.qab.audit`. Do not share
+must contain active `loom`, `loom.retrospective.qab.audit` and `loom.retrospective.qab.source`. Do not share
 unredacted server logs or private source exports.
 
 **Use the exact model provider ID exposed to your normal OpenCode account:**
@@ -60,7 +62,7 @@ Optional arguments: --models-catalog /PRIVATE/models.json, --provider-config /PR
 ## Sources and execution
 
 1. Verify real CLI version 2.2.0, installed plugin/SDK, artifact identity and original skill revision via git show.
-2. Start disposable native parent, worker and reviewer Sessions, using real provider requests. Make the existing settings file **readable but read-only** for the worker's first patch attempt, verify that the operating system rejects writes before inference, and require an actual paired native patch error with the source unchanged. Restore file write permission, ask the model to retry the same patch tool, receive user correction and verify recovery. If a real failed/retried tool call is not observed, **source preparation is UNPROVEN**.
+2. Start disposable native parent, worker and reviewer Sessions with the scripted source provider. Make the existing file readable but OS read-only, verify write denial, and have the scripted source request a **real native OpenCode `edit`**. Require an original paired edit error and an unchanged file. Restore permission and have the source request the same native edit followed by a real shell test. Preserve the original reviewer statement and user correction. If these source events and verified recovery are not observed, **source preparation is UNPROVEN**.
 3. Preserve original native unsanitized Session exports containing *only synthetic data*. Keep the oracle outside the target project and expose only permitted per-Session export copies under qa-evidence/.
 4. Launch a fresh same-family investigator with the retrospective skill and a misleading General handoff. Tell it the work scope and available evidence directory but do not give it expected event IDs or prescribe which tools/children to inspect.
 5. Check actual model requests and registered loom_trace tool-call IDs, operation arguments, original source IDs, child discovery, authorized timeline reads, pagination, provenance limits and final report. A good answer created solely from a manually supplied transcript is **not** a PASS.
@@ -78,7 +80,7 @@ error, the report names its safe error **type only**, not raw provider text.
 Older completed messages from the same Session cannot qualify a new turn.
 
 The first worker attempt is separately reported under `source_first_attempt`,
-including whether a native patch error occurred and whether the file remained
+including whether a native edit error occurred and whether the file remained
 unchanged under a verified OS-level read-only fixture. A missing error stops the
 suite before the retry, reviewer and investigator, reducing paid model usage.
 
@@ -109,7 +111,7 @@ adding a persistent multi-Session execution mode.
 
 ## Duration, feedback and fail-fast behavior
 
-A full QA-B run executes **about 13 model prompts** in sequence, plus native
+A full QA-B run exercises the real-model investigator, five adversarial controls and a compaction setup turn, plus scripted source creation and native
 compaction, host setup, file export and evaluation. `--timeout 180` is a
 **per-model-turn** bound, not a whole-suite deadline. A run lasting several
 minutes is therefore possible and can spend considerable quota.
@@ -172,36 +174,28 @@ order**. Sequential ID reuse is supported; overlapping starts with the same
 key are **ambiguous and ignored**, never granted success. Identical call IDs
 in a report are not proof of duplicate model actions.
 
-The source-preparation worker previously received a prompt asking it to patch
-a missing path. In the live run the model made **two successful patches**:
-making a mistake was not a reliable precondition. The first attempted
-replacement—a native Session permission denial—was rejected by an actual
-installed-host countercheck: OpenCode filters fully denied tools **out of the
-model-facing catalog**, so a denied `patch` is not a reliable way to cause an
-observed patch error.
+### Results-007: source fixture replaced
 
-QA-B instead makes only its disposable `settings.json` file **read-only**,
-without disabling `patch`. Before any inference, the harness checks with
-`os.open(O_WRONLY)` that the kernel genuinely rejects writes; it returns
-UNPROVEN when filesystem permissions cannot enforce the restriction. The
-real model then attempts to patch the existing file. A paired native tool
-**error**, and an unchanged file digest, are mandatory. If the model declines
-or avoids the failed patch, QA-B stops before the retry.
+Previous runs exposed two separate false assumptions: in `results-006` the model
+successfully patched the source twice; in `results-007` it issued only three
+Code Mode `search` calls and never attempted `patch`. The OS read-only check
+passed but could not force the model to choose that tool.
 
-After a qualifying error, the harness restores file write permission and asks
-the same real model to retry `patch`. It requires a later completed native
-patch, a real settings test, and independently observed source-linked
-review/correction/verification. The model must report the actual native error
-without being coached to invent a particular cause. This is deliberate,
-transparent **filesystem fault injection**, not a naturally occurring bug.
-No fake messages, tool calls, error results, or semantic retrospective
-conclusions are inserted into the history.
+The source stage no longer requires the real model to make or even attempt a
+mistake. A separate `qab-source/scripted` provider emits explicit **model tool
+calls** for `edit` and `shell`; the installed OpenCode 2.2.0 runtime executes
+them, records the actual error, later retry, and verification, and persists
+original native Session history. The fixture never inserts tool results,
+historical messages, or retrospective answers. The existing installed E6
+countercheck established the same read-only-file native `edit` mechanism.
 
-A separate provider-free, installed OpenCode 2.2.0 qualification sends
-a *scripted* **native edit** call against a read-only fixture and repeats it
-after restoring write permission. It exercises the OS-failure mechanism and
-native tool terminals, not live-model reasoning, independently selected
-retrospective sources, or the five adversarial controls.
+The default real-model QA-B now checks source provenance and genuine native
+failure/retry **before** using the chosen real provider for the independent
+investigator and five controls. CI runs the source stage in `--source-only`
+mode with no provider credentials or inference, and fails if its gate is not
+ready. A passing source-only job **does not prove** an investigator outcome,
+the five controls, or complete QA-B acceptance.
+
 
 ## Private bundle and trust boundaries
 
@@ -219,4 +213,4 @@ The machine evaluator cannot replace independent inspection of nuanced causal or
 
 ## Normal CI
 
-The main plugin CI runs provider-free QA-B oracle tests and typechecks the passive auditor. These checks are **not** a real-model run. Do not wire provider credentials or subscription tokens into ordinary pull_request CI. Rerun an opt-in installed acceptance when Loom, OpenCode, or the skill changes.
+The main plugin CI runs provider-free QA-B oracle tests and typechecks the passive auditor. The installed-questions workflow also performs a no-inference assembled source-only proof with real native tool calls and recovery. These checks are **not** a real-model retrospective run. Do not wire provider credentials or subscription tokens into ordinary pull_request CI. Rerun an opt-in installed acceptance when Loom, OpenCode, or the skill changes.
