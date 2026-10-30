@@ -581,7 +581,7 @@ class QABEvidenceTests(unittest.TestCase):
     def test_scripted_external_source_provider_is_separate_from_audit_and_live_model(self):
         source = (Path(__file__).resolve().parent / "retrospective-source/server.ts").read_text()
         self.assertIn('id: "loom.retrospective.qab.source"', source)
-        self.assertIn('id: "qab-source"', source)
+        self.assertIn('const provider = "qab-source"', source)
         self.assertIn('tool("edit"', source)
         self.assertIn('tool("shell"', source)
         self.assertNotIn("editor.remove(", source)
