@@ -60,7 +60,7 @@ Optional arguments: --models-catalog /PRIVATE/models.json, --provider-config /PR
 ## Sources and execution
 
 1. Verify real CLI version 2.2.0, installed plugin/SDK, artifact identity and original skill revision via git show.
-2. Start disposable native parent, worker and reviewer Sessions, using real provider requests. In the worker Session, apply and read back a **real OpenCode native edit/write/shell deny policy**, ask the model to attempt a patch of the existing settings file, and require an actual paired native tool error with the source file unchanged. Restore the worker's Session policy through the native API, ask the model to retry the same patch tool, receive user correction and verify recovery. If a real failed/retried tool call is not observed, **source preparation is UNPROVEN**.
+2. Start disposable native parent, worker and reviewer Sessions, using real provider requests. Make the existing settings file **readable but read-only** for the worker's first patch attempt, verify that the operating system rejects writes before inference, and require an actual paired native patch error with the source unchanged. Restore file write permission, ask the model to retry the same patch tool, receive user correction and verify recovery. If a real failed/retried tool call is not observed, **source preparation is UNPROVEN**.
 3. Preserve original native unsanitized Session exports containing *only synthetic data*. Keep the oracle outside the target project and expose only permitted per-Session export copies under qa-evidence/.
 4. Launch a fresh same-family investigator with the retrospective skill and a misleading General handoff. Tell it the work scope and available evidence directory but do not give it expected event IDs or prescribe which tools/children to inspect.
 5. Check actual model requests and registered loom_trace tool-call IDs, operation arguments, original source IDs, child discovery, authorized timeline reads, pagination, provenance limits and final report. A good answer created solely from a manually supplied transcript is **not** a PASS.
@@ -79,7 +79,7 @@ Older completed messages from the same Session cannot qualify a new turn.
 
 The first worker attempt is separately reported under `source_first_attempt`,
 including whether a native patch error occurred and whether the file remained
-unchanged under a verified native write-deny. A missing error stops the
+unchanged under a verified OS-level read-only fixture. A missing error stops the
 suite before the retry, reviewer and investigator, reducing paid model usage.
 
 When source setup does not produce the required worker error/retry/verification,
@@ -174,25 +174,34 @@ in a report are not proof of duplicate model actions.
 
 The source-preparation worker previously received a prompt asking it to patch
 a missing path. In the live run the model made **two successful patches**:
-making a mistake was not a reliable precondition. Instead, QA-B now uses
-an explicit, **real OpenCode Session permission transition**, scoped to its
-disposable worker only. The native host first denies `edit`, `write` and
-`shell`, and the harness verifies the rule through the Session API. The model
-then attempts `patch` against the existing settings file. An authentic,
-paired native tool **error**, and an unchanged settings-file digest, are
-mandatory. If the model refuses or avoids the failed patch, the test stops
-before the retry and reports **UNPROVEN**.
+making a mistake was not a reliable precondition. The first attempted
+replacement—a native Session permission denial—was rejected by an actual
+installed-host countercheck: OpenCode filters fully denied tools **out of the
+model-facing catalog**, so a denied `patch` is not a reliable way to cause an
+observed patch error.
 
-Only after a qualifying real failure does the harness remove the restriction
-through the native Session API, verify the update and ask the model to retry
-`patch`. The grader requires a later completed call of that same native tool,
-then a real settings test and source-linked review/correction/verification.
-The model's reported failure reason must follow the actual original tool
-error; the retry prompt does **not** instruct it to invent a particular cause.
-The injected write restriction is a documented **fault-injection fixture**, not
-an unplanned production failure. No Session messages, tool calls or error
-results are fabricated, and none of this relaxes the independent retrospective
-or adversarial-control requirements.
+QA-B instead makes only its disposable `settings.json` file **read-only**,
+without disabling `patch`. Before any inference, the harness checks with
+`os.open(O_WRONLY)` that the kernel genuinely rejects writes; it returns
+UNPROVEN when filesystem permissions cannot enforce the restriction. The
+real model then attempts to patch the existing file. A paired native tool
+**error**, and an unchanged file digest, are mandatory. If the model declines
+or avoids the failed patch, QA-B stops before the retry.
+
+After a qualifying error, the harness restores file write permission and asks
+the same real model to retry `patch`. It requires a later completed native
+patch, a real settings test, and independently observed source-linked
+review/correction/verification. The model must report the actual native error
+without being coached to invent a particular cause. This is deliberate,
+transparent **filesystem fault injection**, not a naturally occurring bug.
+No fake messages, tool calls, error results, or semantic retrospective
+conclusions are inserted into the history.
+
+A separate provider-free, installed OpenCode 2.2.0 qualification sends
+a *scripted* **native edit** call against a read-only fixture and repeats it
+after restoring write permission. It exercises the OS-failure mechanism and
+native tool terminals, not live-model reasoning, independently selected
+retrospective sources, or the five adversarial controls.
 
 ## Private bundle and trust boundaries
 
