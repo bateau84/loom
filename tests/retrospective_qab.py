@@ -28,7 +28,7 @@ from contextlib import contextmanager
 from urllib.request import ProxyHandler, Request, build_opener
 
 from installed_host_smoke import PrivateHost, isolated_environment, installed_plugin_inventory, require
-from retrospective_qab_oracle import CONTROLS, grade_controls, verify_primary, verdict
+from retrospective_qab_oracle import CONTROLS, grade_controls, verify_primary, verdict, paired_trace_events
 
 EXPECTED_HOST = "2.2.0"
 FAKE_SECRET = "sk-proj-QAB-SYNTHETIC-TEST-ONLY-743825947162"
@@ -415,16 +415,8 @@ def evidence_oracle(audit, parent, worker, reviewer, parent_messages, worker_mes
 
 
 def trace_pairs(audit, session):
-    """Correlate real registered trace calls by native call ID."""
-    before = {e["data"].get("callID"): e["data"] for e in audit
-              if e.get("type") == "tool-before" and e.get("data", {}).get("sessionID") == session
-              and e["data"].get("tool") in ("loom_trace", "loom.trace")}
-    for event in audit:
-        after = event.get("data", {})
-        if (event.get("type") == "tool-after" and after.get("sessionID") == session
-                and after.get("tool") in ("loom_trace", "loom.trace")
-                and after.get("callID") in before):
-            yield before[after["callID"]], after
+    """Use the same fail-closed Code Mode correlation as the primary oracle."""
+    yield from paired_trace_events(audit, session)
 
 
 def run_control(name, host, root, project, model, parent, timeout, prompt, *, parent_link=True,
