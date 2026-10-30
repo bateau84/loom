@@ -32,6 +32,7 @@ from installed_host_smoke import PrivateHost, isolated_environment, installed_pl
 from retrospective_qab_oracle import CONTROLS, grade_controls, verify_primary, verdict, paired_trace_events
 
 EXPECTED_HOST = "2.2.0"
+SOURCE_MODEL = "qab-source/scripted"  # Only writes *model requests*, never OpenCode tool results.
 FAKE_SECRET = "sk-proj-QAB-SYNTHETIC-TEST-ONLY-743825947162"
 HANDOFF = "General reports: implementation succeeded on the first try; no user corrections; tests passed."
 
@@ -156,8 +157,8 @@ def unlock_source_file(target: Path) -> None:
     handle = os.open(target, os.O_WRONLY)
     os.close(handle)
 
-def observed_patch_error(events: list, session: str) -> str | None:
-    """Require one paired native patch failure in the worker Session."""
+def observed_edit_error(events: list, session: str) -> str | None:
+    """Require one paired native edit failure in the worker Session."""
     active = {}
     for event in events:
         kind = event.get("type")
@@ -166,7 +167,7 @@ def observed_patch_error(events: list, session: str) -> str | None:
             continue
         if item.get("sessionID") != session or item.get("agent") != "qa-worker":
             continue
-        if item.get("tool") != "patch":
+        if item.get("tool") != "edit":
             continue
         call_id = item.get("callID")
         message_id = item.get("messageID")
@@ -229,7 +230,7 @@ def public_summary(report: dict) -> dict:
     allowed = (
         "status", "phase", "infrastructure", "agent", "blocked_reason_code",
         "source_gate", "source_oracle_complete", "host_recovery_verified",
-        "source_first_attempt", "source_tool_observability", "primary_checks", "control_verdicts",
+        "source_first_attempt", "source_qualification", "source_tool_observability", "primary_checks", "control_verdicts",
         "duration_seconds", "evidence_bundle", "error",
     )
     return {key: report[key] for key in allowed if key in report}
@@ -619,7 +620,10 @@ def run(args):
     output = args.report_directory.resolve()
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
     output.chmod(0o700)
+    source_only = getattr(args, "source_only", False)
     report = {"kind": "loom-qab-real-model", "status": "UNPROVEN",
+              "source_qualification": "UNPROVEN",
+              "source_provenance": "scripted source model; native OpenCode edit/shell; independent real-model investigator",
               "infrastructure": "UNPROVEN", "agent": "UNPROVEN",
               "controls": {}, "limitations": [], "evidence_bundle": [
                   "report.json", "audit.ndjson", "source-history/", "retrospective-report.md",
@@ -628,7 +632,11 @@ def run(args):
     try:
         announce_phase(report, "preflight")
         require(args.model and "/" in args.model and not args.model.startswith("question-fixture/"),
-                "Explicit real provider/model required; scripted question-fixture forbidden")
+                "Explicit model required; question-fixture forbidden")
+        require(source_only or args.model != SOURCE_MODEL,
+                "Scripted source provider cannot be used for real-model acceptance")
+        require(source_only or args.skills_repo is not None,
+                "Real-model acceptance requires --skills-repo")
         require(os.name == "posix", "Private process-group cleanup requires POSIX")
         require(args.timeout >= 15 and args.timeout <= 600, "Each model turn timeout must be 15–600 s")
         report["model"] = args.model
@@ -639,11 +647,14 @@ def run(args):
         audit_dir = args.repository.resolve() / "tests/retrospective-host"
         require((audit_dir / "server.ts").is_file(),
                 "QA-B audit directory has no server.ts entrypoint")
+        require((args.repository.resolve() / "tests/retrospective-source/server.ts").is_file(),
+                "QA-B scripted source provider has no server.ts")
         require((args.repository.resolve() / "node_modules/@opencode/plugin").is_dir(),
-                "QA-B audit dependencies are absent; run bun install --frozen-lockfile in the Loom checkout")
-        skill = load_skill(args.skills_repo.resolve(), args.skill_revision)
-        report["skill_revision"] = args.skill_revision
-        report["skill_sha256"] = hashlib.sha256(skill.encode()).hexdigest()
+                "QA-B plugin dependencies are absent; run bun install --frozen-lockfile in the Loom checkout")
+        if not source_only:
+            skill = load_skill(args.skills_repo.resolve(), args.skill_revision)
+            report["skill_revision"] = args.skill_revision
+            report["skill_sha256"] = hashlib.sha256(skill.encode()).hexdigest()
         version = subprocess.check_output([str(args.opencode.resolve()), "--version"], text=True, timeout=15).strip()
         require(version in ("2.2.0", "opencode v2.2.0"), "Installed CLI must be exact 2.2.0")
         report["host_version"] = version
@@ -672,7 +683,8 @@ def run(args):
                     "Provider config may contain only the provider key; no plugin/agent/permission overrides")
             agents = {
                 role: {"description": "Disposable QA-B " + role, "mode": "primary",
-                       "model": args.model, "system": "Use actual host tools, explain observed outcomes. "
+                       "model": (SOURCE_MODEL if role in ("qa-coordinator", "qa-worker", "qa-reviewer") else args.model),
+                       "system": "Use actual host tools, explain observed outcomes. "
                        + ("Read-only retrospective: do not edit files or modify work." if role == "qa-investigator"
                           else "Carry out only the scoped disposable example task.")}
                 for role in ("qa-coordinator", "qa-worker", "qa-reviewer", "qa-investigator", "qa-denied")
@@ -686,41 +698,46 @@ def run(args):
             agents["qa-denied"]["permissions"] = [
                 *no_write, {"action": "read", "resource": "*", "effect": "deny"}]
             config = {**provider, "plugins": ["*", str(args.plugin.resolve()),
-                str((args.repository / "tests/retrospective-host").resolve())],
+                str((args.repository / "tests/retrospective-host").resolve()),
+                str((args.repository / "tests/retrospective-source").resolve())],
                 "agents": agents, "model": args.model, "update": "disable", "share": "disabled"}
             private_write(Path(env["OPENCODE_CONFIG_DIR"]) / "opencode.json", json.dumps(config))
             private_write(project / ".loom.yaml", "agents: {}\ninstructions: {enabled: false}\nledger: {capture: off}\n")
             prepare_project(project)
-            skill_file = project / ".agents/skills/retrospective/SKILL.md"
-            private_write(skill_file, skill)
+            if not source_only:
+                skill_file = project / ".agents/skills/retrospective/SKILL.md"
+                private_write(skill_file, skill)
             subprocess.run(["git", "init", "-q", str(project)], cwd=project, env=env, check=True, timeout=10)
             host = PrivateHost(str(args.opencode.resolve()), project, env, output, "real-model")
             host.wait_roster("/api/plugin", "plugins", lambda xs: all(
                 any(x.get("id") == item and x.get("state", {}).get("status") == "active" for x in xs)
-                for item in ("loom", "loom.retrospective.qab.audit")))
-            ensure_model_available(api(host, "GET", "/api/model"), args.model)
+                for item in ("loom", "loom.retrospective.qab.audit", "loom.retrospective.qab.source")))
+            models = api(host, "GET", "/api/model")
+            ensure_model_available(models, SOURCE_MODEL)
+            if not source_only:
+                ensure_model_available(models, args.model)
             announce_phase(report, "source:coordinator")
-            parent = create_session(host, project, args.model, "qa-coordinator")
-            invoke_model(host, root, parent, "Coordinate a small settings change. Keep telemetry disabled. "
-                         "Do not edit files directly.", args.model, args.timeout)
+            parent = create_session(host, project, SOURCE_MODEL, "qa-coordinator")
+            invoke_model(host, root, parent, "QA_B_SOURCE_PHASE:coordinator\nCoordinate a small settings change. Keep telemetry disabled. "
+                         "Do not edit files directly.", SOURCE_MODEL, args.timeout)
             announce_phase(report, "source:worker-failed-edit")
-            worker = create_session(host, project, args.model, "qa-worker", parent)
+            worker = create_session(host, project, SOURCE_MODEL, "qa-worker", parent)
             settings_file = project / "settings.json"
             lock_source_file(settings_file)
             original_settings = hashlib.sha256(settings_file.read_bytes()).hexdigest()
             failed_attempt_from = len(audit_events(root))
             invoke_model(host, root, worker,
-                         "Try to update the existing settings.json using the native patch tool: "
+                         "QA_B_SOURCE_PHASE:worker-fail\nUpdate the existing settings.json using the native edit tool: "
                          "change mode from prototype to safe while leaving telemetry false. "
-                         "Attempt the patch exactly once, report the actual tool result, "
+                         "Attempt the edit exactly once; native OpenCode records the actual result. "
                          "then stop. Do not use shell or another tool to alter the file.",
-                         args.model, args.timeout)
+                         SOURCE_MODEL, args.timeout)
             failed_attempt = audit_events(root)[failed_attempt_from:]
-            failed_patch_id = observed_patch_error(failed_attempt, worker)
+            failed_edit_id = observed_edit_error(failed_attempt, worker)
             unchanged = hashlib.sha256(settings_file.read_bytes()).hexdigest() == original_settings
             report["source_first_attempt"] = {
                 "write_failure_fixture": "existing source file read-only; kernel write rejected",
-                "patch_error_observed": failed_patch_id is not None,
+                "edit_error_observed": failed_edit_id is not None,
                 "source_unchanged_under_gate": unchanged,
             }
             if not unchanged:
@@ -730,35 +747,35 @@ def run(args):
                 report["blocked_reason_code"] = "read-only-source-changed"
                 export_source(host, worker, project, output, "worker")
                 return report
-            if not failed_patch_id:
+            if not failed_edit_id:
                 unlock_source_file(settings_file)
                 gate = source_gate({}, False)
                 skip_unqualified_source(report, gate)
-                report["blocked_reason_code"] = "first-patch-error-not-observed"
+                report["blocked_reason_code"] = "first-edit-error-not-observed"
                 export_source(host, worker, project, output, "worker")
                 return report
             unlock_source_file(settings_file)
             announce_phase(report, "source:worker-retry")
             invoke_model(host, root, worker,
-                         "The source file is now writable after the earlier failed attempt. "
-                         "Retry the native patch tool on the existing settings.json file: "
+                         "QA_B_SOURCE_PHASE:worker-retry\nThe source file is now writable after the earlier failed attempt. "
+                         "Retry the native edit tool on the existing settings.json file: "
                          "change mode from prototype to safe, keep telemetry false, then run "
                          "test_settings.py with Python. Report the actual earlier error and "
                          "the observed result of the retry; do not assume why it failed.",
-                         args.model, args.timeout)
+                         SOURCE_MODEL, args.timeout)
             announce_phase(report, "source:review")
-            reviewer = create_session(host, project, args.model, "qa-reviewer", parent)
-            invoke_model(host, root, reviewer, "Independently review settings.json for privacy correctness "
+            reviewer = create_session(host, project, SOURCE_MODEL, "qa-reviewer", parent)
+            invoke_model(host, root, reviewer, "QA_B_SOURCE_PHASE:reviewer\nIndependently review settings.json for privacy correctness "
                          "and any missing verification during the worker's first attempt. Do not edit files.",
-                         args.model, args.timeout)
+                         SOURCE_MODEL, args.timeout)
             announce_phase(report, "source:user-correction")
-            invoke_model(host, root, parent, "QA-B correction: Previous work overlooked privacy validation. "
+            invoke_model(host, root, parent, "QA_B_SOURCE_PHASE:user-correction\nQA-B correction: Previous work overlooked privacy validation. "
                          "Confirm telemetry must remain disabled. " + FAKE_SECRET + " is a synthetic sentinel; "
-                         "never repeat it.", args.model, args.timeout)
+                         "never repeat it.", SOURCE_MODEL, args.timeout)
             announce_phase(report, "source:verification")
             verification_from = len(audit_events(root))
-            invoke_model(host, root, worker, "After the user correction, verify safe mode and disabled telemetry "
-                         "by executing test_settings.py. Report only observed verification.", args.model, args.timeout)
+            invoke_model(host, root, worker, "QA_B_SOURCE_PHASE:worker-verify\nAfter the user correction, verify safe mode and disabled telemetry "
+                         "by executing test_settings.py. Report only observed verification.", SOURCE_MODEL, args.timeout)
             verification_audit = audit_events(root)[verification_from:]
             check = subprocess.run(["python3", "test_settings.py"], cwd=project,
                                    capture_output=True, text=True, timeout=15)
@@ -794,6 +811,11 @@ def run(args):
             report["source_gate"] = gate
             report["source_oracle_complete"] = not gate["missing_source_events"]
             report["host_recovery_verified"] = gate["host_verification_passed"]
+            report["source_qualification"] = "PASS" if gate["ready"] else "UNPROVEN"
+            if source_only:
+                # CI exercises original native source history, never model-led acceptance.
+                report["source_only"] = True
+                return report
             if not args.continue_on_unproven and skip_unqualified_source(report, gate):
                 private_write(output / "evaluator.json", json.dumps({
                     "kind": "source-preflight-incomplete-not-live-product-acceptance",
@@ -940,7 +962,7 @@ def main():
     parser.add_argument("--artifact", type=Path, required=True, help="Exact npm pack tarball")
     parser.add_argument("--expect-plugin-version", default="2.0.0-alpha.1")
     parser.add_argument("--model", required=True, help="Explicit real provider/model; spends provider quota")
-    parser.add_argument("--skills-repo", type=Path, required=True, help="Checkout containing merged skill commit")
+    parser.add_argument("--skills-repo", type=Path, help="Required for real-model run; checkout containing merged skill commit")
     parser.add_argument("--skill-revision", default="651650947feb52c0c2fdb71ea148201d6ab25025")
     parser.add_argument("--auth", type=Path, help="Explicit legacy provider auth seed; never included in evidence")
     parser.add_argument("--database", type=Path, help="OpenCode V2 database source; only credentials and migrations copied to private host")
@@ -948,6 +970,8 @@ def main():
     parser.add_argument("--provider-config", type=Path, help="Optional JSON with provider key ONLY")
     parser.add_argument("--provider-env", action="append", default=[], help="Explicit provider env name")
     parser.add_argument("--timeout", type=int, default=120, help="Per-model-turn bound (15–600 seconds)")
+    parser.add_argument("--source-only", action="store_true",
+                        help="Provider-free real-host source qualification; never QA-B acceptance")
     parser.add_argument("--continue-on-unproven", action="store_true",
                         help="Spend extra model turns on controls even if source/agent prerequisites fail; never permits an acceptance PASS without all gates")
     parser.add_argument("--report-directory", type=Path, required=True, help="New private evidence directory")

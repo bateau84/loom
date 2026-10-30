@@ -14,7 +14,7 @@ from retrospective_qab import (evidence_oracle, prepare_project, run as run_real
                                completed_model_text, summarize_native_tools,
                                source_gate, skip_unqualified_source,
                                skip_unqualified_primary, public_summary,
-                               lock_source_file, unlock_source_file, observed_patch_error)
+                               lock_source_file, unlock_source_file, observed_edit_error)
 from retrospective_qab_oracle import CONTROLS, grade_controls, verify_primary, verdict, paired_trace_events
 
 INVESTIGATOR, PARENT, WORKER, REVIEWER = "investigator", "parent", "worker", "reviewer"
@@ -406,7 +406,7 @@ class QABEvidenceTests(unittest.TestCase):
                   "source_gate": {"ready": False, "missing_source_events": ["retry"],
                                   "host_verification_passed": False},
                   "source_tool_observability": {"worker_native": {"total": 0}},
-                  "source_first_attempt": {"patch_error_observed": False,
+                  "source_first_attempt": {"edit_error_observed": False,
                                            "source_unchanged_under_gate": True},
                   "blocked_reason_code": "source-unqualified",
                   "raw_private_key": "DO_NOT_PRINT",
@@ -415,7 +415,7 @@ class QABEvidenceTests(unittest.TestCase):
         self.assertEqual(summary["blocked_reason_code"], "source-unqualified")
         self.assertEqual(summary["source_gate"]["missing_source_events"], ["retry"])
         self.assertEqual(summary["source_tool_observability"]["worker_native"]["total"], 0)
-        self.assertEqual(summary["source_first_attempt"]["patch_error_observed"], False)
+        self.assertEqual(summary["source_first_attempt"]["edit_error_observed"], False)
         self.assertNotIn("PRIVATE", json.dumps(summary))
 
     def test_adversarial_fail_cannot_be_downgraded_to_pass(self):
@@ -578,6 +578,14 @@ class QABEvidenceTests(unittest.TestCase):
         self.assertIsNone(gold["retry"])
 
 
+    def test_scripted_external_source_provider_is_separate_from_audit_and_live_model(self):
+        source = (Path(__file__).resolve().parent / "retrospective-source/server.ts").read_text()
+        self.assertIn('id: "loom.retrospective.qab.source"', source)
+        self.assertIn('id: "qab-source"', source)
+        self.assertIn('tool("edit"', source)
+        self.assertIn('tool("shell"', source)
+        self.assertNotIn("editor.remove(", source)
+
     def test_readonly_source_fixture_causes_real_filesystem_write_denial(self):
         with tempfile.TemporaryDirectory() as temp:
             target = Path(temp) / "settings.json"
@@ -605,24 +613,27 @@ class QABEvidenceTests(unittest.TestCase):
                 lock_source_file(target)
 
 
-    def test_real_patch_error_requires_correlated_native_start_and_terminal(self):
+    def test_real_edit_error_requires_correlated_native_start_and_terminal(self):
         events = [
             {"type": "tool-before", "data": {
-                "sessionID": WORKER, "agent": "qa-worker", "tool": "patch",
-                "callID": "patch-1", "messageID": "msg_failed"}},
+                "sessionID": WORKER, "agent": "qa-worker", "tool": "edit",
+                "callID": "edit-1", "messageID": "msg_failed"}},
             {"type": "tool-after", "data": {
-                "sessionID": WORKER, "agent": "qa-worker", "tool": "patch",
-                "callID": "patch-1", "messageID": "msg_failed", "status": "error"}},
+                "sessionID": WORKER, "agent": "qa-worker", "tool": "edit",
+                "callID": "edit-1", "messageID": "msg_failed", "status": "error"}},
         ]
-        self.assertEqual(observed_patch_error(events, WORKER), "msg_failed")
+        self.assertEqual(observed_edit_error(events, WORKER), "msg_failed")
+        search_only = [{**events[0], "data": {**events[0]["data"], "tool": "execute"}},
+                       {**events[1], "data": {**events[1]["data"], "tool": "execute", "status": "completed"}}]
+        self.assertIsNone(observed_edit_error(search_only, WORKER))
         success = [events[0], {**events[1], "data": {**events[1]["data"], "status": "completed"}}]
-        self.assertIsNone(observed_patch_error(success, WORKER))
+        self.assertIsNone(observed_edit_error(success, WORKER))
         no_start = events[1:]
-        self.assertIsNone(observed_patch_error(no_start, WORKER))
+        self.assertIsNone(observed_edit_error(no_start, WORKER))
         other_session = [events[0], {**events[1], "data": {**events[1]["data"], "sessionID": "foreign"}}]
-        self.assertIsNone(observed_patch_error(other_session, WORKER))
+        self.assertIsNone(observed_edit_error(other_session, WORKER))
         other_tool = [events[0], {**events[1], "data": {**events[1]["data"], "tool": "shell"}}]
-        self.assertIsNone(observed_patch_error(other_tool, WORKER))
+        self.assertIsNone(observed_edit_error(other_tool, WORKER))
 
     def test_source_oracle_does_not_substitute_completed_patch_for_failure(self):
         events = [
