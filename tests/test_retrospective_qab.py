@@ -14,7 +14,7 @@ from retrospective_qab import (evidence_oracle, prepare_project, run as run_real
                                completed_model_text, summarize_native_tools,
                                source_gate, skip_unqualified_source,
                                skip_unqualified_primary, public_summary)
-from retrospective_qab_oracle import CONTROLS, grade_controls, verify_primary, verdict
+from retrospective_qab_oracle import CONTROLS, grade_controls, verify_primary, verdict, paired_trace_events
 
 INVESTIGATOR, PARENT, WORKER, REVIEWER = "investigator", "parent", "worker", "reviewer"
 EVENTS = {"failure": "msg_failure", "retry": "msg_retry", "user": "msg_correction",
@@ -442,6 +442,60 @@ class QABEvidenceTests(unittest.TestCase):
         self.assertTrue(all(not x["executed"] for x in report["controls"].values()))
         self.assertFalse(skip_unqualified_primary({}, {"infrastructure":"PASS", "agent":"PASS"}))
 
+
+
+    def test_same_codemode_call_id_reused_sequentially_preserves_trace_ownership(self):
+        common = {"sessionID": INVESTIGATOR, "tool": "loom_trace", "callID": "outer-code-call"}
+        stream = [
+            {"type": "tool-before", "data": {**common,
+                "trace": {"operation": "children", "session_id": PARENT}}},
+            {"type": "tool-after", "data": {**common, "status": "completed",
+                "trace_result": {"parse": "ok", "child_ids": [WORKER, REVIEWER]}}},
+            {"type": "tool-before", "data": {**common,
+                "trace": {"operation": "timeline", "session_id": WORKER,
+                          "export_path": "qa-evidence/worker.json"}}},
+            {"type": "tool-after", "data": {**common, "status": "completed",
+                "trace_result": {"parse": "ok", "event_ids": [EVENTS["failure"]]}}},
+        ]
+        pairs = list(paired_trace_events(stream, INVESTIGATOR))
+        self.assertEqual(len(pairs), 2)
+        self.assertEqual([item[0]["trace"]["operation"] for item in pairs],
+                         ["children", "timeline"])
+        self.assertEqual([item[1]["trace_result"].get("child_ids") for item in pairs],
+                         [[WORKER, REVIEWER], None])
+
+    def test_overlapping_codemode_trace_calls_with_shared_id_fail_closed(self):
+        common = {"sessionID": INVESTIGATOR, "tool": "loom_trace", "callID": "outer-code-call"}
+        stream = [
+            {"type": "tool-before", "data": {**common,
+                "trace": {"operation": "children", "session_id": PARENT}}},
+            {"type": "tool-before", "data": {**common,
+                "trace": {"operation": "timeline", "session_id": WORKER,
+                          "export_path": "qa-evidence/worker.json"}}},
+            {"type": "tool-after", "data": {**common, "status": "completed",
+                "trace_result": {"parse": "ok", "child_ids": [WORKER, REVIEWER]}}},
+            {"type": "tool-after", "data": {**common, "status": "completed",
+                "trace_result": {"parse": "ok", "event_ids": [EVENTS["failure"]]}}},
+        ]
+        self.assertEqual(list(paired_trace_events(stream, INVESTIGATOR)), [])
+        graded = self.grade(model_audit() + stream, "narrative cannot authorize source reads")
+        self.assertEqual(graded["checks"]["model-discovered-children"], "UNPROVEN")
+        self.assertEqual(graded["checks"]["model-read-source-events"], "UNPROVEN")
+
+    def test_trace_pairing_does_not_cross_tool_names_or_unpaired_events(self):
+        common = {"sessionID": INVESTIGATOR, "callID": "outer-code-call"}
+        stream = [
+            {"type": "tool-before", "data": {**common, "tool": "loom_trace",
+                "trace": {"operation": "children", "session_id": PARENT}}},
+            {"type": "tool-after", "data": {**common, "tool": "read", "status": "completed"}},
+            {"type": "tool-after", "data": {**common, "tool": "loom_trace",
+                "status": "completed", "trace_result": {"child_ids": [WORKER]}}},
+            {"type": "tool-after", "data": {**common, "tool": "loom_trace",
+                "status": "completed", "trace_result": {"child_ids": [REVIEWER]}}},
+        ]
+        paired = list(paired_trace_events(stream, INVESTIGATOR))
+        self.assertEqual(len(paired), 1)
+        self.assertEqual(paired[0][1]["trace_result"]["child_ids"], [WORKER])
 
 
 if __name__ == "__main__":
