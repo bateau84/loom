@@ -60,7 +60,7 @@ Optional arguments: --models-catalog /PRIVATE/models.json, --provider-config /PR
 ## Sources and execution
 
 1. Verify real CLI version 2.2.0, installed plugin/SDK, artifact identity and original skill revision via git show.
-2. Start disposable native parent, worker and reviewer Sessions, using real provider requests. Have the worker attempt an in-place edit that fails, retry on the actual settings, receive user correction and verify recovery. If an actual failed/retried tool call is not observed, **source preparation is UNPROVEN**.
+2. Start disposable native parent, worker and reviewer Sessions, using real provider requests. In the worker Session, apply and read back a **real OpenCode native edit/write/shell deny policy**, ask the model to attempt a patch of the existing settings file, and require an actual paired native tool error with the source file unchanged. Restore the worker's Session policy through the native API, ask the model to retry the same patch tool, receive user correction and verify recovery. If a real failed/retried tool call is not observed, **source preparation is UNPROVEN**.
 3. Preserve original native unsanitized Session exports containing *only synthetic data*. Keep the oracle outside the target project and expose only permitted per-Session export copies under qa-evidence/.
 4. Launch a fresh same-family investigator with the retrospective skill and a misleading General handoff. Tell it the work scope and available evidence directory but do not give it expected event IDs or prescribe which tools/children to inspect.
 5. Check actual model requests and registered loom_trace tool-call IDs, operation arguments, original source IDs, child discovery, authorized timeline reads, pagination, provenance limits and final report. A good answer created solely from a manually supplied transcript is **not** a PASS.
@@ -76,6 +76,11 @@ native tool completion. QA-B therefore requires a **new, terminal native
 assistant message** for each target-model turn. If the provider returned an
 error, the report names its safe error **type only**, not raw provider text.
 Older completed messages from the same Session cannot qualify a new turn.
+
+The first worker attempt is separately reported under `source_first_attempt`,
+including whether a native patch error occurred and whether the file remained
+unchanged under a verified native write-deny. A missing error stops the
+suite before the retry, reviewer and investigator, reducing paid model usage.
 
 When source setup does not produce the required worker error/retry/verification,
 inspect `report.json`'s `source_tool_observability`, including
@@ -167,14 +172,27 @@ order**. Sequential ID reuse is supported; overlapping starts with the same
 key are **ambiguous and ignored**, never granted success. Identical call IDs
 in a report are not proof of duplicate model actions.
 
-The source-preparation worker now explicitly attempts a native `patch`
-against a missing target and later retries `patch` against the actual
-settings file. The authentic tool error and later same-tool completion are
-still mandatory. These prompts guide only the **source-creation worker**;
-the retrospective investigator retains independent evidence-discovery freedom.
-This is not a simulated successful tool call. If the model declines the
-initial patch or the required error does not occur, report **UNPROVEN** and
-stop by the normal fail-fast gate.
+The source-preparation worker previously received a prompt asking it to patch
+a missing path. In the live run the model made **two successful patches**:
+making a mistake was not a reliable precondition. Instead, QA-B now uses
+an explicit, **real OpenCode Session permission transition**, scoped to its
+disposable worker only. The native host first denies `edit`, `write` and
+`shell`, and the harness verifies the rule through the Session API. The model
+then attempts `patch` against the existing settings file. An authentic,
+paired native tool **error**, and an unchanged settings-file digest, are
+mandatory. If the model refuses or avoids the failed patch, the test stops
+before the retry and reports **UNPROVEN**.
+
+Only after a qualifying real failure does the harness remove the restriction
+through the native Session API, verify the update and ask the model to retry
+`patch`. The grader requires a later completed call of that same native tool,
+then a real settings test and source-linked review/correction/verification.
+The model's reported failure reason must follow the actual original tool
+error; the retry prompt does **not** instruct it to invent a particular cause.
+The injected write restriction is a documented **fault-injection fixture**, not
+an unplanned production failure. No Session messages, tool calls or error
+results are fabricated, and none of this relaxes the independent retrospective
+or adversarial-control requirements.
 
 ## Private bundle and trust boundaries
 
