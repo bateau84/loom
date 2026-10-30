@@ -342,6 +342,13 @@ def run(args):
         report["model"] = args.model
         report["candidate"] = installed_plugin_inventory(args.artifact.resolve(), args.plugin.resolve(),
                                                          args.expect_plugin_version, "2.2.0")
+        # The audit is a local OpenCode V2 plugin *directory*. Its entrypoint
+        # and dependency tree must be present before starting a real host.
+        audit_dir = args.repository.resolve() / "tests/retrospective-host"
+        require((audit_dir / "server.ts").is_file(),
+                "QA-B audit directory has no server.ts entrypoint")
+        require((args.repository.resolve() / "node_modules/@opencode/plugin").is_dir(),
+                "QA-B audit dependencies are absent; run bun install --frozen-lockfile in the Loom checkout")
         skill = load_skill(args.skills_repo.resolve(), args.skill_revision)
         report["skill_revision"] = args.skill_revision
         report["skill_sha256"] = hashlib.sha256(skill.encode()).hexdigest()
