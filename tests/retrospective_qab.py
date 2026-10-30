@@ -199,10 +199,14 @@ def evidence_oracle(audit, parent, worker, reviewer, parent_messages, worker_mes
     # Verification is only source-linked if the last worker turn actually
     # executed a completed tool after the user's correction; text alone is not
     # a verification event.
+    verified_before = {e["data"].get("callID") for e in final_worker_audit
+                       if e.get("type") == "tool-before"
+                       and e.get("data", {}).get("sessionID") == worker
+                       and e["data"].get("verification_command") is True}
     verified_tool = any(e.get("type") == "tool-after" and
                         e.get("data", {}).get("sessionID") == worker and
                         e["data"].get("status") == "completed" and
-                        e["data"].get("tool") not in ("loom_trace", "loom.trace")
+                        e["data"].get("callID") in verified_before
                         for e in final_worker_audit)
     verified_message = next((m for m in worker_messages if m.get("type") == "assistant"
                              and any(word in message_text(m).lower()
