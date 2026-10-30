@@ -43,6 +43,11 @@ def verify_primary(audit, investigator, model, parent, worker, reviewer, require
                          and call.get("session_id") == parent]
     children = {item for result in child_inventories for item in result.get("child_ids", [])}
     checks["model-discovered-children"] = "PASS" if {worker, reviewer} <= children else "UNPROVEN"
+    loaded = {e.get("callID") for e in _items(audit, "tool-before", investigator)
+              if e.get("tool") == "skill" and e.get("skill_id") == "retrospective"}
+    checks["retrospective-skill-loaded"] = ("PASS" if loaded and any(
+        e.get("callID") in loaded and e.get("tool") == "skill" and e.get("status") == "completed"
+        for e in _items(audit, "tool-after", investigator)) else "UNPROVEN")
     timelines = [result for call, result in good if call.get("operation") == "timeline"]
     observed_sources = {id for entry in timelines for id in entry.get("event_ids", [])}
     evidence = {value for value in required_events.values() if isinstance(value, str) and value}
