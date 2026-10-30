@@ -468,8 +468,11 @@ def evidence_oracle(audit, parent, worker, reviewer, parent_messages, worker_mes
     # observed error. A successful read or preparation step before failure
     # is not evidence of a recovered implementation attempt.
     failed_index = next((i for i, e in enumerate(activity) if
-                         e.get("status") == "error" and
-                         e.get("tool") in ("edit", "patch", "execute", "shell")), None)
+                         e.get("status") == "error" and e.get("tool") == "patch"), None)
+    if failed_index is None:
+        failed_index = next((i for i, e in enumerate(activity) if
+                             e.get("status") == "error" and
+                             e.get("tool") in ("edit", "execute", "shell")), None)
     failed = activity[failed_index] if failed_index is not None else None
     succeeded = next((e for e in activity[failed_index + 1:]
                       if e.get("status") == "completed" and
@@ -723,10 +726,11 @@ def run(args):
             set_worker_write_gate(host, worker, denied=False)
             announce_phase(report, "source:worker-retry")
             invoke_model(host, root, worker,
-                         "The previous patch was rejected by the real host's edit policy, "
-                         "which is now restored. Retry the native patch tool on the existing "
-                         "settings.json file: change mode from prototype to safe, keep telemetry "
-                         "false, then run test_settings.py with Python and report its observed result.",
+                         "The host write restriction used during the first attempt has been removed. "
+                         "Retry the native patch tool on the existing settings.json file: "
+                         "change mode from prototype to safe, keep telemetry false, then run "
+                         "test_settings.py with Python. Report the actual earlier error and "
+                         "the observed result of the retry; do not assume why it failed.",
                          args.model, args.timeout)
             announce_phase(report, "source:review")
             reviewer = create_session(host, project, args.model, "qa-reviewer", parent)
