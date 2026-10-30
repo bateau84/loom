@@ -10,8 +10,8 @@ timestamp: 2026-10-19T00:00:00Z
 
 Run commands from the repository root. This is the maintained inventory of every
 tracked path under `tests/`, `tools/` and `.github/workflows/`, plus the seven
-runner/example supports below: **74 + 7 = 81 paths**. There are 42 test entry files
-(18 Node, 21 Bun, 3 Python); file counts are not case counts. Update this guide
+runner/example supports below: **75 + 7 = 82 paths**. There are 43 test entry files
+(18 Node, 22 Bun, 3 Python); file counts are not case counts. Update this guide
 when adding, removing or renaming an entrypoint or support input.
 
 ## Environment and commands
@@ -36,7 +36,7 @@ Component doubles are not installed-host evidence; no suite requires paid infere
 | Profile | Direct command and prerequisites | Outputs / side effects / membership |
 |---|---|---|
 | C | `./node_modules/.bin/tsc -p tsconfig.core.json`, then `node --test PATH`; locked dependencies, Node SQLite | Compiler writes ignored `.test-build/`; Node report/status. Synthetic memory/temp SQLite/config/files, subprocesses/workers where noted. All root `tests/*.test.mjs` in `bun run test:core`, main CI. No host/model. |
-| N | `bun test PATH`; locked dependencies and Bun | Bun report/status; real Bun/SQLite/plugin registration with simulated host. Disposable state/config; fixtures restore environment. Startup cases also write disposable `.test-build/startup-*`. `bun run test:native` discovers root `*native.test.ts` plus explicit package-entry, backup, baseline and question-host globs; main CI. No installed host/model. |
+| N | `bun test PATH`; locked dependencies and Bun | Bun report/status; real Bun/SQLite/plugin registration with simulated host. Disposable state/config; fixtures restore environment. Startup cases also write disposable `.test-build/startup-*`. `bun run test:native` discovers root `*native.test.ts` plus explicit package-entry, backup, baseline, question-host and retrospective-source globs; main CI. No installed host/model. |
 | P | `python3 -m unittest discover -s tests -p 'BASENAME'`; stdlib Python, Git for export | unittest report/status; temp files/SQLite, mocks/failure subprocesses, ignored bytecode caches. `bun run test:python` discovers `test_*.py`; main CI. No installed qualification. |
 | S | `LOOM_CODEMODE_ROOT=/ABS/PREFIX bun test tests/tool-search-codemode.test.ts`; first `npm install --prefix /ABS/PREFIX --ignore-scripts --no-audit --no-fund @opencode/codemode@2.0.29` | Verifies exact package and imports real search/effect. Registration/temp state and report/status, no model/CLI. npm writes only external prefix. Separate main CI step, excluded from native aggregate. |
 | H | `python3 tests/installed_host_smoke.py --opencode /ABS/CLI --expect-version 2.1.1 --plugin /ABS/PLUGIN_PREFIX/node_modules/loom-plugin --artifact /ABS/loom-plugin.tgz --expect-plugin-version 2.0.0-alpha.1 --expect-sdk-version 2.1.1 --report-directory /ABS/OUTPUT`; Python, Bun/Node, candidate npm artifact, canonical SDK 2.1.1 and separate CLI 2.1.1 | Starts owned loopback/stdio hosts in private temp config/state, loading the installed artifact rather than checkout. Verifies artifact metadata/hash and SDK pin/version. Boot/restart/removal/roster/empty-ledger checks, no model. Retains version stdout, HTTP JSON, artifact identity and `report.json`; removes temp host state. Installed-host workflow only, or explicit manual invocation. |
@@ -108,6 +108,7 @@ additional maintained tests. Do not publish private host reports without inspect
 | tests/fixtures/baseline-c9ffcfa/candidate-preservation.test.ts | Current Store/context startup/read twice against exact old rows, not old-writer characterization. |
 | tests/fixtures/baseline-c9ffcfa/preservation.test.ts | Frozen writer characterization, source/raw hashes, hydrate/copy/restore, corrupt qualification falsification and rollback. Immutable input. |
 | tests/question-host/get-rejection.test.ts | Component SDK get rejection AFTER committed answer: independent durability, no admission/input/wake/transfer; also explicitly run by questions workflow. Not installed selective-ACL evidence. |
+| tests/retrospective-source/source-model.test.ts | QA-B scripted-source continuation without a repeated phase marker, strict fresh-phase and phase-step bounds; provider-free component evidence, not a full retrospective. |
 
 ## Python tests (P)
 

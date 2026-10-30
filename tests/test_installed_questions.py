@@ -91,6 +91,7 @@ class QuestionHarnessTest(unittest.TestCase):
         expected = set((repo / 'tests').glob('*.test.ts')) - {repo / 'tests/tool-search-codemode.test.ts'}
         expected.update((repo / 'tests/fixtures/baseline-c9ffcfa').glob('*.test.ts'))
         expected.update((repo / 'tests/question-host').glob('*.test.ts'))
+        expected.update((repo / 'tests/retrospective-source').glob('*.test.ts'))
         self.assertEqual(collected, expected)
 
     def test_retirement_inventory_names_missing_obsolete_contracts_not_equivalent_passes(self):
