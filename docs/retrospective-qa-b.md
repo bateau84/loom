@@ -11,6 +11,7 @@ A POSIX machine with Python 3, Bun, Node and Git; an existing exact OpenCode 2.2
 Prepare the actual PR artifact, then run (substitute real local paths):
 
     mkdir -p /tmp/loom-qab/package
+    bun install --frozen-lockfile  # In the Loom checkout: local audit plugin imports @opencode/plugin
     npm pack --pack-destination /tmp/loom-qab/package
     npm install --prefix /tmp/loom-qab/plugin /tmp/loom-qab/package/loom-plugin-2.0.0-alpha.1.tgz
     npm install --prefix /tmp/loom-qab/host @opencode/cli@2.2.0
@@ -22,6 +23,15 @@ Prepare the actual PR artifact, then run (substitute real local paths):
       --model PROVIDER/MODEL_ID \
       --auth /ABS/PRIVATE/opencode-auth.json \
       --report-directory /ABS/PRIVATE/qab-001 --timeout 120
+
+**Plugin activation diagnostics:** A configured local plugin directory needs a
+`server.ts` or `index.ts` entrypoint. QA-B now supplies
+`tests/retrospective-host/server.ts` and uses the checkout's dependencies
+(install them with `bun install --frozen-lockfile` before running). If startup
+fails before a model request, inspect the **private** `real-model.plugins.latest.json`
+and `real-model.server.stderr.txt` in the report directory. The plugin roster
+must contain active `loom` and `loom.retrospective.qab.audit`. Do not share
+unredacted server logs or private source exports.
 
 Optional arguments: --models-catalog /PRIVATE/models.json, --provider-config /PRIVATE/provider-only.json, --provider-env NAME. Auth and chosen provider environment variables remain inside an isolated temporary host state; do not provide a production workspace. Use a new private report directory each time.
 
