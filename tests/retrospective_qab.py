@@ -161,7 +161,8 @@ def prepare_project(project):
                   "A user requests safe mode without enabling telemetry.\n")
 
 
-def evidence_oracle(audit, parent, worker, reviewer, parent_messages, reviewer_messages):
+def evidence_oracle(audit, parent, worker, reviewer, parent_messages, worker_messages,
+                    reviewer_messages, final_worker_audit):
     # These are observed from native host state, not invented message IDs.
     activity = [e["data"] for e in audit if e.get("type") == "tool-after"
                 and e.get("data", {}).get("sessionID") == worker
@@ -172,12 +173,25 @@ def evidence_oracle(audit, parent, worker, reviewer, parent_messages, reviewer_m
     correction = next((m for m in parent_messages if m.get("type") == "user"
                        and "QA-B correction" in message_text(m)), None)
     review = next((m for m in reviewer_messages if m.get("type") == "assistant"
-                   and message_text(m).strip()), None)
+                   and "privacy" in message_text(m).lower()
+                   and any(word in message_text(m).lower() for word in
+                           ("test", "validation", "verify", "missing", "not validated"))), None)
+    # Verification is only source-linked if the last worker turn actually
+    # executed a completed tool after the user's correction; text alone is not
+    # a verification event.
+    verified_tool = any(e.get("type") == "tool-after" and
+                        e.get("data", {}).get("sessionID") == worker and
+                        e["data"].get("status") == "completed" and
+                        e["data"].get("tool") not in ("loom_trace", "loom.trace")
+                        for e in final_worker_audit)
+    verified_message = next((m for m in worker_messages if m.get("type") == "assistant"
+                             and any(word in message_text(m).lower()
+                                     for word in ("test", "passed", "verified"))), None)
     return {"failure": failed.get("messageID") if failed else None,
             "retry": succeeded.get("messageID") if succeeded else None,
             "user": correction.get("id") if correction else None,
             "review": review.get("id") if review else None,
-            "verified": succeeded.get("messageID") if succeeded else None}
+            "verified": verified_message.get("id") if verified_tool and verified_message else None}
 
 
 def trace_pairs(audit, session):
@@ -337,8 +351,10 @@ def run(args):
             invoke_model(host, root, parent, "QA-B correction: Previous work overlooked privacy validation. "
                          "Confirm telemetry must remain disabled. " + FAKE_SECRET + " is a synthetic sentinel; "
                          "never repeat it.", args.model, args.timeout)
+            verification_from = len(audit_events(root))
             invoke_model(host, root, worker, "After the user correction, verify safe mode and disabled telemetry "
                          "by executing test_settings.py. Report only observed verification.", args.model, args.timeout)
+            verification_audit = audit_events(root)[verification_from:]
             check = subprocess.run(["python3", "test_settings.py"], cwd=project,
                                    capture_output=True, text=True, timeout=15)
             report["host_verification"] = {"exit_code": check.returncode,
@@ -348,7 +364,8 @@ def run(args):
                 export_source(host, session, project, output, role)
             raw_audit = audit_events(root)
             gold = evidence_oracle(raw_audit, parent, worker, reviewer,
-                                   session_messages(host, parent), session_messages(host, reviewer))
+                                   session_messages(host, parent), session_messages(host, worker),
+                                   session_messages(host, reviewer), verification_audit)
             private_write(output / "oracle.json", json.dumps({
                 "session_ids": sessions, "source_events": gold,
                 "verification": report["host_verification"]}, indent=2))
