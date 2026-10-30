@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import errno
 import hashlib
 import json
 import os
@@ -128,22 +129,32 @@ def ensure_model_available(models: list, requested: str) -> None:
 SOURCE_KINDS = ("failure", "retry", "user", "review", "verified")
 
 
-def set_worker_write_gate(host, session: str, denied: bool) -> None:
-    """Apply real OpenCode Session policy, then read back the effective override.
+def lock_source_file(target: Path) -> None:
+    """Create a real, verified OS write failure on a disposable source file.
 
-    Only the disposable worker Session is affected. The model still chooses
-    whether to invoke a tool; the harness never fabricates tool events.
+    OpenCode 2.2.0 hides tools when their native permission is denied, so
+    Session-policy denial is not a valid producer of a model-called tool error.
+    This guard leaves patch advertised and verifies the kernel rejects writes.
     """
-    permissions = [
-        {"action": action, "resource": "*", "effect": "deny"}
-        for action in ("edit", "write", "shell")
-    ] if denied else []
-    api(host, "PATCH", "/api/session/" + session, {"permissions": permissions})
-    session_info = api(host, "GET", "/api/session/" + session)
-    require(isinstance(session_info, dict) and session_info.get("id") == session
-            and session_info.get("permissions") == permissions,
-            "Native Session permission policy was not confirmed")
+    require(target.is_file(), "QA-B source file does not exist")
+    target.chmod(0o400)
+    try:
+        handle = os.open(target, os.O_WRONLY)
+    except OSError as error:
+        require(error.errno in (errno.EACCES, errno.EPERM),
+                "Read-only source could not be verified against the operating system")
+    else:
+        os.close(handle)
+        target.chmod(0o600)
+        raise RuntimeError("Host filesystem does not enforce write denial")
 
+
+def unlock_source_file(target: Path) -> None:
+    """Restore the normal writable fixture before the real same-tool retry."""
+    require(target.is_file(), "QA-B source file does not exist")
+    target.chmod(0o600)
+    handle = os.open(target, os.O_WRONLY)
+    os.close(handle)
 
 def observed_patch_error(events: list, session: str) -> str | None:
     """Require one paired native patch failure in the worker Session."""
@@ -694,8 +705,9 @@ def run(args):
                          "Do not edit files directly.", args.model, args.timeout)
             announce_phase(report, "source:worker-failed-edit")
             worker = create_session(host, project, args.model, "qa-worker", parent)
-            set_worker_write_gate(host, worker, denied=True)
-            original_settings = hashlib.sha256((project / "settings.json").read_bytes()).hexdigest()
+            settings_file = project / "settings.json"
+            lock_source_file(settings_file)
+            original_settings = hashlib.sha256(settings_file.read_bytes()).hexdigest()
             failed_attempt_from = len(audit_events(root))
             invoke_model(host, root, worker,
                          "Try to update the existing settings.json using the native patch tool: "
@@ -705,28 +717,30 @@ def run(args):
                          args.model, args.timeout)
             failed_attempt = audit_events(root)[failed_attempt_from:]
             failed_patch_id = observed_patch_error(failed_attempt, worker)
-            unchanged = hashlib.sha256((project / "settings.json").read_bytes()).hexdigest() == original_settings
+            unchanged = hashlib.sha256(settings_file.read_bytes()).hexdigest() == original_settings
             report["source_first_attempt"] = {
-                "native_worker_write_gate": "edit/write/shell denied, applied and read back",
+                "write_failure_fixture": "existing source file read-only; kernel write rejected",
                 "patch_error_observed": failed_patch_id is not None,
                 "source_unchanged_under_gate": unchanged,
             }
             if not unchanged:
-                report["status"] = "FAIL"
-                report["blocked_reason_code"] = "source-mutated-during-native-write-deny"
-                report["source_gate"] = source_gate({}, False)
+                unlock_source_file(settings_file)
+                gate = source_gate({}, False)
+                skip_unqualified_source(report, gate)
+                report["blocked_reason_code"] = "read-only-source-changed"
                 export_source(host, worker, project, output, "worker")
                 return report
             if not failed_patch_id:
+                unlock_source_file(settings_file)
                 gate = source_gate({}, False)
                 skip_unqualified_source(report, gate)
-                report["blocked_reason_code"] = "native-first-patch-error-not-observed"
+                report["blocked_reason_code"] = "first-patch-error-not-observed"
                 export_source(host, worker, project, output, "worker")
                 return report
-            set_worker_write_gate(host, worker, denied=False)
+            unlock_source_file(settings_file)
             announce_phase(report, "source:worker-retry")
             invoke_model(host, root, worker,
-                         "The host write restriction used during the first attempt has been removed. "
+                         "The source file is now writable after the earlier failed attempt. "
                          "Retry the native patch tool on the existing settings.json file: "
                          "change mode from prototype to safe, keep telemetry false, then run "
                          "test_settings.py with Python. Report the actual earlier error and "
