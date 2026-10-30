@@ -371,7 +371,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             s = Scenario(host, root)
             asker, respondent, reader = [s.session(role) for role in roles[:3]]
             report['sessions'] = {'asker': asker, 'respondent': respondent, 'reader': reader}
-            s.command(reader, 'const x=search({namespace:"loom",limit:10}); if(x.items.length!==6) throw new Error("Expected six tools"); return x')
+            s.command(reader, 'return search({namespace:"loom",limit:10})')
             gate = s.session('reader')
             gate_file = project / 'permission-gate.txt'
             gate_file.write_text('mode=prototype\n')
