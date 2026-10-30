@@ -1,6 +1,13 @@
 """Provider-free contract checks for QA-B grading, not a real-model PASS."""
 import unittest
+import argparse
+import json
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
 
+from retrospective_qab import prepare_project, run as run_real_qab
 from retrospective_qab_oracle import CONTROLS, grade_controls, verify_primary, verdict
 
 INVESTIGATOR, PARENT, WORKER, REVIEWER = "investigator", "parent", "worker", "reviewer"
@@ -93,6 +100,28 @@ class QABEvidenceTests(unittest.TestCase):
         row = self.grade(audit, report)
         self.assertEqual(row["checks"]["real-model-primary"], "UNPROVEN")
         self.assertEqual(row["agent"], "UNPROVEN")
+
+
+    def test_disposable_fixture_has_a_real_initial_failure_and_verifiable_recovery(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            prepare_project(root)
+            command = [sys.executable, "-I", "-B", "test_settings.py"]
+            prior = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(prior.returncode, 0, "Initial unsafe mode must fail real Python test")
+            (root / "settings.json").write_text('{"mode":"safe","telemetry":false}\n')
+            after = subprocess.run(command, cwd=root, capture_output=True, text=True, timeout=10)
+            self.assertEqual(after.returncode, 0, after.stderr)
+
+    def test_scripted_provider_is_rejected_before_running_any_installed_host(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "new-private-result"
+            options = argparse.Namespace(report_directory=path, model="question-fixture/reader", timeout=30)
+            result = run_real_qab(options)
+            self.assertEqual(result["status"], "UNPROVEN")
+            self.assertIn("question-fixture forbidden", result["error"])
+            self.assertEqual(json.loads((path / "report.json").read_text())["status"], "UNPROVEN")
+            self.assertEqual(path.stat().st_mode & 0o777, 0o700)
 
 
 if __name__ == "__main__":
