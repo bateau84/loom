@@ -218,7 +218,7 @@ def public_summary(report: dict) -> dict:
     allowed = (
         "status", "phase", "infrastructure", "agent", "blocked_reason_code",
         "source_gate", "source_oracle_complete", "host_recovery_verified",
-        "source_tool_observability", "primary_checks", "control_verdicts",
+        "source_first_attempt", "source_tool_observability", "primary_checks", "control_verdicts",
         "duration_seconds", "evidence_bundle", "error",
     )
     return {key: report[key] for key in allowed if key in report}
