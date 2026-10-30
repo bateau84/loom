@@ -47,6 +47,7 @@ REQUIRED_INSTALLED_CHECKS = {
     'E4-native-session-discovery', 'E4-native-archive-status',
     'E5-compaction-context-and-observation',
     'E6-native-trace-and-scope', 'E6-exported-child-history', 'E6-native-text-redaction',
+    'E6-native-edit-permission-gate',
 }
 
 
