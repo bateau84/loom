@@ -68,6 +68,40 @@ Optional arguments: --models-catalog /PRIVATE/models.json, --provider-config /PR
 
 The passive audit plugin never injects tools, swaps models, changes policy or supplies answers. Its records contain source/call IDs, tool statuses and coverage, **not** raw provider prompts, headers or full tool outputs.
 
+## Interpreting UNPROVEN without weakening the test
+
+The passive `session.model.request` hook only proves that OpenCode prepared
+a provider request. It does **not** prove provider success, text generation, or
+native tool completion. QA-B therefore requires a **new, terminal native
+assistant message** for each target-model turn. If the provider returned an
+error, the report names its safe error **type only**, not raw provider text.
+Older completed messages from the same Session cannot qualify a new turn.
+
+When source setup does not produce the required worker error/retry/verification,
+inspect `report.json`'s `source_tool_observability`, including
+`worker_native.by_tool_status`, `worker_observer_starts` and
+`worker_observer_terminals`. These are projected tool identifiers, statuses
+and counts; no prompts, arguments, or tool outputs. A native tool count greater
+than the passive observer's start count indicates a suspected instrumentation
+gap rather than proof the model did nothing. Code Mode wrappers can hide
+nested tool calls; the independent evaluator must verify that boundary before
+declaring behavior missing. A zero native tool count instead means the synthetic
+source task did not cause any observed native tool calls. In either case,
+source qualification remains **UNPROVEN** until the real evidence exists.
+
+For a locally generated report, these zsh-safe read-only checks expose only
+the relevant aggregate metadata:
+
+    jq '{status,source_oracle_complete,host_recovery_verified,source_tool_observability,primary_checks,control_verdicts,error}' /PRIVATE/results-N/report.json
+    jq -s '[.[] | select(.type=="model-request" or .type=="tool-before" or .type=="tool-after") | {type,agent:.data.agent,tool:.data.tool,status:.data.status}] | group_by([.type,.agent,.tool,.status]) | map({type:.[0].type,agent:.[0].agent,tool:.[0].tool,status:.[0].status,count:length})' /PRIVATE/results-N/audit.ndjson
+
+Neither read grants permission to publish the private source-history files.
+`opencode-eval-runner` has more detailed native + Code Mode runtime
+observation and terminal-event validation. Its normal `invoke` interface
+runs one fresh Session and cannot by itself replace QA-B's multi-Session
+scenario or five controls; these evidence boundaries should be reused when
+adding a persistent multi-Session execution mode.
+
 ## Private bundle and trust boundaries
 
 - report.json: exact package/model/skill and per-layer verdicts
