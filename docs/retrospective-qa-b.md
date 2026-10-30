@@ -139,6 +139,43 @@ The provider-free oracle also treats an explicit security/privacy
 `status:"FAIL"` as FAIL even when a native tool-call ID exists: recorded
 execution is not successful behavior.
 
+### Source Code Mode and native trace correlation
+
+In OpenCode 2.2.0, a native `execute` wrapper may finish with
+`status:completed` while the persisted `state.metadata.toolCalls` reports
+a nested `status:error`. QA-B now reports bounded tool names/statuses in
+`source_tool_observability.worker_native.code_mode_inner`; a missing metadata
+array is **unknown**, not evidence that the nested tools all succeeded. Neither
+this diagnostic nor an error-looking string alone satisfies the required
+failed-edit and same-tool retry acceptance evidence.
+
+For an **existing private bundle**, this read-only command inspects persisted
+`execute` metadata without copying inputs, outputs, or message text:
+
+    jq '[.data.messages[]? | select(.type == "assistant") | . as $m
+      | .content[]? | select(.type == "tool" and .name == "execute")
+      | {message_id: $m.id, outer_status: .state.status,
+         inner_metadata_available: ((.state.metadata.toolCalls | type) == "array"),
+         wrapper_error: (.state.metadata.error // false),
+         nested: [(.state.metadata.toolCalls // [])[]? | {tool, status}]}]'       "$QA_HOME/results-005/source-history/worker.json"
+
+The QA-B oracle formerly paired `loom_trace` starts and finishes using
+`callID` alone. That is unsafe when several nested Code Mode operations share
+one outer call ID: the last start could be incorrectly associated with earlier
+finishes. The oracle now pairs by **Session, tool, call ID, and observed event
+order**. Sequential ID reuse is supported; overlapping starts with the same
+key are **ambiguous and ignored**, never granted success. Identical call IDs
+in a report are not proof of duplicate model actions.
+
+The source-preparation worker now explicitly attempts a native `patch`
+against a missing target and later retries `patch` against the actual
+settings file. The authentic tool error and later same-tool completion are
+still mandatory. These prompts guide only the **source-creation worker**;
+the retrospective investigator retains independent evidence-discovery freedom.
+This is not a simulated successful tool call. If the model declines the
+initial patch or the required error does not occur, report **UNPROVEN** and
+stop by the normal fail-fast gate.
+
 ## Private bundle and trust boundaries
 
 - report.json: exact package/model/skill and per-layer verdicts
