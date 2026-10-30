@@ -85,10 +85,18 @@ def verify_primary(audit, investigator, model, parent, worker, reviewer, require
     evidence = {value for value in required_events.values() if isinstance(value, str) and value}
     complete_oracle = len(evidence) == len(required_events)
     checks["model-read-source-events"] = "PASS" if complete_oracle and evidence <= observed_sources else "UNPROVEN"
-    checks["tool-arguments-authorized"] = "PASS" if (timelines and all(
-        any(before.get("trace", {}).get("export_path") for before, after in pairs
-            if after.get("status") == "completed" and after.get("trace_result") is entry)
-        for entry in timelines if entry.get("session_id") != investigator)) else "UNPROVEN"
+    # A caller-only timeline is useful but cannot prove authorization for
+    # related Session exports. Require at least one observed, successful
+    # cross-Session read, matching requested and returned source identity.
+    cross_session_reads = [(call, result) for call, result in good
+                           if call.get("operation") == "timeline" and (
+                               call.get("session_id") != investigator or
+                               result.get("session_id") != investigator)]
+    checks["tool-arguments-authorized"] = ("PASS" if cross_session_reads and all(
+        call.get("session_id") == result.get("session_id")
+        and isinstance(call.get("export_path"), str) and bool(call["export_path"])
+        and result.get("source") == "provided-export"
+        for call, result in cross_session_reads) else "UNPROVEN")
     checks["source-linked-retrospective"] = ("PASS" if complete_oracle and report and all(
         source_id in report for source_id in evidence) else "UNPROVEN")
     checks["history-limits-visible"] = ("PASS" if timelines and all(
