@@ -537,5 +537,42 @@ class QABEvidenceTests(unittest.TestCase):
         self.assertEqual(summary["code_mode_inner"]["status"], "unknown")
 
 
+    def test_real_patch_error_and_same_tool_patch_retry_qualify_source_attempt(self):
+        observations = [
+            {"type": "tool-after", "data": {
+                "sessionID": WORKER, "tool": "patch", "status": "error",
+                "messageID": "msg_patch_failed", "callID": "call_1"}},
+            {"type": "tool-after", "data": {
+                "sessionID": WORKER, "tool": "patch", "status": "completed",
+                "messageID": "msg_patch_retry", "callID": "call_2"}},
+        ]
+        parent = [{"id": "msg_correction", "type": "user",
+                   "text": "QA-B correction: preserve privacy"}]
+        reviewer = [{"id": "msg_review", "type": "assistant",
+                     "content": [{"type": "text",
+                                  "text": "Privacy verification was missing"}]}]
+        final = [
+            {"type": "tool-before", "data": {"sessionID": WORKER,
+                "tool": "shell", "callID": "verify", "verification_command": True}},
+            {"type": "tool-after", "data": {"sessionID": WORKER,
+                "tool": "shell", "callID": "verify", "status": "completed"}},
+        ]
+        worker = [{"id": "msg_verified", "type": "assistant",
+                   "content": [{"type": "text", "text": "Tests passed"}]}]
+        gold = evidence_oracle(observations, PARENT, WORKER, REVIEWER,
+                               parent, worker, reviewer, final)
+        self.assertEqual(gold["failure"], "msg_patch_failed")
+        self.assertEqual(gold["retry"], "msg_patch_retry")
+        self.assertEqual(gold["verified"], "msg_verified")
+
+    def test_successful_patch_without_prior_failure_is_not_a_recovery(self):
+        success_only = [{"type": "tool-after", "data": {
+            "sessionID": WORKER, "tool": "patch", "status": "completed",
+            "messageID": "msg_success", "callID": "call_1"}}]
+        gold = evidence_oracle(success_only, PARENT, WORKER, REVIEWER, [], [], [], [])
+        self.assertIsNone(gold["failure"])
+        self.assertIsNone(gold["retry"])
+
+
 if __name__ == "__main__":
     unittest.main()
