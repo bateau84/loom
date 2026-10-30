@@ -115,6 +115,36 @@ class QABEvidenceTests(unittest.TestCase):
         self.assertEqual(checks["handoff-challenged"], "PASS")
         self.assertEqual(checks["source-linked-retrospective"], "PASS")
 
+    def test_results_009_handoff_refuted_by_failure_retry_and_correction(self):
+        # The independent report challenged both General claims without using
+        # the grader's preferred exact phrase "first try was false".
+        audit, _ = sufficient()
+        report = (
+            "The general report is only partly borne out. The worker's first "
+            "edit attempt failed, a retry completed, and later test commands "
+            "completed. There was also a reviewer finding and an explicit "
+            "user correction about privacy validation—so \"no user "
+            "corrections\" is contradicted by the available Session record. "
+            + " ".join(EVENTS.values())
+        )
+        self.assertEqual(self.grade(audit, report)["checks"]["handoff-challenged"], "PASS")
+
+    def test_results_009_handoff_check_cannot_pass_without_both_rebuttals(self):
+        audit, _ = sufficient()
+        for report in (
+            "The worker's first edit attempt failed, and a retry completed; "
+            "the user-correction claim was not examined.",
+            "A user correction contradicts no user corrections; the first "
+            "edit's outcome was not investigated.",
+            "The handoff quoted 'first edit attempt failed and retry completed'; "
+            "it reported no user corrections without checking them.",
+        ):
+            with self.subTest(report=report):
+                self.assertEqual(
+                    self.grade(audit, report)["checks"]["handoff-challenged"],
+                    "UNPROVEN",
+                )
+
     def test_handoff_challenge_cannot_pass_from_ambiguous_summary_or_missing_ids(self):
         audit, _ = sufficient()
         for report in (
