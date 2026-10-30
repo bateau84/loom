@@ -2,13 +2,15 @@
 import unittest
 import argparse
 import json
+import sqlite3
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-from retrospective_qab import evidence_oracle, prepare_project, run as run_real_qab, run_control
+from retrospective_qab import (evidence_oracle, prepare_project, run as run_real_qab,
+                               run_control, seed_credential_database, ensure_model_available)
 from retrospective_qab_oracle import CONTROLS, grade_controls, verify_primary, verdict
 
 INVESTIGATOR, PARENT, WORKER, REVIEWER = "investigator", "parent", "worker", "reviewer"
@@ -266,6 +268,57 @@ class QABEvidenceTests(unittest.TestCase):
         entry = directory / "server.ts"
         self.assertTrue(entry.is_file(), "QA-B directory needs a server.ts entrypoint")
         self.assertIn('export { default } from "./audit.ts"', entry.read_text(encoding="utf-8"))
+
+
+    def test_sanitized_database_keeps_credentials_not_session_history(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original, seeded = root / "original.db", root / "isolated" / "opencode.db"
+            with sqlite3.connect(original) as db:
+                db.executescript("""
+                    CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, value TEXT);
+                    CREATE TABLE session (id TEXT PRIMARY KEY, private_message TEXT);
+                    CREATE TABLE project (id TEXT PRIMARY KEY, path TEXT);
+                    CREATE TABLE migration (hash TEXT PRIMARY KEY);
+                    CREATE INDEX credential_by_provider ON credential(integration_id);
+                """)
+                db.execute("INSERT INTO credential VALUES (?,?,?)",
+                           ("cred-1", "opencode", '{"type":"key","key":"synthetic-only"}'))
+                db.execute("INSERT INTO session VALUES (?,?)",
+                           ("ses-private", "DO_NOT_COPY_PRIVATE_SESSION"))
+                db.execute("INSERT INTO project VALUES (?,?)", ("project-private", "/private/work"))
+                db.execute("INSERT INTO migration VALUES (?)", ("migration-1",))
+                db.commit()
+            count = seed_credential_database(original, seeded)
+            self.assertEqual(count, 1)
+            self.assertEqual(seeded.stat().st_mode & 0o777, 0o600)
+            with sqlite3.connect(seeded) as db:
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM credential").fetchone()[0], 1)
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM migration").fetchone()[0], 1)
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM session").fetchone()[0], 0)
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM project").fetchone()[0], 0)
+                self.assertEqual(db.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+            with sqlite3.connect(original) as db:
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM session").fetchone()[0], 1)
+
+    def test_invalid_database_source_fails_without_leaving_secret_copy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original, seeded = root / "bad.db", root / "isolated" / "opencode.db"
+            with sqlite3.connect(original) as db:
+                db.execute("CREATE TABLE session (id TEXT)")
+            with self.assertRaisesRegex(RuntimeError, "credential table"):
+                seed_credential_database(original, seeded)
+            self.assertFalse(seeded.exists())
+
+    def test_requested_model_must_match_provider_and_id(self):
+        available = [
+            {"providerID": "opencode-go", "id": "gpt-6-luna"},
+            {"providerID": "openai", "id": "gpt-6.1-sol"},
+        ]
+        ensure_model_available(available, "opencode-go/gpt-6-luna")
+        with self.assertRaisesRegex(RuntimeError, "opencode-go/gpt-6-luna"):
+            ensure_model_available(available, "openai/gpt-6-luna")
 
 
 if __name__ == "__main__":
