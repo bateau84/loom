@@ -12,7 +12,8 @@ from unittest.mock import patch
 from retrospective_qab import (evidence_oracle, prepare_project, run as run_real_qab,
                                run_control, seed_credential_database, ensure_model_available,
                                completed_model_text, summarize_native_tools,
-                               source_gate, skip_unqualified_source, public_summary)
+                               source_gate, skip_unqualified_source,
+                               skip_unqualified_primary, public_summary)
 from retrospective_qab_oracle import CONTROLS, grade_controls, verify_primary, verdict
 
 INVESTIGATOR, PARENT, WORKER, REVIEWER = "investigator", "parent", "worker", "reviewer"
@@ -428,6 +429,19 @@ class QABEvidenceTests(unittest.TestCase):
                     for k in CONTROLS}
         controls["read-denied"]["status"] = "UNPROVEN"
         self.assertEqual(grade_controls(controls)["read-denied"], "UNPROVEN")
+
+
+    def test_unqualified_investigator_skips_optional_controls(self):
+        report = {"status":"UNPROVEN", "infrastructure":"PASS", "agent":"UNPROVEN"}
+        primary = {"infrastructure":"PASS", "agent":"UNPROVEN",
+                   "checks":{"model-discovered-children":"UNPROVEN"}}
+        self.assertTrue(skip_unqualified_primary(report, primary))
+        self.assertEqual(report["blocked_reason_code"], "investigator-unqualified")
+        self.assertEqual(report["control_verdicts"],
+                         {name:"UNPROVEN" for name in CONTROLS})
+        self.assertTrue(all(not x["executed"] for x in report["controls"].values()))
+        self.assertFalse(skip_unqualified_primary({}, {"infrastructure":"PASS", "agent":"PASS"}))
+
 
 
 if __name__ == "__main__":
