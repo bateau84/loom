@@ -509,6 +509,85 @@ class QABEvidenceTests(unittest.TestCase):
         self.assertEqual(graded["checks"]["model-discovered-children"], "UNPROVEN")
         self.assertEqual(graded["checks"]["model-read-source-events"], "UNPROVEN")
 
+    def test_overlapping_codemode_calls_with_identifiable_native_results(self):
+        # results-008: one Code Mode execute issued children + worker/reviewer
+        # timeline calls before their terminals. A shared outer ID is NOT
+        # sufficient to reject tool evidence when the returned source identity
+        # unambiguously matches exactly one pending request.
+        shared = {"sessionID": INVESTIGATOR, "tool": "loom_trace",
+                  "callID": "outer-execute", "messageID": "msg_code"}
+        def before(operation, target, path=None):
+            return {"type": "tool-before", "data": {**shared, "trace": {
+                "operation": operation, "session_id": target,
+                "export_path": path}}}
+        def after(result):
+            return {"type": "tool-after", "data": {**shared,
+                "status": "completed", "trace_result": {"parse": "ok", **result}}}
+        concurrent = [
+            before("children", PARENT),
+            before("timeline", REVIEWER, "qa-evidence/reviewer.json"),
+            before("timeline", WORKER, "qa-evidence/worker.json"),
+            after({"child_ids": [WORKER, REVIEWER, INVESTIGATOR]}),
+            after({"source": "provided-export", "session_id": WORKER,
+                   "event_ids": [EVENTS["failure"], EVENTS["retry"], EVENTS["verified"]],
+                   "coverage": {"full_history": None, "delegation_complete": False}}),
+            after({"source": "provided-export", "session_id": REVIEWER,
+                   "event_ids": [EVENTS["review"]],
+                   "coverage": {"full_history": None, "delegation_complete": False}}),
+        ]
+        pairs = list(paired_trace_events(concurrent, INVESTIGATOR))
+        self.assertEqual(len(pairs), 3)
+        self.assertEqual([(a["trace"]["operation"], a["trace"]["session_id"])
+                          for a, _ in pairs], [
+            ("children", PARENT), ("timeline", WORKER), ("timeline", REVIEWER)])
+        audit, report = sufficient()
+        # Use just the separate coordinator read and replace the three
+        # individually paired operations with their actual concurrent form.
+        audit = audit[:4] + trace("parent", "timeline", PARENT,
+                                 {"event_ids": [EVENTS["user"]]}) + concurrent
+        result = self.grade(audit, report)
+        self.assertEqual(result["checks"]["model-discovered-children"], "PASS")
+        self.assertEqual(result["checks"]["model-read-source-events"], "PASS")
+        self.assertEqual(result["checks"]["tool-arguments-authorized"], "PASS")
+
+    def test_overlapping_same_target_or_unidentified_result_remains_unproven(self):
+        common = {"sessionID": INVESTIGATOR, "tool": "loom_trace",
+                  "callID": "one-outer-call"}
+        start = {"type": "tool-before", "data": {**common,
+                 "trace": {"operation": "timeline", "session_id": WORKER,
+                           "export_path": "qa-evidence/worker.json"}}}
+        end = {"type": "tool-after", "data": {**common, "status": "completed",
+               "trace_result": {"parse": "ok", "source": "provided-export",
+                                "session_id": WORKER, "event_ids": [EVENTS["failure"]]}}}
+        self.assertEqual(list(paired_trace_events(
+            [start, start, end, end], INVESTIGATOR)), [])
+        # Missing source identity on one of two concurrent completions must
+        # not allow the other completion to be guessed into the wrong request.
+        review_start = {"type": "tool-before", "data": {**common,
+                        "trace": {"operation": "timeline", "session_id": REVIEWER,
+                                  "export_path": "qa-evidence/reviewer.json"}}}
+        unknown_end = {"type": "tool-after", "data": {**common,
+                       "status": "completed", "trace_result": {
+                           "parse": "ok", "event_ids": [EVENTS["review"]]}}}
+        self.assertEqual(list(paired_trace_events(
+            [start, review_start, end, unknown_end], INVESTIGATOR)), [])
+
+    def test_overlapping_error_cannot_be_assigned_to_arbitrary_request(self):
+        common = {"sessionID": INVESTIGATOR, "tool": "loom_trace",
+                  "callID": "one-outer-call"}
+        def before(target):
+            return {"type": "tool-before", "data": {**common,
+                "trace": {"operation": "timeline", "session_id": target,
+                          "export_path": "qa-evidence/source.json"}}}
+        error = {"type": "tool-after", "data": {**common,
+                 "status": "error", "error_kind": "permission-denied"}}
+        completed = {"type": "tool-after", "data": {**common,
+                     "status": "completed", "trace_result": {
+                         "parse": "ok", "source": "provided-export",
+                         "session_id": WORKER, "event_ids": [EVENTS["failure"]]}}}
+        self.assertEqual(list(paired_trace_events(
+            [before(WORKER), before(REVIEWER), error, completed], INVESTIGATOR)), [])
+
     def test_trace_pairing_does_not_cross_tool_names_or_unpaired_events(self):
         common = {"sessionID": INVESTIGATOR, "callID": "outer-code-call"}
         stream = [
