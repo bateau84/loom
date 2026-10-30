@@ -65,7 +65,7 @@ export default Plugin.define({
           } } : {}),
           ...(event.tool === "read" ? { read_path:
             str(input.filePath) ?? str(input.path) ?? str(input.file) } : {}),
-          ...(["shell", "bash", "execute"].includes(event.tool)
+          ...(["shell", "bash"].includes(event.tool)
             ? { verification_command: JSON.stringify(input).slice(0, 8192).includes("test_settings") }
             : {}),
         })
