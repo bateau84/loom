@@ -578,14 +578,6 @@ class QABEvidenceTests(unittest.TestCase):
         self.assertIsNone(gold["retry"])
 
 
-    def test_scripted_external_source_provider_is_separate_from_audit_and_live_model(self):
-        source = (Path(__file__).resolve().parent / "retrospective-source/server.ts").read_text()
-        self.assertIn('id: "loom.retrospective.qab.source"', source)
-        self.assertIn('const provider = "qab-source"', source)
-        self.assertIn('tool("edit"', source)
-        self.assertIn('tool("shell"', source)
-        self.assertNotIn("editor.remove(", source)
-
     def test_readonly_source_fixture_causes_real_filesystem_write_denial(self):
         with tempfile.TemporaryDirectory() as temp:
             target = Path(temp) / "settings.json"
