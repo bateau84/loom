@@ -169,9 +169,16 @@ def evidence_oracle(audit, parent, worker, reviewer, parent_messages, worker_mes
     activity = [e["data"] for e in audit if e.get("type") == "tool-after"
                 and e.get("data", {}).get("sessionID") == worker
                 and e["data"].get("tool") not in ("loom_trace", "loom.trace")]
-    failed = next((e for e in activity if e.get("status") == "error"), None)
-    succeeded = next((e for e in activity if e.get("status") == "completed"
-                      and (not failed or e.get("callID") != failed.get("callID"))), None)
+    # The retry must be a completed call of the SAME real tool, AFTER the
+    # observed error. A successful read or preparation step before failure
+    # is not evidence of a recovered implementation attempt.
+    failed_index = next((i for i, e in enumerate(activity) if
+                         e.get("status") == "error" and
+                         e.get("tool") in ("edit", "execute", "shell")), None)
+    failed = activity[failed_index] if failed_index is not None else None
+    succeeded = next((e for e in activity[failed_index + 1:]
+                      if e.get("status") == "completed" and
+                      e.get("tool") == failed.get("tool")), None) if failed else None
     correction = next((m for m in parent_messages if m.get("type") == "user"
                        and "QA-B correction" in message_text(m)), None)
     review = next((m for m in reviewer_messages if m.get("type") == "assistant"
