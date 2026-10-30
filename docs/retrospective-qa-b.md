@@ -6,7 +6,7 @@ This scenario exercises the actual npm-packed Loom candidate, a private OpenCode
 
 ## Requirements
 
-A POSIX machine with Python 3, Bun, Node and Git; an existing exact OpenCode 2.2.0 CLI; an npm-packed and installed copy of the reviewed Loom PR head; and a local bateau84/skills checkout containing merged commit 651650947feb52c0c2fdb71ea148201d6ab25025. Supply a real model as PROVIDER/MODEL_ID and explicit provider auth or environment variable names. The script never chooses another model or provider when quota is exhausted. **Live calls can spend tokens or incur charges.** Only a disposable synthetic project may be used.
+A POSIX machine with Python 3, Bun, Node and Git; an existing exact OpenCode 2.2.0 CLI; an npm-packed and installed copy of the reviewed Loom PR head; and a local bateau84/skills checkout containing merged commit 651650947feb52c0c2fdb71ea148201d6ab25025. Supply a real model as PROVIDER/MODEL_ID and explicit provider auth or environment variable names. For V2 OpenCode OAuth/Go accounts stored in SQLite, pass `--database /ABS/PRIVATE/opencode.db`; the runner reconstructs the schema while retaining only credential and migration rows, **never Session/project/message contents**, inside its disposable, private XDG state. The script never chooses another model or provider when quota is exhausted. **Live calls can spend tokens or incur charges.** Only a disposable synthetic project may be used.
 
 Prepare the actual PR artifact, then run (substitute real local paths):
 
@@ -22,6 +22,7 @@ Prepare the actual PR artifact, then run (substitute real local paths):
       --skills-repo /ABS/bateau84-skills \
       --model PROVIDER/MODEL_ID \
       --auth /ABS/PRIVATE/opencode-auth.json \
+      --database /ABS/PRIVATE/opencode.db \
       --report-directory /ABS/PRIVATE/qab-001 --timeout 120
 
 **Plugin activation diagnostics:** A configured local plugin directory needs a
@@ -32,6 +33,27 @@ fails before a model request, inspect the **private** `real-model.plugins.latest
 and `real-model.server.stderr.txt` in the report directory. The plugin roster
 must contain active `loom` and `loom.retrospective.qab.audit`. Do not share
 unredacted server logs or private source exports.
+
+**Use the exact model provider ID exposed to your normal OpenCode account:**
+
+    opencode models | grep -F 'gpt-6-luna'
+
+OpenCode Go documents Luna as `opencode-go/gpt-6-luna`. Do not assume
+`openai/gpt-6-luna` is interchangeable: QA-B now checks the exact
+`providerID/modelID` against the **isolated host** before issuing its first
+prompt. Missing model selection fails promptly as environment **UNPROVEN**
+with matching-provider suggestions. This check does not consume inference
+tokens. Provider routes supplied by the user's authenticated V2 account
+must still exist in that temporary host.
+
+The `--database` input remains on the user's machine; the sanitized
+credential-only SQLite database is created inside the temporary private
+host state and deleted after the test. Do not copy or upload the full
+`opencode.db`. The separate `--auth` option is for legacy `auth.json`
+credentials and does **not** replace a V2 OAuth/Go database connection.
+The `--models-catalog` option accepts a models.dev-format JSON snapshot
+and sets `OPENCODE_MODELS_PATH`; an old cache file that lacks the
+requested model will not make it available.
 
 Optional arguments: --models-catalog /PRIVATE/models.json, --provider-config /PRIVATE/provider-only.json, --provider-env NAME. Auth and chosen provider environment variables remain inside an isolated temporary host state; do not provide a production workspace. Use a new private report directory each time.
 
