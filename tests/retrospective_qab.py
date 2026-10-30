@@ -839,8 +839,12 @@ def run(args):
                       "Session " + parent + ". " + HANDOFF +
                       " Original Session evidence is available through the installed host; authorized per-Session "
                       "exports, if needed, are in qa-evidence/. Investigate user feedback, child execution, "
-                      "retries, review and verification independently. Clearly mark missing evidence. "
-                      "Do not modify anything.")
+                      "retries, review and verification independently. Cite the exact original message IDs "
+                      "for claimed failures, successful retries, reviewer findings, user corrections and "
+                      "verification, distinguishing actual outcomes from prompts asking for them. "
+                      "Cross-check reviewer claims against available project/test evidence rather than "
+                      "assuming those claims are true. State unknown causes, incomplete history and "
+                      "verification limits. Do not modify anything.")
             answer, _ = invoke_model(host, root, investigator, prompt, args.model, args.timeout)
             after_retro = {str(p.relative_to(project)): hashlib.sha256(p.read_bytes()).hexdigest()
                            for p in preserved}
