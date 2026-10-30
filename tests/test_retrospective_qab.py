@@ -257,5 +257,16 @@ class QABEvidenceTests(unittest.TestCase):
             self.assertEqual(path.stat().st_mode & 0o777, 0o700)
 
 
+    def test_passive_audit_directory_has_discoverable_v2_server_part(self):
+        # OpenCode V2 resolves configured local directories using server.ts
+        # or index.ts, not arbitrary filenames like audit.ts. This must fail
+        # before relying on the installed-host qualification.
+        directory = Path(__file__).resolve().parent / "retrospective-host"
+        self.assertTrue((directory / "audit.ts").is_file(), "QA-B audit implementation missing")
+        entry = directory / "server.ts"
+        self.assertTrue(entry.is_file(), "QA-B directory needs a server.ts entrypoint")
+        self.assertIn('export { default } from "./audit.ts"', entry.read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()
