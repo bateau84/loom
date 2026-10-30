@@ -35,7 +35,7 @@ def trace(call_id, op, session_id, result):
             "trace": {"operation": op, "session_id": session_id, "export_path": "evidence.json"}}},
         {"type": "tool-after", "data": {"sessionID": INVESTIGATOR,
             "tool": "loom_trace", "callID": call_id, "status": "completed",
-            "trace_result": {"parse": "ok", "session_id": session_id,
+            "trace_result": {"parse": "ok", "session_id": session_id, "source": "provided-export",
                              "coverage": {"full_history": None, "delegation_complete": False},
                              **result}}},
     ]
@@ -70,6 +70,29 @@ class QABEvidenceTests(unittest.TestCase):
         self.assertEqual(row["infrastructure"], "UNPROVEN")
         self.assertEqual(row["agent"], "UNPROVEN")
         self.assertEqual(row["observed_trace_call_ids"], [])
+
+    def test_own_timeline_cannot_prove_cross_session_authorization(self):
+        # A real investigator may read only its own context. This is useful
+        # infrastructure evidence, but says nothing about authorized child
+        # exports; results-008 must not be given an authorization PASS for it.
+        audit = model_audit()
+        audit += trace("self", "timeline", INVESTIGATOR, {"event_ids": []})
+        audit[-2]["data"]["trace"]["export_path"] = None
+        audit[-1]["data"]["trace_result"]["source"] = "native-context"
+        result = self.grade(audit, "History incomplete")
+        self.assertEqual(result["infrastructure"], "PASS")
+        self.assertEqual(result["checks"]["tool-arguments-authorized"], "UNPROVEN")
+        self.assertEqual(result["agent"], "UNPROVEN")
+
+    def test_cross_session_authorization_requires_successful_provided_export(self):
+        audit, report = sufficient()
+        valid = self.grade(audit, report)
+        self.assertEqual(valid["checks"]["tool-arguments-authorized"], "PASS")
+        for event in audit:
+            if event.get("type") == "tool-after" and event.get("data", {}).get("callID") == "worker":
+                event["data"]["trace_result"]["source"] = "native-context"
+        invalid = self.grade(audit, report)
+        self.assertEqual(invalid["checks"]["tool-arguments-authorized"], "UNPROVEN")
 
     def test_real_model_request_without_native_child_discovery_is_unproven(self):
         audit, report = sufficient()
