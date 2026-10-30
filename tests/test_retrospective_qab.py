@@ -16,6 +16,7 @@ from retrospective_qab import (evidence_oracle, prepare_project, run as run_real
                                skip_unqualified_primary, public_summary,
                                lock_source_file, unlock_source_file, observed_edit_error)
 from retrospective_qab_oracle import CONTROLS, grade_controls, verify_primary, verdict, paired_trace_events
+from retrospective_qab_regrade import regrade_existing
 
 INVESTIGATOR, PARENT, WORKER, REVIEWER = "investigator", "parent", "worker", "reviewer"
 EVENTS = {"failure": "msg_failure", "retry": "msg_retry", "user": "msg_correction",
@@ -63,6 +64,42 @@ class QABEvidenceTests(unittest.TestCase):
     def grade(self, audit=None, report=""):
         return verify_primary(audit or [], INVESTIGATOR, MODEL, PARENT, WORKER, REVIEWER,
                               EVENTS, report)
+
+    def test_offline_regrade_uses_existing_private_bundle_without_new_execution(self):
+        audit, retrospective = sufficient()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "report.json").write_text(json.dumps({
+                "kind": "loom-qab-real-model",
+                "status": "UNPROVEN", "infrastructure": "UNPROVEN",
+                "agent": "UNPROVEN",
+                "source_gate": {"ready": True},
+                "source_qualification": "PASS",
+                "investigator_read_only_preserved": True,
+                "investigator_session": INVESTIGATOR, "model": MODEL,
+                "primary_checks": {"model-discovered-children": "UNPROVEN"},
+                "controls": {name: {"executed": False} for name in CONTROLS},
+            }))
+            (root / "oracle.json").write_text(json.dumps({
+                "session_ids": {"parent": PARENT, "worker": WORKER, "reviewer": REVIEWER},
+                "source_events": EVENTS,
+            }))
+            (root / "audit.ndjson").write_text("".join(json.dumps(x) + "\\n" for x in audit))
+            (root / "retrospective-report.md").write_text(retrospective)
+            outcome = regrade_existing(root)
+            self.assertEqual(outcome["regraded"]["infrastructure"], "PASS")
+            self.assertEqual(outcome["regraded"]["agent"], "PASS")
+            self.assertEqual(outcome["regraded"]["overall"], "UNPROVEN")
+            self.assertEqual(outcome["regraded"]["checks"]["model-discovered-children"], "PASS")
+            self.assertEqual(outcome["controls"], {name: "UNPROVEN" for name in CONTROLS})
+            self.assertIn("offline", outcome["limitations"][0])
+            self.assertNotIn("msg_failure", json.dumps(outcome))
+            self.assertFalse((root / "regraded.json").exists())
+
+    def test_offline_regrade_fails_closed_on_missing_private_sources(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with self.assertRaises(ValueError):
+                regrade_existing(Path(temp))
 
     def test_narrative_only_is_never_evidence_of_model_tool_use(self):
         audit, report = sufficient()

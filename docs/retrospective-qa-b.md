@@ -59,6 +59,25 @@ requested model will not make it available.
 
 Optional arguments: --models-catalog /PRIVATE/models.json, --provider-config /PRIVATE/provider-only.json, --provider-env NAME. Auth and chosen provider environment variables remain inside an isolated temporary host state; do not provide a production workspace. Use a new private report directory each time.
 
+## Regrade an existing private bundle without inference
+
+After a QA-B oracle correction, you do **not** need to create source history
+or run the model again to check its original observations. Use the read-only
+offline command on the existing report directory:
+
+    python3 tests/retrospective_qab_regrade.py \\
+      --report-directory "$HOME/loom-qab/results-008"
+
+It reads only the recorded audit, original source event IDs, original
+investigator report and prior run metadata. It does not contact providers,
+start OpenCode, change Session history or overwrite any evidence. Its output
+lists old versus current checks, but never emits raw user messages, model
+prompts, transcript text or source/call IDs. Original controls that were not
+executed remain `UNPROVEN`. Regrading cannot create missing Session events or
+make unexecuted adversarial controls pass; it is also not an independent
+semantic assessment of the investigator's prose. Retain the original report
+and note which evaluator revision was used.
+
 ## Sources and execution
 
 1. Verify real CLI version 2.2.0, installed plugin/SDK, artifact identity and original skill revision via git show.
