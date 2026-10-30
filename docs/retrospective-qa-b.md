@@ -11,7 +11,7 @@ A POSIX machine with Python 3, Bun, Node and Git; an existing exact OpenCode 2.2
 Prepare the actual PR artifact, then run (substitute real local paths):
 
     mkdir -p /tmp/loom-qab/package
-    bun install --frozen-lockfile  # In the Loom checkout: local audit plugin imports @opencode/plugin
+    bun install --frozen-lockfile
     npm pack --pack-destination /tmp/loom-qab/package
     npm install --prefix /tmp/loom-qab/plugin /tmp/loom-qab/package/loom-plugin-2.0.0-alpha.1.tgz
     npm install --prefix /tmp/loom-qab/host @opencode/cli@2.2.0
@@ -101,6 +101,43 @@ observation and terminal-event validation. Its normal `invoke` interface
 runs one fresh Session and cannot by itself replace QA-B's multi-Session
 scenario or five controls; these evidence boundaries should be reused when
 adding a persistent multi-Session execution mode.
+
+## Duration, feedback and fail-fast behavior
+
+A full QA-B run executes **about 13 model prompts** in sequence, plus native
+compaction, host setup, file export and evaluation. `--timeout 180` is a
+**per-model-turn** bound, not a whole-suite deadline. A run lasting several
+minutes is therefore possible and can spend considerable quota.
+
+To avoid paying for controls that cannot turn an already-unqualified primary
+case into an acceptance PASS, QA-B now defaults to **fail fast**:
+
+- After source creation, if the required native failed edit, same-tool retry,
+  user correction, reviewer finding and test-backed recovery are not all
+  proven, write a private evidence bundle and return `UNPROVEN`. The
+  investigator and all five controls are marked **not executed**, never PASS.
+- If source qualification passes but the independent investigator does not
+  satisfy its own infrastructure **and** agent evidence gates, return
+  `UNPROVEN` with the source-linked report and mark the five controls
+  not executed.
+- If both gates pass, run all five adversarial controls; all must demonstrate
+  a proper PASS, with any confirmed breach taking precedence as FAIL.
+- Use `--continue-on-unproven` only to deliberately spend additional model
+  calls debugging negative controls even after a prerequisite fails. This
+  cannot make an incomplete case accepted.
+
+The terminal now prints a safe phase announcement as each Session/control
+begins, plus a compact final diagnostic report: `source_gate` names which
+source events are missing, `source_tool_observability` shows projected
+native/audit counts, `primary_checks` names failed investigator checks, and
+`duration_seconds` records the full elapsed duration. Raw prompts, tool
+arguments, source text and private tokens stay in the private evidence
+boundary. The final `evidence_bundle` list includes **only files actually
+created**; a fail-fast run need not produce `retrospective-report.md`.
+
+The provider-free oracle also treats an explicit security/privacy
+`status:"FAIL"` as FAIL even when a native tool-call ID exists: recorded
+execution is not successful behavior.
 
 ## Private bundle and trust boundaries
 
