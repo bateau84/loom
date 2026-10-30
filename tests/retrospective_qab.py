@@ -278,9 +278,20 @@ def completed_model_text(previous: list, current: list) -> str:
 
 
 def summarize_native_tools(messages: list) -> dict:
-    """Compare native tool messages with passive observer coverage, without raw I/O."""
-    totals = {}
-    total = 0
+    """Project native and Code Mode tool statuses, never tool inputs/outputs.
+
+    OpenCode 2.2.0 can mark the outer Code Mode execute as completed even when
+    its returned metadata.toolCalls contains a failed nested tool. Absence of
+    this metadata is UNKNOWN, not evidence of zero nested failures.
+    """
+    totals, nested = {}, {}
+    total = wrappers = metadata_available = nested_total = nested_errors = wrapper_errors = 0
+    inner_truncated = False
+
+    def safe_name(value):
+        return value[:64] if isinstance(value, str) and re.fullmatch(
+            r"[a-zA-Z0-9_.-]+", value) else "other"
+
     for msg in messages:
         if not isinstance(msg, dict) or msg.get("type") != "assistant":
             continue
@@ -291,18 +302,52 @@ def summarize_native_tools(messages: list) -> dict:
             if not isinstance(part, dict) or part.get("type") != "tool":
                 continue
             total += 1
-            raw_name = part.get("name")
-            name = raw_name[:64] if isinstance(raw_name, str) and re.fullmatch(
-                r"[a-zA-Z0-9_.-]+", raw_name) else "other"
+            name = safe_name(part.get("name"))
             state = part.get("state") if isinstance(part.get("state"), dict) else {}
             raw_status = state.get("status")
             status = raw_status if raw_status in ("completed", "error", "running", "streaming") else "other"
             totals[(name, status)] = totals.get((name, status), 0) + 1
+            if name != "execute":
+                continue
+            wrappers += 1
+            metadata = state.get("metadata") if isinstance(state.get("metadata"), dict) else {}
+            if metadata.get("error") is True:
+                wrapper_errors += 1
+            calls = metadata.get("toolCalls")
+            if not isinstance(calls, list):
+                continue
+            metadata_available += 1
+            if len(calls) > 128:
+                inner_truncated = True
+            for call in calls[:128]:
+                if not isinstance(call, dict):
+                    continue
+                nested_total += 1
+                nested_name = safe_name(call.get("tool"))
+                inner_status = call.get("status")
+                if inner_status not in ("completed", "error", "running"):
+                    inner_status = "other"
+                if inner_status == "error":
+                    nested_errors += 1
+                nested[(nested_name, inner_status)] = nested.get((nested_name, inner_status), 0) + 1
     return {
         "total": total,
         "by_tool_status": [{"tool": name, "status": status, "count": count}
                            for (name, status), count in sorted(totals.items())][:64],
         "truncated": len(totals) > 64,
+        "code_mode_inner": {
+            "wrappers": wrappers,
+            "metadata_available": metadata_available,
+            "status": ("not-applicable" if wrappers == 0 else "known"
+                       if metadata_available == wrappers and not inner_truncated else "partial"
+                       if metadata_available else "unknown"),
+            "total": nested_total,
+            "error_count": nested_errors,
+            "wrapper_error_count": wrapper_errors,
+            "by_tool_status": [{"tool": name, "status": status, "count": count}
+                               for (name, status), count in sorted(nested.items())][:64],
+            "truncated": inner_truncated or len(nested) > 64,
+        },
     }
 
 
