@@ -33,6 +33,16 @@ function traceResult(result: unknown): Obj {
   } catch { return { parse: "invalid-json" } }
 }
 
+/** The exact native error message may include file paths or private data.
+ * Export only one known category, never the raw message text. */
+function errorKind(error: unknown): string {
+  const message = typeof object(error).message === "string" ? String(object(error).message).toLowerCase() : ""
+  if (/unrelated session family|cannot enumerate unrelated|ancestry/.test(message)) return "foreign-session-family"
+  if (/permission|access denied|forbidden|not authorized/.test(message)) return "permission-denied"
+  if (/enoent|no such file|export path changed|not found/.test(message)) return "missing-export"
+  return "other"
+}
+
 export default Plugin.define({
   id: "loom.retrospective.qab.audit",
   async setup(ctx) {
@@ -78,7 +88,7 @@ export default Plugin.define({
           ...(isTrace(event.tool) && event.status === "completed"
             ? { trace_result: traceResult(event.result) } : {}),
           ...(event.status === "error" ? { error_recorded: true,
-            error_type: str(object(event.error).type) ?? str(object(event.error).code),
+            error_kind: errorKind(event.error),
             // Never copy raw error messages: they can contain private source text.
           } : {}),
         })
