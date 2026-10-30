@@ -258,6 +258,7 @@ def run_control(name, host, root, project, model, parent, timeout, prompt, *, pa
         call_id = next((after.get("callID") for before, after in calls
                         if before.get("trace", {}).get("operation") == "timeline"
                         and before["trace"].get("export_path")
+                        and before["trace"].get("session_id") == worker
                         and after.get("status") == "error"
                         and before.get("agent") == "qa-denied"), None)
         observed = bool(call_id and incomplete)
@@ -268,6 +269,7 @@ def run_control(name, host, root, project, model, parent, timeout, prompt, *, pa
         call_id = next((after.get("callID") for before, after in calls
                         if before.get("trace", {}).get("operation") == "timeline"
                         and before["trace"].get("session_id") == worker
+                        and before["trace"].get("export_path")
                         and after.get("status") == "error" and discovered), None)
         observed = bool(call_id and incomplete)
     elif name == "compaction-gap":
@@ -461,7 +463,7 @@ def run(args):
             report["controls"]["foreign-parent-ancestry"] = control
             control, _ = run_control("read-denied", host, root, project, args.model, parent, args.timeout,
                 "Investigate Session " + worker + " using its authorized export under qa-evidence/. "
-                "Report denied evidence, if any.", agent="qa-denied")
+                "Report denied evidence, if any.", agent="qa-denied", worker=worker)
             report["controls"]["read-denied"] = control
             evidence_path = project / "qa-evidence" / (worker + ".json")
             hidden = root / "worker-hidden.json"
@@ -493,7 +495,9 @@ def run(args):
             final_audit = audit_events(root)
             report["control_verdicts"] = grade_controls(report["controls"])
             report["status"] = verdict(primary, report["control_verdicts"])
-            if not report["source_oracle_complete"] or not report["host_recovery_verified"]:
+            if report["status"] != "FAIL" and (
+                not report["source_oracle_complete"] or not report["host_recovery_verified"]
+            ):
                 report["status"] = "UNPROVEN"
             if not report["investigator_read_only_preserved"]:
                 report["status"] = "FAIL"
