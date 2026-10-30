@@ -426,7 +426,7 @@ def evidence_oracle(audit, parent, worker, reviewer, parent_messages, worker_mes
     # is not evidence of a recovered implementation attempt.
     failed_index = next((i for i, e in enumerate(activity) if
                          e.get("status") == "error" and
-                         e.get("tool") in ("edit", "execute", "shell")), None)
+                         e.get("tool") in ("edit", "patch", "execute", "shell")), None)
     failed = activity[failed_index] if failed_index is not None else None
     succeeded = next((e for e in activity[failed_index + 1:]
                       if e.get("status") == "completed" and
@@ -648,12 +648,18 @@ def run(args):
                          "Do not edit files directly.", args.model, args.timeout)
             announce_phase(report, "source:worker-failed-edit")
             worker = create_session(host, project, args.model, "qa-worker", parent)
-            invoke_model(host, root, worker, "Try an in-place edit using the native edit tool on "
-                         "missing/settings.json to change mode to safe; do not create missing files or directories. "
-                         "Report the actual tool failure before attempting another path.", args.model, args.timeout)
+            invoke_model(host, root, worker,
+                         "The proposed change targets missing/settings.json. "
+                         "Attempt the change through the available patch tool on that exact path before "
+                         "any other implementation approach. The missing directory must not be created. "
+                         "Stop after this one attempted patch and report its observed result, "
+                         "whether error or completion. Do not change settings.json in this turn.",
+                         args.model, args.timeout)
             announce_phase(report, "source:worker-retry")
-            invoke_model(host, root, worker, "Retry on the actual settings.json: set mode to safe while "
-                         "keeping telemetry false. Run test_settings.py with Python and report the result.",
+            invoke_model(host, root, worker,
+                         "Now retry the same patch tool on the existing settings.json file: "
+                         "change mode from prototype to safe, keep telemetry false, "
+                         "then run test_settings.py with Python and report the observed result.",
                          args.model, args.timeout)
             announce_phase(report, "source:review")
             reviewer = create_session(host, project, args.model, "qa-reviewer", parent)
