@@ -155,6 +155,21 @@ def skip_unqualified_source(report: dict, gate: dict) -> bool:
     return True
 
 
+def skip_unqualified_primary(report: dict, primary: dict) -> bool:
+    """Fail closed before expensive adversarial turns when primary is unproven."""
+    if primary["infrastructure"] == "PASS" and primary["agent"] == "PASS":
+        return False
+    report["status"] = "UNPROVEN"
+    report["blocked_reason_code"] = "investigator-unqualified"
+    report["controls"] = {
+        name: {"status": "UNPROVEN", "executed": False,
+               "reason": "Investigator or infrastructure acceptance not established"}
+        for name in CONTROLS
+    }
+    report["control_verdicts"] = grade_controls(report["controls"])
+    return True
+
+
 def public_summary(report: dict) -> dict:
     """Print only bounded, non-source diagnostic fields to the terminal."""
     allowed = (
@@ -651,7 +666,7 @@ def run(args):
             report["source_gate"] = gate
             report["source_oracle_complete"] = not gate["missing_source_events"]
             report["host_recovery_verified"] = gate["host_verification_passed"]
-            if skip_unqualified_source(report, gate):
+            if not args.continue_on_unproven and skip_unqualified_source(report, gate):
                 private_write(output / "evaluator.json", json.dumps({
                     "kind": "source-preflight-incomplete-not-live-product-acceptance",
                     "verdict": "UNPROVEN", "source_gate": gate,
@@ -688,6 +703,20 @@ def run(args):
             report["primary_checks"] = primary["checks"]
             report["model_trace"] = {"tool_call_ids": primary["observed_trace_call_ids"],
                                      "observed_event_ids": primary["observed_event_ids"]}
+            if not args.continue_on_unproven and skip_unqualified_primary(report, primary):
+                private_write(output / "evaluator.json", json.dumps({
+                    "kind": "investigator-preflight-incomplete-not-live-product-acceptance",
+                    "infrastructure": primary["infrastructure"], "agent": primary["agent"],
+                    "checks": primary["checks"], "controls": report["control_verdicts"],
+                    "verdict": "UNPROVEN"}, indent=2) + "\n")
+                private_write(output / "coverage.json", json.dumps({
+                    "limits": ["Investigator did not demonstrate complete, independent source retrieval",
+                               "Five adversarial controls were skipped to avoid nonqualifying paid calls",
+                               "Native and Code Mode observation differ in coverage",
+                               "Provided exports are not authenticated"],
+                    "model": args.model, "skill_revision": args.skill_revision,
+                    "source_gate": report["source_gate"]}, indent=2) + "\n")
+                return report
             # Five isolated adversarial target Sessions. None receives oracle IDs.
             announce_phase(report, "control:foreign-parent-ancestry")
             forged = create_session(host, project, args.model, "qa-coordinator")
@@ -791,6 +820,8 @@ def main():
     parser.add_argument("--provider-config", type=Path, help="Optional JSON with provider key ONLY")
     parser.add_argument("--provider-env", action="append", default=[], help="Explicit provider env name")
     parser.add_argument("--timeout", type=int, default=120, help="Per-model-turn bound (15–600 seconds)")
+    parser.add_argument("--continue-on-unproven", action="store_true",
+                        help="Spend extra model turns on controls even if source/agent prerequisites fail; never permits an acceptance PASS without all gates")
     parser.add_argument("--report-directory", type=Path, required=True, help="New private evidence directory")
     args = parser.parse_args()
     report = run(args)
