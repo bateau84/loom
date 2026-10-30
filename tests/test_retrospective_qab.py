@@ -197,6 +197,53 @@ class QABEvidenceTests(unittest.TestCase):
         self.assertEqual(check["native_tool_call_id"], "bypass")
 
 
+    def test_read_denial_control_requires_permission_error_not_generic_failure(self):
+        def audit(error_kind):
+            return [
+                {"type": "tool-before", "data": {
+                    "sessionID": INVESTIGATOR, "agent": "qa-denied",
+                    "callID": "denial", "tool": "loom_trace", "trace": {
+                        "operation": "timeline", "session_id": WORKER,
+                        "export_path": "qa-evidence/worker.json"}}},
+                {"type": "tool-after", "data": {
+                    "sessionID": INVESTIGATOR, "callID": "denial",
+                    "tool": "loom_trace", "status": "error", "error_kind": error_kind}},
+            ]
+        for kind, expected in [("other", "UNPROVEN"), ("permission-denied", "PASS")]:
+            with self.subTest(kind=kind), (
+                patch("retrospective_qab.create_session", return_value=INVESTIGATOR),
+                patch("retrospective_qab.invoke_model", return_value=("Source incomplete", [])),
+                patch("retrospective_qab.audit_events", side_effect=[[], audit(kind)]),
+            ):
+                result, _ = run_control("read-denied", None, None, None,
+                                        MODEL, PARENT, 30, "inspect", agent="qa-denied", worker=WORKER)
+                self.assertEqual(result["status"], expected)
+
+    def test_child_unavailable_control_requires_missing_export_error(self):
+        def audit(error_kind):
+            return [
+                {"type": "tool-before", "data": {"sessionID": INVESTIGATOR, "callID": "children",
+                    "tool": "loom_trace", "trace": {"operation": "children", "session_id": PARENT}}},
+                {"type": "tool-after", "data": {"sessionID": INVESTIGATOR, "callID": "children",
+                    "tool": "loom_trace", "status": "completed",
+                    "trace_result": {"child_ids": [WORKER]}}},
+                {"type": "tool-before", "data": {"sessionID": INVESTIGATOR, "callID": "missing",
+                    "tool": "loom_trace", "trace": {"operation": "timeline",
+                    "session_id": WORKER, "export_path": "qa-evidence/worker.json"}}},
+                {"type": "tool-after", "data": {"sessionID": INVESTIGATOR, "callID": "missing",
+                    "tool": "loom_trace", "status": "error", "error_kind": error_kind}},
+            ]
+        for kind, expected in [("permission-denied", "UNPROVEN"), ("missing-export", "PASS")]:
+            with self.subTest(kind=kind), (
+                patch("retrospective_qab.create_session", return_value=INVESTIGATOR),
+                patch("retrospective_qab.invoke_model", return_value=("Child history unavailable", [])),
+                patch("retrospective_qab.audit_events", side_effect=[[], audit(kind)]),
+            ):
+                result, _ = run_control("child-inaccessible", None, None, None,
+                                        MODEL, PARENT, 30, "inspect", worker=WORKER)
+                self.assertEqual(result["status"], expected)
+
+
     def test_scripted_provider_is_rejected_before_running_any_installed_host(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "new-private-result"
