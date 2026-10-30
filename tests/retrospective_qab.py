@@ -196,7 +196,55 @@ def message_text(message):
                      and p.get("type") == "text" and isinstance(p.get("text"), str))
 
 
+def completed_model_text(previous: list, current: list) -> str:
+    """A request hook is not an inference result; require a new native terminal."""
+    prior = {item.get("id") for item in previous if isinstance(item, dict)}
+    new = [item for item in current if isinstance(item, dict)
+           and item.get("type") == "assistant" and item.get("id") not in prior]
+    require(new, "Prompt produced no new assistant message; model-request hook alone is insufficient")
+    latest = new[0]  # The native API was requested with order=desc.
+    error = latest.get("error")
+    if error:
+        kind = error.get("type") if isinstance(error, dict) else None
+        kind = kind[:72] if isinstance(kind, str) and re.fullmatch(r"[a-zA-Z0-9_.-]+", kind) else "unknown"
+        raise RuntimeError("Native model turn failed: " + kind)
+    timing = latest.get("time") if isinstance(latest.get("time"), dict) else {}
+    require(latest.get("finish") and timing.get("completed") is not None,
+            "Latest native assistant message was not completed")
+    return message_text(latest)
+
+
+def summarize_native_tools(messages: list) -> dict:
+    """Compare native tool messages with passive observer coverage, without raw I/O."""
+    totals = {}
+    total = 0
+    for msg in messages:
+        if not isinstance(msg, dict) or msg.get("type") != "assistant":
+            continue
+        parts = msg.get("content")
+        if not isinstance(parts, list):
+            continue
+        for part in parts:
+            if not isinstance(part, dict) or part.get("type") != "tool":
+                continue
+            total += 1
+            raw_name = part.get("name")
+            name = raw_name[:64] if isinstance(raw_name, str) and re.fullmatch(
+                r"[a-zA-Z0-9_.-]+", raw_name) else "other"
+            state = part.get("state") if isinstance(part.get("state"), dict) else {}
+            raw_status = state.get("status")
+            status = raw_status if raw_status in ("completed", "error", "running", "streaming") else "other"
+            totals[(name, status)] = totals.get((name, status), 0) + 1
+    return {
+        "total": total,
+        "by_tool_status": [{"tool": name, "status": status, "count": count}
+                           for (name, status), count in sorted(totals.items())][:64],
+        "truncated": len(totals) > 64,
+    }
+
+
 def invoke_model(host, root, session, text, model, timeout):
+    before_messages = session_messages(host, session)
     before = len(audit_events(root))
     api(host, "POST", "/api/session/" + session + "/prompt", {"text": text})
     # Native prompt acceptance is not model execution. Wait for the passive
@@ -220,8 +268,7 @@ def invoke_model(host, root, session, text, model, timeout):
         and event["data"].get("modelID") == model.split("/", 1)[1] for event in primary
     ), "No actual primary request for the exact real model, or unexpected provider/model fallback")
     parts = session_messages(host, session)
-    assistant = next((m for m in parts if m.get("type") == "assistant"), None)
-    return (message_text(assistant) if assistant else ""), observed
+    return completed_model_text(before_messages, parts), observed
 
 
 def export_source(host, session, project, output, label):
@@ -522,6 +569,21 @@ def run(args):
             for role, session in sessions.items():
                 export_source(host, session, project, output, role)
             raw_audit = audit_events(root)
+            source_tool_events = [e["data"] for e in raw_audit
+                                  if e.get("type") == "tool-before"
+                                  and e.get("data", {}).get("sessionID") == worker]
+            source_tool_terminals = [e["data"] for e in raw_audit
+                                     if e.get("type") == "tool-after"
+                                     and e.get("data", {}).get("sessionID") == worker]
+            native_worker = summarize_native_tools(session_messages(host, worker))
+            report["source_tool_observability"] = {
+                "worker_native": native_worker,
+                "worker_observer_starts": len(source_tool_events),
+                "worker_observer_terminals": len(source_tool_terminals),
+                "observer_gap_suspected": native_worker["total"] > len(source_tool_events),
+                "qualification": "Native tool messages versus passive tool hooks; "
+                                 "Code Mode may hide inner tool calls"
+            }
             gold = evidence_oracle(raw_audit, parent, worker, reviewer,
                                    session_messages(host, parent), session_messages(host, worker),
                                    session_messages(host, reviewer), verification_audit)
