@@ -21,7 +21,9 @@ def trace(call_id, op, session_id, result):
             "trace": {"operation": op, "session_id": session_id, "export_path": "evidence.json"}}},
         {"type": "tool-after", "data": {"sessionID": INVESTIGATOR,
             "tool": "loom_trace", "callID": call_id, "status": "completed",
-            "trace_result": {"parse": "ok", "session_id": session_id, **result}}},
+            "trace_result": {"parse": "ok", "session_id": session_id,
+                             "coverage": {"full_history": None, "delegation_complete": False},
+                             **result}}},
     ]
 
 
@@ -32,7 +34,7 @@ def sufficient():
     audit += trace("worker", "timeline", WORKER,
                    {"event_ids": ["msg_failure", "msg_retry", "msg_verified"]})
     audit += trace("review", "timeline", REVIEWER, {"event_ids": ["msg_review"]})
-    report = ("General's first-try claim is contradicted by user correction. " +
+    report = ("General's first-try claim was false and the handoff contradicted the correction. " +
               " ".join(EVENTS.values()))
     return audit, report
 
