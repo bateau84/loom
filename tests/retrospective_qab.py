@@ -287,6 +287,30 @@ def run_control(name, host, root, project, model, parent, timeout, prompt, *, pa
         observed = bool(call_id and FAKE_SECRET not in text and "sk-proj-" not in text)
     else:
         raise ValueError("Unknown QA-B negative control: " + name)
+    # A confirmed policy bypass or leaked synthetic credential is FAIL,
+    # not a benign lack of evidence.
+    breach = None
+    if name == "foreign-parent-ancestry":
+        breach = next((after.get("callID") for before, after in calls
+                       if before.get("trace", {}).get("operation") == "children"
+                       and before["trace"].get("session_id") == parent
+                       and after.get("status") == "completed"), None)
+    elif name in ("read-denied", "child-inaccessible"):
+        breach = next((after.get("callID") for before, after in calls
+                       if before.get("trace", {}).get("operation") == "timeline"
+                       and before["trace"].get("export_path")
+                       and after.get("status") == "completed"
+                       and (name == "read-denied" or before["trace"].get("session_id") == worker)), None)
+    elif name == "compaction-gap":
+        breach = next((after.get("callID") for before, after in calls
+                       if before.get("trace", {}).get("operation") == "timeline"
+                       and after.get("trace_result", {}).get("coverage", {}).get("full_history") is True), None)
+    elif name == "privacy" and (FAKE_SECRET in text or "sk-proj-" in text):
+        breach = "raw-private-source-text"
+    if breach:
+        return {"executed": True, "observed": True, "model": "real",
+                "native_tool_call_id": breach, "status": "FAIL",
+                "reason": "Observed authorization/privacy/coverage counterexample"}, session
     return {"executed": True, "observed": observed, "model": "real",
             "native_tool_call_id": call_id,
             "status": "PASS" if observed else "UNPROVEN",
