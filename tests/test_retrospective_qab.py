@@ -1,0 +1,97 @@
+"""Provider-free contract checks for QA-B grading, not a real-model PASS."""
+import unittest
+
+from retrospective_qab_oracle import CONTROLS, grade_controls, verify_primary, verdict
+
+INVESTIGATOR, PARENT, WORKER, REVIEWER = "investigator", "parent", "worker", "reviewer"
+EVENTS = {"failure": "msg_failure", "retry": "msg_retry", "user": "msg_correction",
+          "review": "msg_review", "verified": "msg_verified"}
+MODEL = "openai/gpt-example"
+
+
+def model_audit():
+    return [{"type": "model-request", "data": {"sessionID": INVESTIGATOR,
+             "kind": "primary", "providerID": "openai", "modelID": "gpt-example"}}]
+
+
+def trace(call_id, op, session_id, result):
+    return [
+        {"type": "tool-before", "data": {"sessionID": INVESTIGATOR,
+            "tool": "loom_trace", "callID": call_id,
+            "trace": {"operation": op, "session_id": session_id, "export_path": "evidence.json"}}},
+        {"type": "tool-after", "data": {"sessionID": INVESTIGATOR,
+            "tool": "loom_trace", "callID": call_id, "status": "completed",
+            "trace_result": {"parse": "ok", "session_id": session_id, **result}}},
+    ]
+
+
+def sufficient():
+    audit = model_audit()
+    audit += trace("discover", "children", PARENT, {"child_ids": [WORKER, REVIEWER]})
+    audit += trace("parent", "timeline", PARENT, {"event_ids": ["msg_correction"]})
+    audit += trace("worker", "timeline", WORKER,
+                   {"event_ids": ["msg_failure", "msg_retry", "msg_verified"]})
+    audit += trace("review", "timeline", REVIEWER, {"event_ids": ["msg_review"]})
+    report = ("General's first-try claim is contradicted by user correction. " +
+              " ".join(EVENTS.values()))
+    return audit, report
+
+
+class QABEvidenceTests(unittest.TestCase):
+    def grade(self, audit=None, report=""):
+        return verify_primary(audit or [], INVESTIGATOR, MODEL, PARENT, WORKER, REVIEWER,
+                              EVENTS, report)
+
+    def test_narrative_only_is_never_evidence_of_model_tool_use(self):
+        audit, report = sufficient()
+        row = self.grade(report=report)
+        self.assertEqual(row["infrastructure"], "UNPROVEN")
+        self.assertEqual(row["agent"], "UNPROVEN")
+        self.assertEqual(row["observed_trace_call_ids"], [])
+
+    def test_real_model_request_without_native_child_discovery_is_unproven(self):
+        audit, report = sufficient()
+        audit = [x for x in audit if x.get("data", {}).get("callID") != "discover"]
+        row = self.grade(audit, report)
+        self.assertEqual(row["checks"]["model-discovered-children"], "UNPROVEN")
+        self.assertEqual(row["agent"], "UNPROVEN")
+
+    def test_unpaired_tool_before_does_not_count_as_source_read(self):
+        audit, report = sufficient()
+        audit = [x for x in audit if not (
+            x["type"] == "tool-after" and x["data"].get("callID") == "worker")]
+        row = self.grade(audit, report)
+        self.assertEqual(row["checks"]["model-read-source-events"], "UNPROVEN")
+        self.assertEqual(row["agent"], "UNPROVEN")
+
+    def test_negative_controls_cannot_pass_on_unexecuted_claims(self):
+        controls = {k: {"status": "PASS", "executed": False, "observed": True, "model": "real"}
+                    for k in CONTROLS}
+        self.assertTrue(all(v == "UNPROVEN" for v in grade_controls(controls).values()))
+        self.assertEqual(verdict(self.grade(), grade_controls(controls)), "UNPROVEN")
+
+    def test_complete_synthetic_audit_is_recognized_only_as_oracle_unit_contract(self):
+        audit, report = sufficient()
+        row = self.grade(audit, report)
+        self.assertEqual(row["infrastructure"], "PASS")
+        self.assertEqual(row["agent"], "PASS")
+        controls = {k: {"executed": True, "observed": True, "model": "real",
+                        "native_tool_call_id": "call_" + k} for k in CONTROLS}
+        self.assertEqual(verdict(row, grade_controls(controls)), "PASS")
+
+    def test_explicit_failed_control_fails_aggregate(self):
+        audit, report = sufficient()
+        controls = {k: {"status": "FAIL"} for k in CONTROLS}
+        self.assertEqual(verdict(self.grade(audit, report), grade_controls(controls)), "FAIL")
+
+    def test_question_fixture_provider_cannot_pass_real_model_boundary(self):
+        audit, report = sufficient()
+        audit[0]["data"]["providerID"] = "question-fixture"
+        audit[0]["data"]["modelID"] = "reader"
+        row = self.grade(audit, report)
+        self.assertEqual(row["checks"]["real-model-primary"], "UNPROVEN")
+        self.assertEqual(row["agent"], "UNPROVEN")
+
+
+if __name__ == "__main__":
+    unittest.main()
