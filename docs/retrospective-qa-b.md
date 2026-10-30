@@ -65,7 +65,7 @@ After a QA-B oracle correction, you do **not** need to create source history
 or run the model again to check its original observations. Use the read-only
 offline command on the existing report directory:
 
-    python3 tests/retrospective_qab_regrade.py \\
+    python3 tests/retrospective_qab_regrade.py \
       --report-directory "$HOME/loom-qab/results-008"
 
 It reads only the recorded audit, original source event IDs, original
