@@ -63,6 +63,7 @@ export default Plugin.define({
             export_path: str(input.export_path), include_text: input.include_text === true,
             cursor: str(input.cursor), limit: input.limit,
           } } : {}),
+          ...(event.tool === "skill" ? { skill_id: str(input.id) } : {}),
           ...(event.tool === "read" ? { read_path:
             str(input.filePath) ?? str(input.path) ?? str(input.file) } : {}),
           ...(["shell", "bash"].includes(event.tool)
