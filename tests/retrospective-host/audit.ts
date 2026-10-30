@@ -63,6 +63,8 @@ export default Plugin.define({
             export_path: str(input.export_path), include_text: input.include_text === true,
             cursor: str(input.cursor), limit: input.limit,
           } } : {}),
+          ...(event.tool === "read" ? { read_path:
+            str(input.filePath) ?? str(input.path) ?? str(input.file) } : {}),
         })
       }))
       registrations.push(await ctx.tool.hook("execute.after", event => {
@@ -71,7 +73,10 @@ export default Plugin.define({
           callID: event.id, tool: event.tool, status: event.status,
           ...(isTrace(event.tool) && event.status === "completed"
             ? { trace_result: traceResult(event.result) } : {}),
-          ...(event.status === "error" ? { error_recorded: true } : {}),
+          ...(event.status === "error" ? { error_recorded: true,
+            error_type: str(object(event.error).type) ?? str(object(event.error).code),
+            // Never copy raw error messages: they can contain private source text.
+          } : {}),
         })
       }))
       audit("ready", { plugin: "loom.retrospective.qab.audit", location: ctx.location.directory })
