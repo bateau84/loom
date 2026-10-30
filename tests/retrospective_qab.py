@@ -252,7 +252,9 @@ def run_control(name, host, root, project, model, parent, timeout, prompt, *, pa
         call_id = next((after.get("callID") for before, after in calls
                         if before.get("trace", {}).get("operation") == "children"
                         and before["trace"].get("session_id") == parent
-                        and after.get("status") == "error" and forged_read), None)
+                        and after.get("status") == "error"
+                        and after.get("error_kind") == "foreign-session-family"
+                        and forged_read), None)
         observed = bool(call_id and incomplete)
     elif name == "read-denied":
         call_id = next((after.get("callID") for before, after in calls
@@ -260,6 +262,7 @@ def run_control(name, host, root, project, model, parent, timeout, prompt, *, pa
                         and before["trace"].get("export_path")
                         and before["trace"].get("session_id") == worker
                         and after.get("status") == "error"
+                        and after.get("error_kind") == "permission-denied"
                         and before.get("agent") == "qa-denied"), None)
         observed = bool(call_id and incomplete)
     elif name == "child-inaccessible":
@@ -270,7 +273,9 @@ def run_control(name, host, root, project, model, parent, timeout, prompt, *, pa
                         if before.get("trace", {}).get("operation") == "timeline"
                         and before["trace"].get("session_id") == worker
                         and before["trace"].get("export_path")
-                        and after.get("status") == "error" and discovered), None)
+                        and after.get("status") == "error"
+                        and after.get("error_kind") == "missing-export"
+                        and discovered), None)
         observed = bool(call_id and incomplete)
     elif name == "compaction-gap":
         call_id = next((after.get("callID") for before, after in calls
