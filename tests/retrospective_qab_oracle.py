@@ -18,12 +18,43 @@ def _items(audit, kind, session):
 
 
 def paired_trace_events(audit, session):
-    """Correlate traces by event order, call ID AND tool name.
+    """Pair native trace starts/results without assigning ambiguous Code Mode IDs.
 
-    Code Mode can reuse its outer call ID for separate nested tools. Sequential
-    reuse is safe, but overlapping starts with the same key have no reliable
-    identity and MUST NOT be attributed to any completion.
+    OpenCode Code Mode may reuse one outer call ID for several *concurrent*
+    loom_trace invocations. When results overlap, only accept a complete group
+    whose returned operation/source and Session identity uniquely identify
+    each request. Error results have no reliable target identity and remain
+    unpaired in an overlapping group. Sequential reuse still works.
     """
+
+    def identifies(start, terminal):
+        if terminal.get("status") != "completed":
+            return False
+        result = terminal.get("trace_result")
+        request = start.get("trace")
+        if not isinstance(result, dict) or result.get("parse") != "ok" or not isinstance(request, dict):
+            return False
+        if request.get("operation") == "timeline":
+            return (
+                isinstance(request.get("session_id"), str)
+                and request["session_id"] == result.get("session_id")
+                and result.get("source") == (
+                    "provided-export" if request.get("export_path") else "native-context")
+            )
+        if request.get("operation") == "children":
+            # A children response is not a timeline. The old audit retained
+            # child_ids but not parent_session_id; exactly one compatible
+            # pending children request is needed to recover that older bundle.
+            # New audits include parent_session_id for stronger attribution.
+            parent = result.get("parent_session_id")
+            return (
+                isinstance(result.get("child_ids"), list)
+                and result.get("source") is None
+                and result.get("session_id") is None
+                and (parent is None or parent == request.get("session_id"))
+            )
+        return False
+
     pending = {}
     for event in audit:
         if event.get("type") not in ("tool-before", "tool-after"):
@@ -31,28 +62,43 @@ def paired_trace_events(audit, session):
         data = event.get("data")
         if not isinstance(data, dict) or data.get("sessionID") != session:
             continue
-        tool = data.get("tool")
-        call_id = data.get("callID")
+        tool, call_id = data.get("tool"), data.get("callID")
         if tool not in ("loom_trace", "loom.trace") or not isinstance(call_id, str) or not call_id:
             continue
-        key = (session, tool, call_id)
+        # A distinct native message can reuse a Code Mode outer call ID.
+        # Keep it separate when the host supplies messageID.
+        key = (session, tool, call_id, data.get("messageID"))
         if event["type"] == "tool-before":
-            state = pending.get(key)
-            if state is None:
-                pending[key] = {"start": data, "count": 1, "ambiguous": False}
-            else:
-                state["count"] += 1
-                state["ambiguous"] = True
+            group = pending.setdefault(key, {"starts": [], "terminals": []})
+            group["starts"].append(data)
             continue
-        state = pending.get(key)
-        if state is None:
+        group = pending.get(key)
+        if group is None:
             continue
-        state["count"] -= 1
-        if state["count"] > 0:
+        group["terminals"].append(data)
+        starts, terminals = group["starts"], group["terminals"]
+        if len(terminals) < len(starts):
             continue
         del pending[key]
-        if not state["ambiguous"]:
-            yield state["start"], data
+        if len(terminals) != len(starts):
+            continue
+        if len(starts) == 1:
+            # Preserve sequential reuse and normal error correlation.
+            yield starts[0], terminals[0]
+            continue
+        # A concurrent group is all-or-nothing: an unidentified error or
+        # a duplicate plausible target invalidates the complete group.
+        pairs, assigned = [], set()
+        for terminal in terminals:
+            matches = [i for i, start in enumerate(starts)
+                       if identifies(start, terminal)]
+            if len(matches) != 1 or matches[0] in assigned:
+                break
+            assigned.add(matches[0])
+            pairs.append((starts[matches[0]], terminal))
+        else:
+            if len(assigned) == len(starts):
+                yield from pairs
 
 
 def _paired_traces(audit, session):

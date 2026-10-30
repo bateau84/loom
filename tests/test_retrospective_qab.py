@@ -543,7 +543,7 @@ class QABEvidenceTests(unittest.TestCase):
         audit, report = sufficient()
         # Use just the separate coordinator read and replace the three
         # individually paired operations with their actual concurrent form.
-        audit = audit[:4] + trace("parent", "timeline", PARENT,
+        audit = audit[:3] + trace("parent", "timeline", PARENT,
                                  {"event_ids": [EVENTS["user"]]}) + concurrent
         result = self.grade(audit, report)
         self.assertEqual(result["checks"]["model-discovered-children"], "PASS")

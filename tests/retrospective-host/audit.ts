@@ -25,6 +25,7 @@ function traceResult(result: unknown): Obj {
     const events = Array.isArray(trace.events) ? trace.events : []
     return {
       parse: "ok", source: str(trace.source), session_id: str(trace.session_id),
+      parent_session_id: str(trace.parent_session_id),
       coverage: object(trace.coverage), next_cursor: str(trace.next_cursor),
       event_ids: events.slice(0, 50).map(x => str(object(x).source_message_id)),
       event_kinds: events.slice(0, 50).map(x => str(object(x).kind)),
