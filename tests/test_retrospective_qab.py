@@ -101,6 +101,39 @@ class QABEvidenceTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 regrade_existing(Path(temp))
 
+    def test_results_008_handoff_challenge_is_not_lost_to_markdown_or_paraphrase(self):
+        # A real investigator rejected both false handoff claims using ordinary
+        # language, not the grader's small set of preferred phrases.
+        audit, _ = sufficient()
+        report = (
+            "The evidence does **not** support \"succeeded on the first try\" "
+            "or \"no user corrections\": the worker was explicitly told to retry "
+            "after the first failure, and the parent contains a user correction "
+            "about privacy validation. " + " ".join(EVENTS.values())
+        )
+        checks = self.grade(audit, report)["checks"]
+        self.assertEqual(checks["handoff-challenged"], "PASS")
+        self.assertEqual(checks["source-linked-retrospective"], "PASS")
+
+    def test_handoff_challenge_cannot_pass_from_ambiguous_summary_or_missing_ids(self):
+        audit, _ = sufficient()
+        for report in (
+            "General reports implementation succeeded on first try and no user corrections.",
+            "The handoff says no user corrections; I cannot confirm either claim.",
+            "Tests were run after the work. The timeline may be incomplete.",
+        ):
+            with self.subTest(report=report):
+                checks = self.grade(audit, report)["checks"]
+                self.assertEqual(checks["handoff-challenged"], "UNPROVEN")
+        disputed_but_uncited = (
+            "The evidence does **not** support \"succeeded on the first try\" "
+            "or \"no user corrections\": there was an edit failure, a retry and "
+            "an actual user correction."
+        )
+        checks = self.grade(audit, disputed_but_uncited)["checks"]
+        self.assertEqual(checks["handoff-challenged"], "PASS")
+        self.assertEqual(checks["source-linked-retrospective"], "UNPROVEN")
+
     def test_narrative_only_is_never_evidence_of_model_tool_use(self):
         audit, report = sufficient()
         row = self.grade(report=report)
