@@ -18,6 +18,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import time
@@ -39,6 +40,90 @@ def private_write(path: Path, content: str):
     path.chmod(0o600)
 
 
+def seed_credential_database(source: Path, destination: Path) -> int:
+    """Copy only credential/migration rows, not the user's Session database.
+
+    Follows opencode-eval-runner's sanitized V2 database seed contract. The
+    original is opened read-only and remains unchanged; no credential values
+    are printed, reported, or copied into the evidence bundle.
+    """
+    source = source.expanduser().resolve()
+    destination = destination.resolve()
+    require(source.is_file(), "OpenCode V2 database source does not exist")
+    require(source != destination, "Cannot replace the original OpenCode database")
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    require(not destination.exists(), "Credential seed destination must be new")
+
+    def quoted(name: str) -> str:
+        return '"' + name.replace('"', '""') + '"'
+
+    try:
+        with sqlite3.connect(source.as_uri() + "?mode=ro", uri=True) as original, \
+             sqlite3.connect(destination) as target:
+            schema = original.execute(
+                "SELECT type, name, sql FROM sqlite_master "
+                "WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' "
+                "ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 "
+                "WHEN 'view' THEN 2 WHEN 'trigger' THEN 3 ELSE 4 END, name"
+            ).fetchall()
+            tables = {name for kind, name, _ in schema if kind == "table"}
+            require("credential" in tables, "OpenCode V2 database has no credential table")
+            require("session" in tables, "OpenCode V2 database has no session table")
+            target.execute("PRAGMA foreign_keys=OFF")
+            for kind, _, ddl in schema:
+                if kind == "table":
+                    target.execute(ddl)
+            kept = 0
+            for name in ("credential", "migration", "__drizzle_migrations"):
+                if name not in tables:
+                    continue
+                columns = [row[1] for row in original.execute(f"PRAGMA table_info({quoted(name)})")]
+                if not columns:
+                    continue
+                fields = ", ".join(quoted(column) for column in columns)
+                values = ", ".join("?" for _ in columns)
+                rows = original.execute(f"SELECT {fields} FROM {quoted(name)}").fetchall()
+                if rows:
+                    target.executemany(
+                        f"INSERT INTO {quoted(name)} ({fields}) VALUES ({values})", rows)
+                if name == "credential":
+                    kept = len(rows)
+            for kind, _, ddl in schema:
+                if kind != "table":
+                    target.execute(ddl)
+            target.commit()
+            target.execute("PRAGMA journal_mode=DELETE")
+            target.execute("VACUUM")
+            require(target.execute("PRAGMA integrity_check").fetchone()[0] == "ok",
+                    "Sanitized OpenCode database integrity check failed")
+    except (sqlite3.Error, RuntimeError):
+        destination.unlink(missing_ok=True)
+        raise
+    destination.chmod(0o600)
+    return kept
+
+
+def ensure_model_available(models: list, requested: str) -> None:
+    """Refuse an absent model before any inference; provider IDs are exact."""
+    require(isinstance(models, list), "OpenCode model endpoint returned no catalog array")
+    available = {
+        item["providerID"] + "/" + item["id"]
+        for item in models
+        if isinstance(item, dict)
+        and isinstance(item.get("providerID"), str)
+        and isinstance(item.get("id"), str)
+    }
+    if requested in available:
+        return
+    model_id = requested.split("/", 1)[-1]
+    alternatives = sorted(name for name in available if name.split("/", 1)[-1] == model_id)
+    details = "; same model under: " + ", ".join(alternatives[:8]) if alternatives else ""
+    raise RuntimeError(
+        f"Selected model unavailable in isolated OpenCode host: {requested}{details}. "
+        "Check 'opencode models' and the QA-B --database credential seed."
+    )
+
+
 @contextmanager
 def private_scenario(output, active_host):
     """Always capture a bounded audit before destroying private provider seeds."""
@@ -57,8 +142,9 @@ def private_scenario(output, active_host):
 
 
 def api(host, method, path, data=None):
-    require(path.startswith("/api/session") or path.startswith("/api/experimental/session/"),
-            "QA-B may only use the owned host's Session endpoints")
+    require(path.startswith("/api/session") or path.startswith("/api/experimental/session/")
+            or (method == "GET" and path == "/api/model"),
+            "QA-B may only use the owned host's Session and model-read endpoints")
     token = base64.b64encode(("opencode:" + host.password).encode()).decode()
     request = Request(host.url + path, data=None if data is None else json.dumps(data).encode(),
                       method=method, headers={"Authorization": "Basic " + token,
@@ -360,6 +446,10 @@ def run(args):
             project.mkdir(mode=0o700)
             env = isolated_environment(root)
             env["LOOM_QAB_ROOT"] = str(root)
+            if args.database:
+                seed_credential_database(args.database,
+                                         Path(env["XDG_DATA_HOME"]) / "opencode/opencode.db")
+                report["credential_seed"] = "V2 credential and migration records only; no Session history"
             for name in args.provider_env:
                 require(name in os.environ and re.fullmatch(r"[A-Z][A-Z0-9_]*", name),
                         "Explicit provider env name not present or invalid")
@@ -370,6 +460,7 @@ def run(args):
             if args.models_catalog:
                 destination = Path(env["XDG_CACHE_HOME"]) / "opencode/models.json"
                 private_write(destination, args.models_catalog.read_text())
+                env["OPENCODE_MODELS_PATH"] = str(destination)
             provider = json.loads(args.provider_config.read_text()) if args.provider_config else {}
             require(isinstance(provider, dict) and set(provider) <= {"provider"},
                     "Provider config may contain only the provider key; no plugin/agent/permission overrides")
@@ -401,6 +492,7 @@ def run(args):
             host.wait_roster("/api/plugin", "plugins", lambda xs: all(
                 any(x.get("id") == item and x.get("state", {}).get("status") == "active" for x in xs)
                 for item in ("loom", "loom.retrospective.qab.audit")))
+            ensure_model_available(api(host, "GET", "/api/model"), args.model)
             parent = create_session(host, project, args.model, "qa-coordinator")
             invoke_model(host, root, parent, "Coordinate a small settings change. Keep telemetry disabled. "
                          "Do not edit files directly.", args.model, args.timeout)
@@ -548,8 +640,9 @@ def main():
     parser.add_argument("--model", required=True, help="Explicit real provider/model; spends provider quota")
     parser.add_argument("--skills-repo", type=Path, required=True, help="Checkout containing merged skill commit")
     parser.add_argument("--skill-revision", default="651650947feb52c0c2fdb71ea148201d6ab25025")
-    parser.add_argument("--auth", type=Path, help="Explicit provider auth seed; never included in evidence")
-    parser.add_argument("--models-catalog", type=Path, help="Optional models catalog seed")
+    parser.add_argument("--auth", type=Path, help="Explicit legacy provider auth seed; never included in evidence")
+    parser.add_argument("--database", type=Path, help="OpenCode V2 database source; only credentials and migrations copied to private host")
+    parser.add_argument("--models-catalog", type=Path, help="Optional models.dev catalog file seed")
     parser.add_argument("--provider-config", type=Path, help="Optional JSON with provider key ONLY")
     parser.add_argument("--provider-env", action="append", default=[], help="Explicit provider env name")
     parser.add_argument("--timeout", type=int, default=120, help="Per-model-turn bound (15–600 seconds)")
