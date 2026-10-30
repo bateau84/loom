@@ -145,7 +145,10 @@ class Scenario:
         own = [e for e in observed if e['type'] == 'tool-after' and e['data']['sessionID'] == session]
         finished = [e for e in own if e['data']['tool'] == 'execute']
         require(len(finished) == 1 and finished[0]['data']['status'] == 'completed',
-                f'Expected one successful native execute for {job}: {finished}')
+                'Expected one terminal native execute for scripted qualification')
+        metadata = finished[0]['data'].get('result', {}).get('metadata', {})
+        require(not isinstance(metadata, dict) or metadata.get('error') is not True,
+                'Scripted Code Mode returned an error; outer completed status is not proof of script success')
         if tool:
             nested = [e for e in own if e['data']['tool'] in ('loom_' + tool, 'loom.' + tool)]
             require(len(nested) == 1 and nested[0]['data']['status'] == 'completed', f'No real production {tool} result: {nested}')
@@ -368,7 +371,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             s = Scenario(host, root)
             asker, respondent, reader = [s.session(role) for role in roles[:3]]
             report['sessions'] = {'asker': asker, 'respondent': respondent, 'reader': reader}
-            s.command(reader, 'const x=search({namespace:"loom",limit:10}); if(x.items.length!==5) throw new Error("Expected five tools"); return x')
+            s.command(reader, 'const x=search({namespace:"loom",limit:10}); if(x.items.length!==6) throw new Error("Expected six tools"); return x')
             gate = s.session('reader')
             gate_file = project / 'permission-gate.txt'
             gate_file.write_text('mode=prototype\n')
