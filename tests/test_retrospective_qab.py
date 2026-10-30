@@ -498,5 +498,44 @@ class QABEvidenceTests(unittest.TestCase):
         self.assertEqual(paired[0][1]["trace_result"]["child_ids"], [WORKER])
 
 
+    def test_code_mode_nested_tool_statuses_are_projected_without_private_inputs(self):
+        messages = [
+            {"id": "msg_code", "type": "assistant", "content": [
+                {"type": "tool", "name": "execute", "state": {
+                    "status": "completed", "metadata": {
+                        "toolCalls": [
+                            {"tool": "edit", "status": "error",
+                             "input": {"path": "/private/sensitive"}},
+                            {"tool": "edit", "status": "completed"},
+                            {"tool": "shell", "status": "completed"},
+                        ], "error": True,
+                    },
+                    "content": [{"type": "text", "text": "PRIVATE_TOOL_OUTPUT"}],
+                }},
+            ]},
+        ]
+        summary = summarize_native_tools(messages)
+        self.assertEqual(summary["total"], 1)
+        self.assertEqual(summary["code_mode_inner"]["total"], 3)
+        self.assertEqual(summary["code_mode_inner"]["error_count"], 1)
+        self.assertEqual(summary["code_mode_inner"]["wrapper_error_count"], 1)
+        self.assertEqual(summary["code_mode_inner"]["by_tool_status"], [
+            {"tool": "edit", "status": "completed", "count": 1},
+            {"tool": "edit", "status": "error", "count": 1},
+            {"tool": "shell", "status": "completed", "count": 1},
+        ])
+        self.assertNotIn("PRIVATE", json.dumps(summary))
+        self.assertNotIn("/private/", json.dumps(summary))
+
+    def test_missing_code_mode_metadata_is_unknown_not_success(self):
+        summary = summarize_native_tools([
+            {"type": "assistant", "content": [
+                {"type": "tool", "name": "execute",
+                 "state": {"status": "completed"}}]}])
+        self.assertEqual(summary["code_mode_inner"]["wrappers"], 1)
+        self.assertEqual(summary["code_mode_inner"]["metadata_available"], 0)
+        self.assertEqual(summary["code_mode_inner"]["status"], "unknown")
+
+
 if __name__ == "__main__":
     unittest.main()
