@@ -14,7 +14,7 @@ from retrospective_qab import (evidence_oracle, prepare_project, run as run_real
                                completed_model_text, summarize_native_tools,
                                source_gate, skip_unqualified_source,
                                skip_unqualified_primary, public_summary,
-                               set_worker_write_gate, observed_patch_error)
+                               lock_source_file, unlock_source_file, observed_patch_error)
 from retrospective_qab_oracle import CONTROLS, grade_controls, verify_primary, verdict, paired_trace_events
 
 INVESTIGATOR, PARENT, WORKER, REVIEWER = "investigator", "parent", "worker", "reviewer"
@@ -578,31 +578,32 @@ class QABEvidenceTests(unittest.TestCase):
         self.assertIsNone(gold["retry"])
 
 
-    def test_native_worker_gate_denies_writes_then_restores_session_policy(self):
-        session = "ses_worker"
-        recorded = []
-        current = []
-        def fake_api(host, method, path, data=None):
-            self.assertEqual(path, "/api/session/" + session)
-            if method == "PATCH":
-                current[:] = data["permissions"]
-                recorded.append((method, [dict(x) for x in current]))
-                return {}
-            if method == "GET":
-                return {"id": session, "permissions": list(current)}
-            self.fail("unexpected host operation")
-        with patch("retrospective_qab.api", side_effect=fake_api):
-            set_worker_write_gate(object(), session, denied=True)
-            set_worker_write_gate(object(), session, denied=False)
-        self.assertEqual([r["action"] for r in recorded[0][1]],
-                         ["edit", "write", "shell"])
-        self.assertTrue(all(r["effect"] == "deny" for r in recorded[0][1]))
-        self.assertEqual(recorded[1], ("PATCH", []))
+    def test_readonly_source_fixture_causes_real_filesystem_write_denial(self):
+        with tempfile.TemporaryDirectory() as temp:
+            target = Path(temp) / "settings.json"
+            target.write_text('{"mode":"prototype"}\n')
+            try:
+                lock_source_file(target)
+            except RuntimeError as error:
+                if "does not enforce write denial" in str(error):
+                    self.skipTest("POSIX filesystem permissions are not enforced as non-root")
+                raise
+            try:
+                with self.assertRaises(PermissionError):
+                    with target.open("w"):
+                        pass
+                self.assertEqual(target.read_text(), '{"mode":"prototype"}\n')
+            finally:
+                unlock_source_file(target)
+            target.write_text('{"mode":"safe"}\n')
+            self.assertEqual(target.read_text(), '{"mode":"safe"}\n')
 
-    def test_worker_gate_fail_closed_on_invalid_session_readback(self):
-        with patch("retrospective_qab.api", side_effect=[{}, {"permissions": []}]):
-            with self.assertRaisesRegex(RuntimeError, "permission policy"):
-                set_worker_write_gate(object(), WORKER, denied=True)
+    def test_lock_source_file_rejects_missing_precondition(self):
+        with tempfile.TemporaryDirectory() as temp:
+            target = Path(temp) / "missing-settings.json"
+            with self.assertRaisesRegex(RuntimeError, "does not exist"):
+                lock_source_file(target)
+
 
     def test_real_patch_error_requires_correlated_native_start_and_terminal(self):
         events = [
