@@ -837,6 +837,8 @@ def run(args):
             investigator = create_session(host, project, args.model, "qa-investigator", parent)
             prompt = ("Conduct one independent deep retrospective of the engineering work associated with "
                       "Session " + parent + ". " + HANDOFF +
+                      " First load the installed retrospective skill using the native skill tool. "
+                      "If it cannot be loaded, report that gap; do not claim it loaded. "
                       " Original Session evidence is available through the installed host; authorized per-Session "
                       "exports, if needed, are in qa-evidence/. Investigate user feedback, child execution, "
                       "retries, review and verification independently. Cite the exact original message IDs "
