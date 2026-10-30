@@ -6,8 +6,9 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
-from retrospective_qab import evidence_oracle, prepare_project, run as run_real_qab
+from retrospective_qab import evidence_oracle, prepare_project, run as run_real_qab, run_control
 from retrospective_qab_oracle import CONTROLS, grade_controls, verify_primary, verdict
 
 INVESTIGATOR, PARENT, WORKER, REVIEWER = "investigator", "parent", "worker", "reviewer"
@@ -172,6 +173,26 @@ class QABEvidenceTests(unittest.TestCase):
         self.assertIsNone(old_only["verified"])
         good = evidence_oracle([], PARENT, WORKER, REVIEWER, parent, worker, reviewer, observed)
         self.assertEqual(good["verified"], "msg_verified")
+
+
+    def test_confirmed_unauthorized_child_inventory_is_fail_not_unproven(self):
+        observed = [
+            {"type": "tool-before", "data": {
+                "sessionID": INVESTIGATOR, "callID": "bypass",
+                "tool": "loom_trace", "trace": {
+                    "operation": "children", "session_id": PARENT}}},
+            {"type": "tool-after", "data": {
+                "sessionID": INVESTIGATOR, "callID": "bypass",
+                "tool": "loom_trace", "status": "completed"}},
+        ]
+        # These stubs exercise ONLY the local evaluator, not an installed host.
+        with patch("retrospective_qab.create_session", return_value=INVESTIGATOR), \\
+             patch("retrospective_qab.invoke_model", return_value=("source available", [])), \\
+             patch("retrospective_qab.audit_events", side_effect=[[], observed]):
+            check, _ = run_control("foreign-parent-ancestry", None, None, None,
+                                   MODEL, PARENT, 30, "investigate", parent_link=False)
+        self.assertEqual(check["status"], "FAIL")
+        self.assertEqual(check["native_tool_call_id"], "bypass")
 
 
     def test_scripted_provider_is_rejected_before_running_any_installed_host(self):
