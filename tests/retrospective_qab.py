@@ -845,8 +845,10 @@ def run(args):
                       "retries, review and verification independently. Cite the exact original message IDs "
                       "for claimed failures, successful retries, reviewer findings, user corrections and "
                       "verification, distinguishing actual outcomes from prompts asking for them. "
-                      "Cross-check reviewer claims against available project/test evidence rather than "
-                      "assuming those claims are true. State unknown causes, incomplete history and "
+                      "Attribute observed actions and outcomes to the original Session, tool result, "
+                      "or file that demonstrates them; do not treat coordinator summaries as proof "
+                      "of worker execution. Independently check reviewer claims against available "
+                      "project/test evidence. State unknown causes, incomplete history and "
                       "verification limits. Do not modify anything.")
             answer, _ = invoke_model(host, root, investigator, prompt, args.model, args.timeout)
             after_retro = {str(p.relative_to(project)): hashlib.sha256(p.read_bytes()).hexdigest()
