@@ -770,7 +770,7 @@ def evaluate_control(name, events, session, text, parent, *, worker=None, correc
     if breach:
         return {"executed": True, "observed": True, "model": "real",
                 "native_tool_call_id": breach, "status": "FAIL",
-                "reason": "Observed authorization/privacy/coverage counterexample"}, session
+                "reason": "Observed authorization/privacy/coverage counterexample"}
     return {"executed": True, "observed": observed, "model": "real",
             "native_tool_call_id": call_id,
             "status": "PASS" if observed else "UNPROVEN",
