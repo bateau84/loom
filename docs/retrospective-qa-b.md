@@ -68,15 +68,22 @@ offline command on the existing report directory:
     python3 tests/retrospective_qab_regrade.py \
       --report-directory "$HOME/loom-qab/results-008"
 
-It reads only the recorded audit, original source event IDs, original
-investigator report and prior run metadata. It does not contact providers,
-start OpenCode, change Session history or overwrite any evidence. Its output
-lists old versus current checks, but never emits raw user messages, model
-prompts, transcript text or source/call IDs. Original controls that were not
-executed remain `UNPROVEN`. Regrading cannot create missing Session events or
-make unexecuted adversarial controls pass; it is also not an independent
-semantic assessment of the investigator's prose. Retain the original report
-and note which evaluator revision was used.
+It reads the recorded audit, source event IDs, original investigator
+report, run metadata, and (when present) the original private
+`source-history/worker.json`. The extra source is used only to validate
+native tool-call citations against the same worker's actual tool results and
+host audit; the worker Session identity must match. A citation can identify
+an original message, or the authenticated native call for the failed edit,
+successful retry, or final verification. An invented/uncorrelated call ID
+cannot satisfy the source-link check. For older bundles without the worker
+source export, only exact message IDs qualify.
+
+Regrading does not contact providers, start OpenCode, change history, or
+overwrite evidence. Its output lists old versus current checks without
+emitting raw user messages, prompts, transcript text or source/call IDs.
+Skipped controls remain `UNPROVEN`; regrading cannot create missing events
+or substitute for an independent review of the investigator's prose. Retain
+the original report and record the evaluator revision.
 
 ## Sources and execution
 
@@ -186,12 +193,13 @@ For an **existing private bundle**, this read-only command inspects persisted
          nested: [(.state.metadata.toolCalls // [])[]? | {tool, status}]}]'       "$QA_HOME/results-005/source-history/worker.json"
 
 The QA-B oracle formerly paired `loom_trace` starts and finishes using
-`callID` alone. That is unsafe when several nested Code Mode operations share
-one outer call ID: the last start could be incorrectly associated with earlier
-finishes. The oracle now pairs by **Session, tool, call ID, and observed event
-order**. Sequential ID reuse is supported; overlapping starts with the same
-key are **ambiguous and ignored**, never granted success. Identical call IDs
-in a report are not proof of duplicate model actions.
+`callID` alone. Multiple nested Code Mode calls can share one outer ID.
+The oracle now correlates **Session, tool, call ID, message ID**, and only
+disambiguates overlapping results when the returned operation and source
+Session uniquely identify the request. Ambiguous errors, duplicate targets,
+and incomplete groups remain unpaired rather than counting as evidence.
+Sequential reuse is supported. Identical outer call IDs do not establish
+duplicate model actions.
 
 ### Results-007: source fixture replaced
 
