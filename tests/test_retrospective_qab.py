@@ -171,6 +171,39 @@ class QABEvidenceTests(unittest.TestCase):
             self.grade(audit, citations)["checks"]["source-linked-retrospective"],
             "UNPROVEN", "Without original worker source, bare call IDs cannot pass")
 
+        # Existing private bundles can be regraded with no new inference.
+        # The regrader must validate the original export's worker identity,
+        # and cannot promote skipped adversarial controls to PASS.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "source-history").mkdir()
+            (root / "source-history/worker.json").write_text(json.dumps({
+                "data": {"info": {"id": WORKER}, "messages": worker_messages}}))
+            (root / "report.json").write_text(json.dumps({
+                "kind": "loom-qab-real-model", "source_gate": {"ready": True},
+                "source_qualification": "PASS",
+                "investigator_read_only_preserved": True,
+                "investigator_session": INVESTIGATOR, "model": MODEL,
+                "status": "UNPROVEN", "infrastructure": "PASS",
+                "agent": "UNPROVEN", "primary_checks": {},
+                "controls": {name: {"executed": False} for name in CONTROLS},
+            }))
+            (root / "oracle.json").write_text(json.dumps({
+                "session_ids": {"parent": PARENT, "worker": WORKER, "reviewer": REVIEWER},
+                "source_events": EVENTS}))
+            (root / "audit.ndjson").write_text(
+                "".join(json.dumps(entry) + "\n" for entry in audit))
+            (root / "retrospective-report.md").write_text(citations)
+            result = regrade_existing(root)
+            self.assertEqual(result["regraded"]["checks"]["source-linked-retrospective"], "PASS")
+            self.assertEqual(result["regraded"]["overall"], "UNPROVEN")
+            self.assertEqual(result["controls"], {name: "UNPROVEN" for name in CONTROLS})
+            self.assertNotIn("call_failed_edit", json.dumps(result))
+            (root / "source-history/worker.json").write_text(json.dumps({
+                "data": {"info": {"id": "foreign"}, "messages": worker_messages}}))
+            with self.assertRaises(ValueError):
+                regrade_existing(root)
+
         # The same call ID in a forged foreign Session cannot authenticate
         # the original. Replacing any one correct terminal must fail closed.
         bad_audit = [dict(e) for e in audit]
