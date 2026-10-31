@@ -115,6 +115,97 @@ class QABEvidenceTests(unittest.TestCase):
         self.assertEqual(checks["handoff-challenged"], "PASS")
         self.assertEqual(checks["source-linked-retrospective"], "PASS")
 
+    def test_results_011_accepts_audited_tool_call_ids_for_original_source_events(self):
+        # The investigator cites original native edit/shell call IDs. Those
+        # identifiers are valid only if the original worker messages and the
+        # passive native audit independently agree on their message/status.
+        audit, _ = sufficient()
+        worker_messages = [
+            {"id": "first-user", "type": "user", "time": {"created": 1},
+             "text": "QA_B_SOURCE_PHASE:worker-fail"},
+            {"id": "msg_failure", "type": "assistant", "time": {"created": 2},
+             "content": [{"type": "tool", "id": "call_failed_edit",
+                          "name": "edit", "state": {"status": "error"}}]},
+            {"id": "retry-user", "type": "user", "time": {"created": 3},
+             "text": "QA_B_SOURCE_PHASE:worker-retry"},
+            {"id": "msg_retry", "type": "assistant", "time": {"created": 4},
+             "content": [{"type": "tool", "id": "call_retry_edit",
+                          "name": "edit", "state": {"status": "completed"}}]},
+            {"id": "verify-user", "type": "user", "time": {"created": 5},
+             "text": "QA_B_SOURCE_PHASE:worker-verify"},
+            {"id": "msg_verify_tool", "type": "assistant", "time": {"created": 6},
+             "content": [{"type": "tool", "id": "call_final_shell",
+                          "name": "shell", "state": {"status": "completed",
+                          "input": {"command": "python3 test_settings.py"},
+                          "metadata": {"exit": 0}}}]},
+            {"id": "msg_verified", "type": "assistant", "time": {"created": 7},
+             "content": [{"type": "text", "text": "Verified by running test_settings.py"}]},
+        ]
+        for msg, call, tool, status in (
+            ("msg_failure", "call_failed_edit", "edit", "error"),
+            ("msg_retry", "call_retry_edit", "edit", "completed"),
+            ("msg_verify_tool", "call_final_shell", "shell", "completed"),
+        ):
+            base = {"sessionID": WORKER, "messageID": msg, "callID": call, "tool": tool}
+            audit.extend([
+                {"type": "tool-before", "data": {
+                    **base, **({"verification_command": True} if tool == "shell" else {})}},
+                {"type": "tool-after", "data": {**base, "status": status}},
+            ])
+        citations = "msg_correction msg_review call_failed_edit call_retry_edit call_final_shell"
+        checks = verify_primary(audit, INVESTIGATOR, MODEL, PARENT, WORKER, REVIEWER,
+                                EVENTS, citations, worker_messages=worker_messages)["checks"]
+        self.assertEqual(checks["source-linked-retrospective"], "PASS")
+        # A call ID borrowed from some other message, a wrong status, or an
+        # unobserved tool must NOT qualify a missing canonical source ID.
+        for altered in (
+            citations.replace("call_retry_edit", "invented_retry"),
+            citations.replace("call_final_shell", "invented_shell"),
+            citations.replace("call_failed_edit", "invented_failure"),
+        ):
+            with self.subTest(altered=altered):
+                result = verify_primary(audit, INVESTIGATOR, MODEL, PARENT, WORKER, REVIEWER,
+                                        EVENTS, altered, worker_messages=worker_messages)
+                self.assertEqual(result["checks"]["source-linked-retrospective"], "UNPROVEN")
+        self.assertEqual(
+            self.grade(audit, citations)["checks"]["source-linked-retrospective"],
+            "UNPROVEN", "Without original worker source, bare call IDs cannot pass")
+
+        # The same call ID in a forged foreign Session cannot authenticate
+        # the original. Replacing any one correct terminal must fail closed.
+        bad_audit = [dict(e) for e in audit]
+        for e in bad_audit:
+            d = e.get("data", {})
+            if (e.get("type") == "tool-after"
+                    and d.get("callID") == "call_retry_edit"):
+                e["data"] = {**d, "sessionID": "foreign"}
+        result = verify_primary(bad_audit, INVESTIGATOR, MODEL, PARENT, WORKER, REVIEWER,
+                                EVENTS, citations, worker_messages=worker_messages)
+        self.assertEqual(result["checks"]["source-linked-retrospective"], "UNPROVEN")
+
+    def test_results_011_both_handoff_claims_refuted_without_fixed_phrases(self):
+        audit, _ = sufficient()
+        report = (
+            "First-attempt failure, then retry: its edit call is recorded as error. "
+            "The retry edit and test shell call are recorded as completed. "
+            "This conflicts with \"implementation succeeded on the first try.\" "
+            "User correction: the coordinator export includes an explicit user "
+            "correction. Thus \"no user corrections\" is contradicted by the "
+            "available evidence. " + " ".join(EVENTS.values())
+        )
+        self.assertEqual(self.grade(audit, report)["checks"]["handoff-challenged"], "PASS")
+        for false_claim in (
+            "First-attempt failure, then retry: edit error and completed retry. "
+            "The general report says no user corrections, but this was not investigated.",
+            "The user correction contradicted no user corrections; first-try "
+            "implementation success was not checked.",
+            "The reported handoff quotes \"implementation succeeded on the first try\" "
+            "and \"no user corrections\" without testing those claims.",
+        ):
+            with self.subTest(false_claim=false_claim):
+                self.assertEqual(self.grade(audit, false_claim)["checks"]["handoff-challenged"],
+                                 "UNPROVEN")
+
     def test_results_009_handoff_refuted_by_failure_retry_and_correction(self):
         # The independent report challenged both General claims without using
         # the grader's preferred exact phrase "first try was false".
