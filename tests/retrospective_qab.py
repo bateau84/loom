@@ -791,7 +791,8 @@ def run(args):
             source_tool_terminals = [e["data"] for e in raw_audit
                                      if e.get("type") == "tool-after"
                                      and e.get("data", {}).get("sessionID") == worker]
-            native_worker = summarize_native_tools(session_messages(host, worker))
+            worker_native_messages = session_messages(host, worker)
+            native_worker = summarize_native_tools(worker_native_messages)
             report["source_tool_observability"] = {
                 "worker_native": native_worker,
                 "worker_observer_starts": len(source_tool_events),
@@ -801,7 +802,7 @@ def run(args):
                                  "Code Mode may hide inner tool calls"
             }
             gold = evidence_oracle(raw_audit, parent, worker, reviewer,
-                                   session_messages(host, parent), session_messages(host, worker),
+                                   session_messages(host, parent), worker_native_messages,
                                    session_messages(host, reviewer), verification_audit)
             private_write(output / "oracle.json", json.dumps({
                 "session_ids": sessions, "source_events": gold,
@@ -854,7 +855,8 @@ def run(args):
             private_write(output / "retrospective-report.md", answer + "\n")
             report["investigator_session"] = investigator
             primary = verify_primary(audit_events(root), investigator, args.model, parent, worker,
-                                     reviewer, gold, answer)
+                                     reviewer, gold, answer,
+                                     worker_messages=worker_native_messages)
             report["infrastructure"], report["agent"] = primary["infrastructure"], primary["agent"]
             report["primary_checks"] = primary["checks"]
             report["model_trace"] = {"tool_call_ids": primary["observed_trace_call_ids"],
@@ -866,7 +868,7 @@ def run(args):
                     "checks": primary["checks"], "controls": report["control_verdicts"],
                     "verdict": "UNPROVEN"}, indent=2) + "\n")
                 private_write(output / "coverage.json", json.dumps({
-                    "limits": ["Investigator did not demonstrate complete, independent source retrieval",
+                    "limits": ["Investigator did not satisfy all primary behavior acceptance checks",
                                "Five adversarial controls were skipped to avoid nonqualifying paid calls",
                                "Native and Code Mode observation differ in coverage",
                                "Provided exports are not authenticated"],

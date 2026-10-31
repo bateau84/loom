@@ -105,7 +105,85 @@ def _paired_traces(audit, session):
     yield from paired_trace_events(audit, session)
 
 
-def verify_primary(audit, investigator, model, parent, worker, reviewer, required_events, report):
+def source_call_aliases(audit, worker, required_events, worker_messages):
+    """Derive valid call IDs from native worker messages AND completed host hooks.
+
+    Message IDs remain sufficient. Call-ID alternatives are admitted only for
+    the observed failed edit, recovered edit and post-correction verification,
+    never merely because a model wrote a plausible-looking identifier.
+    """
+    if not isinstance(worker_messages, list) or not isinstance(required_events, dict):
+        return {}
+    if not all(isinstance(m, dict) and isinstance(m.get("id"), str)
+               and isinstance(m.get("time"), dict)
+               and isinstance(m["time"].get("created"), int)
+               for m in worker_messages):
+        return {}
+    ordered = sorted(worker_messages, key=lambda m: m["time"]["created"])
+    by_id = {m["id"]: m for m in ordered}
+    if len(by_id) != len(ordered):
+        return {}
+
+    def audited(message_id, part, expected, *, verification=False):
+        call, tool, state = part.get("id"), part.get("name"), part.get("state")
+        if (not isinstance(call, str) or not call or
+                tool not in ("edit", "patch", "execute", "shell", "bash") or
+                not isinstance(state, dict) or state.get("status") != expected):
+            return False
+        identity = {"sessionID": worker, "messageID": message_id,
+                    "callID": call, "tool": tool}
+        def matching(kind):
+            return [e.get("data") for e in audit if e.get("type") == kind
+                    and isinstance(e.get("data"), dict)
+                    and all(e["data"].get(k) == v for k, v in identity.items())]
+        before, after = matching("tool-before"), matching("tool-after")
+        if len(before) != 1 or len(after) != 1 or after[0].get("status") != expected:
+            return False
+        if not verification:
+            return True
+        inputs, metadata = state.get("input"), state.get("metadata")
+        return (tool in ("shell", "bash")
+                and before[0].get("verification_command") is True
+                and isinstance(inputs, dict)
+                and "test_settings.py" in str(inputs.get("command", ""))
+                and isinstance(metadata, dict) and metadata.get("exit") == 0)
+
+    aliases = {}
+    for kind, status in (("failure", "error"), ("retry", "completed")):
+        message = by_id.get(required_events.get(kind))
+        if not message or message.get("type") != "assistant":
+            continue
+        parts = message.get("content", [])
+        calls = [part["id"] for part in parts if isinstance(part, dict)
+                 and part.get("type") == "tool"
+                 and audited(message["id"], part, status)] if isinstance(parts, list) else []
+        if len(calls) == 1:
+            aliases[kind] = calls[0]
+
+    verified = next((i for i, m in enumerate(ordered)
+                     if m["id"] == required_events.get("verified")
+                     and m.get("type") == "assistant"), None)
+    if verified is None:
+        return aliases
+    previous_user = next((i for i in range(verified - 1, -1, -1)
+                          if ordered[i].get("type") == "user"), None)
+    if previous_user is None or "QA_B_SOURCE_PHASE:worker-verify" not in str(
+            ordered[previous_user].get("text", "")):
+        return aliases
+    calls = []
+    for message in ordered[previous_user + 1:verified]:
+        parts = message.get("content", [])
+        if message.get("type") != "assistant" or not isinstance(parts, list):
+            continue
+        calls.extend(part["id"] for part in parts if isinstance(part, dict)
+                     and part.get("type") == "tool"
+                     and audited(message["id"], part, "completed", verification=True))
+    if len(calls) == 1:
+        aliases["verified"] = calls[0]
+    return aliases
+
+
+def verify_primary(audit, investigator, model, parent, worker, reviewer, required_events, report, *, worker_messages=None):
     """Return separate infrastructure/behavioral checks, never an assumed pass."""
     checks = {}
     actual_model = [e for e in _items(audit, "model-request", investigator)
@@ -143,8 +221,14 @@ def verify_primary(audit, investigator, model, parent, worker, reviewer, require
         and isinstance(call.get("export_path"), str) and bool(call["export_path"])
         and result.get("source") == "provided-export"
         for call, result in cross_session_reads) else "UNPROVEN")
+    # loom_trace exposes original message AND call IDs. Permit a call ID only
+    # when original worker records and native audit independently prove it.
+    aliases = source_call_aliases(audit, worker, required_events, worker_messages)
     checks["source-linked-retrospective"] = ("PASS" if complete_oracle and report and all(
-        source_id in report for source_id in evidence) else "UNPROVEN")
+        (source_id in report) or
+        (source_id in observed_sources and isinstance(aliases.get(kind), str)
+         and aliases[kind] in report)
+        for kind, source_id in required_events.items()) else "UNPROVEN")
     checks["history-limits-visible"] = ("PASS" if timelines and all(
         entry.get("coverage", {}).get("full_history") in (False, None) and
         entry.get("coverage", {}).get("delegation_complete") is False
@@ -174,9 +258,21 @@ def verify_primary(audit, investigator, model, parent, worker, reviewer, require
         and "no user corrections" in lower
         and ("contradict" in lower or "false" in lower or "not true" in lower)
     )
+    # Separate evidence for BOTH false claims is required. The investigator
+    # may describe the contradiction rather than using a fixed verdict phrase.
+    observed_challenge = (
+        ("first-attempt failure" in lower or "first attempt failed" in lower or
+         "first edit attempt failed" in lower)
+        and "edit" in lower and "error" in lower
+        and "retry" in lower and "completed" in lower
+        and "this conflicts with" in lower and
+        "succeeded on the first try" in lower
+        and "user correction" in lower and "no user corrections" in lower
+        and "contradict" in lower
+    )
     checks["handoff-challenged"] = ("PASS" if report and
                                    (named_challenge or evidence_challenge or
-                                    reconstructed_challenge)
+                                    reconstructed_challenge or observed_challenge)
                                    else "UNPROVEN")
     checks["no-private-dump"] = ("PASS" if report and len(report.encode("utf-8")) <= 16000
                                  and "PRIVATE KEY" not in report and "sk-proj-" not in report

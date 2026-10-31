@@ -45,9 +45,21 @@ def regrade_existing(directory: Path) -> dict:
             not isinstance(report.get("model"), str) or
             not isinstance(report.get("investigator_session"), str)):
         raise ValueError("QA-B bundle lacks original Session/evidence identity")
+    # Optional original host export: validate worker identity before allowing
+    # any call-ID aliases. Older bundles without it retain message-only grading.
+    source_path = root / "source-history" / "worker.json"
+    worker_messages = None
+    if source_path.exists() or source_path.is_symlink():
+        source = json.loads(_read(root, "source-history/worker.json", 8 * 1024 * 1024))
+        data = source.get("data") if isinstance(source, dict) else None
+        if (not isinstance(data, dict) or not isinstance(data.get("info"), dict)
+                or data["info"].get("id") != sessions["worker"]
+                or not isinstance(data.get("messages"), list)):
+            raise ValueError("Worker source history lacks expected Session identity")
+        worker_messages = data["messages"]
     primary = verify_primary(audit, report["investigator_session"], report["model"],
                              sessions["parent"], sessions["worker"], sessions["reviewer"],
-                             events, retrospective)
+                             events, retrospective, worker_messages=worker_messages)
     controls = grade_controls(report.get("controls", {}))
     overall = verdict(primary, controls)
     if report.get("source_gate", {}).get("ready") is not True or report.get("source_qualification") != "PASS":
