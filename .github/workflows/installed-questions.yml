@@ -43,6 +43,62 @@ jobs:
           --report-directory "$RUNNER_TEMP/loom-question-report"
           --repository "$GITHUB_WORKSPACE"
           --duplicate-input-control
+      - name: Typecheck QA-B scripted source provider (provider-free)
+        run: >-
+          ./node_modules/.bin/tsc --noEmit --ignoreConfig --target ES2022 --module NodeNext
+          --moduleResolution NodeNext --strict --skipLibCheck --types bun,node tests/retrospective-source/server.ts
+      - name: QA-B source proof via installed OpenCode (no inference)
+        run: |
+          set +e
+          python3 tests/retrospective_qab.py \
+            --source-only \
+            --opencode "$RUNNER_TEMP/loom-question-host/node_modules/.bin/opencode" \
+            --plugin "$RUNNER_TEMP/loom-question-install/node_modules/loom-plugin" \
+            --artifact "$(find "$RUNNER_TEMP/loom-question-artifact" -maxdepth 1 -name 'loom-plugin-*.tgz' -print -quit)" \
+            --model qab-source/scripted \
+            --report-directory "$RUNNER_TEMP/qab-source-proof" --timeout 60
+          code=$?
+          set -e
+          test "$code" -eq 1
+          python3 - "$RUNNER_TEMP/qab-source-proof/report.json" <<'PY'
+          import json, sys
+          from pathlib import Path
+          r = json.loads(Path(sys.argv[1]).read_text())
+          assert r["source_qualification"] == "PASS", r.get("blocked_reason_code", r.get("error"))
+          assert r["source_gate"]["ready"] is True
+          assert r["source_first_attempt"]["edit_error_observed"] is True
+          assert r["source_first_attempt"]["source_unchanged_under_gate"] is True
+          assert r["host_verification"]["passed"] is True
+          assert r["status"] == "UNPROVEN", "Source-only is not retrospective acceptance"
+          PY
+      - name: QA-B source under external default model (no inference)
+        run: |
+          set +e
+          python3 tests/retrospective_qab.py \
+            --source-only \
+            --opencode "$RUNNER_TEMP/loom-question-host/node_modules/.bin/opencode" \
+            --plugin "$RUNNER_TEMP/loom-question-install/node_modules/loom-plugin" \
+            --artifact "$(find "$RUNNER_TEMP/loom-question-artifact" -maxdepth 1 -name 'loom-plugin-*.tgz' -print -quit)" \
+            --model openai/gpt-6-luna \
+            --report-directory "$RUNNER_TEMP/qab-mixed-default-proof" --timeout 60
+          code=$?
+          set -e
+          test "$code" -eq 1
+          python3 - "$RUNNER_TEMP/qab-mixed-default-proof" <<'PY'
+          import json, sys
+          from pathlib import Path
+          output = Path(sys.argv[1])
+          report = json.loads((output / "report.json").read_text())
+          assert report.get("source_qualification") == "PASS", (
+              report.get("error"), report.get("blocked_reason_code"))
+          assert report["source_gate"]["ready"] is True
+          requests = [json.loads(line)["data"] for line in (output / "audit.ndjson").read_text().splitlines()
+                      if json.loads(line).get("type") == "model-request"]
+          assert requests, "Missing actual source model requests"
+          assert all(request.get("providerID") == "qab-source"
+                     and request.get("modelID") == "scripted" for request in requests), (
+              "Unexpected non-scripted model request during provider-free source setup")
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:

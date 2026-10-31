@@ -1,6 +1,11 @@
 /** Registered discovery help. No guide-file read or extra tool call is required. */
 export const TOOL_EXAMPLES = {
   agents: [{}],
+  trace: [
+    { operation: "timeline", limit: 25 },
+    { operation: "timeline", session_id: "SESSION_ID", export_path: "private-retro/session.json", include_text: true, limit: 25 },
+    { operation: "children", session_id: "SESSION_ID", limit: 20 },
+  ],
   action: [
     { operation: "create", title: "Explain a setting", goal: "Record a source-backed explanation and its qualifications." },
     { operation: "list", offset: 0 },
@@ -44,6 +49,12 @@ const entries: Record<LoomToolName, { summary: string; usage: string; returns: s
     usage: "Use {} to find the actual roster before native delegation. Choose by available=true, enabled=true and relevant roles; configured=true alone does not establish availability. Match agents[].roles with role_descriptions by role ID. Agent and role descriptions are coordination hints, not permissions or automatic matching. Agents and skills are defined outside Loom.",
     returns: "result.agents contains id, description when present, roles, configured, available and enabled. result.role_descriptions maps configured role IDs to their descriptions when provided; roles without a description have no entry, and unassigned roles may appear. Also returns config_sources, errors, warnings, evidence.capture/pairing and config_loads (active, waiting and limits).",
     caution: "Does not create or dispatch agents, load skills or grant authority. Configuration errors disable Loom injection and new capture, not native work. Queue length is bounded, waiting time is not; a diagnostic request can itself wait. Use native OpenCode delegation with the Action/task IDs and retrieve work through loom_context.",
+  },
+  trace: {
+    summary: "Read an original native Session timeline, or list direct child Sessions, for evidence-based retrospectives.",
+    usage: "operation=timeline reads ONLY the calling Session's native session.context (post-compaction, NOT complete history). Other Sessions require explicit export_path and native file-read authorization; project membership alone never permits raw native-context reads. For a broader projected history, first create an authorized sanitized OpenCode session export under the current project, then supply its relative export_path. Host read permission is required and may be denied. Session ID and project are checked; a normal directory is verified, while OpenCode's exact sanitized-directory marker leaves location unverified. Page via next_cursor; limit=1-50 (default 25). include_text:true requests bounded, best-effort credential-masked excerpts of user messages, assistant replies and dispatch prompts. It cannot guarantee masking of every secret; false by default. operation=children lists direct native children only when the parent belongs to the caller's Session family, limit=1-50, cursor/next_cursor. Follow child IDs individually. Neither creates an Action.",
+    returns: "timeline returns result.source, coverage (including location_verified:false for OpenCode-redacted directories, full_history:null for unverified exports, delegation_complete:false), page-scoped metrics/tool_statuses, source IDs, next_cursor and total_events (null until final page). Opaque Code Mode wrappers are marked as possible hidden delegation, never proof of no dispatch. children returns result.sessions, scanned, matched, next_cursor and direct-child coverage. Neither returns raw tool input/output, private reasoning or full skill contents; source projection and exports can omit media and may be stale.",
+    caution: "Read-only and restricted to the plugin's project, workspace and canonical directory. Export JSON must be a regular project-local file (maximum 16 MiB); path escapes, permission denial and mismatched Session identity fail closed. Nonblocking descriptor opens reject FIFO replacements without hanging. Export identity checks cannot prove the content was an unmodified complete OpenCode export. Sanitize exports, then delete them; read permission does not prove authenticity. Session-file replacement is checked before, during and after opening. include_text can still expose private prompt excerpts; do not copy secrets into durable reports. Native context cannot prove what happened before compaction; child listing is not recursive, and per-Session exports are not family exports. Project source IDs are validated, strings are bounded, and final response size is limited to 262144 bytes. Provided JSON is reparsed per page; paging is not a snapshot. Check completeness and never treat counts or agent claims as proven causes.",
   },
   action: {
     summary: "Create, list or update Actions, or list native Sessions associated with local work.",

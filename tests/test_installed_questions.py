@@ -69,6 +69,21 @@ class QuestionHarnessTest(unittest.TestCase):
             with patch('installed_questions.idle'):
                 self.assertEqual(Scenario(None, root).finish('respondent', 'job', 0, 'record'), {'id': 'answer'})
 
+    def test_scripted_code_mode_error_does_not_pass_on_outer_completed_status(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            log = [
+                {'type': 'tool-after', 'data': {
+                    'sessionID': 'target', 'tool': 'execute', 'status': 'completed',
+                    'result': {'metadata': {'error': True, 'toolCalls': []},
+                               'content': [{'type': 'text', 'text': 'PRIVATE_EXCEPTION'}]}}}
+            ]
+            (root / 'audit.ndjson').write_text('\\n'.join(json.dumps(e) for e in log))
+            with patch('installed_questions.idle'):
+                with self.assertRaisesRegex(RuntimeError, 'scripted qualification|Scripted Code Mode'):
+                    Scenario(None, root).finish('target', 'job', 0)
+            self.assertNotIn('PRIVATE_EXCEPTION', (root / 'missing').name)
+
     def test_package_script_collects_every_current_native_and_preservation_suite(self):
         repo = Path(__file__).resolve().parents[1]
         command = shlex.split(json.loads((repo / 'package.json').read_text())['scripts']['test:native'])
@@ -76,6 +91,7 @@ class QuestionHarnessTest(unittest.TestCase):
         expected = set((repo / 'tests').glob('*.test.ts')) - {repo / 'tests/tool-search-codemode.test.ts'}
         expected.update((repo / 'tests/fixtures/baseline-c9ffcfa').glob('*.test.ts'))
         expected.update((repo / 'tests/question-host').glob('*.test.ts'))
+        expected.update((repo / 'tests/retrospective-source').glob('*.test.ts'))
         self.assertEqual(collected, expected)
 
     def test_retirement_inventory_names_missing_obsolete_contracts_not_equivalent_passes(self):
