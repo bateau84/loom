@@ -12,11 +12,20 @@ import json
 from pathlib import Path
 
 from retrospective_qab_oracle import CONTROLS, grade_controls, verify_primary, verdict
+from retrospective_qab import evaluate_control
 
 
 def _read(root: Path, name: str, limit: int) -> str:
     path = root / name
-    if path.is_symlink() or not path.is_file() or path.stat().st_size > limit:
+    chain = []
+    part = path
+    while part != root:
+        if root not in part.parents:
+            raise ValueError("QA-B evidence must stay within its report directory")
+        chain.append(part)
+        part = part.parent
+    if (any(part.is_symlink() for part in chain)
+            or not path.is_file() or path.stat().st_size > limit):
         raise ValueError("Required local QA-B evidence file is missing, linked or oversized")
     return path.read_text(encoding="utf-8")
 
@@ -26,6 +35,55 @@ def _statuses(value: object) -> dict:
         return {}
     return {name: value[name] if value[name] in ("PASS", "FAIL", "UNPROVEN")
             else "UNPROVEN" for name in value if isinstance(name, str)}
+
+
+def regrade_controls(root: Path, report: dict, oracle: dict, audit: list) -> tuple[dict, list]:
+    """Recheck retained complete replies; never manufacture skipped controls.
+
+    Historical bundles without complete control files keep their original
+    verdicts. Newly retained replies must match the run's model, targets and
+    native audit interval before current grading can be applied offline.
+    """
+    original = report.get("controls", {})
+    records = dict(original)
+    replayed = []
+    sessions = oracle["session_ids"]
+    for name in CONTROLS:
+        path = root / "controls" / (name + ".json")
+        if not path.exists() and not path.is_symlink():
+            continue
+        prior = original.get(name, {})
+        if prior.get("executed") is not True or prior.get("status") == "FAIL":
+            continue
+        saved = json.loads(_read(root, "controls/" + name + ".json", 2 * 1024 * 1024))
+        if (not isinstance(saved, dict) or saved.get("schema_version") != 1
+                or saved.get("kind") != "qa-b-control-evidence" or saved.get("control") != name
+                or saved.get("parent_session") != sessions["parent"]
+                or saved.get("model") != report["model"]
+                or not isinstance(saved.get("session_id"), str)):
+            raise ValueError("Control evidence identity does not match this run")
+        if name in ("read-denied", "child-inaccessible") and saved.get("worker_session") != sessions["worker"]:
+            raise ValueError("Control worker identity does not match this run")
+        records[name] = {"status": "UNPROVEN"}
+        text = saved.get("response")
+        if (saved.get("response_complete") is not True or saved.get("error_type") is not None
+                or not isinstance(text, str) or len(text.encode("utf-8")) > 256 * 1024):
+            continue
+        start, end = saved.get("audit_start"), saved.get("audit_end")
+        if type(start) is not int or type(end) is not int or not 0 <= start <= end <= len(audit):
+            raise ValueError("Control audit interval is absent or out of range")
+        events = audit[start:end]
+        requests = [e.get("data", {}) for e in events if e.get("type") == "model-request"
+                    and e.get("data", {}).get("sessionID") == saved["session_id"]
+                    and e.get("data", {}).get("kind") == "primary"]
+        if not requests or any(str(e.get("providerID")) + "/" + str(e.get("modelID")) != report["model"]
+                               for e in requests):
+            continue
+        records[name] = evaluate_control(name, events, saved["session_id"], text, sessions["parent"],
+                                         worker=sessions["worker"],
+                                         correction_id=oracle["source_events"].get("user"))
+        replayed.append(name)
+    return grade_controls(records), replayed
 
 
 def regrade_existing(directory: Path) -> dict:
@@ -60,13 +118,14 @@ def regrade_existing(directory: Path) -> dict:
     primary = verify_primary(audit, report["investigator_session"], report["model"],
                              sessions["parent"], sessions["worker"], sessions["reviewer"],
                              events, retrospective, worker_messages=worker_messages)
-    controls = grade_controls(report.get("controls", {}))
+    controls, replayed_controls = regrade_controls(root, report, oracle, audit)
     overall = verdict(primary, controls)
-    if report.get("source_gate", {}).get("ready") is not True or report.get("source_qualification") != "PASS":
+    if overall != "FAIL" and (report.get("source_gate", {}).get("ready") is not True
+                              or report.get("source_qualification") != "PASS"):
         overall = "UNPROVEN"
     if report.get("investigator_read_only_preserved") is False:
         overall = "FAIL"
-    elif report.get("investigator_read_only_preserved") is not True:
+    elif overall != "FAIL" and report.get("investigator_read_only_preserved") is not True:
         overall = "UNPROVEN"
     return {
         "kind": "qa-b-offline-regrade",
@@ -86,6 +145,7 @@ def regrade_existing(directory: Path) -> dict:
             "source_event_count": len(primary["observed_event_ids"]),
         },
         "controls": controls,
+        "replayed_controls": replayed_controls,
         "limitations": [
             "offline regrade only; no new model, native tools or controls executed",
             "provided evidence remains unauthenticated; source and call IDs withheld",
