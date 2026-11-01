@@ -47,12 +47,14 @@ type Dispatch = { status: "admission-observed" | "not-attempted" | "outcome-unkn
   native_status?: "running" | "completed"; diagnostic?: string }
 function nativeDenial(error: unknown): { reason: string; diagnostic: string } | undefined {
   const message = error instanceof Error ? error.message : typeof error === "string" ? error : ""
-  // Both checks occur before native child creation in OpenCode 2.2.0's
-  // subagent tool. Never infer non-execution from an arbitrary runtime error.
-  const depth = /Subagent depth limit reached \((\d+)\)/.exec(message)
+  // Only a top-level, exact OpenCode pre-creation failure is known to have
+  // caused no native child. A started child can fail with the SAME depth or
+  // permission text inside "Subagent failed (sessionID: ...): <cause>".
+  // Matching substrings would mislabel already-executed work as not-attempted.
+  const depth = /^Subagent depth limit reached \((\d+)\)(?:\. Increase "experimental\.subagent_depth" to allow nested subagents\.)?$/.exec(message)
   if (depth) return { reason: "native-subagent-depth-denied",
     diagnostic: `Subagent depth limit reached (${depth[1]})` }
-  if (/Subagent denied: [\w.:-]+/.test(message) || /Permission denied: subagent/.test(message))
+  if (/^Subagent denied: [\w.:-]+$/.test(message) || message === "Permission denied: subagent")
     return { reason: "native-subagent-permission-denied", diagnostic: "Native subagent permission denied" }
   return undefined
 }
