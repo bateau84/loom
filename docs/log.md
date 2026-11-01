@@ -6,6 +6,16 @@ type: Log
 
 ## 2026-11-01
 
+**Independent review remediation for #204:** Expanded Copilot Individual/Business/Enterprise/access coverage and Go Teams member/service-account handling; separated generic Codex terms from legacy OpenCode billing claims. Tightened the proposed included-only proof to a host-bound native attempt, exact auth method, credential revision and effective billing account. Removed unverified metered authorization from the included-only decision. No provider gained qualification or production routing.
+
+**Investigation #204 — account-bound included billing:** Added the
+[source-backed qualification matrix](subscription-billing-qualification.md)
+for OpenCode Go, both native ChatGPT OAuth routes and GitHub Copilot,
+including the proposed provider-enforced no-paid contract, deterministic
+negative tests and safe live-verification prerequisites. No provider is
+qualified; production managed routing remains disabled. Linked the audit
+from the [routing contract](model-routing.md) and [documentation index](index.md).
+
 **Rebased PR #190 integration with merged PR #202:** The optional
 `loom_trace` tool added by PR #202 changes the registered fixture
 tool count from five to six. Updated the routing-configuration regression
