@@ -90,7 +90,7 @@ test("search-visible documentation covers new operations, meaning, scope and ret
   try {
     const record = f.tools.get("record")
     expect(record.description).toBe(TOOL_HELP.record)
-    expect(record.input.properties.operation.enum).toEqual(["add", "query", "complete", "reopen", "ask", "answer"])
+    expect(record.input.properties.operation.enum).toEqual(["add", "query", "complete", "reopen", "ask", "answer", "bind-respondent"])
     for (const required of ["work_ref", "question_id", "respondent", "view"]) expect(record.input.properties[required]).toBeDefined()
     for (const phrase of ["BEFORE doing the work", "no parent/Action cascade", "NOT resolution/approval/permission", "does not require or change selection", "needs-reconfirmation", "validity-unknown"]) expect(record.description).toContain(phrase)
     expect(TOOL_HELP.context).toContain("this read does not dispatch or resume")
