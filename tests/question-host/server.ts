@@ -38,7 +38,8 @@ export default Plugin.define({
         const id = ids.at(-1)
         const jobs = JSON.parse(readFileSync(join(root, "jobs.json"), "utf8"))
         const code = id && !issued.has(id) ? jobs[id]?.code : undefined
-        if (code) issued.add(id!)
+        const nativeEdit = id && !issued.has(id) && jobs[id]?.nativeEdit === true
+        if (code || nativeEdit) issued.add(id!)
         if (id && ((code && jobs[id]?.hold === "before") || (!code && jobs[id]?.hold === "after"))) {
           audit("provider-held", { role, job: id, phase: jobs[id].hold })
           for (let i = 0; ; i++) {
@@ -60,6 +61,9 @@ export default Plugin.define({
         const events: any[] = [{ type: "stream-start", warnings: [] }]
         if (code) {
           events.push({ type: "tool-call", toolCallId: randomUUID(), toolName: "execute", input: JSON.stringify({ code }) })
+        } else if (nativeEdit) {
+          events.push({ type: "tool-call", toolCallId: randomUUID(), toolName: "edit",
+            input: JSON.stringify({ path: "permission-gate.txt", oldString: "prototype", newString: "safe" }) })
         } else if (checkPolicy) {
           // Two real negative controls: the omitted shell tool must not dispatch, and the
           // still-advertised native skill tool must honor the switched agent's deny-all policy.
@@ -75,7 +79,7 @@ export default Plugin.define({
               : "HARNESS_IDLE" },
             { type: "text-end", id: "text" })
         }
-        events.push({ type: "finish", finishReason: { unified: code || checkPolicy ? "tool-calls" : "stop", raw: code || checkPolicy ? "tool_calls" : "stop" }, usage })
+        events.push({ type: "finish", finishReason: { unified: code || nativeEdit || checkPolicy ? "tool-calls" : "stop", raw: code || nativeEdit || checkPolicy ? "tool_calls" : "stop" }, usage })
         return { stream: new ReadableStream({ start(c) { for (const e of events) c.enqueue(e); c.close() } }) }
       },
     })

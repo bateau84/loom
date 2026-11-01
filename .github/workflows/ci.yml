@@ -26,6 +26,10 @@ jobs:
         run: >-
           ./node_modules/.bin/tsc --noEmit --ignoreConfig --target ES2022 --module NodeNext
           --moduleResolution NodeNext --strict --skipLibCheck --types bun,node tests/question-host/server.ts tests/question-host/get-rejection.test.ts
+      - name: Typecheck passive real-model QA-B audit plugin (provider-free)
+        run: >-
+          ./node_modules/.bin/tsc --noEmit --ignoreConfig --target ES2022 --module NodeNext
+          --moduleResolution NodeNext --strict --skipLibCheck --types bun,node tests/retrospective-host/audit.ts
       - run: bun run test:core
       - run: bun run test:native
       - name: Install pinned search implementation outside plugin dependencies

@@ -9,6 +9,7 @@ import argparse
 import base64
 import hashlib
 import json
+import os
 import re
 import secrets
 import shutil
@@ -46,6 +47,8 @@ REQUIRED_INSTALLED_CHECKS = {
     'E2-E3-restart-no-reconstruction',
     'E4-native-session-discovery', 'E4-native-archive-status',
     'E5-compaction-context-and-observation',
+    'E6-native-trace-and-scope', 'E6-exported-child-history', 'E6-native-text-redaction',
+    'E6-native-filesystem-write-denial',
 }
 
 
@@ -62,7 +65,9 @@ def qualification_status(checks, version):
 
 
 def request(host, method, path, body=None):
-    require(path.startswith('/api/session'), 'Only owned private Session endpoints permitted')
+    allow_export = method == 'GET' and path.startswith('/api/experimental/session/') and path.endswith('/export?sanitize=true')
+    require(path.startswith('/api/session') or allow_export,
+            'Only owned private Session endpoints and sanitized export reads are permitted')
     token = base64.b64encode(f'opencode:{host.password}'.encode()).decode()
     req = Request(host.url + path, data=None if body is None else json.dumps(body).encode(), method=method,
                   headers={'Authorization': 'Basic ' + token, 'Content-Type': 'application/json'})
@@ -140,7 +145,10 @@ class Scenario:
         own = [e for e in observed if e['type'] == 'tool-after' and e['data']['sessionID'] == session]
         finished = [e for e in own if e['data']['tool'] == 'execute']
         require(len(finished) == 1 and finished[0]['data']['status'] == 'completed',
-                f'Expected one successful native execute for {job}: {finished}')
+                'Expected one terminal native execute for scripted qualification')
+        metadata = finished[0]['data'].get('result', {}).get('metadata', {})
+        require(not isinstance(metadata, dict) or metadata.get('error') is not True,
+                'Scripted Code Mode returned an error; outer completed status is not proof of script success')
         if tool:
             nested = [e for e in own if e['data']['tool'] in ('loom_' + tool, 'loom.' + tool)]
             require(len(nested) == 1 and nested[0]['data']['status'] == 'completed', f'No real production {tool} result: {nested}')
@@ -363,7 +371,159 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             s = Scenario(host, root)
             asker, respondent, reader = [s.session(role) for role in roles[:3]]
             report['sessions'] = {'asker': asker, 'respondent': respondent, 'reader': reader}
-            s.command(reader, 'const x=search({namespace:"loom",limit:10}); if(x.items.length!==5) throw new Error("Expected five tools"); return x')
+            s.command(reader, 'return search({namespace:"loom",limit:10})')
+            gate = s.session('reader')
+            gate_file = project / 'permission-gate.txt'
+            gate_file.write_text('mode=prototype\n')
+            gate_file.chmod(0o400)
+            try:
+                handle = os.open(gate_file, os.O_WRONLY)
+            except PermissionError:
+                pass
+            else:
+                os.close(handle)
+                raise RuntimeError('Installed host did not enforce kernel file write denial')
+            allow_edit = [{'action': 'edit', 'resource': '*', 'effect': 'allow'}]
+            request(host, 'PATCH', f'/api/session/{gate}', {'permissions': allow_edit})
+            require(request(host, 'GET', f'/api/session/{gate}').get('permissions') == allow_edit,
+                    'Native edit permission needed for filesystem fault injection was not applied')
+            def native_edit():
+                job = secrets.token_hex(8)
+                s.jobs[job] = {'code': None, 'hold': None, 'nativeEdit': True}
+                (root / 'jobs.json').write_text(json.dumps(s.jobs))
+                start = len(events(root))
+                request(host, 'POST', f'/api/session/{gate}/prompt',
+                        {'text': 'LOOM_HARNESS_JOB:' + job})
+                idle(host, [gate])
+                return [e['data'] for e in events(root)[start:]
+                        if e['type'] == 'tool-after' and e['data'].get('sessionID') == gate
+                        and e['data'].get('tool') == 'edit']
+            failed = native_edit()
+            require(len(failed) == 1 and failed[0]['status'] == 'error'
+                    and gate_file.read_text() == 'mode=prototype\n',
+                    'Real OpenCode native edit did not fail on OS read-only file')
+            gate_file.chmod(0o600)
+            allowed = native_edit()
+            require(len(allowed) == 1 and allowed[0]['status'] == 'completed'
+                    and gate_file.read_text() == 'mode=safe\n',
+                    'Real OpenCode native edit did not recover on writable file')
+            report['checks'].append({'name': 'E6-native-filesystem-write-denial', 'status': 'PASS',
+                                     'qualification': 'Scripted provider calling real installed OpenCode 2.2.0 direct edit tool against a kernel read-only file then retry; proves OS fault injection only, not real-model QA-B acceptance',
+                                     'session': gate, 'failed_tool_message': failed[0]['messageID'],
+                                     'recovered_tool_message': allowed[0]['messageID']})
+            # Execute the real installed plugin's trace against native host messages,
+            # not a fabricated response or a component-only copy.
+            own_trace = s.invoke(reader, 'trace', {'operation': 'timeline', 'limit': 50})
+            require(own_trace['session_id'] == reader and own_trace['source'] == 'native-context'
+                    and own_trace['coverage']['full_history'] is False
+                    and own_trace['coverage']['delegation_complete'] is False,
+                    'Native timeline returned an unqualified source or wrong Session')
+            require(any(e['kind'] == 'user_prompt' for e in own_trace['events'])
+                    and any(e['kind'] == 'opaque_tool' and e.get('tool') == 'execute'
+                            for e in own_trace['events']),
+                    'Installed OpenCode context did not expose a real user prompt and Code Mode wrapper')
+            # The same project is not permission to read another Session's
+            # native context; this must fail through the real plugin.
+            refused = 'let denied=false;try{await tools.loom.trace({operation:"timeline",session_id:' + json.dumps(asker) + '})}catch(e){denied=true}if(!denied)throw new Error("cross-session native context escaped");return true'
+            denied_events = s.command(reader, refused)
+            require(any(e['type'] == 'tool-after' and e['data']['tool'] in ('loom_trace', 'loom.trace')
+                        and e['data']['status'] == 'error' for e in denied_events),
+                    'Cross-session rejection did not reach native trace authorization')
+            report['checks'].append({'name': 'E6-native-trace-and-scope', 'status': 'PASS',
+                                     'session': reader,
+                                     'source_messages': own_trace['source_messages'],
+                                     'observed_opaque': True,
+                                     'qualification': 'Real native postcompaction context and negative same-project read, not full history'})
+            child = request(host, 'POST', '/api/session', {'parentID': reader, 'agent': 'question-reader',
+                'title': 'deep retro child', 'model': {'providerID': 'question-fixture', 'id': 'reader'},
+                'location': {'directory': str(root / 'project')}})['id']
+            s.command(child, 'return await tools.loom.agents({})')
+            inventory = s.invoke(reader, 'trace', {'operation': 'children', 'session_id': reader, 'limit': 50})
+            require(any(x['id'] == child and x['parent_id'] == reader for x in inventory['sessions']),
+                    'Real native parent-child Session inventory did not include delegated child')
+            # Read the child's *real* sanitized native export. The content must
+            # traverse the actual host export API -> private file -> Loom read ACL -> trace.
+            exported = request(host, 'GET', f'/api/experimental/session/{child}/export?sanitize=true')
+            require(exported.get('info', {}).get('id') == child and isinstance(exported.get('messages'), list),
+                    'Native sanitized Session export is unavailable or malformed')
+            (root / 'project' / 'child-trace.json').write_text(json.dumps({'data': exported}))
+            projected = s.invoke(reader, 'trace', {'operation': 'timeline', 'session_id': child,
+                'export_path': 'child-trace.json', 'limit': 50})
+            require(projected['source'] == 'provided-export' and projected['coverage']['full_history'] is None
+                    and any(e['kind'] == 'user_prompt' for e in projected['events'])
+                    and any(e['kind'] == 'opaque_tool' and e.get('tool') == 'execute'
+                            for e in projected['events']),
+                    'Loom did not project the installed child history through an authorized export')
+            report['checks'].append({'name': 'E6-exported-child-history', 'status': 'PASS',
+                                     'parent': reader, 'child': child,
+                                     'source_messages': projected['source_messages'],
+                                     'qualification': 'Actual OpenCode child export shape; no cryptographic completeness proof'})
+            # A real native user message must be identified by its original ID
+            # BEFORE tracing. An unrelated redaction marker cannot pass this oracle.
+            marker = 'RETRO_TRACE_SENTINEL_SOURCE_20261029'
+            sentinel = 'sk-proj-NOTAREALKEYLOCALRETRO123456789'
+            aws_secret = 'SYNTHETIC_AWS_SECRET_VALUE_20261029'
+            db_secret = 'SYNTHETIC_DB_PASSWORD_VALUE_20261029'
+            uri_secret = 'SYNTHETIC_POSTGRES_PASSWORD_VALUE_20261029'
+            credential_text = (
+                f'{marker}: {sentinel} AWS_SECRET_ACCESS_KEY={aws_secret} '
+                f'DB_PASSWORD={db_secret} postgres://audit:{uri_secret}@db.invalid/retro'
+            )
+            request(host, 'POST', f'/api/session/{reader}/prompt', {'text': credential_text})
+            idle(host, [reader])
+            raw_messages = request(host, 'GET', f'/api/session/{reader}/message?order=desc&limit=200')
+            require(isinstance(raw_messages, list), 'Native source message listing is not an array')
+            sources = [row for row in raw_messages if row.get('type') == 'user'
+                       and marker in row.get('text', '')]
+            require(len(sources) == 1 and isinstance(sources[0].get('id'), str),
+                    'Source credential fixture was not uniquely found in native Session history')
+            source_id = sources[0]['id']
+            redaction_start = len(events(root))
+            all_pages = []
+            token_event = None
+            cursor = None
+            for _ in range(20):
+                query = {'operation': 'timeline', 'limit': 50, 'include_text': True}
+                if cursor is not None:
+                    query['cursor'] = cursor
+                page = s.invoke(reader, 'trace', query)
+                all_pages.append(page)
+                for secret in (sentinel, aws_secret, db_secret, uri_secret):
+                    require(secret not in json.dumps(page),
+                            'Native Session trace response leaked credential fixture bytes')
+                matching = [entry for entry in page['events'] if entry['source_message_id'] == source_id]
+                if matching:
+                    require(len(matching) == 1 and matching[0]['kind'] == 'user_prompt',
+                            'Found wrong source event for native credential message')
+                    token_event = matching[0]
+                    break
+                cursor = page.get('next_cursor')
+                if not cursor:
+                    break
+            require(token_event is not None, 'The credential fixture source message was not visited')
+            excerpt = token_event.get('text_excerpt', '')
+            require(marker in excerpt and excerpt.count('[REDACTED]') >= 4,
+                    'The exact source message was not included with all four credentials masked')
+            completed = [event for event in events(root)[redaction_start:]
+                         if event['type'] == 'tool-after' and
+                         event['data']['tool'] in ('loom_trace', 'loom.trace')]
+            require(len(completed) == len(all_pages),
+                    'Native trace result evidence missing for one or more inspected pages')
+            stored_matches = []
+            for completed_event in completed:
+                actual = result_value(completed_event)
+                for secret in (sentinel, aws_secret, db_secret, uri_secret):
+                    require(secret not in json.dumps(actual),
+                            'Native trace tool output persisted sensitive fixture bytes')
+                stored_matches.extend(entry for entry in actual['events']
+                                      if entry['source_message_id'] == source_id)
+            require(len(stored_matches) == 1 and stored_matches[0].get('text_excerpt') == excerpt,
+                    'Persisted native tool result did not contain the exact masked source event')
+            report['checks'].append({'name': 'E6-native-text-redaction', 'status': 'PASS',
+                                     'source_message': source_id,
+                                     'source_events_matched': len(stored_matches),
+                                     'patterns_checked': 4,
+                                     'qualification': 'Real native user message and trace tool result, including common env credentials and connection URI. Synthetic values only; unknown secret formats remain unproven'})
             start_index = len(events(root))
             q = s.invoke(asker, 'record', {'operation': 'ask', 'question': '# <tag> Unicode 雪🙂 [not approval]',
                          'to_agent': 'question-respondent', 'blocking': False, 'context_attachments': ['fixture://question']})

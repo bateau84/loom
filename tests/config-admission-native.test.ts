@@ -98,7 +98,7 @@ test("configuration overflow removes stale injection, exposes diagnostics and ke
     expect(end.data.attribution).toContain("capture-gap")
     expect(end.data.start_id).toBeUndefined(); expect(end.action_id).toBeUndefined()
     expect((await f.invoke("context", {})).result.action.id).toBe(action.id)
-    expect(f.tools.size).toBe(5)
+    expect(f.tools.size).toBe(6)
     await f.hooks.get("context")(model); expect(model.system.length).toBe(3)
   } finally { hold?.release(); await hold?.promise; await Promise.all(waiting); await f.close() }
 })
@@ -135,6 +135,6 @@ test("disposal cancels old queued hooks without resetting admission for a replac
     await until(() => configLoadStatus().waiting === 1)
     expect(configLoadStatus().active).toBe(1)
     hold.release(); await hold.promise; await newer
-    expect(event.system.length).toBe(2); expect(f.tools.size).toBe(5)
+    expect(event.system.length).toBe(2); expect(f.tools.size).toBe(6)
   } finally { hold?.release(); await hold?.promise; await f.close() }
 })

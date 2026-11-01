@@ -118,7 +118,7 @@ test("unreadable selection does not block discovery, Action listing, Plan or Ses
     expect((await f.invoke("record", { operation: "query", action_id: f.action.id, record_id: f.finding.id })).result.items[0].id).toBe(f.finding.id)
     expect(f.selection()).toBe("{broken selection")
     expect(f.history()).toEqual(before)
-    expect(f.tools.size).toBe(7)
+    expect(f.tools.size).toBe(8)
   } finally { await f.close() }
 })
 
@@ -194,7 +194,7 @@ test("context read survives selection-save failure and automatic context follows
     expect((await f.invoke("context", {})).result.task.id).toBe("task")
     expect((await f.context("s", "author")).task.id).toBe("task")
     expect(f.history()).toEqual(before)
-    expect(f.tools.size).toBe(7)
+    expect(f.tools.size).toBe(8)
   } finally { select.mockRestore(); await f.close() }
 })
 
@@ -455,7 +455,7 @@ test("oversized config diagnostics preserve successful navigation, missing-task 
     f.db.exec("CREATE TRIGGER refuse_selection BEFORE INSERT ON focus BEGIN SELECT RAISE(ABORT,'injected clear refusal'); END")
     await expect(f.invoke("context", { clear: true })).rejects.toThrow("injected clear refusal")
     expect(f.history()).toEqual(before)
-    expect(f.tools.size).toBe(7)
+    expect(f.tools.size).toBe(8)
     expect(f.tools.get("context").description).toContain("config_errors_excerpted marks configuration diagnostic prefixes")
   } finally { read.mockRestore(); select.mockRestore(); await f.close() }
 })
