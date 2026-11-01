@@ -48,10 +48,10 @@ function nativeDenial(error: unknown): { reason: string; diagnostic: string } | 
   const message = error instanceof Error ? error.message : typeof error === "string" ? error : ""
   // Both checks occur before native child creation in OpenCode 2.2.0's
   // subagent tool. Never infer non-execution from an arbitrary runtime error.
-  const depth = /Subagent depth limit reached \\((\\d+)\\)/.exec(message)
+  const depth = /Subagent depth limit reached \((\d+)\)/.exec(message)
   if (depth) return { reason: "native-subagent-depth-denied",
     diagnostic: `Subagent depth limit reached (${depth[1]})` }
-  if (/Subagent denied: [\\w.:-]+/.test(message) || /Permission denied: subagent/.test(message))
+  if (/Subagent denied: [\w.:-]+/.test(message) || /Permission denied: subagent/.test(message))
     return { reason: "native-subagent-permission-denied", diagnostic: "Native subagent permission denied" }
   return undefined
 }
