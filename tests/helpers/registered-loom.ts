@@ -93,7 +93,6 @@ export async function registeredLoom(initialSkills: any[] = []) {
       },
       prompt: async (r:any) => { sessionPrompts.push(r); return { id: "msg_questionprompt_" + sessionPrompts.length,
         sessionID: r.sessionID, type: "user", delivery: r.delivery } },
-      context: async () => [],
       context: async ({ sessionID }: { sessionID: string }) => nativeContexts.get(sessionID) ?? { data: [] },
       get: async ({ sessionID }: { sessionID: string }) => {
         sessionReads.push(sessionID)
