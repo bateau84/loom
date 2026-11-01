@@ -194,7 +194,9 @@ test("typed OQ delegates to one eligible agent and only that native agent can an
     expect(threadBefore.answers).toHaveLength(0)
     const a = (await f.invoke("record", { operation: "answer", question_id: q.id, answer: "Verified via code" }, "ses_questionchild_1", "investigator")).result
     expect(a.data.format).toBe("loom-answer/v2")
-    expect(a.resume).toMatchObject({ attempted: true, asking_session_id: "asker" })
+    expect(a.resume).toBeUndefined()
+    expect(a.continuation).toMatchObject({ owner: "native-subagent-completion", question_id: q.id })
+    expect(f.nativeInputs).toHaveLength(0)
     const threadAfter = (await f.invoke("record", { operation: "query", view: "thread", question_id: q.id })).result
     expect(threadAfter.answers).toHaveLength(1)
   } finally { await f.close() }
@@ -417,11 +419,39 @@ test("native subagent depth zero prevents even an empty OQ child Session", async
     f.nativeSubagent.depth = 0
     const q = (await f.invoke("record", { operation: "ask", question: "Depth policy?",
       recipient: { kind: "agent", id: "investigator" }, blocking: true }, "asker", "author")).result
-    expect(q.dispatch.status).not.toBe("admission-observed")
+    expect(q.dispatch).toMatchObject({ status: "not-attempted", attempted: false,
+      reason: "native-subagent-depth-denied", diagnostic: "Subagent depth limit reached (0)" })
     expect(f.sessionCreates).toHaveLength(0)
     expect(f.sessionPrompts).toHaveLength(0)
     await expect(f.invoke("record", { operation: "answer", question_id: q.id,
       answer: "No delegate was created" }, "unrelated", "investigator"))
       .rejects.toThrow("verified receiving Session")
+  } finally { await f.close() }
+})
+
+test("direct native OQ answer relies on background completion; forwarded blocking OQ still resumes its asker", async () => {
+  const f = await registeredLoom()
+  try {
+    const direct = (await f.invoke("record", { operation: "ask", question: "Which interface?",
+      recipient: { kind: "agent", id: "investigator" }, blocking: true }, "root", "author")).result
+    const first = (await f.invoke("record", { operation: "answer", question_id: direct.id, answer: "Review source" },
+      "ses_questionchild_1", "investigator")).result
+    expect(first.resume).toBeUndefined()
+    expect(first.continuation).toMatchObject({ owner: "native-subagent-completion", question_id: direct.id })
+    expect(f.nativeInputs).toHaveLength(0)
+    const later = (await f.invoke("record", { operation: "answer", question_id: direct.id, answer: "More context" },
+      "ses_questionchild_1", "investigator")).result
+    expect(later.continuation).toBeUndefined()
+    expect(f.nativeInputs).toHaveLength(0)
+
+    f.sessions.set("asking-child", { id: "asking-child", parentID: "root", agent: "author",
+      projectID: "tool-help", location: { directory: f.directory } })
+    f.sessions.set("root", { id: "root", agent: "author", projectID: "tool-help", location: { directory: f.directory } })
+    const forwarded = (await f.invoke("record", { operation: "ask", question: "What is scope?",
+      recipient: { kind: "dispatcher" }, blocking: true }, "asking-child", "author")).result
+    const answered = (await f.invoke("record", { operation: "answer", question_id: forwarded.id, answer: "Exact scope" },
+      "root", "author")).result
+    expect(answered.resume).toMatchObject({ attempted: true, asking_session_id: "asking-child" })
+    expect(f.nativeInputs.some((v: any) => v.metadata?.format === "loom-answer-notice/v1")).toBe(true)
   } finally { await f.close() }
 })
