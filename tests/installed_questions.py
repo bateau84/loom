@@ -679,6 +679,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             # Fully installed typed-OQ path: real native child, model request,
             # Loom callback, durable answer and exact-typed_asker synthetic admission.
             typed_start = len(events(root))
+            asker_requests_before = len(target_requests(root, typed_asker))
             typed_q = s.invoke(typed_asker, 'record', {'operation': 'ask',
                            'question': 'Which boundary needs research?',
                            'recipient': {'kind': 'role', 'id': 'research'}, 'blocking': True})
@@ -712,8 +713,26 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             typed_notices = [e['data'] for e in events(root)[typed_start:] if e['type'] == 'native-event'
                              and e['data']['type'] == 'session.inbox.enqueued'
                              and e['data']['data']['item']['type'] == 'synthetic'
-                             and e['data']['data']['item']['payload'].get('metadata', {}).get('question_id') == typed_q['id']]
-            verify_single_admission(typed_notices, typed_asker, typed_answers[0]['id'])
+                             and e['data']['data']['sessionID'] == typed_asker]
+            # All native notices matter, not only Loom's answer-formatted notices.
+            # The subagent completion must be the sole wake from this OQ.
+            completion_notices = [n for n in typed_notices
+                                  if n['data']['item']['payload'].get('metadata', {}).get('source') == 'subagent'
+                                  and n['data']['item']['payload']['metadata'].get('childID') == child_id]
+            loom_notices = [n for n in typed_notices
+                            if n['data']['item']['payload'].get('metadata', {}).get('format') == 'loom-answer-notice/v1'
+                            and n['data']['item']['payload']['metadata'].get('question_id') == typed_q['id']]
+            require(len(typed_notices) == 1 and len(completion_notices) == 1 and not loom_notices,
+                    'Duplicate native/Loom notices woke the same asking Session: ' + str(
+                        [(n['data']['item']['payload'].get('metadata')) for n in typed_notices]))
+            require(typed_q['id'] in completion_notices[0]['data']['item']['payload'].get('description', ''),
+                    'Native completion notice did not identify the durable OQ for retrieval')
+            asker_request_delta = target_requests(root, typed_asker)[asker_requests_before:]
+            require(len(asker_request_delta) == 2,
+                    'Expected one asking-model turn for ask and one native-completion continuation, got '
+                    + str(len(asker_request_delta)))
+            require(typed_answers[0]['data']['format'] == 'loom-answer/v2',
+                    'Native completion did not accompany a durable authorized answer')
             unrelated = request(host, 'POST', '/api/session', {'agent': 'question-specialist',
                          'title': 'unrelated specialist', 'model': {'providerID': 'question-fixture', 'id': 'respondent'},
                          'location': {'directory': str(project)}})['id']
@@ -725,6 +744,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             report['checks'].append({'name': 'E6-typed-role-native-dispatch', 'status': 'PASS',
                                      'question': typed_q['id'], 'child_session': child_id,
                                      'answer': typed_answers[0]['id'], 'native_admissions': len(typed_notices),
+                                     'asker_model_requests': len(asker_request_delta),
                                      'qualification': 'Installed OpenCode 2.2.0 scripted-model run; no production provider'})
 
             # Delegated work can ask its actual dispatcher or request a user
