@@ -16,6 +16,19 @@ negative tests and safe live-verification prerequisites. No provider is
 qualified; production managed routing remains disabled. Linked the audit
 from the [routing contract](model-routing.md) and [documentation index](index.md).
 
+
+**Independent review remediation for #205:** Matched modeled HTTP hooks to native `request: Request` and `response: Response` fields, first retry ordinal 2, and explicit HTTP-200-then-stream-failure/success cases. Tightened the upstream proposal to a unique native send attempt and provider-verified effective billing principal; logical request grouping is optional, not an unexplained safety prerequisite. Added auth refresh, account-equivalence, WebSocket reuse, step events and background-compaction limitations. No production routing was enabled.
+
+**Issue #205 — native request/account identity audit:** Compared the exact
+OpenCode 2.2.0 SDK/CLI pairing and source-only 2.2.4 follow-up.
+The native model hook exposes request kind, but retry and completion lack
+stable request/attempt and transport-bound credential identity. Added
+[source audit and proposed minimum host guarantees](native-request-identity.md)
+plus deterministic source-modeled ambiguity witnesses. This investigation
+**does not enable managed routing**, claim live acceptance or implement an
+upstream API.
+
+
 **Rebased PR #190 integration with merged PR #202:** The optional
 `loom_trace` tool added by PR #202 changes the registered fixture
 tool count from five to six. Updated the routing-configuration regression
