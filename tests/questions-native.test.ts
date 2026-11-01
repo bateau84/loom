@@ -183,11 +183,11 @@ test("typed OQ delegates to one eligible agent and only that native agent can an
   try {
     const q = (await f.invoke("record", { operation: "ask", question: "Which API boundary?", recipient: { kind: "agent", id: "investigator" }, blocking: true }, "asker", "author")).result
     expect(q.data).toMatchObject({ format: "loom-question/v2", recipient: { kind: "agent", id: "investigator" }, expected_agent: "investigator" })
-    expect(q.dispatch).toMatchObject({ status: "admission-observed", reason: "native-subagent-admitted", target_agent: "investigator", attempted: true })
+    expect(q.dispatch).toMatchObject({ status: "admission-observed", reason: "native-subagent-admitted", target_agent: "investigator", native_status: "completed", attempted: true })
     expect(f.permissionRequests[0]).toMatchObject({ action: "subagent", resources: ["investigator"], sessionID: "asker", agent: "author" })
     expect(f.sessionCreates).toHaveLength(1)
     expect(f.sessionCreates[0]).toMatchObject({ agent: "investigator", parentID: "asker" })
-    expect(f.sessionPrompts[0]).toMatchObject({ sessionID: "ses_questionchild_1", resume: false, delivery: "steer" })
+    expect(f.sessionPrompts[0]).toMatchObject({ sessionID: "ses_questionchild_1", resume: true, delivery: "steer" })
     expect(f.sessionPrompts[0].text).toContain(q.id)
     await expect(f.invoke("record", { operation: "answer", question_id: q.id, answer: "Unqualified guess" }, "someone-else", "author")).rejects.toThrow("intended respondent")
     const threadBefore = (await f.invoke("record", { operation: "query", view: "thread", question_id: q.id })).result
@@ -195,7 +195,7 @@ test("typed OQ delegates to one eligible agent and only that native agent can an
     const a = (await f.invoke("record", { operation: "answer", question_id: q.id, answer: "Verified via code" }, "ses_questionchild_1", "investigator")).result
     expect(a.data.format).toBe("loom-answer/v2")
     expect(a.resume).toBeUndefined()
-    expect(a.continuation).toMatchObject({ owner: "native-subagent-completion", question_id: q.id })
+    expect(a.continuation).toMatchObject({ owner: "native-subagent-execution", question_id: q.id })
     expect(f.nativeInputs).toHaveLength(0)
     const threadAfter = (await f.invoke("record", { operation: "query", view: "thread", question_id: q.id })).result
     expect(threadAfter.answers).toHaveLength(1)
@@ -306,12 +306,14 @@ test("native OQ delegation uses specialist model before the asking Session model
     const first = (await f.invoke("record", { operation: "ask", question: "First?",
       recipient: { kind: "agent", id: "investigator" }, blocking: false }, "asker", "author")).result
     expect(first.dispatch.status).toBe("admission-observed")
+    expect(first.dispatch.native_status).toBe("running")
     expect(f.sessionCreates[0].model).toEqual(parentModel)
     const specialistModel = { providerID: "specialist-fixture", id: "preferred-model" }
     f.nativeAgents[0].model = specialistModel
     const second = (await f.invoke("record", { operation: "ask", question: "Second?",
       recipient: { kind: "agent", id: "investigator" }, blocking: false }, "asker", "author")).result
     expect(second.dispatch.status).toBe("admission-observed")
+    expect(second.dispatch.native_status).toBe("running")
     expect(f.sessionCreates[1].model).toEqual(specialistModel)
   } finally { await f.close() }
 })
@@ -437,7 +439,7 @@ test("direct native OQ answer relies on background completion; forwarded blockin
     const first = (await f.invoke("record", { operation: "answer", question_id: direct.id, answer: "Review source" },
       "ses_questionchild_1", "investigator")).result
     expect(first.resume).toBeUndefined()
-    expect(first.continuation).toMatchObject({ owner: "native-subagent-completion", question_id: direct.id })
+    expect(first.continuation).toMatchObject({ owner: "native-subagent-execution", question_id: direct.id })
     expect(f.nativeInputs).toHaveLength(0)
     const later = (await f.invoke("record", { operation: "answer", question_id: direct.id, answer: "More context" },
       "ses_questionchild_1", "investigator")).result
