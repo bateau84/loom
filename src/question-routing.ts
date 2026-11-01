@@ -38,12 +38,13 @@ export function questionRoute(recipient: QuestionRecipient, config: Config, rost
 type Native = {
   // Delegation runs OpenCode's native subagent tool, which owns its depth and permission policy.
   // Its prompt hook must bind the verified child to this OQ before input admission.
-  delegate: (agent: string, parentID: string, questionID: string, prompt: string) => Promise<{ sessionID: string }>
+  delegate: (agent: string, parentID: string, questionID: string, prompt: string, background: boolean) =>
+    Promise<{ sessionID: string; status: "running" | "completed" }>
   synthetic: (sessionID: string, text: string, metadata: Record<string, string>) => Promise<unknown>
 }
 type Dispatch = { status: "admission-observed" | "not-attempted" | "outcome-unknown";
   reason: string; target_session_id?: string; target_agent?: string; attempted: boolean;
-  diagnostic?: string }
+  native_status?: "running" | "completed"; diagnostic?: string }
 function nativeDenial(error: unknown): { reason: string; diagnostic: string } | undefined {
   const message = error instanceof Error ? error.message : typeof error === "string" ? error : ""
   // Both checks occur before native child creation in OpenCode 2.2.0's
@@ -66,10 +67,12 @@ export async function sendQuestion(store: Store, question: LedgerRecord, route: 
     if (route.mode === "delegate" && route.agent) {
       outcome = { status: "outcome-unknown", reason: "native-subagent-delegation", target_agent: route.agent, attempted: true }
       const admitted = await api.delegate(route.agent, question.session_id, question.id,
-        `You are being asked a Loom Open Question (ID: ${question.id}). Read it with loom_record query view=thread and question_id, investigate within your responsibility, then submit the answer using loom_record operation=answer with this exact question_id. A chat response alone does not save an answer. Do not claim authority outside your role. Do not create another Action just to answer. After storing your answer, finish with a short message naming OQ ${question.id} and telling your parent to retrieve its authoritative thread. OpenCode's background subagent completion will wake the parent; Loom will not send another answer notice.`)
-      if (typeof admitted.sessionID !== "string" || !admitted.sessionID)
-        throw new Error("Native subagent did not return a verified Session")
-      outcome = { ...outcome, target_session_id: admitted.sessionID,
+        `You are being asked a Loom Open Question (ID: ${question.id}). Read it with loom_record query view=thread and question_id, investigate within your responsibility, then submit the answer using loom_record operation=answer with this exact question_id. A chat response alone does not save an answer. Do not claim authority outside your role. Do not create another Action just to answer. After saving the answer, finish with a short message naming OQ ${question.id} and instructing your parent to retrieve its authoritative thread. OpenCode's native subagent result handles continuation; Loom will not send a duplicate answer notice.`,
+        question.data.blocking !== true)
+      if (typeof admitted.sessionID !== "string" || !admitted.sessionID ||
+          (admitted.status !== "running" && admitted.status !== "completed"))
+        throw new Error("Native subagent did not return a verified Session/status")
+      outcome = { ...outcome, target_session_id: admitted.sessionID, native_status: admitted.status,
         status: "admission-observed", reason: "native-subagent-admitted" }
     } else if (route.mode === "notify" && route.session) {
       outcome = { status: "outcome-unknown", reason: "native-parent-notice", target_session_id: route.session,
