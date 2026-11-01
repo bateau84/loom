@@ -17,9 +17,12 @@ Primary Sessions use native user interaction for user-targeted questions.
 Legacy `to_agent` questions remain manual. A delivered notice is not an answer.
 Blocking is intent, not an enforced wait or execution gate.
 
-The first committed answer to a blocking legacy v1 or typed v2 question
-qualifies for best-effort exact-asking-Session resume. Later/nonblocking
-answers never submit asker input. Failure or crash may permanently lose
+Direct blocking typed OQs use native foreground subagents; one returned
+result continues the asker without another Loom answer notice.
+Direct nonblocking OQs rely on native background completion. For legacy v1
+or forwarded typed v2 blocking OQs, only the first answer may trigger
+best-effort exact-asker Loom resume. Later/nonblocking answers submit
+no additional Loom notice. Failure or crash may permanently lose
 liveness; no retries, transfer, replay or eventual consumption promise exists.
 Target checks are not leases; admission is not processing or completion.
 

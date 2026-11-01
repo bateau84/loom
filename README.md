@@ -221,6 +221,9 @@ Action association is optional and unchanged by answering.
 
 On OpenCode 2.2.0, a typed agent/role OQ from a top-level Session attempts
 native subagent delegation, including the host's depth and permission checks.
+Blocking direct OQs use foreground native execution and return a single
+tool result; nonblocking direct OQs use native background completion.
+Neither sends a duplicate Loom answer notice.
 Questions raised inside child Sessions reach the dispatching Session, which
 can delegate to a suitable role or ask the user. A primary agent must ask
 the user via native interaction; Loom cannot independently verify that a
@@ -232,9 +235,10 @@ asker's. Legacy `to_agent` questions
 stay fail-closed and manual. Dispatch admission is not execution, answer,
 or approval; no automatic retry is promised. Blocking is advisory, not a gate.
 
-Only the FIRST committed answer to a blocking legacy v1 or typed v2
-question qualifies for best-effort resumption of the exact asking Session.
-Later/nonblocking answers never submit asker input. No retries, transfers, recovery replay
+Only the FIRST committed blocking legacy v1 or forwarded typed v2 answer
+qualifies for best-effort Loom resumption of the exact asking Session.
+Direct typed OQs use native continuation. Later/nonblocking answers
+do not submit separate Loom resume input. No retries, transfers, recovery replay
 or consumption guarantee: crash after commit may permanently lose resume.
 Missing/moved/inaccessible targets fail visibly, never retarget; current native
 agent/model/permissions remain unchanged. Target checks are not leases; the

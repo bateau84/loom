@@ -110,14 +110,22 @@ subagent-capable target must match. Loom invokes OpenCode 2.2.0's native
 subagent tool, which enforces its effective depth and permission rules and
 selects the specialist or asking Session model. A scoped prompt hook checks
 parent and agent and binds the native child before input admission.
-With `subagent_depth=0`, OpenCode refuses delegation without creating a child. When the asker is a
+With `subagent_depth=0`, OpenCode refuses delegation without creating a child.
+Direct blocking OQs use native foreground subagents: the original tool call
+returns its result, with no separate Loom answer notice or background-completion
+wake. Direct nonblocking OQs remain background and may later send OpenCode's
+completion notice. `dispatch.native_status` describes the native job result
+(`running` or `completed`), not proof the OQ is correctly answered.
+When the asker is a
 child, Loom notifies the parent; the parent must delegate natively, respecting
 OpenCode's depth and permission checks. Dispatcher targets use that parent; user targets also notify the parent,
 or require native user interaction in a primary Session. A failed/missing/ambiguous
 target stays recorded without invented receipt. The dispatch result is
 a separate SYSTEM record. Native policy failures cannot claim successful
-contact. The stored question remains available. A native background subagent
-can also notify its parent on completion, distinct from Loom's answer notice.
+contact. The stored question remains available. A background subagent can
+notify its parent later, but a blocking foreground OQ does not create that wake.
+Native pre-creation depth/permission denials report `not-attempted` with a
+bounded diagnostic; unknown partial results retain `outcome-unknown`.
 
 **Answered means an authorized response was stored (or, for legacy questions,
 any response).** It does not mean resolved, approved, independently verified
@@ -128,12 +136,17 @@ Blocking is collaboration intent, never a forced wait or execution gate.
 
 ## One-shot first-answer resume
 
-In one `BEGIN IMMEDIATE` transaction, answer validates the question, checks for
-ANY committed answer and appends/commits the response. Only the FIRST committed answer to a blocking legacy v1 or typed v2
-question receives in-memory eligibility for one postcommit best-effort
-resume of the exact asking Session. Later and nonblocking answers never
-wake the asker. Legacy question delivery is manual, but its first blocking
-answer retains the existing resumption behavior.
+In one `BEGIN IMMEDIATE` transaction, answer checks for ANY previous answer
+and commits the response. Direct typed OQs never submit an additional Loom
+answer notice. Blocking direct OQs continue through their native foreground
+subagent result; nonblocking direct OQs can receive native background completion.
+A blocking answer may expose `continuation.owner:native-subagent-execution`,
+identifying the native owner, not an extra action.
+
+Only the FIRST committed answer to a blocking legacy v1 or forwarded typed v2
+question may attempt one best-effort Loom resume of the exact asker.
+Later/nonblocking answers do not wake it; legacy delivery stays manual.
+Neither native completion nor Loom admission proves answer consumption.
 Storage failure sends nothing. No retry, eligibility transfer, recovery replay,
 startup/read reconstruction or consumption guarantee exists; a crash after commit
 can permanently lose liveness. Do not repeat an answer to try delivery.

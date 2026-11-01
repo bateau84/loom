@@ -198,7 +198,10 @@ Action/node references are validated, never silently changed.
 On OpenCode 2.2.0, a question directed to a single eligible agent/role from a
 primary Session invokes OpenCode's native subagent tool with built-in
 permission and depth checks; a prompt hook binds the verified child before
-native admission. A question from a child is relayed to its
+native admission. Blocking direct OQs run as native foreground subagents
+and return one tool result, without another Loom answer notice.
+Nonblocking direct OQs use native background completion to wake later.
+A question from a child is relayed to its
 dispatching Session. If it delegates to a specialist, it then calls
 `loom_record` with `operation:"bind-respondent"`, `question_id`, and the
 `respondent_session_id` returned by native delegation. Only that child
@@ -209,9 +212,12 @@ Legacy `to_agent` is still stored with no native contact. For automatic native r
 with `recipient:{"kind":"role","id":"research"}` after discovering an eligible
 role through `loom_agents`.
 
-`dispatch.status:"admission-observed"` means OpenCode confirmed native input,
-not that another agent ran, answered, or obtained user approval. Unknown outcomes
-are not retried automatically. `blocking` is intent, not a forced wait or gate.
+`dispatch.status:"admission-observed"` means native delegation was acknowledged,
+not OQ resolution. `native_status` distinguishes running/completed work;
+it does not verify correctness. Known pre-creation depth/permission denials
+return `not-attempted` with a bounded `diagnostic`. Uncertain effects
+remain `outcome-unknown`; no automatic retry. Blocking selects foreground
+direct delegation, not an approval gate.
 
 ```json
 {"operation":"answer","question_id":"QUESTION_ID","answer":"Empty input is excluded; see the source limits.","context_attachments":["SOURCE_REFERENCE"]}
@@ -228,9 +234,11 @@ work. Both canonical attachment fields are string-reference arrays. `attachments
 is never an alias, alone or alongside the canonical field. Old statement,
 respondent, background and artifact_refs are not ask/answer inputs.
 
-Only the FIRST committed answer to a blocking legacy v1 or typed v2 question
-qualifies for one immediate postcommit best-effort exact-asking-Session
-resume. Later and nonblocking answers never submit asker input. No retries, eligibility
+Only the FIRST committed blocking legacy v1 or forwarded typed v2 answer
+qualifies for one best-effort Loom resume of the original asker. Direct typed
+OQs do not send a Loom answer notice: foreground native execution owns blocking
+continuation, background native completion owns nonblocking wake-up.
+Later/nonblocking answers do not submit Loom resume input. No retries, eligibility
 transfer, recovery replay or startup/read reconstruction exists; crash after
 commit can permanently lose liveness. Missing/moved/inaccessible targets fail
 visibly without retargeting; current native agent/model/permissions stay unchanged.
