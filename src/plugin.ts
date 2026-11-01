@@ -429,7 +429,7 @@ export default Plugin.define({
                     ...(route.expected_parent_session ? { expected_parent_session: route.expected_parent_session } : {}),
                   })
                   const dispatch = await sendQuestion(store, stored, route, {
-                    delegate: async (agent, parentID, questionID, prompt) => {
+                    delegate: async (agent, parentID, questionID, prompt, background) => {
                       const native = (await ctx.tool.list()).find(info => info.name === "subagent")
                       if (!native) throw new Error("OpenCode native subagent tool unavailable; no direct child creation")
                       const token = randomUUID()
@@ -441,13 +441,13 @@ export default Plugin.define({
                         // native permission checks, and model selection semantics.
                         const result = await native.execute({
                           agent, description: `Resolve Loom OQ ${questionID}`,
-                          prompt: `Loom OQ dispatch token: ${token}\n${prompt}`, background: true,
+                          prompt: `Loom OQ dispatch token: ${token}\n${prompt}`, background,
                         }, toolContext)
                         const output = payload(result.output)
                         if (typeof output.sessionID !== "string" || pending.bound !== output.sessionID ||
                             !["running", "completed"].includes(String(output.status)))
                           throw new Error("Native subagent completion did not match the verified pre-admission binding")
-                        return { sessionID: output.sessionID }
+                        return { sessionID: output.sessionID, status: output.status as "running" | "completed" }
                       } finally {
                         awaitingNativePrompt.delete(token)
                       }
