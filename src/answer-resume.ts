@@ -11,7 +11,8 @@ const qualification = "Admission is not processing or completion. Location check
 export async function resumeAnswer(store: Store, committed: AnswerCommit,
   local: (session: string) => Promise<boolean>, synthetic: (notice: Notice) => Promise<unknown>, signal: AbortSignal) {
   const eligible = committed.resume
-  if (!eligible) return committed.record
+  if (!eligible) return committed.continuation
+    ? { ...committed.record, continuation: committed.continuation } : committed.record
   let attempted = false
   const deadline = new AbortController()
   const stop = AbortSignal.any([signal, deadline.signal])
