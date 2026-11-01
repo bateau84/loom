@@ -273,7 +273,9 @@ export class Collaboration {
     // atomic() has returned only after COMMIT succeeded. No callback or native I/O
     // runs inside the transaction. Later answers never inherit a lost handoff.
     const { record, question, first } = committed
-    if (!first || question.data.blocking !== true) return { record }
+    if (!first || question.data.blocking !== true ||
+        (question.data.format !== "loom-question/v1" && question.data.format !== "loom-question/v2"))
+      return { record }
     // Direct typed OQs use native subagent execution. Blocking ones are
     // foreground, so the parent gets the result within its original tool
     // call; native-background fallback also owns its own completion.
