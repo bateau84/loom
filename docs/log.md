@@ -6,6 +6,17 @@ type: Log
 
 ## 2026-11-01
 
+
+**Issue #205 — native request/account identity audit:** Compared the exact
+OpenCode 2.2.0 SDK/CLI pairing and source-only 2.2.4 follow-up.
+The native model hook exposes request kind, but retry and completion lack
+stable request/attempt and transport-bound credential identity. Added
+[source audit and proposed minimum host guarantees](native-request-identity.md)
+plus deterministic source-modeled ambiguity witnesses. This investigation
+**does not enable managed routing**, claim live acceptance or implement an
+upstream API.
+
+
 **Rebased PR #190 integration with merged PR #202:** The optional
 `loom_trace` tool added by PR #202 changes the registered fixture
 tool count from five to six. Updated the routing-configuration regression
