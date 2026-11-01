@@ -22,7 +22,10 @@ export function questionRecipient(raw: unknown): QuestionRecipient {
   return { kind: value.kind }
 }
 /** Ephemeral post-COMMIT handoff only. Never stored, exposed by reads, or reconstructed. */
-export type AnswerCommit = { record: LedgerRecord; resume?: { question_id: string; answer_id: string; asking_session_id: string } }
+export type AnswerCommit = { record: LedgerRecord;
+  resume?: { question_id: string; answer_id: string; asking_session_id: string }
+  continuation?: { owner: "native-subagent-completion"; question_id: string; reason: "direct-native-background-subagent" }
+}
 export const QUESTION_DISPATCH = { status: "not-attempted", reason: "policy-capability-unavailable" } as const
 function fields(input: Record<string, unknown>, allowed: string[]) {
   for (const field of Object.keys(input)) if (!allowed.includes(field)) throw new Error(`${field} is not supported`)
@@ -270,8 +273,16 @@ export class Collaboration {
     // atomic() has returned only after COMMIT succeeded. No callback or native I/O
     // runs inside the transaction. Later answers never inherit a lost handoff.
     const { record, question, first } = committed
-    return { record, ...(first && (question.data.format === "loom-question/v1" || question.data.format === "loom-question/v2") && question.data.blocking === true
-      ? { resume: { question_id: question.id, answer_id: record.id, asking_session_id: question.session_id } } : {}) }
+    if (!first || question.data.blocking !== true) return { record }
+    // Direct typed OQs are native *background* subagents. Their completion
+    // already wakes the original parent. Another Loom notice would cause a
+    // second independent model turn for the same answered question.
+    if (question.data.format === "loom-question/v2" && typeof question.data.expected_agent === "string" &&
+        question.data.expected_parent_session === undefined && question.data.expected_session === undefined)
+      return { record, continuation: { owner: "native-subagent-completion", question_id: question.id,
+        reason: "direct-native-background-subagent" } }
+    return { record, resume: { question_id: question.id, answer_id: record.id,
+      asking_session_id: question.session_id } }
   }
   private latest(action: string, node: string, allowance: ReadAllowance = { bytes: 0 }) {
     const rows = this.candidates(`SELECT seq,octet_length(data) AS data_bytes FROM ledger
