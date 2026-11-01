@@ -49,10 +49,11 @@ def request(id_: str, account: str, kind: str = "primary") -> dict:
 
 
 def quota_retry(origin: str) -> dict:
+    """Model tagged 2.2.0's default nonretryable quota-failure callback."""
     return event("retry", sessionID="ses-1", agent="general", model=MODEL,
-                 error={"type": "provider.quota", "status": 429},
+                 error={"type": "provider.quota", "message": "Included quota exceeded", "status": 429},
                  attempt=FIRST_RETRY_ORDINAL,
-                 decision={"retry": True, "delay": 0}, _requestID=origin)
+                 decision={"retry": False}, _requestID=origin)
 
 
 def observable(trace: list[dict]) -> list[dict]:
@@ -78,6 +79,8 @@ class NativeIdentityWitnesses(unittest.TestCase):
         self.assertEqual(owner_account(from_aux), "B")
         self.assertEqual(owner_account(from_primary), "A")
         self.assertEqual(from_aux[-1]["attempt"], 2)
+        self.assertEqual(from_aux[-1]["decision"], {"retry": False})
+        self.assertTrue(from_aux[-1]["error"]["message"])
         latest_primary = next(e["_accountID"] for e in reversed(prefix) if e["kind"] == "primary")
         self.assertNotEqual(latest_primary, owner_account(from_aux))
 
@@ -156,7 +159,7 @@ class NativeIdentityWitnesses(unittest.TestCase):
         ]
         failed = headers + [
             event("session.step.failed", sessionID="ses-1", assistantMessageID="msg-1",
-                  error={"type": "provider.error", "status": 502}),
+                  error={"type": "provider.error", "message": "Provider stream failed", "status": 502}),
         ]
         visible_headers = observable(headers)
         self.assertEqual(visible_headers, observable(finished)[:len(headers)])
@@ -165,6 +168,7 @@ class NativeIdentityWitnesses(unittest.TestCase):
         self.assertEqual(visible_headers[2]["response"].status, 200)
         self.assertEqual(finished[-1]["type"], "session.step.ended")
         self.assertEqual(failed[-1]["type"], "session.step.failed")
+        self.assertTrue(failed[-1]["error"]["message"])
         # Neither response status nor Session step event carries a native
         # request/attempt ID or independently confirmed effective billing account.
         self.assertNotIn("attemptID", visible_headers[2])
