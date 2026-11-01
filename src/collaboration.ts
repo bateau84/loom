@@ -24,7 +24,7 @@ export function questionRecipient(raw: unknown): QuestionRecipient {
 /** Ephemeral post-COMMIT handoff only. Never stored, exposed by reads, or reconstructed. */
 export type AnswerCommit = { record: LedgerRecord;
   resume?: { question_id: string; answer_id: string; asking_session_id: string }
-  continuation?: { owner: "native-subagent-completion"; question_id: string; reason: "direct-native-background-subagent" }
+  continuation?: { owner: "native-subagent-execution"; question_id: string; reason: "direct-native-subagent" }
 }
 export const QUESTION_DISPATCH = { status: "not-attempted", reason: "policy-capability-unavailable" } as const
 function fields(input: Record<string, unknown>, allowed: string[]) {
@@ -274,13 +274,14 @@ export class Collaboration {
     // runs inside the transaction. Later answers never inherit a lost handoff.
     const { record, question, first } = committed
     if (!first || question.data.blocking !== true) return { record }
-    // Direct typed OQs are native *background* subagents. Their completion
-    // already wakes the original parent. Another Loom notice would cause a
-    // second independent model turn for the same answered question.
+    // Direct typed OQs use native subagent execution. Blocking ones are
+    // foreground, so the parent gets the result within its original tool
+    // call; native-background fallback also owns its own completion.
+    // A second Loom synthetic input would duplicate the parent's turn.
     if (question.data.format === "loom-question/v2" && typeof question.data.expected_agent === "string" &&
         question.data.expected_parent_session === undefined && question.data.expected_session === undefined)
-      return { record, continuation: { owner: "native-subagent-completion", question_id: question.id,
-        reason: "direct-native-background-subagent" } }
+      return { record, continuation: { owner: "native-subagent-execution", question_id: question.id,
+        reason: "direct-native-subagent" } }
     return { record, resume: { question_id: question.id, answer_id: record.id,
       asking_session_id: question.session_id } }
   }
