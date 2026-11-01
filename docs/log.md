@@ -6,6 +6,9 @@ type: Log
 
 ## 2026-11-01
 
+**Issue #206 initial-routing qualification and startup safety:** Audited tagged OpenCode 2.2.5 source against the still-pinned 2.2.0 installed host and recorded the unsatisfied native effective-account / attempt identity / provider no-paid contracts in [initial routing qualification](initial-routing-qualification-206.md). The public server entrypoint now starts core before optional skill/review registration, retaining the core guard when those optional features fail; a new native-mock startup test covers this boundary. No provider is qualified, no routing is enabled, and #206 remains open.
+
+
 **Independent review remediation for #204:** Expanded Copilot Individual/Business/Enterprise/access coverage and Go Teams member/service-account handling; separated generic Codex terms from legacy OpenCode billing claims. Tightened the proposed included-only proof to a host-bound native attempt, exact auth method, credential revision and effective billing account. Removed unverified metered authorization from the included-only decision. No provider gained qualification or production routing.
 
 **Investigation #204 — account-bound included billing:** Added the
