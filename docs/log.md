@@ -7,6 +7,8 @@ type: Log
 ## 2026-11-01
 
 
+**Independent review remediation for #205:** Matched modeled HTTP hooks to native `request: Request` and `response: Response` fields, first retry ordinal 2, and explicit HTTP-200-then-stream-failure/success cases. Tightened the upstream proposal to a unique native send attempt and provider-verified effective billing principal; logical request grouping is optional, not an unexplained safety prerequisite. Added auth refresh, account-equivalence, WebSocket reuse, step events and background-compaction limitations. No production routing was enabled.
+
 **Issue #205 — native request/account identity audit:** Compared the exact
 OpenCode 2.2.0 SDK/CLI pairing and source-only 2.2.4 follow-up.
 The native model hook exposes request kind, but retry and completion lack
