@@ -39,10 +39,13 @@ export default Plugin.define({
     }
 
     return async () => {
-      try { await companions?.() }
+      // Core cancellation must happen first, as before the entrypoint
+      // reorder: pending native handoffs must lose eligibility immediately.
+      // Optional cleanup is always attempted without masking core cleanup.
+      try { await cleanup?.() }
       finally {
-        try { await registration?.dispose() }
-        finally { await cleanup?.() }
+        try { await companions?.() }
+        finally { await registration?.dispose() }
       }
     }
   },
