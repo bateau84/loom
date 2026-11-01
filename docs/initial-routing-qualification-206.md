@@ -150,4 +150,4 @@ guard tests.
 - [Billing proof / provider matrix](subscription-billing-qualification.md)
 - [Native identity / per-attempt requirements](native-request-identity.md)
 - [Initial route implementation and guard](model-routing.md)
-- [Installed host acceptance contract](../tests/routing-host/ACCEPTANCE.md)
+- Installed host acceptance contract: `tests/routing-host/ACCEPTANCE.md`
