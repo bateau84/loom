@@ -34,6 +34,9 @@ paid Extra Usage is disabled. See the
 [Go billing eligibility investigation](opencode-go-eligibility.md).
 Without a supported, account-bound, provider-enforced no-paid guarantee,
 these routes remain `billing: unknown`, even when the catalog lists them.
+The updated [2026-11-01 account-bound billing qualification](subscription-billing-qualification.md)
+compares Go, both ChatGPT OAuth modes and GitHub Copilot; it qualifies **no**
+provider for positive included-only routing.
 See also the [OpenCode safe fallback proposal](opencode-v2-safe-live-fallback.md)
 for the separate native retry/account-lease blocker.
 
