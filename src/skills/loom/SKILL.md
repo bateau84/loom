@@ -153,7 +153,7 @@ best-effort exact-asker resume. No retries/replay. 5000ms limits waiting,
 not native I/O; check is not an atomic lease.
 Do not repeat an answer to try delivery. Answered is not resolution.
 Use `view:thread`.
-Assignment/delivery views remain retired.
+Historical records remain readable; assignment/delivery views retired.
 
 ## Deep retrospective evidence
 
