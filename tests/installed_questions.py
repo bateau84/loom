@@ -996,8 +996,11 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
                                  and e['data']['agent'] == 'question-specialist'])
             depth_q = s.invoke(zero_asker, 'record', {'operation': 'ask', 'question': 'Depth is disabled',
                                'recipient': {'kind': 'agent', 'id': 'question-specialist'}, 'blocking': True})
-            require(depth_q['dispatch']['status'] != 'admission-observed',
-                    'Depth zero wrongly permitted native OQ delegation')
+            require(depth_q['dispatch']['status'] == 'not-attempted'
+                    and depth_q['dispatch']['reason'] == 'native-subagent-depth-denied'
+                    and depth_q['dispatch']['attempted'] is False
+                    and depth_q['dispatch']['diagnostic'] == 'Subagent depth limit reached (0)',
+                    'Known native depth denial must be explicit and bounded: ' + str(depth_q['dispatch']))
             zero_after = request(host, 'GET', f'/api/session?parentID={zero_asker}')
             require(zero_after == zero_before, 'Depth zero created an unauthorized child Session')
             require(len([e for e in events(root) if e['type'] == 'model-request'
