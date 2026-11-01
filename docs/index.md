@@ -22,6 +22,7 @@ scan root so the profile is discovered; it declares no mandatory link counts.
 
 ## Agent work and evidence
 
+- [Deep retrospective session tracing](retrospective-trace.md) — Original Session evidence sources, access checks and coverage limits
 - [Collaboration](collaboration.md) — Progress reports and contextual questions
 - [Context relevance](context-relevance.md) — Bounded useful context and scope
 - [Evidence reliability](evidence-reliability.md) — Pairing, capture gaps and recovery
@@ -44,6 +45,8 @@ scan root so the profile is discovered; it declares no mandatory link counts.
 
 ## Operations and verification
 
+- [QA-B retrospective acceptance](retrospective-qa-b.md) — Isolated real-model investigation and adversarial acceptance runbook
+- [QA-B control evidence](retrospective-qa-b-controls.md) — Private evidence bundles, safeguards and offline regrading
 - [Testing and CI](testing.md) — Test inventory and qualification scope
 - [Installed-host validation](installed-host-validation.md) — Separates boot evidence from acceptance
 - [Operating policy](operating-policy.md) — Supported alpha behavior and limits

@@ -1,3 +1,11 @@
+---
+type: Architecture
+title: "Deep retrospective session tracing (OpenCode 2.2.0)"
+description: "Evidence sources, permission and completeness limits of Loom's read-only session tracing."
+tags: [loom, retrospective, session-trace]
+timestamp: 2026-11-01T00:00:00Z
+---
+
 # Deep retrospective session tracing (OpenCode 2.2.0)
 
 Loom exposes a **read-only** `loom_trace` tool for inspecting original native evidence. There is **one retrospective workflow**: inspect relevant original sessions and child sessions, compare them with General's handoff and repository outcomes, and publish a source-linked account. There is no shallow/standard mode.

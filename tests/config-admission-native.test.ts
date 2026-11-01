@@ -160,6 +160,7 @@ test("enabled routing exposes a truthful, read-only policy preview without chang
     expect(response.result.model_routing_runtime).toBe("not-connected")
     expect(response.result.model_policy_preview.external).toEqual({ modelClass: "balanced", reasoning: "high" })
     expect(response.result.model_routing_note).toContain("does not yet route")
-    expect(f.tools.size).toBe(5)
+    // PR #202 added loom_trace to this registered-tool fixture.
+    expect(f.tools.size).toBe(6)
   } finally { await f.close() }
 })

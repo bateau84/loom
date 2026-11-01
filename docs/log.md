@@ -4,6 +4,20 @@ type: Log
 
 # Update Log
 
+## 2026-11-01
+
+**Rebased PR #190 integration with merged PR #202:** The optional
+`loom_trace` tool added by PR #202 changes the registered fixture
+tool count from five to six. Updated the routing-configuration regression
+to assert the actual six tools without changing routing behavior.
+[Deep retrospective tracing](retrospective-trace.md),
+[QA-B retrospective acceptance](retrospective-qa-b.md), and
+[QA-B control evidence](retrospective-qa-b-controls.md) now have
+repository-compatible OKF document metadata and entries in the
+[documentation index](index.md). This is an index/representation repair:
+the source documents' accepted evidence and safety limits are unchanged.
+No live model-routing activation is authorized.
+
 ## 2026-10-28
 
 **Final-review routing safeguards, draft #190:** The independent re-review
