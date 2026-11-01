@@ -36,6 +36,7 @@ scan root so the profile is discovered; it declares no mandatory link counts.
 - [Configuration parser](configuration-parser.md) — YAML decoding and allocation limits
 - [Migration](migration.md) — Moving out of the legacy OpenCode bundle
 - [Model routing (draft)](model-routing.md) — Guarded native 2.1.4 initial selection with shared quota; no live failover
+- [Account-bound billing qualification](subscription-billing-qualification.md) — 2026-11-01 evidence, provider blockers and required no-paid attestation
 - [Shared subscription quota](shared-subscription-quota.md) — Cross-process SQLite quota state, atomic reservation, recovery and evidence limits
 - [Native request identity](native-request-identity.md) — OpenCode 2.2.0 account/attempt attribution source audit and upstream acceptance contract
 - [V2 model dispatch investigation](model-routing-v2-dispatch.md) — 2.1.1 blocker and 2.1.4 initial-routing update
