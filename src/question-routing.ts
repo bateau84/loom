@@ -41,7 +41,20 @@ type Native = {
   delegate: (agent: string, parentID: string, questionID: string, prompt: string) => Promise<{ sessionID: string }>
   synthetic: (sessionID: string, text: string, metadata: Record<string, string>) => Promise<unknown>
 }
-type Dispatch = { status: "admission-observed" | "not-attempted" | "outcome-unknown"; reason: string; target_session_id?: string; target_agent?: string; attempted: boolean }
+type Dispatch = { status: "admission-observed" | "not-attempted" | "outcome-unknown";
+  reason: string; target_session_id?: string; target_agent?: string; attempted: boolean;
+  diagnostic?: string }
+function nativeDenial(error: unknown): { reason: string; diagnostic: string } | undefined {
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : ""
+  // Both checks occur before native child creation in OpenCode 2.2.0's
+  // subagent tool. Never infer non-execution from an arbitrary runtime error.
+  const depth = /Subagent depth limit reached \\((\\d+)\\)/.exec(message)
+  if (depth) return { reason: "native-subagent-depth-denied",
+    diagnostic: `Subagent depth limit reached (${depth[1]})` }
+  if (/Subagent denied: [\\w.:-]+/.test(message) || /Permission denied: subagent/.test(message))
+    return { reason: "native-subagent-permission-denied", diagnostic: "Native subagent permission denied" }
+  return undefined
+}
 const unwrap = (value: unknown): unknown => value && typeof value === "object" && "data" in value ? (value as { data: unknown }).data : value
 const record = (value: unknown): Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}
 
@@ -53,7 +66,7 @@ export async function sendQuestion(store: Store, question: LedgerRecord, route: 
     if (route.mode === "delegate" && route.agent) {
       outcome = { status: "outcome-unknown", reason: "native-subagent-delegation", target_agent: route.agent, attempted: true }
       const admitted = await api.delegate(route.agent, question.session_id, question.id,
-        `You are being asked a Loom Open Question (ID: ${question.id}). Read it with loom_record query view=thread and question_id, investigate within your responsibility, then submit the answer using loom_record operation=answer with this exact question_id. A chat response alone does not save an answer. Do not claim authority outside your role. Do not create another Action just to answer.`)
+        `You are being asked a Loom Open Question (ID: ${question.id}). Read it with loom_record query view=thread and question_id, investigate within your responsibility, then submit the answer using loom_record operation=answer with this exact question_id. A chat response alone does not save an answer. Do not claim authority outside your role. Do not create another Action just to answer. After storing your answer, finish with a short message naming OQ ${question.id} and telling your parent to retrieve its authoritative thread. OpenCode's background subagent completion will wake the parent; Loom will not send another answer notice.`)
       if (typeof admitted.sessionID !== "string" || !admitted.sessionID)
         throw new Error("Native subagent did not return a verified Session")
       outcome = { ...outcome, target_session_id: admitted.sessionID,
@@ -69,10 +82,14 @@ export async function sendQuestion(store: Store, question: LedgerRecord, route: 
       outcome = { ...outcome, status: "admission-observed", reason: "native-parent-notice-admitted" }
     }
   } catch (error) {
-    // Never retry an ambiguous create/admission: a late native effect may have succeeded.
-    outcome = { ...outcome, status: outcome.attempted ? "outcome-unknown" : "not-attempted",
-      reason: signal.aborted ? "caller-interrupted" : "native-operation-failed-or-unconfirmed" }
-    console.warn(`Loom question ${question.id} dispatch: ${error instanceof Error ? error.message : String(error)}`)
+    // Denials verified as pre-creation in the pinned native contract are safe
+    // to classify. Every other error might follow partial native side effects.
+    const denied = route.mode === "delegate" && !signal.aborted ? nativeDenial(error) : undefined
+    outcome = { ...outcome, status: denied || !outcome.attempted ? "not-attempted" : "outcome-unknown",
+      attempted: denied ? false : outcome.attempted,
+      reason: denied?.reason ?? (signal.aborted ? "caller-interrupted" : "native-operation-failed-or-unconfirmed"),
+      diagnostic: denied?.diagnostic ?? "Native outcome unconfirmed; see host diagnostics" }
+    console.warn(`Loom question ${question.id} dispatch: ${outcome.diagnostic}`)
   }
   let annotation: { status: "stored"; id: string } | { status: "failed"; error: string }
   try {
