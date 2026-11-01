@@ -118,25 +118,41 @@ Completion does not complete parents or Actions and does not establish independe
 `reopen` appends a reason without erasing history or undoing native side effects.
 Update Action state separately; paused/cancelled labels do not stop execution.
 
-## Questions and manual native handling
+## Questions: route material unknowns
 
-Ask with `question`, `to_agent`, Boolean `blocking`; optional `context`, `context_attachments`, `reference:{action_id,kind:action|phase|wave|task|subtask,id}`. Defaults to selected work or asking Session. Invalid references fail closed.
+Raise OQs for material decisions beyond your responsibility, not routine
+research. Ask dispatcher for scope, specialist role for judgment, or user
+for intent/approval. `blocking:true` only when safe progress needs an answer.
+
+`loom_record ask` requires `question`, Boolean `blocking`, and exactly one
+of `recipient:{kind:"agent"|"role"|"dispatcher"|"user",id?:string}` or legacy
+`to_agent`. Agent/role needs `id` from `loom_agents`. Optional context,
+context_attachments and reference. Selection/asking Session supplies scope;
+invalid references fail.
 
 ```json
-{"operation":"ask","question":"Which limit applies here?","to_agent":"research","blocking":false,"context_attachments":["SOURCE_REFERENCE"]}
+{"operation":"ask","question":"Which limit applies?","to_agent":"research","blocking":false,"context_attachments":["SOURCE_REFERENCE"]}
 ```
 
-On pinned OpenCode 2.1.1 the recipient is NOT contacted: `dispatch:{status:not-attempted,reason:policy-capability-unavailable}`. Arrange manual/native handling separately. Blocking intent is not a wait or approval.
+Legacy recipient is NOT contacted (`policy-capability-unavailable`).
+Direct typed OQs use native subagent depth/permissions; verified child binds
+before prompt admission. Native completion wakes parent; Loom sends no
+duplicate answer notice. Admission is not execution/approval.
 
-Answer with `question_id`, `answer`, optional `context_attachments`; actual author/Session come from the host. Association survives task removal; conflicting answers remain. No `attachments` alias or legacy answer inputs.
+Child OQs go to dispatcher. After native specialist delegation, dispatcher
+calls `loom_record bind-respondent` with question_id and the returned
+respondent_session_id. Only that child may answer, not siblings. Cite
+actual user responses for user decisions.
 
 ```json
 {"operation":"answer","question_id":"QUESTION_ID","answer":"Read the source and its limitations.","context_attachments":["SOURCE_REFERENCE"]}
 ```
 
-Only the FIRST committed answer to a new blocking question may attempt one best-effort resume of the exact asker Session. No retries or startup replay; later/nonblocking/legacy answers do not resume. Missing or moved targets fail closed; agent/model/permissions unchanged. Validation is not an atomic lease. The 5000ms bound limits waiting, not started input. Admission is not processing or completion; timeout may leave outcome unknown. Do not repeat an answer to try delivery.
-
-Answers survive resume or annotation failure. Use `view:thread` for replies. Answered is not resolution, approval or permission. Assignment/delivery operations AND views are retired. Historical records remain readable/inert, never current consent. No automatic sender exists.
+Only FIRST committed blocking legacy/forwarded answers attempt one
+best-effort exact-asker resume. No retries/replay. 5000ms limits waiting,
+not native I/O; location check is not a lease. Do not repeat an answer to
+try delivery. Answered is not resolution. Use `view:thread`.
+Assignment/delivery views remain retired.
 
 ## Deep retrospective evidence
 

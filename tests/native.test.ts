@@ -262,7 +262,7 @@ test("plugin integration: configured roles, five tools, reload, scoping, capture
     if (oldConfig === undefined) delete process.env.OPENCODE_CONFIG_DIR; else process.env.OPENCODE_CONFIG_DIR = oldConfig
     await rm(dir, { recursive: true, force: true })
   }
-  expect(disposed).toBe(4)
+  expect(disposed).toBe(5)
 })
 
 test("removed-task recovery is injected, repeatable, non-mutating and cleared by explicit selection", async () => {
