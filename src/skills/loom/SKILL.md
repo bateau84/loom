@@ -135,9 +135,9 @@ invalid references fail.
 ```
 
 Legacy recipient is NOT contacted (`policy-capability-unavailable`).
-Direct typed OQs use native subagent depth/permissions; verified child binds
-before prompt admission. Native completion wakes parent; Loom sends no
-duplicate answer notice. Admission is not execution/approval.
+Direct typed: native child binds before prompt; blocking uses
+foreground result, nonblocking background completion. No duplicate Loom
+answer notice. Native depth/permissions apply; admission is not approval.
 
 Child OQs go to dispatcher. After native specialist delegation, dispatcher
 calls `loom_record bind-respondent` with question_id and the returned
@@ -150,8 +150,9 @@ actual user responses for user decisions.
 
 Only FIRST committed blocking legacy/forwarded answers attempt one
 best-effort exact-asker resume. No retries/replay. 5000ms limits waiting,
-not native I/O; location check is not a lease. Do not repeat an answer to
-try delivery. Answered is not resolution. Use `view:thread`.
+not native I/O; location check is not a lease.
+Do not repeat an answer to try delivery. Answered is not resolution.
+Use `view:thread`.
 Assignment/delivery views remain retired.
 
 ## Deep retrospective evidence
