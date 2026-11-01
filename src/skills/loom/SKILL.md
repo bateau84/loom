@@ -150,7 +150,7 @@ actual user responses for user decisions.
 
 Only FIRST committed blocking legacy/forwarded answers attempt one
 best-effort exact-asker resume. No retries/replay. 5000ms limits waiting,
-not native I/O; location check is not a lease.
+not native I/O; check is not an atomic lease.
 Do not repeat an answer to try delivery. Answered is not resolution.
 Use `view:thread`.
 Assignment/delivery views remain retired.
