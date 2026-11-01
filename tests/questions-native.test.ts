@@ -457,3 +457,37 @@ test("direct native OQ answer relies on background completion; forwarded blockin
     expect(f.nativeInputs.some((v: any) => v.metadata?.format === "loom-answer-notice/v1")).toBe(true)
   } finally { await f.close() }
 })
+
+test("already-started native child failure containing a denial phrase remains outcome-unknown", async () => {
+  for (const afterStartError of [
+    "Subagent depth limit reached (1)",
+    "Subagent denied: investigator",
+    "Permission denied: subagent",
+  ]) {
+    const f = await registeredLoom()
+    try {
+      f.nativeSubagent.failAfterStart = afterStartError
+      const q = (await f.invoke("record", { operation: "ask",
+        question: "Did this child already run?", recipient: { kind: "agent", id: "investigator" },
+        blocking: true }, "asker", "author")).result
+      // The injected failure is downstream of actual native child creation,
+      // pre-admission identity binding, and prompt execution.
+      expect(f.sessionCreates).toHaveLength(1)
+      expect(f.sessionPrompts).toHaveLength(1)
+      expect(q.dispatch).toMatchObject({
+        status: "outcome-unknown", attempted: true,
+        reason: "native-operation-failed-or-unconfirmed",
+        diagnostic: "Native outcome unconfirmed; see host diagnostics",
+      })
+      expect(q.dispatch.reason).not.toContain("denied")
+      const rows = (await f.invoke("record", {
+        operation: "query", session_only: true, limit: 30,
+      }, "asker")).result.items
+      expect(rows.some((record: any) => record.data.format === "loom-question-respondent-binding/v1" &&
+        record.data.question_id === q.id && record.data.session_id === "ses_questionchild_1")).toBe(true)
+      expect(rows.some((record: any) => record.data.format === "loom-question-dispatch/v1" &&
+        record.data.question_id === q.id && record.data.status === "outcome-unknown" &&
+        record.data.attempted === true)).toBe(true)
+    } finally { await f.close() }
+  }
+})

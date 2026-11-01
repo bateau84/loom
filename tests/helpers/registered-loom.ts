@@ -12,7 +12,7 @@ export async function registeredLoom(initialSkills: any[] = []) {
   const sessions = new Map<string, any>()
   const nativeInputs: unknown[] = [], sessionReads: string[] = [], nativeListRequests: any[] = []
   const sessionCreates: any[] = [], sessionPrompts: any[] = []
-  const nativeSubagent = { depth: 1 }
+  const nativeSubagent = { depth: 1, failAfterStart: undefined as string | undefined }
   const nativeAgents: any[] = [{ id: "investigator", mode: "subagent", hidden: false },
     { id: "author", mode: "primary", hidden: false }]
   const nativePages = new Map<string, any>()
@@ -76,6 +76,8 @@ export async function registeredLoom(initialSkills: any[] = []) {
           const text = "You are a subagent spawned by another session.\n" + input.prompt
           await hooks.get("prompt")?.({ sessionID: created.id, messageID: "native-prompt", prompt: { text }, delivery: "steer" })
           await ctx.session.prompt({ sessionID: created.id, text, delivery: "steer", resume: !input.background })
+          if (nativeSubagent.failAfterStart)
+            throw new Error(`Subagent failed (sessionID: ${created.id}): ${nativeSubagent.failAfterStart}`)
           return { output: { sessionID: created.id, status: input.background ? "running" : "completed",
             output: "Native simulated subagent result" }, content: "Native simulated subagent result" }
         },
