@@ -75,9 +75,9 @@ export async function registeredLoom(initialSkills: any[] = []) {
             model: input.model ?? agent.model ?? parent.model, title: input.description })
           const text = "You are a subagent spawned by another session.\n" + input.prompt
           await hooks.get("prompt")?.({ sessionID: created.id, messageID: "native-prompt", prompt: { text }, delivery: "steer" })
-          await ctx.session.prompt({ sessionID: created.id, text, delivery: "steer", resume: false })
-          return { output: { sessionID: created.id, status: "running", output: "Native simulated background" },
-            content: "Native simulated background" }
+          await ctx.session.prompt({ sessionID: created.id, text, delivery: "steer", resume: !input.background })
+          return { output: { sessionID: created.id, status: input.background ? "running" : "completed",
+            output: "Native simulated subagent result" }, content: "Native simulated subagent result" }
         },
       }],
     },
