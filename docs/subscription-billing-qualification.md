@@ -101,6 +101,7 @@ type IncludedOnlyDecision =
 // Verified metered routing needs a DIFFERENT explicit, account-bound paid
 // consent/enforcement contract; this included-only proof cannot grant it.
 type BillingClassification = "included" | "metered" | "unknown"
+~~~
 
 **Normative behavior to implement only after provider support is proven:**
 
