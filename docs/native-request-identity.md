@@ -100,7 +100,7 @@ type EffectiveAccount =
       state: "verified"
       providerID: string
       billingPrincipalID: string // opaque provider-scoped billing account, not credential ID
-      credentialRecordID: string // optional comparison reference, NOT account proof
+      credentialRecordID?: string // optional comparison reference, NOT account proof
       authenticationMethodID: string // exact method (e.g. not merely "oauth")
       credentialRevision: string // must change if final authentication identity changes
     }
