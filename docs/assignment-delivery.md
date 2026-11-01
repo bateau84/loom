@@ -1,3 +1,11 @@
+---
+type: Architecture
+title: "Retired assignment/delivery protocol"
+description: "Historical record of the retired assignment and delivery protocol."
+tags: [loom, historical, delivery]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Retired assignment/delivery protocol
 
 This is a historical documentation address, not an operating guide. General

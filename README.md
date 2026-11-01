@@ -65,7 +65,7 @@ interrupt an OpenCode session or certify successful delivery.
 Upgrade candidate: **OpenCode 2.2.0**, with `@opencode/plugin@2.2.0`
 pinned in the source package and lockfile. The isolated installed boot,
 scripted-question, Session discovery and compaction checks use the exact
-2.2.0 CLI and SDK; see draft PR #199 for current CI evidence.
+2.2.0 CLI and SDK; see merged PR #199 and the current CI checks.
 **Only a successful run on the reviewed head qualifies the tested behavior.**
 Evidence collected under 2.1.1 or the older 2.0.32 host
 does not establish 2.2.0 compatibility. The historical 2.0.32 qualification
@@ -80,6 +80,17 @@ authorization. Neither workflow upgrades your personal CLI or changes
 your active configuration. See
 [2.2.0 migration and compatibility](docs/opencode-2.2.0.md) and
 [installed-host validation](docs/installed-host-validation.md).
+**Model-routing host boundary:** this branch now packages SDK 2.2.0.
+The previous native initial-selection implementation was investigated using
+**CLI 2.1.4 / SDK 2.1.1** and is retained as a historical contract-test
+candidate. No current SDK 2.2.0 host pairing, **including CLI 2.1.4**,
+is qualified for managed subscription routing. The production adapter
+returns `not-connected` and the early `model.request` hook denies such
+opt-in requests with `LOOM_MODEL_ROUTING_HOST_UNQUALIFIED`. Valid,
+explicitly disabled routing preserves native OpenCode execution.
+Test-only billing attestations do not authorize real provider requests;
+see [model routing](docs/model-routing.md).
+
 **Bun support: `>=1.4.2 <2.0.0`. Use Bun 1.4.2 to reproduce validation.**
 The exact tested baseline is recorded in `.bun-version` and used by the CI jobs.
 This is a supported minimum based on that tested baseline, not a claim that
@@ -147,14 +158,54 @@ metadata, not injected instructions, automatic matching or permissions.
 `roles.<role>.instructions` remains the additional injected role guidance.
 
 Supported sections are `version`, `agents`, `roles`, `instructions`, `context`,
-and `ledger`. Unknown settings fail validation. Model/permission definitions
-belong to OpenCode, not this file. Invalid configuration disables guidance and new
-automatic capture instead of applying a partial or stale role mapping. Diagnostics
-remain available through `loom_agents`; native tools remain usable.
+`ledger`, and optional `model-routing`, `model-classes`, and `model-aliases`.
+Unknown settings fail validation. OpenCode still owns provider credentials,
+installed model definitions, and native permissions. **Historical 2.1.4 candidate behavior:** Loom's dormant adapter can assign exact native models and reasoning variants from
+verified provider/connection evidence and guards against unknown or unapproved
+paid requests at provider dispatch. It never switches providers during
+a running native stream. Initial selection now reads the shared,
+per-account SQLite quota state across this user's OpenCode processes, and
+each managed request needs an atomic reservation before dispatch. Only
+native OpenCode ChatGPT OAuth with the known Codex integration evidence is
+recognized as included without a separate billing attestation; quota state
+alone never authorizes paid or subscription use. A classified native quota,
+rate-limit or auth failure updates shared state, but the plugin does not
+invent successful request accounting or a provider reset. Once the active
+model becomes unavailable, its request is rejected rather than switched or
+silently charged to OpenCode's global default.
+`loom_agents` exposes `model_routing_runtime` and selected/unavailable
+agents. See [model routing](docs/model-routing.md) and
+[shared subscription quota](docs/shared-subscription-quota.md) for the
+exact host/account-affinity and recovery limits. The current
+No current SDK 2.2.0 host is qualified for managed routing, including CLI 2.1.4.
+Invalid configuration continues to disable guidance and
+automatic capture instead of applying a partial or stale role mapping;
+do **not** treat an invalid-startup configuration as an enforced billing
+policy. Diagnostics remain available through `loom_agents`; native tools
+remain usable.
 
 Each file is limited to 64 KiB. Context budgets are **characters, not tokens**:
 there is no fabricated tokenizer-independent `max_tokens` guarantee. The schema
 is a first implementation, not an implementation of every earlier sketch.
+
+## OKF documentation profile
+
+The repository-root [`.okf-profile.yaml`](.okf-profile.yaml) configures
+`okf-mcp` document relationships; it is **not** a Loom agent, model or
+provider setting. Start `okf-mcp` with the repository root as its working
+directory. Explicit `--profile .okf-profile.yaml` loading fails if the
+profile is invalid; auto-discovery can instead fall back to untyped links.
+Restart `okf-mcp` after changing the profile.
+
+A separate `okf-mcp --validate` command checks document conformance in its own
+short-lived process; it does **not** prove the running MCP server has reloaded
+the profile. After restarting, inspect `graph_integrity.profile_loaded` and
+query real `depends-on`/`references` links. A false value means the graph
+is using a default or otherwise inactive profile.
+
+The profile maps observed document headings to `references` and `depends-on`
+links, with no mandatory relationship-count invariants. It does not establish
+runtime-model routing correctness or a validated live documentation graph.
 
 ## Bundled Loom skill
 

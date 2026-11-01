@@ -1,3 +1,11 @@
+---
+type: Playbook
+title: "Useful handoffs and independent review"
+description: "Guides context handoffs, fresh-session recovery and independent review."
+tags: [loom, handoff, review]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Useful handoffs and independent review
 
 Keep the useful work outside the conversation so the next task can start fresh.
@@ -113,3 +121,10 @@ These tests do not establish that an LLM will follow the review procedure or tha
 live OpenCode delegation preserves a particular prompt. Model-driven trials and
 installed-host acceptance remain separate evidence. No test is claimed passed
 merely because its fixture is present.
+
+## Implementation references
+
+- [Loom tool reference](tools.md) defines the native context selection,
+  exact record reads and handoff parameters used above.
+- [Read consistency](read-consistency.md) explains why selection and context
+  reads are not permanent snapshots or proof of successful persistence.

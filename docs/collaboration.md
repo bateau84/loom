@@ -1,3 +1,11 @@
+---
+type: Architecture
+title: "Reported progress and contextual questions"
+description: "Explains reported progress, contextual questions and their execution boundaries."
+tags: [loom, coordination, questions]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Reported progress and contextual questions
 
 The Plan describes intent. The ledger stores completion reports, reopen events,

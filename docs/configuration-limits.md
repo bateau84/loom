@@ -1,3 +1,11 @@
+---
+type: Configuration
+title: "Configuration input: bounded reads, explicit decoder boundary"
+description: "Explains bounded configuration reads, file limits and error handling."
+tags: [loom, configuration, resource-safety]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Configuration input: bounded reads, explicit decoder boundary
 
 The file-read contract below was introduced in `3881ece` after `3a8fc97` and

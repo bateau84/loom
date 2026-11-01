@@ -213,7 +213,7 @@ Subsequent operator startup and historical Action/Plan retrieval succeeded after
 the narrowly supported empty predecessor sender-table upgrade. Separately, the
 real native trial passed handoff/completion/replan/removal and independent fresh
 recovery without authorizing/sending automatic continuation. See
-[operating policy](operating-policy.md) and [migration](migration.md#state-and-rollback).
+[operating policy](operating-policy.md) and [migration](migration.md) (section **State and rollback**).
 These later observations do not expand this older empty-ledger boot probe into
 restart, sender transport or whole-alpha acceptance proof.
 

@@ -193,7 +193,7 @@ test('a copied replacement module graph cannot reset or bypass the shared queue'
   const dir = await mkdtemp(join(tmpdir(), 'loom-admission-replacement-'))
   t.after(() => rm(dir, { recursive: true, force: true }))
   await writeFile(join(dir, 'package.json'), '{"type":"module"}')
-  for (const file of ['config.js', 'config-admission.js']) await copyFile(new URL(`../.test-build/${file}`, import.meta.url), join(dir, file))
+  for (const file of ['config.js', 'config-admission.js', 'model-routing.js']) await copyFile(new URL(`../.test-build/${file}`, import.meta.url), join(dir, file))
   const fresh = await import(pathToFileURL(join(dir, 'config.js')).href)
   const first = blocked(t); await first.entered
   const owner = new AbortController()

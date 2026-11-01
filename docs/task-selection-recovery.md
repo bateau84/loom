@@ -1,3 +1,11 @@
+---
+type: Architecture
+title: "Recovering a selected task after replanning"
+description: "Explains selected-task recovery when a plan is revised or removed."
+tags: [loom, selection, recovery]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Recovering a selected task after replanning
 
 A selected task can disappear from the current Plan. Loom must make that visible

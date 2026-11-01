@@ -1,3 +1,11 @@
+---
+type: Architecture
+title: "Implementation boundaries"
+description: "Records Loom plugin design boundaries, decisions and non-goals."
+tags: [loom, design, architecture]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Implementation boundaries
 
 ## Product and ownership
@@ -30,7 +38,10 @@ It is eligible for bounded context, exact ledger reads and Action/Session full
 history. No historical rewrite or new schema/lifecycle/link operation is needed.
 Later consolidation cites source Action and concern IDs in statement text and
 does not mutate provenance or imply resolution. A concern ID is not observation
-evidence. See [concern requirements](requirements/concern-records/index.md).
+evidence. The governing requirements are
+[BR-001](requirements/concern-records/br-001-record-traceable-concerns.md),
+[BR-002](requirements/concern-records/br-002-expose-concerns-through-ledger-views.md)
+and [OC-001](requirements/concern-records/oc-001-concern-interpretation-and-agent-duties.md).
 
 Every agent captures its own concerns, distinguishing suspected from confirmed.
 General routing maps to configured coordination guidance; critic consolidation

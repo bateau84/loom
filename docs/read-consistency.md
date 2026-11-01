@@ -1,3 +1,11 @@
+---
+type: Architecture
+title: "Read consistency: focused finding F audit"
+description: "Analyzes guarantees and known gaps in read consistency across Loom state."
+tags: [loom, storage, consistency]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Read consistency: focused finding F audit
 
 Audited input: `35254ea8a0b468490c202286e9932060b7765afc` (including the
@@ -68,7 +76,7 @@ read or recursive evidence expansion occurs. Scope/location/version-bound cursor
 continue labelled partial records, advancing only after their final part. Invalid,
 changed, corrupt or unsupported continuation fails without advancing. Pages are
 not a frozen concurrent snapshot and cursors are not promised perpetual validity.
-See [collaboration](collaboration.md#full-stored-relational-history).
+See [collaboration](collaboration.md) (section **Full stored relational history**).
 
 The explicit `loom_context` tool obtains a context snapshot and then revalidates
 selection when supplied IDs should be selected. Those are separate boundaries:

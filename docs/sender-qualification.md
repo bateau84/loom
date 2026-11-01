@@ -1,3 +1,11 @@
+---
+type: Architecture
+title: "Sender qualification: historical boundary"
+description: "Documents the historical sender qualification and retired delivery boundary."
+tags: [loom, historical, qualification]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Sender qualification: historical boundary
 
 Previous qualification covered the retired default-off answer-to-primary sender,

@@ -1,3 +1,11 @@
+---
+type: Playbook
+title: "Moving the OpenCode bundle out"
+description: "Describes moving the legacy OpenCode bundle to the Loom plugin layout."
+tags: [loom, migration, setup]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Moving the OpenCode bundle out
 
 This is a breaking, draft change. `main` and its history remain unchanged until

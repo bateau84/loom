@@ -7,7 +7,7 @@ timestamp: 2026-10-19T00:00:00Z
 ---
 # BR-002 — Expose concerns through ledger views
 
-**Priority:** Must. **Status:** Implemented; registered-tool/context/history evidence in [bundle overview](index.md), not live-host acceptance.
+**Priority:** Must. **Status:** Implemented; registered-tool/context/history evidence summarized in the bundle's `index.md`; see [context policy](../../context-relevance.md) and [tool views](../../tools.md). This is not live-host acceptance.
 
 **Statement:** Persisted concerns shall participate in existing record-reading, session-context, and history surfaces under their existing selection, filtering, ordering, and size limits, rather than disappearing solely because their kind is concern.
 

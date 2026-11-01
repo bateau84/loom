@@ -1,3 +1,11 @@
+---
+type: Playbook
+title: "Assessment and QA skill companions"
+description: "Documents optional skill-based Assessment and QA companion loaders."
+tags: [loom, assessment, skills]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Assessment and QA skill companions
 
 Loom restores two read-only tools alongside its five Action/context/ledger tools.

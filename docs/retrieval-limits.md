@@ -1,3 +1,11 @@
+---
+type: Architecture
+title: "E follow-up: bounded retrieval, configuration audit, and closure boundary"
+description: "Explains bounded retrieval and configuration audit limits."
+tags: [loom, retrieval, resource-safety]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # E follow-up: bounded retrieval, configuration audit, and closure boundary
 
 Baseline: `83de434`. This follows [Processing limits](processing-limits.md).
@@ -98,7 +106,7 @@ constant-time proofs, peak-memory results, or guaranteed laptop performance.
 
 The following characterizes the `83de434` follow-up, not the current loader.
 Subsequent [bounded parser](configuration-parser.md), [file-read guards](configuration-limits.md)
-and [admission](operating-policy.md#existing-configuration-admission-stays-in-place)
+and [admission policy](operating-policy.md) (section **Existing configuration admission stays in place**)
 documentation describes the current boundaries; this historical probe is not a
 new claim that the old unbounded path remains in production.
 

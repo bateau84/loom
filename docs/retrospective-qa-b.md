@@ -1,3 +1,11 @@
+---
+type: Playbook
+title: "QA-B: installed real-model retrospective acceptance (OpenCode 2.2.0)"
+description: "Run independent retrospective acceptance and adversarial controls using isolated OpenCode sessions."
+tags: [loom, retrospective, qa-b, acceptance]
+timestamp: 2026-11-01T00:00:00Z
+---
+
 # QA-B: installed real-model retrospective acceptance (OpenCode 2.2.0)
 
 **Status: real-model investigator and adversarial controls are opt-in. Source creation is scripted and verified by installed-host CI without provider inference.**

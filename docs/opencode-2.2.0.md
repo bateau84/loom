@@ -1,3 +1,11 @@
+---
+type: Architecture
+title: "OpenCode 2.2.0 host migration and qualification"
+description: "Exact SDK/CLI upgrade, observed host acceptance and version-scoped limitations."
+tags: [loom, opencode, compatibility, host-upgrade]
+timestamp: 2026-10-27T00:00:00Z
+---
+
 # OpenCode 2.2.0 host migration
 
 This draft moves Loom's pinned Promise plugin SDK and **isolated test host**

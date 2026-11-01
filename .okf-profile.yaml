@@ -1,0 +1,40 @@
+# Loom documentation graph profile for nrkno/okf-mcp.
+# Run okf-mcp from this repository root (the scan root).
+# version 1.0 is the supported profile schema, not the OKF document version.
+name: loom
+version: "1.0"
+
+# Exact, case-sensitive frontmatter types in the current docs corpus.
+# index.md and log.md are reserved, unindexed OKF files; Log is included
+# in the local vocabulary for completeness.
+concept_types:
+  - name: Architecture
+  - name: Configuration
+  - name: Playbook
+  - name: "API Reference"
+  - name: "Behavioral Requirement"
+  - name: "Obligation Contract"
+  - name: Log
+
+# A link's nearest preceding heading determines its relationship.
+# Unmapped headings remain untyped; ordinary navigation is not a dependency.
+relationships:
+  # Source cites a document as supporting or further technical background.
+  # Observed in docs/configuration-parser.md under "Audited primary sources".
+  - name: references
+    heading_aliases: ["Audited primary sources", "Implementation references"]
+    inverse: referenced-by
+    allowed_source_types: ["*"]
+    allowed_target_types: ["*"]
+
+  # Source requires the linked technical contract or interface as an input.
+  # Observed in docs/model-routing.md under "Depends on".
+  - name: depends-on
+    heading_aliases: ["Depends on"]
+    inverse: depended-on-by
+    allowed_source_types: ["*"]
+    allowed_target_types: ["*"]
+
+# No corpus-wide minimum/maximum link count has been authorized.
+# Add constraints only after a concrete obligation is established.
+invariants: []

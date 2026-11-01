@@ -1,3 +1,11 @@
+---
+type: Architecture
+title: "Simple collaboration, native execution"
+description: "Describes optional agent coordination using native OpenCode execution."
+tags: [loom, coordination, execution]
+timestamp: 2026-10-24T00:00:00Z
+---
+
 # Simple collaboration, native execution
 
 Loom stores attributed questions and answers, shared context and qualified

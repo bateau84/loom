@@ -1,3 +1,11 @@
+---
+type: Playbook
+title: "QA-B control evidence"
+description: "Capture, privacy handling and offline regrading of adversarial retrospective control evidence."
+tags: [loom, retrospective, qa-b, acceptance]
+timestamp: 2026-11-01T00:00:00Z
+---
+
 # QA-B control evidence
 
 QA-B keeps source creation, independent retrospective investigation, and five

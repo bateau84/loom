@@ -7,6 +7,15 @@ timestamp: 2026-10-19T00:00:00Z
 ---
 # Change log
 
+## 2026-10-24
+
+- Documentation navigation: [BR-001](br-001-record-traceable-concerns.md),
+  [BR-002](br-002-expose-concerns-through-ledger-views.md), and
+  [OC-001](oc-001-concern-interpretation-and-agent-duties.md) now refer to the
+  reserved `index.md` as a navigation/evidence summary (not a graph node)
+  and link to indexed implementation contracts. Accepted requirement statements,
+  scope and verification semantics remain unchanged.
+
 ## 2026-10-19
 
 - Implementation: concern kind now follows existing add, evidence validation, exact/Session reads, bounded context and Action/Session full history. [Overview evidence](index.md) maps all six acceptance cases to registered-tool tests; simulated host, not live installed acceptance.
