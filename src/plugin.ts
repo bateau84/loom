@@ -359,7 +359,7 @@ export default Plugin.define({
                         // Invoking the native tool preserves the effective depth limit,
                         // native permission checks, and model selection semantics.
                         const result = await native.execute({
-                          agent, description: `Resolve Loom OQ ${questionID.slice(0, 8)}`,
+                          agent, description: `Resolve Loom OQ ${questionID}`,
                           prompt: `Loom OQ dispatch token: ${token}\n${prompt}`, background: true,
                         }, toolContext)
                         const output = payload(result.output)
