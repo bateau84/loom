@@ -129,7 +129,7 @@ and host, not a plugin-side credential lookup, must enforce the billable identit
 - Require an independent cold review of the implementation and recorded
   host/provider evidence before promoting a version/provider allowlist.
 
-The existing [2.2.0 installed negative acceptance](../tests/routing-host/ACCEPTANCE.md)
+The existing 2.2.0 installed negative acceptance (`tests/routing-host/ACCEPTANCE.md`)
 is still the guard regression suite. The new server-startup test is a native
 registration **mock** and must be labeled separately from installed-host
 proof. No personal OpenCode configuration should be read or modified.
