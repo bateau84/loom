@@ -29,7 +29,7 @@ test("public plugin advertises the skill without a role, Action or eager guide i
   try {
     expect([...f.skills.keys()]).toEqual([LOOM_SKILL_ID])
     expect(f.skills.get(LOOM_SKILL_ID)).toEqual(await loomSkill())
-    expect([...f.tools.keys()].sort()).toEqual(["action", "agents", "assessment", "context", "plan", "qa", "record"])
+    expect([...f.tools.keys()].sort()).toEqual(["action", "agents", "assessment", "context", "plan", "qa", "record", "trace"])
     expect((await f.invoke("action", { operation: "list" })).result.items).toEqual([])
     expect((await f.invoke("context", {})).result.selected).toBeNull()
     const event = { sessionID: "s", agent: "author", system: [] as any[], messages: [], tools: {}, options: {} }

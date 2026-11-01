@@ -1,0 +1,35 @@
+# Deep retrospective session tracing (OpenCode 2.2.0)
+
+Loom exposes a **read-only** `loom_trace` tool for inspecting original native evidence. There is **one retrospective workflow**: inspect relevant original sessions and child sessions, compare them with General's handoff and repository outcomes, and publish a source-linked account. There is no shallow/standard mode.
+
+## Evidence sources and completeness
+
+| Source | How obtained | What can be stated |
+|---|---|---|
+| `operation:timeline` without `export_path` | Native `ctx.session.context` **for the caller's own Session only** | Active context after the latest compaction **only**. Original earlier messages may be absent. `coverage.full_history:false`. |
+| `operation:timeline` with `export_path` | Explicit project-relative export JSON, opened after host read permission | Native export *shape* with matching Session ID/project; unsanitized directory is verified, but OpenCode's exact sanitized marker hides that location. It may be stale, shortened or modified: `coverage.full_history:null` (unknown). |
+| `operation:children` | Native `ctx.session.list` filtered by parent | Direct local children from the caller's bounded Session family only. Follow `next_cursor` and inspect descendants separately. |
+
+The pinned Promise SDK does **not** expose a full native message history method. OpenCode's separate `/api/experimental/session/:sessionID/export` endpoint exports a projected transcript with `sanitize` support, but `loom_trace` deliberately does not call this endpoint or assume authority to extract it. Produce a sanitized export with your existing authorized OpenCode client or UI, then place it in a temporary, private file *within the current project* and provide its relative path. Remove the file after use. Do not commit exports.
+
+For every relevant Session, follow `next_cursor` until null. Each page has page-scoped metrics and tool statuses; `total_events` is unknown (`null`) until the final page. The result includes source message/call IDs, event types, agent, model, tool names/status, skill load names, possible delegation targets, page counts and reported token/cost values. Code Mode wrappers such as `functions.exec` are marked **opaque**, because embedded tool calls and hidden delegation are not established by the native message. Dispatch prompt excerpts and user/assistant excerpts require explicit `include_text:true`. Original text is clipped to the requested excerpt budget **before** credential matching, avoiding full-message regex work; an incomplete trailing whitespace-delimited word is withheld and marked `[TRUNCATED]`. Long uninterrupted text may yield only this marker. Excerpts mask common credential assignments (including prefixed environment variables), token patterns, incomplete private-key blocks and authenticated connection URLs on a best-effort basis. Other secrets and private content may still pass; review sensitive sources before opting in. **Permission to inspect a source is not permission to quote, publish, or persist its raw content.** It never returns raw tool outputs, arbitrary input argument values, full skills, attachments, private reasoning or raw whole transcripts. Structured user skill attachments yield `requested_skills` identifiers, separate from confirmed `skill_loaded` events. Paging projects only the requested events; provided JSON still must be parsed on each page, so repeated reads of large exports remain a known cost. `include_text` is still sensitive; inspect and redact before quoting.
+
+## Permission and location boundaries
+
+- Native message context is limited to the calling Session. Another Session requires a separately supplied authorized export; shared project/workspace membership does not grant direct context access. Child enumeration is restricted to the caller's native Session family, with bounded ancestor checks.
+- Every exported file requires a separate OpenCode `read` permission assertion with the native requesting Session/agent/tool source. Rejection propagates. It is not bypassed by a path under the project.
+- File paths must be relative and resolve within the project, with canonicalization, a 16 MiB file cap, nonblocking no-follow open (so FIFO substitution cannot block), descriptor identity checks before/after the bounded read, and cancellation checks between steps. Export Session ID and project ID must match the requested native Session. Unsanitized directories must resolve to the current project; the exact OpenCode 2.2.0 sanitized-directory marker is accepted as **unverified location**, never as proof.
+- Approval can pause execution. Revalidate source Session, path and file identity after approval. A running kernel file operation is not forcibly interrupted by a later AbortSignal. Reject replacements and detected content changes; identity checks cannot cryptographically prove provenance or detect malicious content forged with identical metadata.
+- Trace messages and tool/call IDs are bounded and the total serialized response is capped at 262144 bytes. A page that exceeds the cap fails visibly; reduce its event limit or disable text. Trace reads never change Loom selection, append records, spawn workers or contact agents. Errors leave the original work untouched.
+
+## Deep retrospective procedure
+
+1. Define one bounded Session/time window and identify the goal, actual outcome and previous accepted experiments.
+2. Inspect the current Session with `timeline` and related child Sessions with `children`; recurse only where relevant. Child history requires authorized exports, not direct native-context reads. Gather original records and report missing windows.
+3. Trace user requirements and corrections through dispatch prompts, agent replies, tool errors/retries, skill loads, handoffs and verification. Cross-check with PRs, tests and CI.
+4. Investigate why the process worked or caused friction. Compare counts or cost only with comparable task complexity; many calls are not automatically waste.
+5. Report successes, verified problems, unresolved hypotheses, human feedback, and at most two optional reversible experiments. Cite original message/call/commit IDs, not long text dumps. If source coverage is incomplete, call the deep retrospective **incomplete**, not clean.
+
+## Verification boundaries
+
+`tests/session-trace-native.test.ts` covers registered tool behavior with a simulated host plus real Loom storage: paging, source scoping, permission denial, file-replacement guards, and read-only behavior. The isolated `tests/installed_questions.py` harness also has E6 scenarios (including text masking with a harmless secret-pattern sentinel) that, **if executed and passing on the candidate head**, check native context, unrelated-Session denial, actual parent/child discovery, and an authorized sanitized child export under OpenCode 2.2.0. Neither check proves arbitrary transcripts are complete or cryptographically authentic, and neither validates live subscription providers, every possible secret format, or every nested delegation mechanism. State the observed run status before making an installed-host acceptance claim.
