@@ -30,8 +30,8 @@ SDK_VERSION = "2.2.0"
 PROVIDERS = ("route-primary", "route-secondary", "route-metered")
 AGENTS = ("architect", "coder", "reviewer")
 
-# These require capabilities *outside* the assembled 2.1.4 initial-only
-# adapter. Do not convert fixture calls, mock unit tests or skipped cases to PASS.
+# These require capabilities outside the current SDK/CLI 2.2.0 host-unqualified
+# routing foundation. Do not convert simulated calls or skipped cases to PASS.
 REQUIREMENTS = [
     (1, "UNPROVEN", "Positive role-to-model selection on installed host needs verified included billing; mocked adapter tests are separate."),
     (2, "UNPROVEN", "Installed host proves high is not silently downgraded, not positive supported-variant dispatch."),
@@ -57,13 +57,13 @@ NOT_PROVEN = {
     "committed-request-pre-dispatch-block":
         "The installed local fixtures have no previously committed verified-included route to pre-block",
     "live-provider-account-lease":
-        "The OpenCode 2.1.4 stream does not expose an atomic native account lease",
+        "No account-bound native stream lease is proven for current SDK/CLI 2.2.0 managed routing",
     "real-opencode-go-quota":
         "OpenCode Go has no supported provider-enforced, no-paid inclusion attestation in this setup",
     "real-provider-billing":
         "No real provider credentials or authorized paid API requests are supplied",
-    "native-exact-sdk-match":
-        "CLI 2.1.4 is installed; candidate SDK is still pinned to 2.1.1",
+    "positive-managed-route-with-matched-sdk":
+        "Installed CLI and plugin SDK both use 2.2.0; exact matching is proven, but successful managed routing on this pair is intentionally host-unqualified and UNPROVEN",
     "live-fallback-out-of-scope":
         "No safe in-flight model/provider replacement API is available or tested",
 }
