@@ -86,8 +86,14 @@ export async function registerReviewCompanions(ctx: Plugin.Context): Promise<() 
   const directory = await realpath(ctx.location.directory)
   const paths = configPaths(directory)
   const lifetime = new AbortController()
+  const warned = new Set<string>()
   const registration = await ctx.tool.transform(editor => {
-    for (const lens of ["assessment", "qa"] as const) editor.add({
+    // Native Tool State replays this synchronous transform on registry rebuild.
+    // Never propagate an optional editor failure to the host's plugin group:
+    // that would also remove Loom's pre-transport routing guard.
+    for (const lens of ["assessment", "qa"] as const) {
+      try {
+        editor.add({
       name: lens,
       description: companionHelp(lens),
       options: { namespace: "loom", codemode: true },
@@ -147,7 +153,19 @@ export async function registerReviewCompanions(ctx: Plugin.Context): Promise<() 
           : { skill: id, methodology: lens, available: false, path, reason: "companion-not-found" }
         return { content: record(raw).response_format === "json" ? JSON.stringify({ result }) : reviewCompanionMarkdown(result) }
       },
-    })
+        })
+      } catch (error) {
+        // Even an unusual thrown value or a broken logger cannot turn an
+        // optional failure into a plugin-group failure during replay.
+        try {
+          const message = error instanceof Error ? error.message : String(error)
+          const warning = `optional review ${lens} transform unavailable: ${message}`
+          if (warned.has(warning)) continue
+          warned.add(warning)
+          console.warn("Loom: " + warning)
+        } catch { /* Keep the native guard registered even if reporting fails. */ }
+      }
+    }
   })
   return async () => { lifetime.abort(); await registration.dispose() }
 }

@@ -9,6 +9,9 @@ timestamp: 2026-10-24T00:00:00Z
 # Draft: role model classes and provider-first subscription routing
 
 > **Disabled-by-default foundation, not operational routing approval.**
+> The [issue #206 qualification](initial-routing-qualification-206.md) records
+> the current exact host verdict, startup limitations and required upstream
+> proof before any production activation.
 > The guarded initial-routing adapter was developed with OpenCode CLI
 > **2.1.4 and SDK 2.1.1**. It can select exact native models in isolated
 > candidate tests, but cannot switch providers during a failed stream.

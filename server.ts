@@ -3,41 +3,64 @@ import core from "./src/plugin.js"
 import { loomSkill } from "./src/skill.js"
 import { registerReviewCompanions } from "./src/review-companions.js"
 
-// The public entrypoint composes ledger tools, the usage guide and read-only review lenses.
+// Optional feature errors must not unwind OpenCode's plugin group: a
+// deferred transform-replay exception would also dispose core's deny hook.
+function warnOptional(feature: string, error: unknown) {
+  try {
+    console.warn("Loom: " + feature + ":", error instanceof Error ? error.message : String(error))
+  } catch { /* Reporting a degraded optional feature must not remove the guard. */ }
+}
+
+// Register core before optional skill/tool features. For a managed policy,
+// core.setup() installs the pre-transport deny hook on versioned hosts.
 export default Plugin.define({
   id: "loom",
   async setup(ctx) {
-    const guide = await loomSkill()
-    const skill = {
-      ...guide,
-      id: Skill.ID.make(guide.id),
-      name: Skill.Name.make(guide.name),
-      path: Skill.Info.fields.path.make(guide.path),
-    }
-    const registration = await ctx.skill.transform(editor => {
-      // Respect an existing user skill. Rebuilds get a fresh, unmodified definition.
-      if (!editor.get(skill.id)) editor.add({ ...skill })
-    })
-    let cleanup: Plugin.Cleanup | void
+    const cleanup = await core.setup(ctx)
+    let registration: { dispose(): Promise<void> } | undefined
     let companions: (() => Promise<void>) | undefined
+
     try {
-      cleanup = await core.setup(ctx)
-      companions = await registerReviewCompanions(ctx)
-      return async () => {
-        try { await cleanup?.() }
-        finally {
-          try { await companions?.() }
-          finally { await registration.dispose() }
-        }
+      const guide = await loomSkill()
+      const skill = {
+        ...guide,
+        id: Skill.ID.make(guide.id),
+        name: Skill.Name.make(guide.name),
+        path: Skill.Info.fields.path.make(guide.path),
       }
+      registration = await ctx.skill.transform(editor => {
+        // OpenCode replays this synchronously during native registry rebuilds.
+        // Catch failures HERE, not only around the registration Promise.
+        try {
+          if (!editor.get(skill.id)) editor.add({ ...skill })
+        } catch (error) {
+          warnOptional("native skill transform unavailable", error)
+        }
+      })
     } catch (error) {
-      // Cleanup failures must not replace the activation error.
-      await Promise.allSettled([
-        Promise.resolve().then(() => companions?.()),
-        Promise.resolve().then(() => cleanup?.()),
-        Promise.resolve().then(() => registration.dispose()),
-      ])
-      throw error
+      warnOptional("native skill registration unavailable", error)
+    }
+
+    try {
+      companions = await registerReviewCompanions(ctx)
+    } catch (error) {
+      warnOptional("review companion registration unavailable", error)
+    }
+
+    return async () => {
+      // Core shutdown and cancellation must precede optional disposal.
+      // Always attempt all three; never replace the first (core) failure
+      // with a later optional cleanup failure.
+      const failures: Array<{ feature: string; error: unknown }> = []
+      const attempt = async (feature: string, dispose: () => Promise<void> | void) => {
+        try { await dispose() } catch (error) { failures.push({ feature, error }) }
+      }
+      await attempt("core", () => cleanup?.())
+      await attempt("review companions", () => companions?.())
+      await attempt("skill registration", () => registration?.dispose())
+      for (const secondary of failures.slice(1))
+        warnOptional("secondary cleanup failure (" + secondary.feature + ")", secondary.error)
+      if (failures.length) throw failures[0].error
     }
   },
 })

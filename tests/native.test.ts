@@ -90,11 +90,12 @@ for (const scenario of ["missing-column", "unsupported-version", "healthy", "emp
       expect(failure.message).toContain(failure.cause.message)
       expect(failure.cause.message).toContain("Unsupported Loom Action database version")
       expect(`${failure.message}\n${failure.stack}\n${failure.cause.stack}`).not.toContain("PRIVATE-RECORD-CONTENT")
-      expect(registrations).toEqual(["skill"])
+      // Core startup now precedes optional guide registration.
+      expect(registrations).toEqual([])
       expect(tools).toEqual([])
     }
     expect(closed).toHaveLength(1)
-    expect(skillDisposals).toBe(1)
+    expect(skillDisposals).toBe(healthy ? 1 : 0)
     expect(hostIO).toEqual([])
     expect(() => closed[0].query("SELECT 1")).toThrow()
     close.mockRestore()
