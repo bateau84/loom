@@ -39,9 +39,29 @@ hook has registered**. That is not a substitute for a provider-side zero-paid
 restriction when a plugin never loads, its hook cannot register or a different
 transport bypasses it. The public Loom [server entrypoint](../server.ts)
 now initializes core before optional skill/review registration and retains the
-core guard if those optional registrations fail. This narrows one startup
-window; it does **not** solve plugin absence, a failing core guard registration,
-nor account-bound billing.
+core guard if those optional registrations fail.
+
+**Deferred transform replay matters as much as initial setup.** In exact
+OpenCode 2.2.0 [State.group / State.create](https://github.com/anomalyco/opencode/blob/v2.2.0/packages/core/src/state.ts),
+a registered transform is replayed during registry rebuilds. If an optional
+callback throws later, the host disables the entire plugin group and
+[closes its scope](https://github.com/anomalyco/opencode/blob/v2.2.0/packages/core/src/plugin.ts),
+which also [disposes its model.request hook](https://github.com/anomalyco/opencode/blob/v2.2.0/packages/core/src/plugin/hooks.ts).
+The draft therefore contains editor failures **inside** the optional
+skill/review transform callbacks, not only in the initial registration awaits.
+It keeps core cleanup first, attempts every optional cleanup, and preserves
+the earliest failure when multiple disposals fail.
+
+The [native unit regression](../tests/server-startup-native.test.ts) and
+`tests/installed_optional_replay.py` check healthy core startup, deferred
+callback replay, retained pre-transport denial and disabled-native behavior.
+The latter uses a fault wrapper around the exact npm-packed Loom server in an
+**unmodified 2.2.0 host**, plus a deliberately uncontained native group-failure
+control. Its local metered-*labelled* model has no real billing ability.
+These tests do not qualify routing on a real account. This still does **not**
+solve plugin absence, a failing core guard registration, another host-owned
+unload or account-bound billing; provider-enforced no-paid protection is
+required independently of plugin lifetime.
 
 ## Ownership and current implementation
 
