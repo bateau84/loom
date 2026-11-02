@@ -101,6 +101,7 @@ async function liveCoreFixture() {
   const toolTransforms: Array<(editor: any) => void> = []
   const disposed: string[] = []
   let fault: "skill" | "review" | undefined
+  let opaqueReviewError = false
   let coreDisposalError: Error | undefined
   let reviewDisposalError: Error | undefined
   let skillDisposalError: Error | undefined
@@ -113,7 +114,10 @@ async function liveCoreFixture() {
   })
   const toolEditor = (owner: number) => ({
     add: (value: any) => {
-      if (owner > 0 && fault === "review") throw new Error("REPLAY_REVIEW_EDITOR_FAILURE")
+      if (owner > 0 && fault === "review") {
+        if (opaqueReviewError) throw Object.create(null)
+        throw new Error("REPLAY_REVIEW_EDITOR_FAILURE")
+      }
       tools.set(value.name, value)
     },
     namespace: () => {},
@@ -170,6 +174,7 @@ async function liveCoreFixture() {
   return {
     hooks, skills, tools, disposed,
     arm: (next: "skill" | "review") => { fault = next },
+    useOpaqueReviewError: () => { opaqueReviewError = true },
     rebuild: () => {
       skills.clear()
       for (const apply of skillTransforms) apply(skillEditor())
@@ -230,5 +235,23 @@ test("cleanup keeps the first core failure and still attempts review and skill c
     expect(warning.mock.calls.map(call => String(call[0])).join(" ")).toContain("secondary cleanup failure")
   } finally {
     warning.mockRestore()
+  }
+})
+
+
+test("replay diagnostics that cannot be stringified or logged do not disable core guard", async () => {
+  const f = await liveCoreFixture()
+  const logger = spyOn(console, "warn").mockImplementation(() => {
+    throw new Error("SYNTHETIC_LOGGER_FAILURE")
+  })
+  try {
+    f.arm("review")
+    f.useOpaqueReviewError()
+    // A callback must not propagate even a hostile thrown value or a logger failure.
+    expect(() => f.rebuild()).not.toThrow()
+    expect(() => f.hooks.get("model.request")!()).toThrow(/LOOM_MODEL_ROUTING_HOST_UNQUALIFIED/)
+  } finally {
+    logger.mockRestore()
+    await f.shutdown()
   }
 })
