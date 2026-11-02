@@ -155,12 +155,15 @@ export async function registerReviewCompanions(ctx: Plugin.Context): Promise<() 
       },
         })
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        const warning = `optional review ${lens} transform unavailable: ${message}`
-        if (warned.has(warning)) continue
-        warned.add(warning)
-        try { console.warn("Loom: " + warning) }
-        catch { /* An optional diagnostic must not disable the routing guard. */ }
+        // Even an unusual thrown value or a broken logger cannot turn an
+        // optional failure into a plugin-group failure during replay.
+        try {
+          const message = error instanceof Error ? error.message : String(error)
+          const warning = `optional review ${lens} transform unavailable: ${message}`
+          if (warned.has(warning)) continue
+          warned.add(warning)
+          console.warn("Loom: " + warning)
+        } catch { /* Keep the native guard registered even if reporting fails. */ }
       }
     }
   })
