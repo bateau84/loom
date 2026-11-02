@@ -42,6 +42,15 @@ jobs:
           --expect-plugin-version "$(node -p 'require("./package.json").version')"
           --report-directory "$RUNNER_TEMP/loom-acceptance-report"
           --repository "$GITHUB_WORKSPACE"
+      - name: Installed optional-transform replay and host group-failure control
+        run: >-
+          python3 tests/installed_optional_replay.py
+          --opencode "$RUNNER_TEMP/loom-acceptance-host/node_modules/.bin/opencode"
+          --plugin "$RUNNER_TEMP/loom-acceptance-install/node_modules/loom-plugin"
+          --artifact "$(find "$RUNNER_TEMP/loom-acceptance-artifact" -maxdepth 1 -name 'loom-plugin-*.tgz' -print -quit)"
+          --expect-plugin-version "$(node -p 'require("./package.json").version')"
+          --report-directory "$RUNNER_TEMP/loom-acceptance-report"
+          --repository "$GITHUB_WORKSPACE"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
