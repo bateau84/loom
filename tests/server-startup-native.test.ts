@@ -76,3 +76,159 @@ test("missing native hook-registration capability is not misreported as guarded"
   // No plugin hook can protect a host that rejects hook registration or
   // never loads the plugin. Only host/provider-side no-paid enforcement can.
 })
+
+
+/**
+ * Healthy core with replayable native transforms, not a mocked core result.
+ * A registry rebuild invokes the SAME callbacks that server.setup registered.
+ * The installed 2.2.0 host test separately exercises native State.group.
+ */
+async function liveCoreFixture() {
+  const root = await mkdtemp(join(tmpdir(), "loom-206-replay-"))
+  const previous = { state: process.env.XDG_STATE_HOME, config: process.env.OPENCODE_CONFIG_DIR }
+  process.env.XDG_STATE_HOME = join(root, "private-state")
+  process.env.OPENCODE_CONFIG_DIR = join(root, "private-config")
+  await writeFile(join(root, ".loom.yaml"), JSON.stringify({
+    "model-routing": { enabled: true, "default-class": "strong", "paid-fallback": false },
+    "model-classes": { strong: { models: ["example"] } },
+    agents: { architect: { roles: ["architecture"] } },
+    roles: { architecture: { "model-class": "strong", reasoning: "medium" } },
+  }))
+  const hooks = new Map<string, () => void>()
+  const skills = new Map<string, unknown>()
+  const tools = new Map<string, unknown>()
+  const skillTransforms: Array<(editor: any) => void> = []
+  const toolTransforms: Array<(editor: any) => void> = []
+  const disposed: string[] = []
+  let fault: "skill" | "review" | undefined
+  let coreDisposalError: Error | undefined
+  let reviewDisposalError: Error | undefined
+  let skillDisposalError: Error | undefined
+  const skillEditor = () => ({
+    get: (id: string) => {
+      if (fault === "skill") throw new Error("REPLAY_SKILL_EDITOR_FAILURE")
+      return skills.get(id)
+    },
+    add: (value: any) => skills.set(value.id, value),
+  })
+  const toolEditor = (owner: number) => ({
+    add: (value: any) => {
+      if (owner > 0 && fault === "review") throw new Error("REPLAY_REVIEW_EDITOR_FAILURE")
+      tools.set(value.name, value)
+    },
+    namespace: () => {},
+  })
+  const ctx: any = {
+    app: { version: "2.2.0" },
+    location: { directory: root, project: { id: "replay-206", canonical: root, directory: root } },
+    model: { list: async () => ({ data: [] }) },
+    provider: { list: async () => ({ data: [] }) },
+    integration: { connection: { active: async () => undefined } },
+    session: { hook: async (name: string, fn: any) => {
+      hooks.set(name, fn)
+      return { dispose: async () => {
+        disposed.push("session:" + name)
+        hooks.delete(name)
+        if (name === "model.request" && coreDisposalError) throw coreDisposalError
+      } }
+    } },
+    skill: { transform: async (fn: (editor: any) => void) => {
+      skillTransforms.push(fn)
+      fn(skillEditor())
+      return { dispose: async () => {
+        disposed.push("skill")
+        if (skillDisposalError) throw skillDisposalError
+        skillTransforms.splice(skillTransforms.indexOf(fn), 1)
+      } }
+    } },
+    tool: {
+      transform: async (fn: (editor: any) => void) => {
+        const owner = toolTransforms.length
+        toolTransforms.push(fn)
+        fn(toolEditor(owner))
+        return { dispose: async () => {
+          disposed.push("tool:" + owner)
+          if (owner > 0 && reviewDisposalError) throw reviewDisposalError
+          toolTransforms.splice(toolTransforms.indexOf(fn), 1)
+        } }
+      },
+      hook: async (name: string) => ({
+        dispose: async () => { disposed.push("tool-hook:" + name) },
+      }),
+    },
+  }
+  let cleanup: (() => Promise<void>) | undefined
+  try { cleanup = await (server as any).setup(ctx) as () => Promise<void> }
+  catch (error) {
+    if (previous.state === undefined) delete process.env.XDG_STATE_HOME
+    else process.env.XDG_STATE_HOME = previous.state
+    if (previous.config === undefined) delete process.env.OPENCODE_CONFIG_DIR
+    else process.env.OPENCODE_CONFIG_DIR = previous.config
+    await rm(root, { recursive: true, force: true })
+    throw error
+  }
+  return {
+    hooks, skills, tools, disposed,
+    arm: (next: "skill" | "review") => { fault = next },
+    rebuild: () => {
+      skills.clear()
+      for (const apply of skillTransforms) apply(skillEditor())
+      tools.clear()
+      for (const [owner, apply] of toolTransforms.entries()) apply(toolEditor(owner))
+    },
+    setCleanupErrors: (errors: { core: Error; review: Error; skill: Error }) => {
+      coreDisposalError = errors.core
+      reviewDisposalError = errors.review
+      skillDisposalError = errors.skill
+    },
+    shutdown: async () => {
+      try { await cleanup?.() }
+      finally {
+        if (previous.state === undefined) delete process.env.XDG_STATE_HOME
+        else process.env.XDG_STATE_HOME = previous.state
+        if (previous.config === undefined) delete process.env.OPENCODE_CONFIG_DIR
+        else process.env.OPENCODE_CONFIG_DIR = previous.config
+        await rm(root, { recursive: true, force: true })
+      }
+    },
+  }
+}
+
+for (const kind of ["skill", "review"] as const) {
+  test("healthy core retains a deny hook when optional " + kind + " transform fails on deferred replay", async () => {
+    const f = await liveCoreFixture()
+    const warning = spyOn(console, "warn").mockImplementation(() => {})
+    try {
+      expect(f.hooks.has("model.request")).toBe(true)
+      expect(f.skills.has("loom")).toBe(true)
+      expect(f.tools.has("assessment")).toBe(true)
+      expect(f.tools.has("qa")).toBe(true)
+      // This is a deferred callback invocation after core succeeded.
+      f.arm(kind)
+      expect(() => f.rebuild()).not.toThrow()
+      expect(() => f.hooks.get("model.request")!()).toThrow(/LOOM_MODEL_ROUTING_HOST_UNQUALIFIED/)
+      expect(warning.mock.calls.some(call => String(call[0]).includes("Loom:"))).toBe(true)
+    } finally {
+      warning.mockRestore()
+      await f.shutdown()
+    }
+    expect(f.hooks.has("model.request")).toBe(false)
+  })
+}
+
+test("cleanup keeps the first core failure and still attempts review and skill cleanup", async () => {
+  const f = await liveCoreFixture()
+  const warning = spyOn(console, "warn").mockImplementation(() => {})
+  const core = new Error("PRIMARY_CORE_CLEANUP_FAILURE")
+  const review = new Error("SECONDARY_REVIEW_CLEANUP_FAILURE")
+  const skill = new Error("SECONDARY_SKILL_CLEANUP_FAILURE")
+  f.setCleanupErrors({ core, review, skill })
+  try {
+    await expect(f.shutdown()).rejects.toBe(core)
+    expect(f.disposed).toContain("tool:1")
+    expect(f.disposed).toContain("skill")
+    expect(warning.mock.calls.map(call => String(call[0])).join(" ")).toContain("secondary cleanup failure")
+  } finally {
+    warning.mockRestore()
+  }
+})
