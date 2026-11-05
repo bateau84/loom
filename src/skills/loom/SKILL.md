@@ -27,6 +27,10 @@ Use Promise.allSettled for independent calls and inspect outcomes.
 
 ## Start or resume work
 
+Use an Action when work needs cross-agent/Session continuity; ordinary chat
+needs none. Use a Plan for meaningful dependencies, distinct tasks or resumption needs,
+not merely because work takes several steps.
+
 Use `loom_agents {}`: match `agents[].roles` to `role_descriptions`.
 Check `available`/`enabled`; delegate natively.
 
@@ -60,9 +64,9 @@ Each child selects its own work; selection is not inherited.
 
 ### Handoffs and independent first review
 
-Write a `kind:result` handoff with goal/revision, decisions, evidence, limits and next step. Pass its ID, not the chat. `loom_context` can pin a same-Action `handoff_id:"RESULT_ID"` to destination Action/task, including dependency results. Read it with `loom_record` using `action_id` and `record_id`, without `node_id`. A pointer is not proof of completion.
+Write a `kind:result` handoff with goal/revision, decisions, evidence/limits and next step. Pass its ID, not the chat. Pin same-Action results with `handoff_id`; read via `loom_record` using `action_id`+`record_id` (no `node_id`). A pointer is not proof of completion.
 
-For independent Assessment, start a fresh Session and call `loom_context` with `mode:"independent"` before reading prior opinions. Without an Action, this returns Session-only context with history withheld and no saved selection; no Action is needed. Action-linked independent mode hides Loom ledger/review/progress/question history from reads and injection, but cannot erase native messages, task text or earlier conversation. After original findings, Action-linked reviews can use `mode:"continuation"` to reconcile earlier findings. Without an Action, use `loom_record query` with `session_only:true` to inspect Session history as needed. Action modes persist; default is continuation. A failed selection save leaves the old mode in effect. See [handoff limits and recovery](../../../docs/handoffs.md).
+For independent Assessment, start a fresh Session and select `mode:"independent"` before reading opinions. Without an Action, context is Session-only and no selection is saved. Action-linked independent mode withholds Loom history, but cannot erase native messages, task text or earlier conversation. Record original findings before switching to continuation to reconcile prior work. Without an Action, query Session history with `session_only:true`. Mode persists; default is continuation. Save failure leaves the old mode. See [handoff limits and recovery](../../../docs/handoffs.md).
 
 ## Read evidence before using conclusions
 
@@ -79,8 +83,9 @@ Follow ledger `next_after` as `after` until null; Action lists use `next_offset`
 Read exact records for full statements. `contract_match:null` means unknown;
 matching work definitions do not prove code correctness.
 
-Use `add`: `result` describes observed work; `claim` records a supported
-conclusion with its limits. Keep checks and sources, not activity logs.
+Use `add`: `result` describes useful findings or work for a later agent/Session;
+`claim` records a supported conclusion with its limits. Preserve sources,
+qualifications, unresolved points and next steps. Keep checks, not activity logs.
 `evidence_ids` must cite same-Action host observations for Action records,
 or unscoped observations from the same Session for Session-only records.
 `artifact_refs` are pointers, not proof. Missing evidence stays missing.
@@ -109,20 +114,20 @@ than altering history. No automatic escalation or execution gates.
 
 Report completion with `loom_record complete`, the original `work_ref`, and the
 actual outcome. Do not fetch a newer reference to make old work look current.
-A `result` alone is not completion. Query `view:progress` for reported progress
-and contract matching. Changed contracts may need fresh work or reconfirmation;
-unrelated replanning does not erase history.
+`result` alone is not completion. Check `view:progress`; changed contracts may
+need reconfirmation, while unrelated replanning does not erase history.
 
-Completion does not complete parents or Actions and does not establish independent acceptance. Assessment/QA verdicts are `pass`, `fail`, `inconclusive`. Choose skills independently of the producer. Call `loom_assessment {"skill":"SKILL_ID"}` for ASSESSMENT.md or `loom_qa` for QA.md. The enabled caller needs its role and native skill permission; no Action, Plan or prior skill receipt is required. Missing companions return `available:false`, never SKILL.md. A PASS or loaded lens does not prove independence or Action success. Record findings with `loom_record`: with no Action, review verdicts are stored under the calling Session, as are results, claims and concerns. Use `session_only:true` to override a selected Action; Session-only evidence IDs must refer to unscoped observations from that Session. No workflow gate is created.
+Completion does not complete parents/Actions or establish acceptance. At review start, select relevant skills independently from task/artifacts. Producer skill IDs are optional pointers: add/reject them; do not replay every implementation skill. Assessment checks conformance/obligations; QA challenges failures, regressions and shared assumptions. Load the relevant lens with `loom_assessment` or `loom_qa`, using exact IDs. Matching role and native permission are required; no Action, Plan or prior receipt. Missing companions return `available:false`, never SKILL.md. Loading/passing does not establish independent acceptance or task success. Record actual `pass`/`fail`/`inconclusive` findings with `loom_record`. Without an Action, verdicts use the calling Session; `session_only:true` overrides selected Action, and Session evidence IDs must be unscoped observations. No gate is created.
 
 `reopen` appends a reason without erasing history or undoing native side effects.
 Update Action state separately; paused/cancelled labels do not stop execution.
 
 ## Questions: route material unknowns
 
-Raise OQs for material decisions beyond your responsibility, not routine
-research. Ask dispatcher for scope, specialist role for judgment, or user
-for intent/approval. `blocking:true` only when safe progress needs an answer.
+Investigate facts within your responsibility. Before an unauthorized choice
+changes the goal, scope, promised behavior or accepted risk, ask its owner; do not treat a recorded assumption as authorization. Route scope to dispatcher,
+specialist judgment to role/agent, intent/approval to user. Include alternatives;
+continue safe independent work. `blocking:true` only when safe progress needs an answer.
 
 `loom_record ask` requires `question`, Boolean `blocking`, and exactly one
 of `recipient:{kind:"agent"|"role"|"dispatcher"|"user",id?:string}` or legacy
@@ -137,7 +142,8 @@ invalid references fail.
 Legacy recipient is NOT contacted (`policy-capability-unavailable`).
 Direct typed: native child binds before prompt; blocking uses
 foreground result, nonblocking background completion. No duplicate Loom
-answer notice. Native depth/permissions apply; admission is not approval.
+answer notice. Native depth/permissions apply; admission is not an answer or
+permission. An answer is not necessarily approval or resolution.
 
 Child OQs go to dispatcher. After native specialist delegation, dispatcher
 calls `loom_record bind-respondent` with question_id and the returned
@@ -157,7 +163,7 @@ Historical records remain readable; assignment/delivery views retired.
 
 ## Deep retrospective evidence
 
-`loom_trace timeline` reads the caller's post-compaction context; other Sessions require authorized exports. `loom_trace children` lists direct children in the caller's Session family. Page via `next_cursor` (counts are per page). Code Mode can hide nested calls. `include_text:true` adds best-effort masked excerpts; unknown secrets may remain. Cite IDs, disclose gaps, and never store raw transcripts or secrets.
+`loom_trace timeline` reads the caller's post-compaction context; other Sessions require authorized exports. `loom_trace children` lists direct child Sessions. Page with `next_cursor`. Code Mode can hide nested calls. `include_text:true` adds best-effort masked excerpts; unknown secrets may remain. Cite IDs and disclose gaps; never store raw transcripts or secrets.
 
 ## Complete stored history
 
@@ -165,18 +171,15 @@ Historical records remain readable; assignment/delivery views retired.
 {"operation":"query","view":"full_thread","action_id":"ACTION_ID","node_id":"TASK_ID","limit":20}
 ```
 
-Alternatively use `session_id`, never alongside Action/node; there is no
-selected-scope fallback. Reads the current authorized Loom Store, not native
-Session bodies or cross-project databases. Membership uses authorship and direct
-question/answer relations, not notices, assumed agent identity or delivery.
+Alternatively use `session_id`, never with Action/node; there is no selected
+scope fallback. Reads the authorized Loom Store, not native Session bodies or
+other projects. Membership follows authorship and direct question/answer links,
+not notices or assumed agent identity.
 
-`full_thread` returns Markdown by default, with scope and `next_cursor` at the top. Use
-`response_format:"json"` for `result.format`, `markdown`, `scope` and `next_cursor`.
-Follow the same scope to null; a short page can be incomplete (limit 20, max 50).
-Records include identity, authors, sequence, verdicts, evidence and old work references;
-oversized records advance only on their final part. No recursive source expansion or
-invented raw output. Cursors depend on scope/location/version, not a concurrent
-snapshot. Invalid data fails without advancing.
+`full_thread` returns Markdown with scope and `next_cursor`; JSON mode returns
+`result.format`, `markdown`, `scope` and cursor. Follow the same scope until null
+(limit 20, max 50). Oversized records advance only on their final part. Cursors
+depend on scope/location/version, not a snapshot; invalid data fails without advancing.
 
 ## Recover without guessing
 

@@ -20,6 +20,12 @@ evidence and limits; unfinished work; and the next useful step. Link to actual
 code, documents and evidence through `artifact_refs`. Do not duplicate a large
 architecture document or save every speculative branch of the conversation.
 
+When relevant, name the exact installed skill IDs that materially shaped the
+work as optional review pointers. This is not an exhaustive skill-use record or
+a required compliance field. A reviewer chooses current assessment and QA
+skills independently from the task and artifacts, and may add or reject those
+pointers; they should not mechanically replay every implementation skill.
+
 The native handback carries the Action ID, destination task ID and exact result
 ID. The receiving session can select work with:
 
@@ -46,6 +52,14 @@ work does not make the original task complete.
 
 `handoff_id:null` clears a pin; selecting a different task or Action drops an
 inherited pin. A new explicit pin is allowed with the new selection.
+
+Assessment and QA serve different purposes: assess conformance to the stated
+goal and obligations; challenge plausible failures, regressions and shared
+assumptions. When useful, load the corresponding `ASSESSMENT.md` or `QA.md`
+with the role-scoped companion tool, using exact current skill IDs. Loading a
+lens is not performing review or proving independence. See [Assessment and QA
+skill companions](review-companions.md) for role, permission and availability
+limits.
 
 ## Keep first assessments independent
 

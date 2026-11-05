@@ -157,12 +157,21 @@ test("shipped guidance assigns capture, routing and traceable consolidation with
   } })
   for (const id of ["builder", "router", "challenger"]) {
     const text = guidance(config, id)!
-    for (const phrase of ["Every agent", "kind concern", "suspected", "confirmed", "not resolved"]) expect(text).toContain(phrase)
+    for (const phrase of ["Every agent", "kind concern", "suspected", "confirmed", "does not resolve"]) expect(text).toContain(phrase)
   }
   expect(guidance(config, "router")).toContain("General")
   expect(guidance(config, "router")).toContain("route blockers")
   expect(guidance(config, "challenger")).toContain("critic")
   expect(guidance(config, "challenger")).toContain("source Action and concern record IDs")
+  const reviewer = guidance(mergeConfig(defaults(), { agents: { reviewer: { roles: ["assessment"] } } }), "reviewer")!
+  const challenger = guidance(config, "challenger")!
+  for (const text of [reviewer, challenger]) {
+    expect(text).toContain("At the start of review")
+    expect(text).toContain("optional clues")
+    expect(text).toContain("do not replay every implementation skill")
+  }
+  expect(reviewer).toContain("conformance/obligation lenses")
+  expect(challenger).toContain("failure-challenge lenses")
   const f = await registeredLoom()
   try {
     const help = f.tools.get("record").description

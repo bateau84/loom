@@ -99,6 +99,9 @@ test("skill guidance retains current evidence, coordination and recovery boundar
     "Await writes", "Promise.allSettled",
     "context_attachments", "full_thread", "next_cursor", "No retries", "not an atomic lease",
     "recipient is NOT contacted", "5000ms", "Historical records",
+    "Investigate facts within your responsibility", "do not treat a recorded assumption as authorization",
+    "changes the goal, scope", "An answer is not necessarily approval or resolution",
+    "meaningful", "resumption needs",
   ]) expect(content).toContain(text)
   for (const removed of ["loom_start", "loom_route", "loom_work", "loom_intent", "loom_task_plan"]) expect(content).not.toContain(removed)
 })

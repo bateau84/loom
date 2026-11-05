@@ -8,7 +8,7 @@ timestamp: 2026-10-24T00:00:00Z
 
 # Tool help is part of discovery
 
-Each of Loom's seven registered tool descriptions contains its own usage,
+Each of Loom's eight registered tool descriptions contains its own usage,
 operation-specific inputs, returned fields, side effects, error caveats and JSON
 examples. `src/tool-help.ts` is the source for that text. The plugin registers it
 as actual tool metadata, not a link requiring another file read. `docs/tools.md`
@@ -28,7 +28,7 @@ use the returned callable path, not guess names from underscore labels. A query
 can return more tools than intended; use its returned path/signature and paging.
 The initial compact catalog uses only the first description line, limited by the
 host to 120 characters. Each Loom summary fits that boundary. Detailed help is
-therefore available at discovery without putting all seven manuals into every
+therefore available at discovery without putting all eight manuals into every
 role's initial instructions. Descriptions are at most 3,600 characters, except
 `loom_record` (10,000) which also teaches completion, questions and full_thread;
 this is a tested metadata size convention, not a tokenizer-independent limit or
@@ -39,6 +39,10 @@ replacement, explicit context-selection side effects, full dependency-record
 retrieval with Action ID (without inheriting the Worker's task filter), ledger
 paging, Assessment/QA verdicts and evidence limits. Successful context reads survive
 selection-save failure with a separate truthful outcome; failed clear still throws.
+Action/Plan guidance is proportional: continuity across agents/Sessions can
+warrant an Action, while meaningful dependencies or resumption can warrant a
+Plan. OQ guidance separates fact investigation from choices beyond agent
+authority; it does not create an automatic escalation or approval gate.
 [Collaboration](collaboration.md) uses canonical `context_attachments` on both ask
 and answer (never an `attachments` alias), manual native handling after fail-closed
 question dispatch, first-answer-only best-effort resume and explicit-scope/cursor
