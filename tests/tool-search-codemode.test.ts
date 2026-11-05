@@ -71,7 +71,7 @@ test("actual search exposes canonical questions and full-thread continuation, no
     const record = result.items[0]
     for (const field of ["question", "to_agent", "blocking", "context_attachments", "reference", "question_id", "answer", "session_id", "cursor"])
       expect(record.signature).toContain(field)
-    for (const text of ["attachments is not an accepted alias", "policy-capability-unavailable", "FIRST committed", "No retries", "full_thread", "next_cursor", "not perpetual", "historical records remain readable and inert"])
+    for (const text of ["attachments/old aliases are invalid", "policy-capability-unavailable", "FIRST committed", "No retries", "full_thread", "next_cursor", "not perpetual", "readable Markdown by default", "history remains inert"])
       expect(record.description).toContain(text)
     const examples = record.description.split("\n").filter((s: string) => s.startsWith("{")).map((s: string) => JSON.parse(s))
     const ask = examples.find((e: any) => e.operation === "ask" && e.reference)
@@ -90,7 +90,7 @@ test("task-language discovery finds record and recovery help, including the depe
   await withSearch(async search => {
     const records = await search({ namespace: "loom", query: "dependency history QA", limit: 5 })
     const record = records.items.find((item: any) => item.path === "tools.loom.record")
-    expect(record?.description).toContain("explicit action_id without node_id searches the whole Action")
+    expect(record?.description).toContain("action_id without node_id searches the whole Action")
     const recovery = await search({ namespace: "loom", query: "recover handoff restart", limit: 5 })
     expect(recovery.items.some((item: any) => item.path === "tools.loom.context" && item.description.includes("task-not-in-current-plan"))).toBe(true)
   })
