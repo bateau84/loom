@@ -4,6 +4,23 @@ type: Log
 
 # Update Log
 
+## 2026-11-05
+
+**Update:** Extended optional guidance for Assessment and QA reviewers to select
+relevant skills at review start, independently assess producer pointers, and
+distinguish assessment from failure-challenge QA. Handoffs may name materially
+relevant skills as optional pointers, not exhaustive usage receipts. No new
+workflow gate, automatic capture, or runtime behavior was added.
+
+## 2026-11-05
+
+**Update:** Clarified OQ guidance across registered help, agent instructions,
+the bundled Loom skill and tool documentation: investigate facts within
+authority, ask the owner before committing to consequential choices outside
+authority, and do not treat assumptions, admission or answers as approval or
+resolution. Added proportional Action/Plan triggers and strengthened useful
+result handback guidance. No workflow gates or runtime behavior changed.
+
 ## 2026-11-01
 
 **Independent review remediation for #204:** Expanded Copilot Individual/Business/Enterprise/access coverage and Go Teams member/service-account handling; separated generic Codex terms from legacy OpenCode billing claims. Tightened the proposed included-only proof to a host-bound native attempt, exact auth method, credential revision and effective billing account. Removed unverified metered authorization from the included-only decision. No provider gained qualification or production routing.

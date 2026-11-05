@@ -130,7 +130,7 @@ transport, restart and save-failure probes were outside this trial, not claims
 that separate tests lack such evidence. Completion of this Action is not whole-alpha
 acceptance, a universal usefulness claim or permission to merge/release.
 
-The [five-tool guide](tools.md), registered search help and bundled `loom` skill
+The [tool guide](tools.md), registered search help and bundled `loom` skill
 remain the usage references. Native agent mappings use current definitions;
 removed external Loom skills stay removed. Actions and Plans remain optional.
 The older boot test proves only its loading/empty-ledger scope; it is neither

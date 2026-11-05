@@ -1,17 +1,20 @@
 ---
 type: API Reference
-title: "Seven tools, optional structure"
+title: "Eight tools, optional structure"
 description: "Documents Loom tools, input contracts, scopes and failure semantics."
 tags: [loom, tools, api]
 timestamp: 2026-10-24T00:00:00Z
 ---
 
-# Seven tools, optional structure
+# Eight tools, optional structure
 
 Loom retains goals, context and attributed history. OpenCode owns execution,
 native delegation, skills, models and permissions. A conversation needs no Action;
 an Action needs no Plan. Live tool search is the syntax authority; the bundled
 native `loom` guide teaches use without requiring this document to be fetched.
+Use an Action when substantive work needs continuity across agents or Sessions;
+use a Plan when dependencies, distinct tasks or resumption needs make structure
+useful, not simply because work takes multiple steps.
 
 | Tool | Purpose |
 | --- | --- |
@@ -190,6 +193,14 @@ ordinary limits; paged Action/Session full history includes eligible concerns.
 No concern lifecycle, structured record links, automatic escalation or gates.
 
 ## Questions without assignment machinery
+
+Investigate uncertain facts within your responsibility; uncertainty alone is
+not an OQ. Before committing to a choice outside your authority that changes
+the goal, scope, promised behavior or accepted risk, ask the owner rather than
+silently deciding or treating a recorded assumption as authorization. Route
+scope to the dispatcher, specialist judgment to a role/agent, and intent or
+approval to the user. Continue independent work where safe. An answer is not
+necessarily approval or resolution.
 
 ```json
 {"operation":"ask","question":"Does the finding cover empty input?","to_agent":"research","blocking":true,"context":"The cited source is ambiguous.","context_attachments":["SOURCE_REFERENCE"],"reference":{"action_id":"ACTION_ID","kind":"task","id":"TASK_ID"}}

@@ -92,10 +92,14 @@ The location and role checks apply only to these companion loaders; this is
 not a general filesystem sandbox or a claim that other allowed read tools are
 blocked from reading the same files.
 
-Assessment checks conformance and domain obligations. QA challenges hidden
-failures, shared assumptions and false confidence after competent work/review.
-Choose skills from the work and its risks independently of the producer's list.
-Load practitioner guidance natively when useful; no prior load receipt is required.
+Assessment checks conformance and domain obligations. QA challenges plausible
+failures, regressions and shared assumptions. At the start of review, select
+relevant current skills from the task, requirements and artifacts. Choose
+independently of the producer's list. A handoff's exact skill IDs may be useful
+optional pointers; add or reject them based on current relevance, and do not
+mechanically replay every implementation skill. Load practitioner guidance
+natively when useful; no prior load receipt is required and no skill-use receipt
+is created. The two review purposes remain distinct; either or both may be useful.
 No Action or Plan is required. Loading a file is not performing a review, proving
 independence, completing a task, or producing a verdict. Record actual findings
 separately with `loom_record` using `kind:assessment` or `kind:qa`.
