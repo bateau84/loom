@@ -220,13 +220,16 @@ permission and depth checks; a prompt hook binds the verified child before
 native admission. Blocking direct OQs run as native foreground subagents
 and return one tool result, without another Loom answer notice.
 Nonblocking direct OQs use native background completion to wake later.
-A question from a child is relayed to its
-dispatching Session. If it delegates to a specialist, it then calls
-`loom_record` with `operation:"bind-respondent"`, `question_id`, and the
-`respondent_session_id` returned by native delegation. Only that child
-Session can answer, not a sibling. A user-targeted question from a child reaches the parent for user
-interaction; a primary agent must ask the user itself through the native
-interface. Unavailable or ambiguous role assignments are not auto-dispatched.
+A question from a child is relayed to its dispatching Session. When addressed
+to the dispatcher, it must answer directly, even if it consults a specialist;
+it must not bind that specialist. A forwarded agent/role question requires
+native delegation followed by `loom_record` with
+`operation:"bind-respondent"`, `question_id`, and the verified child
+`respondent_session_id`. Only that child Session can answer, not a sibling.
+A user-targeted question from a child reaches the parent for user interaction;
+the parent asks the user and cites the actual decision. A primary agent must
+ask the user itself through the native interface. Unavailable or ambiguous role
+assignments are not auto-dispatched.
 When guarded model routing is enabled but the native host is unqualified,
 Loom records questions requiring native contact without dispatch
 (`dispatch.reason:"model-routing-host-unqualified"`). This avoids

@@ -145,10 +145,11 @@ foreground result, nonblocking background completion. No duplicate Loom
 answer notice. Native depth/permissions apply; admission is not an answer or
 permission. An answer is not necessarily approval or resolution.
 
-Child OQs go to dispatcher. After native specialist delegation, dispatcher
-calls `loom_record bind-respondent` with question_id and the returned
-respondent_session_id. Only that child may answer, not siblings. Cite
-actual user responses for user decisions.
+Child OQs reach dispatcher. For dispatcher targets, answer directly even
+after specialist consultation; don't bind that specialist. For forwarded
+agent/role OQs, natively delegate and bind the verified child via
+`loom_record bind-respondent`; only it may answer. For user targets, ask the
+user and cite their actual decision.
 
 ```json
 {"operation":"answer","question_id":"QUESTION_ID","answer":"Read the source and its limitations.","context_attachments":["SOURCE_REFERENCE"]}

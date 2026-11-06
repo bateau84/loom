@@ -4,6 +4,16 @@ type: Log
 
 # Update Log
 
+## 2026-11-06
+
+**Dispatcher question routing:** Corrected parent notices and General guidance so
+dispatcher-addressed questions are answered by the dispatcher, even when consulting
+a specialist. `bind-respondent` now distinguishes incompatible routing from an actual
+dispatching-Session mismatch. Aligned the shipped Loom guide and collaboration,
+coordination and tool documentation across dispatcher, user, and forwarded
+specialist paths; added packaged-guidance and documentation regression assertions
+alongside registered-plugin coverage. Live-host acceptance remains separate.
+
 ## 2026-11-05
 
 **Update:** Extended optional guidance for Assessment and QA reviewers to select

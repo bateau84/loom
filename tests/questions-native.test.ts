@@ -9,6 +9,26 @@ import plugin from "../server.js"
 import { digest } from "../src/model.js"
 import { Collaboration } from "../src/collaboration.js"
 
+test("dispatcher-addressed child question tells parent to answer directly and preserves specialist binding", async () => {
+  const f = await registeredLoom()
+  try {
+    f.sessions.set("child", { id: "child", parentID: "parent", agent: "general", projectID: "tool-help", location: { directory: f.directory } })
+    const q = (await f.invoke("record", { operation: "ask", question: "Need a dispatcher decision?", blocking: true,
+      recipient: { kind: "dispatcher" } }, "child", "general")).result
+    const notice = f.nativeInputs.at(-1) as any
+    expect(notice.sessionID).toBe("parent")
+    expect(notice.text).toContain("Answer it directly")
+    expect(notice.text).toContain("Do not bind a specialist")
+    expect(notice.text).not.toContain("delegate natively to the specialist")
+    expect(q.data.expected_session).toBe("parent")
+    expect(q.data.expected_agent).toBeUndefined()
+    await expect(f.invoke("record", { operation: "bind-respondent", question_id: q.id,
+      respondent_session_id: "specialist" }, "parent", "general")).rejects.toThrow("not routed for forwarded-specialist binding")
+    const answer = (await f.invoke("record", { operation: "answer", question_id: q.id, answer: "Dispatcher decision" }, "parent", "general")).result
+    expect(answer.data.answer).toBe("Dispatcher decision")
+  } finally { await f.close() }
+})
+
 test("registered unscoped questions persist actual attribution, absent association and fail-closed dispatch", async () => {
   const f = await registeredLoom()
   const answerSpy = spyOn(Collaboration.prototype, "answer") // Observe the real synchronous commit result, without replacing it.
