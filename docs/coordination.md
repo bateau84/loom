@@ -18,10 +18,12 @@ Use [the tool walkthrough](tools.md), live tool search for exact schemas,
 and [collaboration semantics](collaboration.md). On OpenCode 2.2.0, a new
 `recipient` can target a role, named agent, dispatcher or user. A single eligible
 agent is contacted through OpenCode's native subagent tool, which enforces
-permissions and depth. Children relay to their parent; after specialist
-delegation, the dispatcher binds the exact child with `bind-respondent`.
-Other siblings cannot answer.
-Primary Sessions use native user interaction for user-targeted questions.
+permissions and depth. Children relay to their parent. A question addressed to
+the dispatcher is answered directly by that dispatcher, even if it consults a
+specialist; no specialist binding is needed. Forwarded agent/role questions
+require binding the verified native child with `bind-respondent`; other siblings
+cannot answer. For user-targeted questions, the parent asks the user and cites
+the actual decision. Primary Sessions use native user interaction.
 Legacy `to_agent` questions remain manual. A delivered notice is not an answer.
 Blocking is intent, not an enforced wait or execution gate.
 

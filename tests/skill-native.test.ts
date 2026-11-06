@@ -103,7 +103,28 @@ test("skill guidance retains current evidence, coordination and recovery boundar
     "changes the goal, scope", "An answer is not necessarily approval or resolution",
     "meaningful", "resumption needs",
   ]) expect(content).toContain(text)
+  const normalized = content.replace(/\s+/g, " ")
+  expect(normalized).toContain("For dispatcher targets, answer directly even")
+  expect(normalized).toContain("agent/role OQs, natively delegate and bind the verified child")
+  expect(normalized).toContain("For user targets, ask the user and cite their actual decision.")
   for (const removed of ["loom_start", "loom_route", "loom_work", "loom_intent", "loom_task_plan"]) expect(content).not.toContain(removed)
+})
+
+test("published question-routing guidance distinguishes dispatcher, user and forwarded specialist paths", async () => {
+  for (const [file, direct] of [
+    ["../docs/collaboration.md", "which answers directly when the recipient is the dispatcher"],
+    ["../docs/coordination.md", "dispatcher is answered directly by that dispatcher"],
+    ["../docs/tools.md", "addressed to the dispatcher, it must answer directly"],
+  ]) {
+    const text = (await readFile(new URL(file, import.meta.url), "utf8")).replace(/\s+/g, " ")
+    expect(text).toContain("dispatcher")
+    expect(text).toContain("user")
+    expect(text).toContain("bind-respondent")
+    expect(text).toContain("actual decision")
+    expect(text).toContain(direct)
+  }
+  const collaboration = await readFile(new URL("../docs/collaboration.md", import.meta.url), "utf8")
+  expect(collaboration).not.toContain("the parent must delegate natively")
 })
 
 test("bundled JSON examples execute with real returned identities against registered callbacks", async () => {

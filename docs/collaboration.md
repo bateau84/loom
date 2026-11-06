@@ -90,6 +90,11 @@ sequence: the latest explicit report is the current report, not an approval deci
   specialist delegation, only the dispatching Session can bind one matching
   native child. Only that child may answer; siblings cannot.
 
+Dispatcher-addressed questions notify the parent with direct-answer instructions.
+The dispatcher may consult a specialist, but remains the expected respondent and
+must not bind that child. Binding applies only to forwarded specialist questions;
+user-addressed questions retain their user-relay path.
+
 Both canonical attachment fields are arrays of at most 50 string references,
 each at most 2,000 characters. They are pointers, not verified content.
 `attachments` is not an alias, alone or alongside `context_attachments`.
@@ -124,10 +129,13 @@ returns its result, with no separate Loom answer notice or background-completion
 wake. Direct nonblocking OQs remain background and may later send OpenCode's
 completion notice. `dispatch.native_status` describes the native job result
 (`running` or `completed`), not proof the OQ is correctly answered.
-When the asker is a
-child, Loom notifies the parent; the parent must delegate natively, respecting
-OpenCode's depth and permission checks. Dispatcher targets use that parent; user targets also notify the parent,
-or require native user interaction in a primary Session. A failed/missing/ambiguous
+When the asker is a child, Loom notifies the parent, which answers directly when
+the recipient is the dispatcher—even if it consults a specialist. Forwarded
+agent/role recipients require the parent to delegate natively and bind the
+verified specialist child, respecting OpenCode's depth and permission checks.
+Dispatcher targets use that parent; user targets also notify the parent,
+which asks the user and cites their actual decision, or require native user
+interaction in a primary Session. A failed/missing/ambiguous
 target stays recorded without invented receipt. The dispatch result is
 a separate SYSTEM record. Native policy failures cannot claim successful
 contact. The stored question remains available. A background subagent can

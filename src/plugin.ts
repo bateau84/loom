@@ -403,7 +403,9 @@ export default Plugin.define({
                   const question = store.collaboration.thread(String(input.question_id)).question
                   if (question.data.format !== "loom-question/v2" ||
                       typeof question.data.expected_agent !== "string" ||
-                      question.data.expected_parent_session !== actor.session_id)
+                      typeof question.data.expected_parent_session !== "string")
+                    throw new Error("This question is not routed for forwarded-specialist binding; answer it directly if addressed to the dispatcher, or delegate a specialist without binding if you are consulting one")
+                  if (question.data.expected_parent_session !== actor.session_id)
                     throw new Error("Only the question's dispatching Session can bind this forwarded specialist")
                   const receiverID = String(input.respondent_session_id) as Parameters<typeof ctx.session.get>[0]["sessionID"]
                   const receiver = payload(unwrapped(await ctx.session.get({ sessionID: receiverID })))
