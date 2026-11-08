@@ -14,8 +14,9 @@ timestamp: 2026-11-08T00:00:00Z
   in `package.json` / `bun.lock`. Preserve unrelated dependency pins.
 - Install **unmodified `@opencode/cli@2.2.6`** separately from the packed
   Loom artifact in the installed-host boot and scripted-question CI jobs.
-- Update the version-specific smoke, qualification and source-applicability
-  expectations. Do not alter Loom runtime behavior or native permissions.
+- Update version-specific smoke, question, and installed routing negative/disabled
+  controls, including their source-applicability expectations. Do not alter
+  Loom runtime behavior or native permissions.
 - Keep the historical 2.1.4 model-routing fixtures and 2.0.29 Code Mode
   search fixture pinned; they cannot qualify production 2.2.6 routing.
 
@@ -51,7 +52,9 @@ CI on the exact PR head must successfully complete:
    preserving native agent definitions and empty-ledger behavior.
 3. Installed scripted question, Session discovery, archive status,
    compaction, duplicate-input, and retrospective source-only checks.
-4. The normal fail-closed model-routing guard must remain unchanged.
+4. Installed routing negative/disabled controls against the **same**
+   exact CLI/SDK 2.2.6 pair. Managed-subscription routing must remain
+   blocked by the normal fail-closed guard, with no quota DB or paid requests.
    **No managed-subscription route becomes qualified through this upgrade.**
 
 Only the executed CI reports, tied to the PR head and exact installed package,
