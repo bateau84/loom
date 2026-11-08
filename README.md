@@ -62,33 +62,27 @@ interrupt an OpenCode session or certify successful delivery.
 
 ## Loading the plugin
 
-Upgrade candidate: **OpenCode 2.2.0**, with `@opencode/plugin@2.2.0`
-pinned in the source package and lockfile. The isolated installed boot,
-scripted-question, Session discovery and compaction checks use the exact
-2.2.0 CLI and SDK; see merged PR #199 and the current CI checks.
-**Only a successful run on the reviewed head qualifies the tested behavior.**
-Evidence collected under 2.1.1 or the older 2.0.32 host
-does not establish 2.2.0 compatibility. The historical 2.0.32 qualification
-(PR #182) passed E1–E3 and its negative control with the packed alpha artifact
-(SHA-256 `ef7dad9a30ade952cd055fe5c637ff19d1b7b75ef8da590cde07fad58e7efd15`).
-No test claims live-provider or external-MCP coverage.
+Upgrade candidate: **OpenCode 2.2.6**, with `@opencode/plugin@2.2.6`
+pinned in `package.json` and `bun.lock`. The isolated installed boot,
+scripted-question, native Session discovery and compaction CI runs now target
+the exact 2.2.6 CLI/SDK pairing. **The version bump is a compatibility
+candidate, not a claim of passing installed-host qualification.** Only
+successful evidence from the reviewed PR head qualifies it.
 
-The separately pinned Code Mode search fixture remains 2.0.29; it cannot
-qualify the new host, and 2.0.29 is not a supported SDK/host target. Selective
-session-read remains a version-specific source-qualified N/A, never proof of
-authorization. Neither workflow upgrades your personal CLI or changes
-your active configuration. See
-[2.2.0 migration and compatibility](docs/opencode-2.2.0.md) and
+The previous 2.2.0 qualification is historical (see
+[2.2.0 migration record](docs/opencode-2.2.0.md)); evidence from 2.2.0,
+2.1.1 or 2.0.32 cannot qualify 2.2.6. The separate Code Mode search fixture
+remains 2.0.29 and is not an installed-host qualification.
+This change does not upgrade a developer's CLI or local configuration.
+See [2.2.6 compatibility plan](docs/opencode-2.2.6.md) and
 [installed-host validation](docs/installed-host-validation.md).
-**Model-routing host boundary:** this branch now packages SDK 2.2.0.
-The previous native initial-selection implementation was investigated using
-**CLI 2.1.4 / SDK 2.1.1** and is retained as a historical contract-test
-candidate. No current SDK 2.2.0 host pairing, **including CLI 2.1.4**,
-is qualified for managed subscription routing. The production adapter
-returns `not-connected` and the early `model.request` hook denies such
-opt-in requests with `LOOM_MODEL_ROUTING_HOST_UNQUALIFIED`. Valid,
-explicitly disabled routing preserves native OpenCode execution.
-Test-only billing attestations do not authorize real provider requests;
+
+**Model-routing boundary:** SDK/CLI 2.2.6 remains unqualified for
+managed-subscription initial routing. The production adapter stays
+`not-connected`, and the early `model.request` guard continues to deny
+opt-in routing with `LOOM_MODEL_ROUTING_HOST_UNQUALIFIED`.
+Explicitly disabled routing preserves native OpenCode behavior.
+No test-only billing attestation proves real provider eligibility;
 see [model routing](docs/model-routing.md).
 
 **Bun support: `>=1.4.2 <2.0.0`. Use Bun 1.4.2 to reproduce validation.**
