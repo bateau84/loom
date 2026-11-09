@@ -52,6 +52,7 @@ type CandidateRow = {
 /** Bounded observational statistics. A Session/Action/dispatch is not necessarily one objective. */
 export class Learning {
   constructor(private db: SQL, private store: Store) {
+    db.exec("PRAGMA busy_timeout=2000; PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
     db.exec("CREATE TABLE IF NOT EXISTS learning_candidates (id TEXT PRIMARY KEY, created_at TEXT NOT NULL, author_session TEXT NOT NULL, author_agent TEXT NOT NULL, target_kind TEXT NOT NULL, target_id TEXT NOT NULL, base_sha256 TEXT NOT NULL, candidate_sha256 TEXT NOT NULL, content TEXT NOT NULL, hypothesis TEXT NOT NULL, evidence_refs TEXT NOT NULL, status TEXT NOT NULL, revised_from TEXT);")
     db.exec("CREATE INDEX IF NOT EXISTS learning_candidates_created ON learning_candidates(created_at, id);")
     db.exec("CREATE TABLE IF NOT EXISTS learning_trials (id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL REFERENCES learning_candidates(id), recorded_at TEXT NOT NULL, session_id TEXT NOT NULL, agent TEXT NOT NULL, observed_sha256 TEXT, observed_effect TEXT NOT NULL, statement TEXT NOT NULL, evidence_refs TEXT NOT NULL);")
