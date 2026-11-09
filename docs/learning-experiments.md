@@ -10,6 +10,8 @@ timestamp: 2026-11-09T00:00:00Z
 
 Loom now exposes **observations**, not a built-in evaluator of whether a user objective succeeded. `loom_insights` reports bounded project/Action ledger metadata; `loom_tweak` keeps exact proposed instruction content and reported real-work trials for later recovery. Neither modifies live skills or agents, schedules an experiment, selects a model, or produces an approval verdict.
 
+**Storage and recovery:** Loom keeps provisional candidates/trials in a separate project-local `learning.sqlite` next to its existing `ledger.sqlite`. This prevents changes to the Action Store's frozen SQLite schema. The current [offline Action Store backup procedure](manual-backup-restore.md) covers **only `ledger.sqlite`** and does not back up these learning records; retain a separately stopped-writers copy of `learning.sqlite` (and applicable sidecars) for now. Recovery of that separate file has not been independently qualified. Do not describe an Action Store backup as a full learning-memory backup.
+
 ## Whole-objective evidence
 
 A user goal can span parent and child OpenCode Sessions, several reported Task completions, corrective redispatches, checks, and a later delivered outcome. Three Coder DONE handbacks whose first two implementations fail through the real execution path are **one eventual objective with corrective rework**, if original source evidence links them to that objective. Do not count three successes or two independent failures.

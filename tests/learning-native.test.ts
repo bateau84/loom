@@ -4,6 +4,8 @@ import { createHash } from "node:crypto"
 import { Store } from "../src/store.js"
 import { Learning } from "../src/learning.js"
 import { Observer } from "../src/context.js"
+import { digest } from "../src/model.js"
+import { join } from "node:path"
 import { registeredLoom } from "./helpers/registered-loom.js"
 
 const actor = { session_id: "coder-parent", agent: "coder" }
@@ -83,5 +85,26 @@ test("registered tools expose read-only insights and opt-in candidate memory", a
     expect(proposal.authority).toContain("never installed")
     const list = (await host.invoke("tweak", { operation: "list" })).result
     expect(list.items.some((x: any) => x.id === proposal.id)).toBe(true)
+  } finally { await host.close() }
+})
+
+test("learning state stays outside Action ledger schema and survives a separate reader", async () => {
+  const host = await registeredLoom()
+  try {
+    const scope = digest({ project: "tool-help", canonical: host.directory })
+    const root = join(host.directory, "state", "loom", "actions-v1", scope)
+    const actionDB = new Database(join(root, "ledger.sqlite"))
+    const learningDB = new Database(join(root, "learning.sqlite"))
+    try {
+      expect(actionDB.query("SELECT name FROM sqlite_schema WHERE name LIKE 'learning_%'").all()).toEqual([])
+      const proposal = (await host.invoke("tweak", {
+        operation: "propose", target_kind: "skill", target_id: "example",
+        base_sha256: fingerprint("base"), candidate_content: "# Candidate",
+        hypothesis: "Observed repeated trouble in comparable work",
+      })).result
+      const saved = learningDB.query("SELECT candidate_sha256 FROM learning_candidates WHERE id=?").get(proposal.id) as { candidate_sha256: string }
+      expect(saved.candidate_sha256).toBe(proposal.candidate_sha256)
+      expect(actionDB.query("SELECT name FROM sqlite_schema WHERE name='learning_candidates'").all()).toEqual([])
+    } finally { learningDB.close(); actionDB.close() }
   } finally { await host.close() }
 })
