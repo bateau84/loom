@@ -1,6 +1,6 @@
 import { Plugin } from "@opencode/plugin"
 import { Database } from "bun:sqlite"
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { decodeConfigYaml } from "./config-parser.js"
 import { mkdir, open, realpath } from "node:fs/promises"
 import { homedir } from "node:os"
@@ -16,6 +16,7 @@ import { digest, PROCESSING_LIMITS, type Actor, type Focus } from "./model.js"
 import { renderFullHistory } from "./history-renderer.js"
 import { fullThreadMarkdown } from "./response-format.js"
 import { Store } from "./store.js"
+import { Learning } from "./learning.js"
 import { QUESTION_DISPATCH, questionRecipient } from "./collaboration.js"
 import { questionRoute, sendQuestion, type NativeModel, type QuestionRoute } from "./question-routing.js"
 import { resumeAnswer } from "./answer-resume.js"
@@ -81,6 +82,8 @@ const specs = [
       session_id: str, export_path: { type: "string", minLength: 1, maxLength: 4096 },
       include_text: { type: "boolean" }, limit: { type: "integer", minimum: 1, maximum: 50 },
       cursor: { type: "string", minLength: 1, maxLength: 4096 } }, ["operation"]) },
+  { name: "insights", description: TOOL_HELP.insights, input: obj({ operation: choice("action", "window"), action_id: str, before: { type: "integer", minimum: 1 }, limit: { type: "integer", minimum: 1, maximum: 200 }, since_at: str, until_at: str }, ["operation"]) },
+  { name: "tweak", description: TOOL_HELP.tweak, input: obj({ operation: choice("propose", "list", "read", "retire", "trial"), id: str, target_kind: choice("skill", "assessment", "qa", "agent"), target_id: str, base_sha256: str, candidate_content: str, hypothesis: str, evidence_refs: { type: "array", items: str, maxItems: 20 }, revised_from: str, observed_sha256: str, observed_effect: choice("promising", "harmful", "neutral", "inconclusive", "not-exercised"), statement: str, offset: { type: "integer", minimum: 0 } }, ["operation"]) },
   { name: "action", description: TOOL_HELP.action, input: obj({ operation: choice("list", "create", "update", "sessions"), action_id: str, title: str, goal: str, state: choice("active", "paused", "completed", "cancelled"), expected_revision: num, offset: num, archived: { type: "boolean" }, cursor: { type: "string", minLength: 1, maxLength: 4096 }, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
   { name: "plan", description: TOOL_HELP.plan, input: obj({ operation: choice("read", "save"), action_id: str, revision: num, expected_revision: num, nodes: { type: "array", maxItems: 300, items: obj({ id: str, kind: choice("phase", "wave", "task", "subtask"), title: str, parent: str, depends_on: list, outcome: str, context: str, criteria: list, skills: list, roles: list, agent: str }, ["id", "kind", "title"]) } }, ["operation", "action_id"]) },
   { name: "context", description: TOOL_HELP.context, input: obj({ action_id: str, node_id: str, clear: { type: "boolean" }, mode: choice("continuation", "independent"), handoff_id: { type: ["string", "null"] } }) },
@@ -135,7 +138,7 @@ export default Plugin.define({
     let filename = join(state, "ledger.sqlite")
     let stage = "state-directory"
     let db: Database | undefined
-    let store: Store, observer: Observer
+    let store: Store, observer: Observer, learning: Learning
     try {
       await mkdir(state, { recursive: true, mode: 0o700 })
       stage = "database-file"
@@ -146,6 +149,8 @@ export default Plugin.define({
       db = new Database(filename)
       stage = "store-initialization"
       store = new Store(db, projectScope)
+      stage = "learning-initialization"
+      learning = new Learning(db, store)
       stage = "observer-initialization"
       observer = new Observer(store)
     } catch (error) {
@@ -308,6 +313,33 @@ export default Plugin.define({
                 } else throw new Error("Unknown trace operation")
                 break
               }
+              case "insights":
+                if (input.operation === "action") {
+                  const actionID = input.action_id === undefined ? store.selected(actor.session_id)?.action_id : String(input.action_id)
+                  if (!actionID) throw new Error("Insights action view requires explicit or selected action_id")
+                  result = learning.events({ action_id: actionID, before: input.before as number | undefined, limit: input.limit as number | undefined,
+                    since_at: input.since_at as string | undefined, until_at: input.until_at as string | undefined })
+                } else if (input.operation === "window") {
+                  if (input.action_id !== undefined) throw new Error("Window insights cannot use action_id")
+                  result = learning.events({ before: input.before as number | undefined, limit: input.limit as number | undefined,
+                    since_at: input.since_at as string | undefined, until_at: input.until_at as string | undefined })
+                } else throw new Error("Unknown insights operation")
+                break
+              case "tweak":
+                if (input.operation === "propose") result = learning.propose(actor, {
+                  target_kind: input.target_kind as string, target_id: input.target_id as string,
+                  base_sha256: input.base_sha256 as string, candidate_content: input.candidate_content as string,
+                  hypothesis: input.hypothesis as string, evidence_refs: input.evidence_refs as string[] | undefined,
+                  revised_from: input.revised_from as string | undefined })
+                else if (input.operation === "list") result = learning.list(input.offset as number | undefined)
+                else if (input.operation === "read") result = learning.read(String(input.id))
+                else if (input.operation === "retire") result = learning.retire(String(input.id))
+                else if (input.operation === "trial") result = learning.trial(actor, { id: String(input.id),
+                  observed_sha256: input.observed_sha256 as string | undefined,
+                  observed_effect: input.observed_effect as string, statement: input.statement as string,
+                  evidence_refs: input.evidence_refs as string[] | undefined })
+                else throw new Error("Unknown tweak operation")
+                break
               case "action":
                 if (input.operation === "list") result = store.list(input.offset as number | undefined)
                 else if (input.operation === "create") result = store.create(input.title as string, input.goal as string, actor)
@@ -595,6 +627,28 @@ export default Plugin.define({
               : event
             const record = observer.after(observed, captureEnabled)
             if (record && record.data.attribution !== "captured-at-start") warn(`Evidence is unpaired (${record.data.attribution}). Inspect loom_record with operation=query, session_only=true.`)
+            // Native skill loader result: provenance hint, not proof of model use.
+            // Never store the skill body, original tool output or a claim of final delivery.
+            if (record && record.data.attribution === "captured-at-start" && event.tool === "skill" && event.status === "completed") {
+              const input = event.input && typeof event.input === "object" && !Array.isArray(event.input) ? event.input as Record<string, unknown> : {}
+              const output = event.result as { content?: unknown }
+              if (typeof input.id === "string" && input.id.length > 0 && input.id.length <= 200 &&
+                  typeof output.content === "string" && Buffer.byteLength(output.content, "utf8") <= 131072) {
+                const registry = unwrapped(await ctx.skill.list())
+                const registered = Array.isArray(registry) ? registry.filter(s =>
+                  !!s && typeof s === "object" && (s as { id?: unknown }).id === input.id) : []
+                const current = registered.length === 1 ? registered[0] as { content?: unknown } : undefined
+                const registeredText = typeof current?.content === "string" ? current.content : undefined
+                store.observe({ session_id: event.sessionID, agent: event.agent },
+                  record.action_id ? { action_id: record.action_id, ...(record.node_id ? { node_id: record.node_id } : {}) } : undefined,
+                  { phase: "skill-load-result", skill_id: input.id, call_id: event.id,
+                    rendered_sha256: createHash("sha256").update(output.content, "utf8").digest("hex"),
+                    ...(registeredText ? { registry_content_sha256: createHash("sha256").update(registeredText, "utf8").digest("hex"),
+                      registered_content_present: output.content.includes(registeredText.trim()) } : {}),
+                    observation: "completed native skill tool result; registry sampled afterward; not proof of final model exposure or application" },
+                  record.fingerprint)
+              }
+            }
           }
         } catch (error) { warn(error) }
       }))
