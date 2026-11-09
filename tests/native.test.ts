@@ -93,10 +93,12 @@ for (const scenario of ["missing-column", "unsupported-version", "healthy", "emp
       expect(registrations).toEqual(["skill"])
       expect(tools).toEqual([])
     }
-    expect(closed).toHaveLength(1)
+    // Healthy hosts own a separate learning DB. Unsupported Action-store versions
+    // fail before it is opened; both paths must close every acquired connection.
+    expect(closed).toHaveLength(healthy ? 2 : 1)
     expect(skillDisposals).toBe(1)
     expect(hostIO).toEqual([])
-    expect(() => closed[0].query("SELECT 1")).toThrow()
+    for (const connection of closed) expect(() => connection.query("SELECT 1")).toThrow()
     close.mockRestore()
     const after = new Database(filename)
     try {
