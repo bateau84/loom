@@ -137,7 +137,7 @@ export default Plugin.define({
     const state = join(stateHome, "loom", "actions-v1", projectScope)
     let filename = join(state, "ledger.sqlite")
     let stage = "state-directory"
-    let db: Database | undefined
+    let db: Database | undefined, learningDB: Database | undefined
     let store: Store, observer: Observer, learning: Learning
     try {
       await mkdir(state, { recursive: true, mode: 0o700 })
@@ -149,16 +149,23 @@ export default Plugin.define({
       db = new Database(filename)
       stage = "store-initialization"
       store = new Store(db, projectScope)
+      stage = "learning-database-file"
+      const learningPath = join(state, "learning.sqlite")
+      const learningHandle = await open(learningPath, "a", 0o600)
+      await learningHandle.close()
+      stage = "learning-database-open"
+      learningDB = new Database(await realpath(learningPath))
       stage = "learning-initialization"
-      learning = new Learning(db, store)
+      learning = new Learning(learningDB, store)
       stage = "observer-initialization"
       observer = new Observer(store)
     } catch (error) {
       // Cleanup must not replace the initialization cause. No recovery or retry here.
+      try { learningDB?.close() } catch { /* Preserve the primary failure. */ }
       try { db?.close() } catch { /* Preserve the primary failure. */ }
       throw new Error(`Loom startup failed (stage=${stage}, database=${JSON.stringify(filename)}): ${error instanceof Error ? error.message : String(error)}`, { cause: error })
     }
-    const database = db
+    const database = db, learningDatabase = learningDB
     // Scoped to one live plugin instance; never recover a dispatch token from untrusted history.
     const awaitingNativePrompt = new Map<string, { question: string; parent: string; agent: string; bound?: string }>()
     const disposers: Array<{ dispose(): Promise<void> }> = []
@@ -654,7 +661,10 @@ export default Plugin.define({
       }))
     } catch (error) {
       lifetime.abort()
-      await Promise.allSettled(disposers.map(d => d.dispose())); database.close(); throw error
+      await Promise.allSettled(disposers.map(d => d.dispose()))
+      learningDatabase.close()
+      database.close()
+      throw error
     }
     // The early guard remains restrictive until the entire plugin initialized.
     // A valid, explicitly disabled policy removes it; a guarded runtime
@@ -675,6 +685,7 @@ export default Plugin.define({
       startupDispatch = "deny"
       lifetime.abort()
       await Promise.allSettled(disposers.map(d => d.dispose()))
+      learningDatabase.close()
       database.close()
       await disposeStartupGuard()
     }
