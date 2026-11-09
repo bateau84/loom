@@ -20,7 +20,7 @@ configuration example, documentation and migration helper.
   relational `full_thread` history with explicit part/cursor continuation.
 - Usage documentation returned directly by tool search.
 - A bundled native `loom` skill, discoverable and loaded on demand.
-- Seven tools: `loom_agents`, `loom_action`, `loom_plan`, `loom_context`, `loom_record`,
+- Ten tools including `loom_insights`, `loom_tweak`, `loom_agents`, `loom_action`, `loom_plan`, `loom_context`, `loom_record`,
   `loom_assessment`, and `loom_qa`.
 - Read-only, paginated OpenCode 2.2.0 native Session discovery via `loom_action sessions`,
   optionally filtered by Action; includes native archive status, without changing Sessions.

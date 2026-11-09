@@ -17,6 +17,8 @@ companion loaders, not native execution.
 | `loom_plan` | Read/replace optional nodes; no dispatch or skill loading. |
 | `loom_context` | Select work, pin a result handoff or limit prior opinions during independent review. |
 | `loom_record` | Store/query concerns, claims, results, reviews, progress, questions and history. |
+| `loom_insights` | Read bounded, descriptive project/Action statistics with source IDs and coverage limits; not an objective verdict. |
+| `loom_tweak` | Store provisional fingerprinted instruction candidates and trial reports; does not apply them. |
 | `loom_assessment` | Load ASSESSMENT.md; requires configured assessment role. |
 | `loom_qa` | Load QA.md; requires configured qa role. |
 
