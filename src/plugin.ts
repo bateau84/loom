@@ -156,7 +156,7 @@ export default Plugin.define({
       stage = "learning-database-open"
       learningDB = new Database(await realpath(learningPath))
       stage = "learning-initialization"
-      learning = new Learning(learningDB, store)
+      learning = new Learning(learningDB, store, db)
       stage = "observer-initialization"
       observer = new Observer(store)
     } catch (error) {

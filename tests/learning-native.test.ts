@@ -13,7 +13,7 @@ const fingerprint = (text: string) => createHash("sha256").update(text).digest("
 function fixture() {
   const db = new Database(":memory:")
   const store = new Store(db)
-  const learning = new Learning(db, store)
+  const learning = new Learning(db, store, db)
   const action = store.create("User feature", "One real objective", actor)
   return { db, store, learning, action }
 }

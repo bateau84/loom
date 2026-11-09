@@ -51,7 +51,7 @@ type CandidateRow = {
 
 /** Bounded observational statistics. A Session/Action/dispatch is not necessarily one objective. */
 export class Learning {
-  constructor(private db: SQL, private store: Store) {
+  constructor(private db: SQL, private store: Store, private actionDB: SQL) {
     db.exec("PRAGMA busy_timeout=2000; PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
     db.exec("CREATE TABLE IF NOT EXISTS learning_candidates (id TEXT PRIMARY KEY, created_at TEXT NOT NULL, author_session TEXT NOT NULL, author_agent TEXT NOT NULL, target_kind TEXT NOT NULL, target_id TEXT NOT NULL, base_sha256 TEXT NOT NULL, candidate_sha256 TEXT NOT NULL, content TEXT NOT NULL, hypothesis TEXT NOT NULL, evidence_refs TEXT NOT NULL, status TEXT NOT NULL, revised_from TEXT);")
     db.exec("CREATE INDEX IF NOT EXISTS learning_candidates_created ON learning_candidates(created_at, id);")
@@ -70,7 +70,7 @@ export class Learning {
     const params: unknown[] = [before]
     if (input.action_id !== undefined) params.push(input.action_id)
     params.push(take + 1)
-    const rows = this.db.prepare("SELECT seq,id,action_id,session_id,kind, json_extract(data,'$.created_at') AS occurred_at, json_extract(data,'$.data.phase') AS phase, json_extract(data,'$.data.tool') AS tool, json_extract(data,'$.data.status') AS status, json_extract(data,'$.data.attribution') AS attribution, json_extract(data,'$.data.skill_id') AS skill_id, json_extract(data,'$.data.rendered_sha256') AS rendered_sha256 FROM ledger WHERE seq<?" + action + " ORDER BY seq DESC LIMIT ?")
+    const rows = this.actionDB.prepare("SELECT seq,id,action_id,session_id,kind, json_extract(data,'$.created_at') AS occurred_at, json_extract(data,'$.data.phase') AS phase, json_extract(data,'$.data.tool') AS tool, json_extract(data,'$.data.status') AS status, json_extract(data,'$.data.attribution') AS attribution, json_extract(data,'$.data.skill_id') AS skill_id, json_extract(data,'$.data.rendered_sha256') AS rendered_sha256 FROM ledger WHERE seq<?" + action + " ORDER BY seq DESC LIMIT ?")
       .all(...params) as EventRow[]
     const selected = rows.slice(0, take)
     const sessions = new Set<string>(), actions = new Set<string>()
