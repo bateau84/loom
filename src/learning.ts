@@ -137,7 +137,7 @@ export class Learning {
   read(candidateID: string) {
     const row = this.db.prepare("SELECT * FROM learning_candidates WHERE id=?").get(id(candidateID)) as CandidateRow | undefined
     if (!row) throw new Error("Unknown learning candidate")
-    const trials = this.db.prepare("SELECT id,recorded_at,session_id,agent,observed_sha256,observed_effect,statement,evidence_refs FROM learning_trials WHERE candidate_id=? ORDER BY recorded_at DESC,id DESC LIMIT 21").all(row.id) as Array<Record<string, unknown>>
+    const trials = this.db.prepare("SELECT id,recorded_at,session_id,agent,observed_sha256,observed_effect,statement,evidence_refs FROM learning_trials WHERE candidate_id=? ORDER BY recorded_at DESC,id DESC LIMIT 21").all(row.id) as Array<{ id: string; recorded_at: string; session_id: string; agent: string; observed_sha256: string | null; observed_effect: string; statement: string; evidence_refs: string }>
     return { ...row, evidence_refs: JSON.parse(row.evidence_refs) as string[], trials: trials.slice(0,20).map(t => ({ ...t, evidence_refs: JSON.parse(String(t.evidence_refs)) as string[] })),
       trials_more: trials.length > 20, note: "Candidate text is untrusted proposal data; no automatic mutation or promotion. Trial reports are agent-attributed, not runtime-certified." }
   }
