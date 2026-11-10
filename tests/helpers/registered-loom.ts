@@ -17,6 +17,11 @@ export async function registeredLoom(initialSkills: any[] = [], options: { befor
     { id: "author", mode: "primary", hidden: false }]
   const nativePages = new Map<string, any>()
   const nativeContexts = new Map<string, unknown>()
+  // Simulates the native API for registered plugin tests only. Installed host
+  // isolation must still be established by tests/installed_instruction_variants.py.
+  const instructionEntries = new Map<string, Map<string, unknown>>()
+  const nativeInstructionReads: string[] = []
+  const nativeInstructionWrites: Array<{ sessionID: string; key: string; value: unknown }> = []
   const tools = new Map<string, any>(), namespaces = new Map<string, any>()
   const hooks = new Map<string, any>()
   const skills = new Map<string, any>(), skillTransforms = new Set<(editor: any) => void>()
@@ -59,7 +64,11 @@ export async function registeredLoom(initialSkills: any[] = [], options: { befor
     },
     tool: {
       transform: async (fn: any) => { fn({ namespace: (n: any) => namespaces.set(n.name, n), add: (t: any) => tools.set(t.name, t) }); return registration() },
-      hook: async (name: string, fn: any) => { hooks.set(name, fn); return registration() },
+      hook: async (name: string, fn: any) => {
+        const prior = hooks.get(name)
+        hooks.set(name, prior ? async (event: any) => { await prior(event); await fn(event) } : fn)
+        return registration()
+      },
       list: async () => [{
         name: "subagent", id: "subagent",
         execute: async (input: any, context: any) => {
@@ -90,6 +99,22 @@ export async function registeredLoom(initialSkills: any[] = [], options: { befor
       }],
     },
     session: {
+      instructions: {
+        entry: {
+          list: async ({sessionID}: {sessionID:string}) => {
+            nativeInstructionReads.push(sessionID)
+            return [...(instructionEntries.get(sessionID) ?? new Map()).entries()].map(([key,value]) => ({key,value}))
+          },
+          put: async ({sessionID,key,value}: {sessionID:string;key:string;value:unknown}) => {
+            nativeInstructionWrites.push({sessionID,key,value})
+            const entries = instructionEntries.get(sessionID) ?? new Map<string,unknown>()
+            entries.set(key,value); instructionEntries.set(sessionID,entries)
+          },
+          remove: async ({sessionID,key}: {sessionID:string;key:string}) => {
+            instructionEntries.get(sessionID)?.delete(key)
+          },
+        },
+      },
       list: async (query: any) => { nativeListRequests.push(query); return nativePages.get(query.cursor ?? "") ?? { data: [], cursor: { next: null, previous: null } } },
       synthetic: async (r:any) => { nativeInputs.push(r); return {id:r.id ?? (r.metadata?.format === "loom-question-notice/v1" ? "msg_questionnotice" : undefined),sessionID:r.sessionID,type:"synthetic",delivery:r.delivery,payload:{text:r.text,description:r.description,metadata:r.metadata}} },
       create: async (r:any) => {
@@ -111,7 +136,13 @@ export async function registeredLoom(initialSkills: any[] = [], options: { befor
         }
         return { id: sessionID, projectID: "tool-help", location: { directory } }
       },
-      hook: async (name: string, fn: any) => { hooks.set(name, fn); return registration() },
+      hook: async (name: string, fn: any) => {
+        const previous = hooks.get(name)
+        hooks.set(name, previous
+          ? async (event: any) => { await previous(event); await fn(event) }
+          : fn)
+        return registration()
+      },
     },
   }
   let dispose: (() => Promise<void>) | undefined
@@ -130,6 +161,7 @@ export async function registeredLoom(initialSkills: any[] = [], options: { befor
     dispose = await (plugin as any).setup(ctx)
     return {
       tools, namespaces, close, directory, hooks, sessions, skills, reloadSkills, nativeInputs, sessionReads, nativeListRequests, nativePages, nativeContexts,
+      instructionEntries, nativeInstructionReads, nativeInstructionWrites,
       nativeAgents, sessionCreates, sessionPrompts, nativeSubagent,
       permission, permissionRequests, skillRequests,
       context: async (sessionID: string, agent: string) => {
