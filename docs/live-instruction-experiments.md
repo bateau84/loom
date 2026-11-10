@@ -116,7 +116,11 @@ Use `loom_tweak trial` only for a separately attributed **agent report**,
 not a host-certified exposure or clean experimental comparison.
 
 Local SQLite stores at most one trial for each enrolled native Session, at
-most 64 audit events per trial, and returns at most 20 recent events per read.
+most 64 immutable audit events per trial, and returns at most 20 recent events
+per read. Further events increment a durable `omitted_event_count` and
+`audit_history_complete:false`; an incomplete audit must not be used to
+certify exposure or an untouched control. Audit saturation must not prevent
+native withdrawal or erase its stopped/not-clean-control status.
 Preserve `learning.sqlite` and its WAL/SHM files with stopped writers; the
 Action-only ledger backup is not a complete learning recovery. There is no
 global automatic garbage collector; the project-local history grows with
