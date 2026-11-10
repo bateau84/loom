@@ -64,7 +64,11 @@ export async function registeredLoom(initialSkills: any[] = [], options: { befor
     },
     tool: {
       transform: async (fn: any) => { fn({ namespace: (n: any) => namespaces.set(n.name, n), add: (t: any) => tools.set(t.name, t) }); return registration() },
-      hook: async (name: string, fn: any) => { hooks.set(name, fn); return registration() },
+      hook: async (name: string, fn: any) => {
+        const prior = hooks.get(name)
+        hooks.set(name, prior ? async (event: any) => { await prior(event); await fn(event) } : fn)
+        return registration()
+      },
       list: async () => [{
         name: "subagent", id: "subagent",
         execute: async (input: any, context: any) => {
