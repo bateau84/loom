@@ -23,7 +23,8 @@ scan root so the profile is discovered; it declares no mandatory link counts.
 ## Agent work and evidence
 
 - [Deep retrospective session tracing](retrospective-trace.md) — Original Session evidence sources, access checks and coverage limits
-- [Learning evidence and provisional experiments](learning-experiments.md) — Bounded insight statistics, content fingerprints and manual tweak trials
+- [Learning evidence and provisional experiments](learning-experiments.md)
+- [Opt-in live Session instruction experiments](live-instruction-experiments.md) — Exact-host additive entry scope, native approval and stop/recovery limits — Bounded insight statistics, content fingerprints and manual tweak trials
 - [Session instruction variant qualification](session-instruction-qualification.md) — Installed 2.2.6 additive entry isolation tests, receipts, limits and unsupported routes
 - [Native Evaluator audit qualification](native-evaluator-audit-qualification.md) — Real-host dispatch, original evidence, durable findings and recovery proof; native run pending
 - [Collaboration](collaboration.md) — Progress reports and contextual questions
