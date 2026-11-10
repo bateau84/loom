@@ -242,8 +242,14 @@ export class SessionExperiments {
     const expected = `<context key="${LIVE_ENTRY_KEY}">\n${candidate.content}\n</context>`
     const parts = system.filter(p => p?.type === "text" && typeof p.text === "string").map(p => p.text)
     if (!parts.some(p => p.includes(expected))) {
-      this.transaction(() => this.event(row.id,"context-gap","Candidate missing at pre-provider context stage"))
-      throw new Error("LOOM_LIVE_CONTEXT_GAP: candidate missing from native Session system context")
+      // OpenCode 2.2.6 renders native Session entries after this early context
+      // hook on some paths. Missing here is NOT proof of missing provider input
+      // and must not be promoted to a treatment receipt or a false denial.
+      // The model.request preflight independently checks the exact native key
+      // and source; installed provider-side acceptance proves final exposure.
+      this.transaction(() => this.event(row.id,"context-stage-unobserved",
+        "Additive entry absent at early context hook; provider delivery UNKNOWN, never certified"))
+      return
     }
     this.transaction(() => {
       this.db.prepare("UPDATE learning_live_experiments SET context_count=context_count+1,status='possible-exposure' WHERE id=?")
