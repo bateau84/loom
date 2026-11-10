@@ -59,6 +59,44 @@ def verify_receipt(event: dict | None, *, expected_candidate: bool, candidate_sh
     return event
 
 
+def verify_attempt_receipts(arrivals: list[dict], receipts: list[dict], *,
+                            expected_candidate: bool | None,
+                            candidate_sha: str) -> list[dict]:
+    """Every local SDK arrival needs its own complete receipt.
+
+    A request can have several provider attempts. They are one scenario, never
+    multiple independent trial outcomes. Attempt IDs are fixture-local only:
+    this does not invent a native transport-attempt identity.
+    """
+    require(bool(arrivals), "RECEIPT_MISSING: no provider attempt reached the observer")
+    arriving = [e.get("attemptID") for e in arrivals]
+    observed = [e.get("attemptID") for e in receipts]
+    require(all(isinstance(value, str) and value for value in arriving + observed) and
+            len(set(arriving)) == len(arriving) and
+            len(set(observed)) == len(observed) and
+            set(arriving) == set(observed),
+            "RECEIPT_GAP: unreceipted, repeated or foreign provider attempt")
+    by_id = {event["attemptID"]: event for event in receipts}
+    checked = []
+    for attempt in arriving:
+        receipt = by_id[attempt]
+        if expected_candidate is not None:
+            checked.append(verify_receipt(receipt,
+                                          expected_candidate=expected_candidate,
+                                          candidate_sha=candidate_sha))
+        else:
+            # Withdrawal permits historical exposure; do not call it baseline.
+            require(isinstance(receipt.get("effective_sha256"), str) and
+                    len(receipt["effective_sha256"]) == 64 and
+                    isinstance(receipt.get("system_bytes"), int) and
+                    receipt["system_bytes"] > 0,
+                    "RECEIPT_INCOMPLETE: withdrawn request was not observed")
+            checked.append(receipt)
+    require(len({row["effective_sha256"] for row in checked}) == 1,
+            "EFFECTIVE_DRIFT: attempts in one scenario saw different system instructions")
+    return checked
+
+
 def source_guard(expected: dict[str, str], actual: dict[str, str]) -> None:
     require(expected == actual, "SOURCE_DRIFT: source, agent or skill registry changed during qualification")
 
@@ -191,12 +229,14 @@ class Probe:
     def check(self, session: str, name: str, expected_candidate: bool) -> dict:
         observed = [e["data"] for e in events(self.root)
                     if e["type"] == "provider-request" and e["data"].get("testCase") == name]
-        self.report["last_receipt_counts"] = {name: len(observed)}
-        require(len(observed) == 1,
-                "RECEIPT_AMBIGUOUS: expected one provider input for " + name +
-                "; observed " + str(len(observed)))
-        verified = verify_receipt(observed[0], expected_candidate=expected_candidate,
-                                  candidate_sha=sha(CANDIDATE))
+        arriving = [e["data"] for e in events(self.root)
+                    if e["type"] == "provider-arrival" and e["data"].get("testCase") == name]
+        self.report["last_receipt_counts"] = {
+            name: {"arrivals": len(arriving), "receipts": len(observed)}}
+        attempts = verify_attempt_receipts(arriving, observed,
+                                           expected_candidate=expected_candidate,
+                                           candidate_sha=sha(CANDIDATE))
+        verified = attempts[0]
         native = [e["data"] for e in events(self.root) if e["type"] == "native-request"
                   and e["data"].get("sessionID") == session and e["data"].get("kind") == "primary"]
         require(native, "NATIVE_LINK_MISSING: no primary native request for " + name)
@@ -209,6 +249,7 @@ class Probe:
             "expected_candidate": expected_candidate,
             "actual_candidate_sha256": verified["candidate_sha256"],
             "effective_sha256": verified["effective_sha256"],
+            "provider_attempt_count": len(attempts),
             "observation": "local AI SDK doStream input, after native context hook",
             "native_request_kind": "primary",
         })
@@ -227,13 +268,11 @@ class Probe:
             deadline = time.monotonic() + 25
             while time.monotonic() < deadline:
                 received = [e["data"].get("testCase") for e in events(self.root)
-                            if e["type"] == "provider-request" and
+                            if e["type"] == "provider-arrival" and
                             e["data"].get("testCase") in names]
                 counts = {name: received.count(name) for name in names}
-                self.report["concurrent_receipt_counts"] = counts
-                require(all(number <= 1 for number in counts.values()),
-                        "RECEIPT_AMBIGUOUS: duplicate request before barrier release")
-                if all(number == 1 for number in counts.values()):
+                self.report["concurrent_arrival_counts"] = counts
+                if all(number >= 1 for number in counts.values()):
                     break
                 time.sleep(0.05)
             else:
@@ -394,13 +433,13 @@ def run(args) -> dict:
             try:
                 probe.check(fault, "fault-partial-exposure", True)
             except RuntimeError as error:
-                require("RECEIPT_AMBIGUOUS" in str(error),
+                require("RECEIPT_GAP" in str(error),
                         "Partial exposure was rejected for an unexpected reason: " + str(error))
             else:
                 raise RuntimeError("FAIL_OPEN: unreceipted native exposure was credited")
             report["negative_controls"] = {
                 "partial_exposure_at_provider": True, "complete_delivery_receipt": False,
-                "counted_as_trial": False, "rejection": "RECEIPT_AMBIGUOUS",
+                "counted_as_trial": False, "rejection": "RECEIPT_GAP",
             }
             report["checks"].append("native-partial-exposure-is-not-credited")
             # Real native manual compaction, not an invented context-hook event.
@@ -410,6 +449,9 @@ def run(args) -> dict:
             before_unlabelled = len([e for e in events(root)
                                      if e["type"] == "provider-request" and
                                      e["data"].get("testCase") is None])
+            before_unlabelled_arrival = len([e for e in events(root)
+                                             if e["type"] == "provider-arrival" and
+                                             e["data"].get("testCase") is None])
             request(host, "POST", "/api/session/" + treatment + "/compact", {})
             await_events(root, lambda e: e["type"] == "native-request" and
                          e["data"].get("sessionID") == treatment and
@@ -423,16 +465,19 @@ def run(args) -> dict:
             provider_compact = [e["data"] for e in events(root)
                                 if e["type"] == "provider-request" and
                                 e["data"].get("testCase") is None][before_unlabelled:]
-            require(len(provider_compact) == 1,
-                    "No unique actual provider input for native compaction")
-            observed_compact = verify_receipt(provider_compact[0],
-                                              expected_candidate=True,
-                                              candidate_sha=sha(CANDIDATE))
+            arrived_compact = [e["data"] for e in events(root)
+                               if e["type"] == "provider-arrival" and
+                               e["data"].get("testCase") is None][before_unlabelled_arrival:]
+            checked_compact = verify_attempt_receipts(
+                arrived_compact, provider_compact, expected_candidate=True,
+                candidate_sha=sha(CANDIDATE))
+            observed_compact = checked_compact[0]
             report["compaction"] = {
                 "native_kind": "compaction",
                 "provider_stage": "local AI SDK doStream input",
                 "candidate_sha256": observed_compact["candidate_sha256"],
                 "effective_sha256": observed_compact["effective_sha256"],
+                "provider_attempt_count": len(checked_compact),
             }
             probe.one(treatment, "treatment-postcompact", True)
             report["checks"].append("native-compaction-provider-input-and-continuation")
@@ -456,11 +501,17 @@ def run(args) -> dict:
             idle(host, [treatment])
             withdrawn = [e["data"] for e in events(root) if e["type"] == "provider-request"
                          and e["data"].get("testCase") == "treatment-withdrawn"]
-            require(len(withdrawn) == 1, "Withdrawn request not observed")
+            arrived_withdrawn = [e["data"] for e in events(root)
+                                 if e["type"] == "provider-arrival" and
+                                 e["data"].get("testCase") == "treatment-withdrawn"]
+            checked_withdrawn = verify_attempt_receipts(
+                arrived_withdrawn, withdrawn, expected_candidate=None,
+                candidate_sha=sha(CANDIDATE))
             report["withdrawal"] = {
                 "entry_list_empty": True,
+                "provider_attempt_count": len(checked_withdrawn),
                 "previously_exposed_marker_still_in_native_prompt":
-                    withdrawn[0]["marker_seen"],
+                    any(entry["marker_seen"] for entry in checked_withdrawn),
                 "claim": "no new entry; historical exposure is not revoked",
             }
             fresh = create_session(host, project)
@@ -481,6 +532,8 @@ def run(args) -> dict:
             report["cases"] = probe.cases
             report["native_requests"] = [
                 e["data"] for e in events(root) if e["type"] == "native-request"]
+            report["native_retries"] = [
+                e["data"] for e in events(root) if e["type"] == "native-retry"]
             report["status"] = "QUALIFIED_BOUNDED"
     except Exception as error:
         report["status"] = "UNPROVEN"
