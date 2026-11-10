@@ -128,6 +128,8 @@ export class Learning {
     if (!["skill", "assessment", "qa", "agent"].includes(input.target_kind)) throw new Error("Invalid tweak target_kind")
     const target = value(input.target_id, "target_id", 200)
     const base = hash(input.base_sha256, "base_sha256")
+    if (typeof input.candidate_content === "string" && input.candidate_content.length > 131072)
+      throw new Error("candidate_content exceeds 128 KiB")
     const content = value(input.candidate_content, "candidate_content", 131072)
     if (Buffer.byteLength(content, "utf8") > 131072) throw new Error("candidate_content exceeds 128 KiB")
     const hypothesis = value(input.hypothesis, "hypothesis", 2000)
