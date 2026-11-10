@@ -12,7 +12,7 @@ import { digest } from "../src/model.js"
 import { legacyFixture, legacyDeliveryDDL, savedRows } from "./helpers/legacy-delivery.js"
 
 for (const scenario of ["missing-column", "unsupported-version", "healthy", "empty-legacy", "nonempty-legacy", "masked-index"] as const) test(scenario !== "unsupported-version"
-  ? `${scenario} startup still registers eleven tools and closes its private database on disposal`
+  ? `${scenario} startup still registers twelve tools and closes its private database on disposal`
   : `startup ${scenario} identifies the resolved database and known stage, preserves cause and closes before tools`, async () => {
   const healthy = scenario !== "unsupported-version"
   await mkdir(new URL("../.test-build/", import.meta.url), { recursive: true })
@@ -74,7 +74,7 @@ for (const scenario of ["missing-column", "unsupported-version", "healthy", "emp
     catch (error) { failure = error }
     if (healthy) {
       expect(failure).toBeUndefined()
-      expect(tools.sort()).toEqual(["action", "agents", "assessment", "context", "insights", "objective", "plan", "qa", "record", "trace", "tweak"])
+      expect(tools.sort()).toEqual(["action", "agents", "assessment", "context", "insights", "objective", "plan", "qa", "record", "trace", "trends", "tweak"])
        expect(registrations.sort()).toEqual(["skill", "tool", "tool"])
       expect(closed).toHaveLength(0)
       if (!cleanup) throw new Error("Healthy startup must return cleanup")
@@ -172,7 +172,7 @@ test("plugin integration: configured roles, nine plugin tools, reload, scoping, 
   try {
     await writeFile(path, "version: 1\nagents:\n  external:\n    roles: [planning]\nroles:\n  planning:\n    description: Plans and delegates work\n  unassigned:\n    description: Future specialization\n")
     cleanup = await (plugin as any).setup(ctx)
-    expect([...tools.keys()].sort()).toEqual(["action", "agents", "context", "insights", "objective", "plan", "record", "trace", "tweak"])
+    expect([...tools.keys()].sort()).toEqual(["action", "agents", "context", "insights", "objective", "plan", "record", "trace", "trends", "tweak"])
     const roster = await invoke("agents", {})
     expect(roster.agents[0].roles).toEqual(["planning"])
     expect(roster.agents[0].description).toBe("Native description")
