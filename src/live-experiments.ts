@@ -46,7 +46,7 @@ type TrialRow = {
   id: string; objective_id: string; candidate_id: string
   session_id: string; agent: string; baseline_sha256: string
   candidate_sha256: string; status: string; budget_requests: number
-  preflight_count: number; context_count: number; expires_at: string
+  preflight_count: number; context_count: number; omitted_event_count: number; expires_at: string
   authorization_ref: string; eligibility: string; evaluation_criteria: string
   preserved_guarantees: string; created_at: string; stopped_at: string | null
 }
