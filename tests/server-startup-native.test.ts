@@ -94,7 +94,7 @@ async function liveCoreFixture() {
     agents: { architect: { roles: ["architecture"] } },
     roles: { architecture: { "model-class": "strong", reasoning: "medium" } },
   }))
-  const hooks = new Map<string, () => void>()
+  const hooks = new Map<string, (event?: any) => void>()
   const modelRequestHooks = new Set<(event: unknown) => unknown>()
   const skills = new Map<string, unknown>()
   const tools = new Map<string, unknown>()
