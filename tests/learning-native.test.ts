@@ -234,3 +234,37 @@ test("native agent registry identity is retained before the definition changes",
     expect(stamps[0].data).not.toHaveProperty("system")
   } finally { await f.close() }
 })
+
+for (const routingEnabled of [true, false]) test("corrupt optional learning storage preserves " +
+  (routingEnabled ? "enabled routing deny" : "explicit native routing disable") +
+  " on exact-version host", async () => {
+  const f = await registeredLoom([], { versionedHost: true, beforeSetup: async directory => {
+    const root = join(directory, "state", "loom", "actions-v1", digest({ project: "tool-help", canonical: directory }))
+    await mkdir(root, { recursive: true })
+    await writeFile(join(root, "learning.sqlite"), "corrupt")
+    await writeFile(join(directory, ".loom.yaml"), JSON.stringify({
+      "model-routing": { enabled: routingEnabled, "default-class": "strong", "paid-fallback": false },
+      "model-classes": { strong: { models: ["sol"] } },
+      agents: { author: { roles: ["implementation"] } },
+      instructions: { enabled: false },
+      ledger: { capture: "automatic" },
+    }))
+  } })
+  try {
+    const guard = f.hooks.get("model.request")
+    expect(typeof guard).toBe("function")
+    if (routingEnabled)
+      expect(() => guard({ sessionID: "s", agent: "author", model: { providerID: "metered", id: "sol" } }))
+        .toThrow("LOOM_MODEL_ROUTING_HOST_UNQUALIFIED")
+    else expect(() => guard({ sessionID: "s", agent: "author", model: { providerID: "native", id: "sol" } }))
+      .not.toThrow()
+    const state = (await f.invoke("agents", {})).result
+    expect(state.learning.available).toBe(false)
+    const created = (await f.invoke("action", { operation: "create", title: "Unaffected",
+      goal: "Keep Action ledger available despite damaged learning state" })).result
+    expect((await f.invoke("action", { operation: "list" })).result.items.some((a: any) => a.id === created.id)).toBe(true)
+    const record = (await f.invoke("record", { operation: "add", action_id: created.id,
+      kind: "result", statement: "Original Action evidence remains writable" })).result
+    expect((await f.invoke("record", { operation: "query", action_id: created.id })).result.items.some((a: any) => a.id === record.id)).toBe(true)
+  } finally { await f.close() }
+})

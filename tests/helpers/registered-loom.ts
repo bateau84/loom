@@ -4,7 +4,7 @@ import { join } from "node:path"
 import plugin from "../../server.js"
 
 /** Actual public plugin setup/storage with a simulated registration host, not a live CLI. */
-export async function registeredLoom(initialSkills: any[] = [], options: { beforeSetup?: (directory: string) => Promise<void> } = {}) {
+export async function registeredLoom(initialSkills: any[] = [], options: { beforeSetup?: (directory: string) => Promise<void>; versionedHost?: boolean } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "loom-tool-help-"))
   const previous = { state: process.env.XDG_STATE_HOME, config: process.env.OPENCODE_CONFIG_DIR }
   process.env.XDG_STATE_HOME = join(directory, "state")
@@ -33,6 +33,12 @@ export async function registeredLoom(initialSkills: any[] = [], options: { befor
   }
   const registration = () => ({ dispose: async () => {} })
   const ctx = {
+    ...(options.versionedHost ? {
+      app: { version: "2.2.6" },
+      model: { list: async () => ({ data: [] }) },
+      provider: { list: async () => ({ data: [] }) },
+      integration: { connection: { active: async () => undefined } },
+    } : {}),
     location: { directory, project: { id: "tool-help", canonical: directory, directory } },
     agent: { list: async () => nativeAgents, transform: () => { throw new Error("No agent rewriting") } },
     permission: {
