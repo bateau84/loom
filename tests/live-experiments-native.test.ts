@@ -3,6 +3,8 @@ import { createHash } from "node:crypto"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { Database } from "bun:sqlite"
+import { digest } from "../src/model.js"
 import { registeredLoom } from "./helpers/registered-loom.js"
 import { LIVE_ENTRY_KEY } from "../src/live-experiments.js"
 
@@ -216,6 +218,48 @@ test("active native source drift blocks request before transport and preserves e
     expect(stopped.control_eligible).toBe(false)
     expect(host.instructionEntries.get("parent")?.has(LIVE_ENTRY_KEY)).not.toBe(true)
   } finally { await host.close() }
+})
+
+test("audit saturation remains bounded, records omissions and never traps explicit withdrawal", async () => {
+  const h = await registeredLoom([], { versionedHost: true })
+  try {
+    const { obj, proposal } = await prepare(h)
+    await call(h, "start", startInput(obj.id, proposal.id))
+    const context = { sessionID: "parent", agent: "author",
+      system: [{ type: "text",
+        text: `<context key="${LIVE_ENTRY_KEY}">\n${candidateText}\n</context>` }],
+      messages: [], tools: {}, options: {} }
+    for (let i = 0; i < 70; i++) await h.hooks.get("context")(context)
+    const full = (await call(h, "read")).result
+    expect(full.omitted_event_count).toBeGreaterThan(0)
+    expect(full.audit_history_complete).toBe(false)
+    expect(full.note).toContain("history is incomplete")
+    const stopped = (await call(h, "stop")).result
+    expect(stopped.status).toBe("stopped")
+    expect(stopped.omitted_event_count).toBeGreaterThan(full.omitted_event_count)
+    expect(stopped.control_eligible).toBe(false)
+    expect(h.instructionEntries.get("parent")?.has(LIVE_ENTRY_KEY)).not.toBe(true)
+    const persisted = new Database(join(h.directory, "state", "loom", "actions-v1",
+      digest({ project: "tool-help", canonical: h.directory }), "learning.sqlite"))
+    try {
+      expect((persisted.query("SELECT COUNT(*) AS n FROM learning_live_events").get() as {n:number}).n).toBe(64)
+    } finally { persisted.close() }
+  } finally { await h.close() }
+})
+
+test("a repeated stop does not claim success after its previously withdrawn entry reappears", async () => {
+  const h = await registeredLoom([], { versionedHost: true })
+  try {
+    const { obj, proposal } = await prepare(h)
+    await call(h, "start", startInput(obj.id, proposal.id))
+    await call(h, "stop")
+    h.instructionEntries.get("parent")!.set(LIVE_ENTRY_KEY, candidateText)
+    await expect(call(h, "stop")).rejects.toThrow("WITHDRAWAL_UNCERTAIN")
+    await expect(h.hooks.get("model.request")({
+      sessionID: "parent", agent: "author", kind: "primary",
+      model: { providerID: "fixture", id: "scripted" },
+    })).rejects.toThrow("WITHDRAWAL_UNCERTAIN")
+  } finally { await h.close() }
 })
 
 test("retiring an active candidate is denied until a verified withdrawal", async () => {
