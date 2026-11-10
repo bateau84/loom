@@ -102,6 +102,21 @@ timeout -s TERM -k 20s 600 \
 
 Do not pass `--auto`. Capture the native dispatch/child Session, skill-load event and content identities from the real host (keeping JSONL private). A requested dispatch without completed child evidence is not a success. Direct `--agent evaluator` is a distinct boundary; label it separately if the primary delegation is unavailable. Distinguish host-observed skill result hashes from source file-byte hashes and final provider-input exposure, which neither alone attests.
 
+**Original-parent child-inventory boundary (retained from #220):** The native
+`loom_trace children` view can enumerate direct children only for the caller's
+verified Session family. A newly launched detached General/Evaluator Session
+cannot truthfully claim it enumerated an old parent's complete child tree.
+When an authorized operator intentionally needs that specific proof, they may
+resume the **original parent** with an independently approved model and
+`opencode run --session "$ORIGINAL_PARENT_SESSION" --agent general`, after
+checking the installed CLI help and preserving private snapshots. This writes
+a new, separately identified audit turn into the original Session and must not
+be counted in the historical engineering objective. If the operator does
+not authorize such a mutation, use explicit original parent/child exports
+and record native family enumeration as **UNPROVEN**, not as a failure of the
+Evaluator. Do not create a new source Session or relax read permissions to
+make the claim pass.
+
 ## Persist and recover through public Loom operations
 
 Reuse a correctly scoped existing Action or explicitly create an Action for audit continuity; do not assume every Action represents one objective. The Evaluator must use registered tools, **not direct SQL**. Check `loom_insights {"operation":"action","action_id":"ACTION_ID","limit":50}` and follow `next_before` with `before`; its counts are observations, not success rates.
