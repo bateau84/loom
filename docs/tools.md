@@ -1,12 +1,12 @@
 ---
 type: API Reference
-title: "Eight tools, optional structure"
+title: "Eleven tools, optional structure"
 description: "Documents Loom tools, input contracts, scopes and failure semantics."
 tags: [loom, tools, api]
 timestamp: 2026-10-24T00:00:00Z
 ---
 
-# Eight tools, optional structure
+# Eleven tools, optional structure
 
 Loom retains goals, context and attributed history. OpenCode owns execution,
 native delegation, skills, models and permissions. A conversation needs no Action;
@@ -20,6 +20,10 @@ useful, not simply because work takes multiple steps.
 | --- | --- |
 | `loom_agents` | Existing native roster, roles, configuration/capture diagnostics |
 | `loom_action` | Create/list/update a goal, or read native Session inventory and archive status |
+| `loom_trace` | Inspect authorized original Session messages and child identities; state coverage gaps |
+| `loom_insights` | Read bounded observational Action/project ledger metadata; no success-rate claims |
+| `loom_objective` | Recover one source-linked objective, child-agent handbacks, runtime checks and corrective attempts |
+| `loom_tweak` | Preserve provisional fingerprinted tweak proposals and trials; never activate them |
 | `loom_plan` | Read/replace optional intended work and relationships |
 | `loom_context` | Read selection, explicitly select work or clear selection |
 | `loom_record` | Concerns, results, claims, Assessment/QA, completion/reopen, questions/answers and history |
@@ -34,6 +38,11 @@ including exact metadata and cursors. In Code Mode, JSON.parse only JSON
 responses. Await writes before using IDs or ending the script. Sequence dependent
 calls. Use `Promise.allSettled` for independent calls and inspect every outcome;
 this is not an atomic multi-write transaction. Use the exact callable search path.
+
+
+## Source-linked whole-objective history
+
+`loom_objective` is an optional, authored reconstruction index in separate `learning.sqlite`. A `create` request anchors one goal to an original source message/ledger record/declared URL; different goals in the same request use different `unit_key` values. Use `link` with exact native message/call IDs or a validated ledger record for request, coordination, dispatch, handback, verification, corrective dispatch, continuation, changed requirements, planned increments, environmental failure, outcome and explicit coverage gaps. Later verdict or relationship corrections append records, never erase previous claims. `read` pages chronologically; `find` may return several objectives for a shared source. Foreign native Session evidence requires its own authorized export; no private transcript bodies are copied into the index. Original source, link authorship, confidence, status (reported versus verified) and missing coverage remain separate. See [the full evidence contract](learning-experiments.md#source-linked-objective-reconstruction).
 
 ## Assessment and QA lenses
 
