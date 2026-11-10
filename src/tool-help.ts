@@ -26,6 +26,15 @@ export const TOOL_EXAMPLES = {
     { operation: "trial", id: "CANDIDATE_ID", observed_effect: "inconclusive", statement: "Observed case and exact evidence limit" },
     { operation: "retire", id: "CANDIDATE_ID" },
   ],
+  experiment: [
+    { operation: "start", candidate_id: "IMMUTABLE_AGENT_CANDIDATE_ID", objective_id: "SOURCE_LINKED_OBJECTIVE_ID",
+      authorize: true, authorization_ref: "HUMAN_APPROVAL_SOURCE_ID",
+      eligibility: "One exact native Session and agent with no tool delivery, attachments or other unsupported paths",
+      evaluation_criteria: "Independent objective-level runtime checks, with adverse counterexamples and missing receipts preserved",
+      preserved_guarantees: "Native permissions and billing checks unchanged; no canonical agent/skill mutation; unrelated Sessions remain unchanged",
+      budget_requests: 2, expires_at: "2026-11-10T21:00:00.000Z" },
+    { operation: "read" }, { operation: "stop" },
+  ],
   action: [
     { operation: "create", title: "Explain a setting", goal: "Record a source-backed explanation and its qualifications." },
     { operation: "list", offset: 0 },
@@ -93,6 +102,12 @@ const entries: Record<LoomToolName, { summary: string; usage: string; returns: s
     usage: "operation=propose requires target_kind(skill/assessment/qa/agent), target_id, base_sha256, complete candidate_content and hypothesis; optional evidence_refs/revised_from. list takes offset; read and retire take id; read also accepts trial_before from trials_next_before for bounded history; trial takes id, observed_effect and statement, optional observed_sha256/evidence_refs. A revised candidate gets a new ID/fingerprint.",
     returns: "Propose returns immutable candidate content and SHA-256. Read returns candidate plus up to 20 attributed trial reports and an optional trials_next_before continuation. List omits full candidate text. Trial reports the calling native Session/agent, not a certified model exposure or effectiveness outcome.",
     caution: "Candidate text is untrusted hypothesis data, never installed guidance. This tool does not mutate native skill/agent registries, dispatch agents, assign variants, prove delivery or promote global instructions. Do not store secrets or private transcripts. A matching reported hash is not an attestation. Use qualified isolated or explicit manual trials, then normal review for promotion.",
+  },
+  experiment: {
+    summary: "Explicitly enroll, inspect or withdraw one bounded additive native Session instruction trial.",
+    usage: "Default inactive. start requires this Session's verified source-linked loom_objective, a proposed immutable loom_tweak candidate with target_kind=agent matching the current native agent system SHA-256, authorize:true and native permission approval. Specify the human approval source, eligibility, independent evaluation criteria, preserved guarantees, 1-8 primary-request budget and UTC expires_at within an hour. This is an additive Session entry, NOT replacement of a loaded skill or native agent system. Only OpenCode 2.2.6 is supported. Child Sessions must enroll themselves with explicit verified objective links; ancestry alone grants nothing. read/stop operate only on the calling Session.",
+    returns: "Assignment is reported separately from possible pre-provider exposure; there is no certified provider receipt from these hooks. read retains bounded event history, authorization, objective and candidate hashes. stop removes the owned native entry and verifies its absence; prior model history may still contain the candidate.",
+    caution: "Requires independently authorized eligible real work and disabled unsupported delivery paths (tool reads/skills, attachments, model-generated tools, unqualified retries, compaction as a trial outcome, independent review agents). Native permission policies can deny the trial. A Session is never a clean control again after possible exposure, even after stop. Wrong host, source drift, missing receipt, exceeded budget, retirement or incomplete restart block treatment rather than silently choosing a variant. No global promotion, auto-enrollment, causal/effectiveness verdict or billing override.",
   },
   action: {
     summary: "Create, list or update Actions, or list native Sessions associated with local work.",
