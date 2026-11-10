@@ -264,8 +264,8 @@ test("plugin integration: configured roles, nine plugin tools, reload, scoping, 
     if (oldConfig === undefined) delete process.env.OPENCODE_CONFIG_DIR; else process.env.OPENCODE_CONFIG_DIR = oldConfig
     await rm(dir, { recursive: true, force: true })
   }
-  // Exact-host experiments register context and model-request guards in addition to legacy hooks.
-  expect(disposed).toBe(7)
+  // Session trial context, model-request and native tool guards are all disposed.
+  expect(disposed).toBe(8)
 })
 
 test("removed-task recovery is injected, repeatable, non-mutating and cleared by explicit selection", async () => {
