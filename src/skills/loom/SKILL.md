@@ -4,8 +4,7 @@
 
 A conversation needs no Action. An Action needs no Plan. OpenCode owns
 Sessions, execution, delegation, skills, models and permissions. Loom records
-intent, context and history; it is not a scheduler. Role checks restrict only
-companion loaders, not native execution.
+intent and history; it is not a scheduler. Role checks restrict companion loaders.
 
 ## Find the right tool
 
@@ -18,16 +17,15 @@ companion loaders, not native execution.
 | `loom_context` | Select work, pin a result handoff or limit prior opinions during independent review. |
 | `loom_record` | Store/query concerns, claims, results, reviews, progress, questions and history. |
 | `loom_insights` | Read bounded, descriptive project/Action statistics with source IDs and coverage limits; not an objective verdict. |
+| `loom_objective` | Link one goal's original sources, corrective attempts and verification; no outcome proof. |
 | `loom_trends` | Compare source-started objectives with frozen membership and evidence bounds; no inferred exposure or agent grade. |
-| `loom_objective` | Explicitly link one goal's original sources, child handbacks, corrective attempts and checks; no automatic acceptance or outcome proof. |
 | `loom_tweak` | Store fingerprinted tweak proposals and trials; no activation. |
 | `loom_assessment` | Load ASSESSMENT.md; requires configured assessment role. |
 | `loom_qa` | Load QA.md; requires configured qa role. |
 
-Tool search provides syntax. Structured outputs use JSON with `result` and optional `config_errors`.
-Assessment/QA and `full_thread` return Markdown by default; pass `response_format:"json"` for scripts.
-Only JSON outputs should be passed to JSON.parse. Await writes; sequence dependent calls.
-Use Promise.allSettled for independent calls and inspect outcomes.
+Tool search supplies syntax. JSON outputs contain `result` and optional `config_errors`.
+Assessment/QA and `full_thread` default to Markdown; use `response_format:"json"` for scripts.
+Parse only JSON. Await writes; sequence dependencies; inspect Promise.allSettled results.
 
 ## Start or resume work
 
