@@ -268,10 +268,19 @@ def run(args):
             unsafe='return await tools.loom.agents({})'
             rejected,_=s.begin(treatment,unsafe)
             idle(host,[treatment])
-            attempts=[e["data"] for e in events(root)[started:] if e["type"]=="tool-after"
-                      and e["data"].get("sessionID")==treatment and e["data"].get("tool")=="execute"]
-            require(attempts and all(a.get("status")=="error" for a in attempts),
-                    "Unqualified Code Mode program executed under active treatment")
+            tool_events=[e for e in events(root)[started:] if e["type"] in ("tool-before","tool-after")
+                         and e["data"].get("sessionID")==treatment]
+            before=[e["data"] for e in tool_events if e["type"]=="tool-before"]
+            after=[e["data"] for e in tool_events if e["type"]=="tool-after"]
+            require(any(e["tool"]=="execute" for e in before),
+                    "Negative fixture never attempted the real native execute tool")
+            require(not any(e["tool"] in ("loom_agents","loom.agents") for e in before),
+                    "FAIL_OPEN: disallowed inner Loom tool actually ran")
+            require(not any(e["tool"]=="execute" and e["status"]=="completed" for e in after),
+                    "FAIL_OPEN: disallowed outer Code Mode program succeeded")
+            native_messages=request(host,"GET",f"/api/session/{treatment}/message?order=desc&limit=100")
+            require(any("LOOM_LIVE_TOOL_ROUTE_UNQUALIFIED" in json.dumps(m) for m in native_messages),
+                    "Negative result did not carry Loom's exact Tool.Error in actual native history")
             provider_observation(root,rejected,True,host,treatment,candidate_text)
             report["checks"].append("real-unqualified-tool-execution-denied")
 
