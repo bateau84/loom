@@ -101,6 +101,13 @@ def await_events(root: Path, predicate, count: int, timeout: float = 25) -> list
 
 
 def idle(host: PrivateHost, sessions: list[str], timeout: float = 30) -> None:
+    # GET /active can be briefly empty during a wake/settlement transition.
+    # This is called only AFTER the expected provider/request event exists.
+    # The tagged native coordinator's /wait awaits its completed execution.
+    for session in sessions:
+        require(request(host, "POST",
+                        "/api/experimental/session/" + session + "/wait") is None,
+                "Native Session wait returned an unexpected payload")
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         active = request(host, "GET", "/api/session/active")
@@ -184,7 +191,10 @@ class Probe:
     def check(self, session: str, name: str, expected_candidate: bool) -> dict:
         observed = [e["data"] for e in events(self.root)
                     if e["type"] == "provider-request" and e["data"].get("testCase") == name]
-        require(len(observed) == 1, "RECEIPT_AMBIGUOUS: expected exactly one provider input for " + name)
+        self.report["last_receipt_counts"] = {name: len(observed)}
+        require(len(observed) == 1,
+                "RECEIPT_AMBIGUOUS: expected one provider input for " + name +
+                "; observed " + str(len(observed)))
         verified = verify_receipt(observed[0], expected_candidate=expected_candidate,
                                   candidate_sha=sha(CANDIDATE))
         native = [e["data"] for e in events(self.root) if e["type"] == "native-request"
@@ -202,6 +212,7 @@ class Probe:
             "observation": "local AI SDK doStream input, after native context hook",
             "native_request_kind": "primary",
         })
+        self.report["cases"] = list(self.cases)
         return verified
 
     def pair(self, cases: list[tuple[str, str, bool]]) -> None:
@@ -213,8 +224,20 @@ class Probe:
                 for task in futures:
                     task.result(timeout=20)
             names = {name for _, name, _ in cases}
-            await_events(self.root, lambda e: e["type"] == "provider-request" and
-                         e["data"].get("testCase") in names, len(cases))
+            deadline = time.monotonic() + 25
+            while time.monotonic() < deadline:
+                received = [e["data"].get("testCase") for e in events(self.root)
+                            if e["type"] == "provider-request" and
+                            e["data"].get("testCase") in names]
+                counts = {name: received.count(name) for name in names}
+                self.report["concurrent_receipt_counts"] = counts
+                require(all(number <= 1 for number in counts.values()),
+                        "RECEIPT_AMBIGUOUS: duplicate request before barrier release")
+                if all(number == 1 for number in counts.values()):
+                    break
+                time.sleep(0.05)
+            else:
+                raise RuntimeError("RECEIPT_MISSING: every distinct concurrent Session must reach provider")
         finally:
             self.set_barrier(True)
         idle(self.host, [session for session, _, _ in cases])
@@ -388,6 +411,10 @@ def run(args) -> dict:
                                      if e["type"] == "provider-request" and
                                      e["data"].get("testCase") is None])
             request(host, "POST", "/api/session/" + treatment + "/compact", {})
+            await_events(root, lambda e: e["type"] == "native-request" and
+                         e["data"].get("sessionID") == treatment and
+                         e["data"].get("kind") == "compaction",
+                         before_compact + 1)
             idle(host, [treatment])
             compact = [e["data"] for e in events(root) if e["type"] == "native-request"
                        and e["data"].get("sessionID") == treatment and
@@ -424,6 +451,8 @@ def run(args) -> dict:
             require(entry_list(host, treatment) == [], "Native tombstone/readback failed")
             probe.set_barrier(True)
             probe.prompt(treatment, "treatment-withdrawn")
+            await_events(root, lambda e: e["type"] == "provider-request" and
+                         e["data"].get("testCase") == "treatment-withdrawn", 1)
             idle(host, [treatment])
             withdrawn = [e["data"] for e in events(root) if e["type"] == "provider-request"
                          and e["data"].get("testCase") == "treatment-withdrawn"]
