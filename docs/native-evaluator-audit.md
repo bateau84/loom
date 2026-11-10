@@ -64,7 +64,7 @@ mkdir -p .private-evaluator
 chmod 700 .private-evaluator
 EXCLUDE="$(git rev-parse --git-path info/exclude)"
 mkdir -p "$(dirname "$EXCLUDE")"
-printf '/.private-evaluator/\\n' >> "$EXCLUDE"
+printf '%s\n' '/.private-evaluator/' >> "$EXCLUDE"
 opencode session export "$ORIGINAL_PARENT_SESSION" --sanitize > ".private-evaluator/$ORIGINAL_PARENT_SESSION.json"
 # Repeat the export for each original child Session ID, not only the parent.
 chmod 600 .private-evaluator/*.json
