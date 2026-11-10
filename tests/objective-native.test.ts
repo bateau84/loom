@@ -239,7 +239,10 @@ test("absent/opaque/unauthorized original sources remain gaps; automatic capture
   const host = await registeredLoom()
   try {
     const messages = [
-      nativeUser("request-gap"), nativeDispatch("opaque-message", "opaque-call", "functions.exec"),
+      nativeUser("request-gap"),
+      { id: "opaque-message", type: "assistant", agent: "author", time: { created: Date.now() },
+        content: [{ type: "tool", id: "opaque-call", name: "functions.exec",
+          state: { status: "completed", input: { code: "return await hiddenAgentCall()" } } }] },
     ]
     host.nativeContexts.set("parent", { data: messages })
     expect((await host.invoke("objective", { operation: "list" }, "parent")).result.items).toEqual([])
