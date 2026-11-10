@@ -84,7 +84,7 @@ const specs = [
       session_id: str, export_path: { type: "string", minLength: 1, maxLength: 4096 },
       include_text: { type: "boolean" }, limit: { type: "integer", minimum: 1, maximum: 50 },
       cursor: { type: "string", minLength: 1, maxLength: 4096 } }, ["operation"]) },
-  { name: "insights", description: TOOL_HELP.insights, input: obj({ operation: choice("action", "window", "findings"), action_id: str, before: { type: "integer", minimum: 1 }, limit: { type: "integer", minimum: 1, maximum: 200 }, since_at: str, until_at: str }, ["operation"]) },
+  { name: "insights", description: TOOL_HELP.insights, input: obj({ operation: choice("action", "window", "findings"), finding_cursor: { type: "string", maxLength: 512 }, action_id: str, before: { type: "integer", minimum: 1 }, limit: { type: "integer", minimum: 1, maximum: 200 }, since_at: str, until_at: str }, ["operation"]) },
   { name: "objective", description: TOOL_HELP.objective, input: obj({
       operation: choice("create", "link", "read", "list", "find"),
       objective_id: str, label: { type: "string", maxLength: 200 }, unit_key: str,
@@ -419,7 +419,8 @@ export default Plugin.define({
                   if (input.action_id !== undefined || input.before !== undefined ||
                       input.since_at !== undefined || input.until_at !== undefined)
                     throw new Error("Findings are project-scoped; filters and ledger cursors are unsupported")
-                  result = requiredLearning().proactive.list(input.limit as number | undefined)
+                  result = requiredLearning().proactive.list(input.limit as number | undefined,
+                    input.finding_cursor as string | undefined)
                 } else throw new Error("Unknown insights operation")
                 break
               case "objective": {
