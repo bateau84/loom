@@ -142,7 +142,7 @@ export class ObjectiveIndex {
       gap_reason TEXT, note TEXT, author_session TEXT NOT NULL, author_agent TEXT NOT NULL
     );
     CREATE UNIQUE INDEX IF NOT EXISTS learning_objective_link_identity ON learning_objective_links
-      (objective_id, source_key, phase, IFNULL(related_sequence, 0), IFNULL(assessment, ''));
+      (objective_id, source_key, phase, IFNULL(related_sequence, 0));
     CREATE INDEX IF NOT EXISTS learning_objective_timeline ON learning_objective_links(objective_id, sort_ms, sequence);
     CREATE INDEX IF NOT EXISTS learning_objective_related ON learning_objective_links(objective_id, related_sequence, sequence);
     CREATE INDEX IF NOT EXISTS learning_objective_source ON learning_objective_links(source_key, objective_id);`)
@@ -156,12 +156,14 @@ export class ObjectiveIndex {
 
   /** Resolve a real ledger row by ID without materializing its private body. */
   ledgerSource(recordID: string): ObjectiveSource {
-    const row = this.actionDB.prepare(`SELECT id,session_id,action_id,kind,
-      json_extract(data,'$.node_id') AS node_id,
-      json_extract(data,'$.created_at') AS occurred_at
+    const row = this.actionDB.prepare(`SELECT id,session_id,action_id,kind,octet_length(data) AS data_bytes,
+      CASE WHEN octet_length(data)<=393216 THEN json_extract(data,'$.node_id') END AS node_id,
+      CASE WHEN octet_length(data)<=393216 THEN json_extract(data,'$.created_at') END AS occurred_at
       FROM ledger WHERE id=?`).get(simple(recordID, "record_id")) as
-      { id: string; session_id: string; action_id: string | null; node_id: string | null; kind: string; occurred_at: string | null } | undefined
+      { id: string; session_id: string; action_id: string | null; node_id: string | null; kind: string; occurred_at: string | null; data_bytes: number } | undefined
     if (!row) throw new Error("Unknown original Loom ledger record")
+    if (!Number.isSafeInteger(row.data_bytes) || row.data_bytes > 393216)
+      throw new Error("Original ledger record exceeds bounded source projection; no objective link added")
     const occurred = row.occurred_at ? Date.parse(row.occurred_at) : NaN
     return { type: "ledger-record", id: row.id, verification: "loom-ledger",
       session_id: row.session_id, event_kind: row.kind,
@@ -224,10 +226,10 @@ export class ObjectiveIndex {
     const note = input.note === undefined ? null : bounded(input.note, "interpretation note", 800)
     if (confidence === "uncertain" && !note) throw new Error("Uncertain attribution requires an explanation")
     const existing = this.db.prepare(`SELECT * FROM learning_objective_links WHERE objective_id=? AND source_key=? AND phase=?
-      AND IFNULL(related_sequence,0)=? AND IFNULL(assessment,'')=?`)
-      .get(objective, key, input.phase, related ?? 0, assessment ?? "") as LinkRow | undefined
+      AND IFNULL(related_sequence,0)=?`)
+      .get(objective, key, input.phase, related ?? 0) as LinkRow | undefined
     if (existing) {
-      if (existing.confidence !== confidence || existing.note !== note || existing.gap_reason !== (input.gap_reason ?? null))
+      if (existing.confidence !== confidence || existing.note !== note || existing.gap_reason !== (input.gap_reason ?? null) || existing.assessment !== assessment)
         throw new Error("This source link exists with another interpretation; append a sourced correction instead")
       return { ...existing, existing: true }
     }
