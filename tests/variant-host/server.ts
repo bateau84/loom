@@ -3,7 +3,7 @@
  * It records only hashes, harmless marker presence, native linkage and request kind.
  */
 import { Plugin } from "@opencode/plugin"
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { appendFileSync, readFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 
@@ -43,8 +43,12 @@ export default Plugin.define({
         const cases = [...userText.matchAll(/VARIANT_CASE:([a-z0-9-]+)/g)]
         const testCase = cases.at(-1)?.[1] ?? null
         const match = system.match(/<context key="loom\.variant\.test">\n([\s\S]*?)\n<\/context>/)
+        // Fixture-local attempt IDs, NOT authoritative native/transport IDs.
+        // A successful model request may have multiple SDK attempts.
+        const attemptID = randomUUID()
+        audit("provider-arrival", { testCase, attemptID })
         const payload = {
-          testCase, model: id, effective_sha256: hash(system),
+          testCase, attemptID, model: id, effective_sha256: hash(system),
           candidate_sha256: match ? hash(match[1]) : null,
           entry_seen: match !== null, marker_seen: system.includes(marker),
           system_bytes: Buffer.byteLength(system, "utf8"),
