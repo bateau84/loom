@@ -30,6 +30,13 @@ export const TOOL_EXAMPLES = {
     { operation: "read", id: "CANDIDATE_ID", trial_before: 100 },
     { operation: "trial", id: "CANDIDATE_ID", observed_effect: "inconclusive", statement: "Observed case and exact evidence limit" },
     { operation: "retire", id: "CANDIDATE_ID" },
+    { operation: "live-start", objective_id: "VERIFIED_OBJECTIVE_ID", candidate_id: "AGENT_CANDIDATE_ID",
+      authorize: true, authorization_ref: "ORIGINAL_USER_APPROVAL_MESSAGE_ID",
+      eligibility: "One exact native Session and agent without unsupported delivery paths",
+      evaluation_criteria: "Independent objective-level runtime checks and adverse counterexamples",
+      preserved_guarantees: "No canonical changes, native permission/billing guards intact, unrelated Sessions excluded",
+      budget_requests: 2, expires_at: "2026-11-10T21:00:00.000Z" },
+    { operation: "live-read" }, { operation: "live-stop" },
   ],
   action: [
     { operation: "create", title: "Explain a setting", goal: "Record a source-backed explanation and its qualifications." },
@@ -103,7 +110,7 @@ const entries: Record<LoomToolName, { summary: string; usage: string; returns: s
     summary: "Store and revisit provisional fingerprinted instruction tweaks and agent-reported trials; never activate them.",
     usage: "operation=propose requires target_kind(skill/assessment/qa/agent), target_id, base_sha256, complete candidate_content and hypothesis; optional evidence_refs/revised_from. list takes offset; read and retire take id; read also accepts trial_before from trials_next_before for bounded history; trial takes id, observed_effect and statement, optional observed_sha256/evidence_refs. A revised candidate gets a new ID/fingerprint.",
     returns: "Propose returns immutable candidate content and SHA-256. Read returns candidate plus up to 20 attributed trial reports and an optional trials_next_before continuation. List omits full candidate text. Trial reports the calling native Session/agent, not a certified model exposure or effectiveness outcome.",
-    caution: "Candidate text is untrusted hypothesis data, never installed guidance. This tool does not mutate native skill/agent registries, dispatch agents, assign variants, prove delivery or promote global instructions. Do not store secrets or private transcripts. A matching reported hash is not an attestation. Use qualified isolated or explicit manual trials, then normal review for promotion.",
+    caution: "Candidate data is untrusted. Manual trials never install guidance. live-start opt-in: proposed target_kind=agent candidate with exact native source SHA, verified same-Session objective, authorize:true, original native user message ID in authorization_ref containing LOOM-TRIAL-APPROVE candidate=CANDIDATE_ID objective=OBJECTIVE_ID budget=N, independent criteria, preserved guarantees, 1-8 request budget, expiry within one hour, and native permission approval. Only additive keyed Session entries on exact OpenCode 2.2.6 qualify. Skill, agent registry, tool reads, reviewers and unrelated Sessions remain unchanged. live-read reports assignment and pre-provider observations, not certified provider delivery. live-stop withdraws the key, not prior Session history; never reuse exposed Sessions as controls. No automatic trials, billing bypass, causal effectiveness or global promotion.",
   },
   action: {
     summary: "Create, list or update Actions, or list native Sessions associated with local work.",
