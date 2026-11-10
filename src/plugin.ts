@@ -101,16 +101,13 @@ const specs = [
       cursor: { type: "string", minLength: 1, maxLength: 512 },
       limit: { type: "integer", minimum: 1, maximum: 50 }, offset: num,
     }, ["operation"]) },
-  { name: "tweak", description: TOOL_HELP.tweak, input: obj({ operation: choice("propose", "list", "read", "retire", "trial"), id: str, target_kind: choice("skill", "assessment", "qa", "agent"), target_id: str, base_sha256: str, candidate_content: str, hypothesis: str, evidence_refs: { type: "array", items: str, maxItems: 20 }, revised_from: str, trial_before: { type: "integer", minimum: 1 }, observed_sha256: str, observed_effect: choice("promising", "harmful", "neutral", "inconclusive", "not-exercised"), statement: str, offset: { type: "integer", minimum: 0 } }, ["operation"]) },
-  { name: "experiment", description: TOOL_HELP.experiment, input: obj({
-    operation: choice("start","read","stop"),
-    objective_id: str, candidate_id: str, authorization_ref: str,
+  { name: "tweak", description: TOOL_HELP.tweak, input: obj({ operation: choice("propose", "list", "read", "retire", "trial", "live-start", "live-read", "live-stop"), id: str, target_kind: choice("skill", "assessment", "qa", "agent"), target_id: str, base_sha256: str, candidate_content: str, hypothesis: str, evidence_refs: { type: "array", items: str, maxItems: 20 }, revised_from: str, trial_before: { type: "integer", minimum: 1 }, observed_sha256: str, observed_effect: choice("promising", "harmful", "neutral", "inconclusive", "not-exercised"), statement: str, offset: { type: "integer", minimum: 0 }, authorization_ref: str,
+    objective_id: str, candidate_id: str,
     eligibility: { type:"string",minLength:1,maxLength:1000 },
     evaluation_criteria: { type:"string",minLength:1,maxLength:2000 },
     preserved_guarantees: { type:"string",minLength:1,maxLength:2000 },
     budget_requests: { type:"integer",minimum:1,maximum:8 },
-    expires_at: str, authorize: { type:"boolean" },
-  },["operation"]) },
+    expires_at: str, authorize: { type:"boolean" } }, ["operation"]) },
   { name: "action", description: TOOL_HELP.action, input: obj({ operation: choice("list", "create", "update", "sessions"), action_id: str, title: str, goal: str, state: choice("active", "paused", "completed", "cancelled"), expected_revision: num, offset: num, archived: { type: "boolean" }, cursor: { type: "string", minLength: 1, maxLength: 4096 }, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
   { name: "plan", description: TOOL_HELP.plan, input: obj({ operation: choice("read", "save"), action_id: str, revision: num, expected_revision: num, nodes: { type: "array", maxItems: 300, items: obj({ id: str, kind: choice("phase", "wave", "task", "subtask"), title: str, parent: str, depends_on: list, outcome: str, context: str, criteria: list, skills: list, roles: list, agent: str }, ["id", "kind", "title"]) } }, ["operation", "action_id"]) },
   { name: "context", description: TOOL_HELP.context, input: obj({ action_id: str, node_id: str, clear: { type: "boolean" }, mode: choice("continuation", "independent"), handoff_id: { type: ["string", "null"] } }) },
@@ -491,15 +488,16 @@ export default Plugin.define({
                 } else throw new Error("Unknown objective operation")
                 break
               }
-              case "experiment": {
+              case "tweak":
+              if (["live-start","live-read","live-stop"].includes(String(input.operation))) {
                 const e = requiredExperiments()
                 const session = await checkedSession(actor.session_id)
                 if (session.agent !== actor.agent)
                   throw new Error("LOOM_LIVE_AGENT_MISMATCH: native agent differs from calling tool identity")
                 const host = experimentHost(actor.session_id, actor.agent)
-                if (input.operation === "read") result = e.read(actor.session_id)
-                else if (input.operation === "stop") result = await e.stop(actor, host)
-                else if (input.operation === "start") {
+                if (input.operation === "live-read") result = e.read(actor.session_id)
+                else if (input.operation === "live-stop") result = await e.stop(actor, host)
+                else if (input.operation === "live-start") {
                   // The native user's exact affirmative message is required.
                   // Agent-supplied flags or arbitrary evidence URLs alone grant nothing.
                   const verifyApproval = async () => {
@@ -531,7 +529,6 @@ export default Plugin.define({
                 } else throw new Error("Unknown live experiment operation")
                 break
               }
-              case "tweak":
                 if (input.operation === "propose") result = requiredLearning().propose(actor, {
                   target_kind: input.target_kind as string, target_id: input.target_id as string,
                   base_sha256: input.base_sha256 as string, candidate_content: input.candidate_content as string,
