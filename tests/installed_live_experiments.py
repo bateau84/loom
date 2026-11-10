@@ -301,6 +301,22 @@ def run(args):
             require(digest(config_file.read_bytes())==original_config_hash,
                     "Shared native agent/provider registry file changed during experiment")
             report["checks"].append("no-location-registry-or-canonical-file-mutation")
+            # Negative oracle: a new Session with ONLY user-typed marker text
+            # must not be counted as native experiment exposure.
+            spoof=s.session("reader")
+            spoof_job=secrets.token_hex(8)
+            request(host,"POST",f"/api/session/{spoof}/prompt",
+                    {"text":MARKER+"\\nLOOM_HARNESS_JOB:"+spoof_job})
+            idle(host,[spoof])
+            require(model_requests_for(root,spoof_job), "Spoofed user marker never reached model input")
+            try:
+                provider_observation(root,spoof_job,False,host,spoof,candidate_text)
+            except RuntimeError as error:
+                require("NATIVE_USER_TEXT_CONTAMINATED" in str(error),
+                        "Spoofed marker failed for an unrelated cause: "+str(error))
+            else:
+                raise RuntimeError("FAIL_OPEN: user-typed marker was accepted as native treatment")
+            report["checks"].append("user-authored-marker-cannot-qualify-native-exposure")
             report["status"]="QUALIFIED_BOUNDED"
     except Exception as error:
         report["status"]="UNPROVEN"
