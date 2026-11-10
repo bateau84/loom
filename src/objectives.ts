@@ -97,11 +97,16 @@ export function objectiveSourceKey(source: Pick<ObjectiveSource, "type" | "id" |
     simple(source.session_id, "source_session_id")
     if (source.type === "native-call") simple(source.message_id, "source_message_id")
     else if (source.message_id !== undefined) throw new Error("native-message does not take a separate message ID")
+  } else if (source.type === "ledger-record") {
+    if (source.session_id !== undefined) simple(source.session_id, "original record Session")
+    if (source.message_id !== undefined) throw new Error("Ledger evidence does not have a native message ID")
   } else if (source.session_id !== undefined || source.message_id !== undefined)
-    throw new Error("Only native sources carry a Session/message scope")
+    throw new Error("Only native or ledger sources carry a Session scope")
   if (!["native-message", "native-call", "ledger-record", "external-ref", "unavailable"].includes(source.type))
     throw new Error("Unsupported objective source type")
-  return JSON.stringify([source.type, source.session_id ?? null, source.message_id ?? null, source.id])
+  const native = source.type === "native-message" || source.type === "native-call"
+  return JSON.stringify([source.type, native ? source.session_id ?? null : null,
+    native ? source.message_id ?? null : null, source.id])
 }
 
 type PageCursor = { v: 1; objective: string; max: number; time: number; sequence: number }
@@ -159,7 +164,7 @@ export class ObjectiveIndex {
     if (!row) throw new Error("Unknown original Loom ledger record")
     const occurred = row.occurred_at ? Date.parse(row.occurred_at) : NaN
     return { type: "ledger-record", id: row.id, verification: "loom-ledger",
-      session_id: undefined, event_kind: row.kind,
+      session_id: row.session_id, event_kind: row.kind,
       ...(Number.isSafeInteger(occurred) && occurred >= 0 ? { occurred_at_ms: occurred } : {}),
       ...(row.action_id ? { action_id: row.action_id } : {}),
       ...(row.node_id ? { node_id: row.node_id } : {}) }
