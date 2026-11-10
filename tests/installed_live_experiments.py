@@ -79,9 +79,17 @@ def prompt_text(event, role):
     return "\n".join(parts)
 
 
-def provider_observation(root, job, treatment):
+def provider_observation(root, job, treatment, host, session, candidate_text):
     rows = model_requests_for(root, job)
     require(rows, "PROVIDER_RECEIPT_MISSING: no final SDK input observed")
+    entries = native_entries(host,session)
+    require(entries == ([{"key":KEY,"value":candidate_text}] if treatment else []),
+            "EXACT_NATIVE_ENTRY_READBACK_MISMATCH")
+    original = request(host,"GET",f"/api/session/{session}/message?order=desc&limit=100")
+    require(isinstance(original,list),"NATIVE_USER_SOURCE_UNAVAILABLE")
+    require(not any(m.get("type")=="user" and MARKER in str(m.get("text",""))
+                    for m in original), "NATIVE_USER_TEXT_CONTAMINATED")
+    routes=[]
     for row in rows:
         system = prompt_text(row, "system")
         user = prompt_text(row, "user")
@@ -95,12 +103,18 @@ def provider_observation(root, job, treatment):
             "marker_user_occurrences": user.count(MARKER),
             "marker_system_occurrences": system.count(MARKER),
         }
-        require(MARKER not in user,
-                "PROVIDER_SOURCE_AMBIGUOUS: "+json.dumps(stage,sort_keys=True))
-        seen = MARKER in system and f'<context key="{KEY}">' in system
+        # OpenCode may deliver an instruction change as a native-generated
+        # user-role context delta AFTER the Session already has model turns.
+        # Reject user-authored spoofing via the independent native message scan
+        # and exact Session-entry readback above; never equate a bare marker
+        # with exposure without both origins and control isolation checked.
+        seen = MARKER in system or MARKER in user
         require(seen is treatment,
                 "PROVIDER_CONTROL_CONTAMINATION" if not treatment else "PROVIDER_TREATMENT_MISSING")
+        routes.append("system-initial" if MARKER in system else
+                      "native-user-role-delta" if MARKER in user else "no-candidate")
     return {"attempts": len(rows), "candidate_at_provider": treatment,
+            "provider_routes": sorted(set(routes)),
             "system_fingerprints": sorted({digest(prompt_text(row, "system")) for row in rows})}
 
 
@@ -236,15 +250,15 @@ def run(args):
             s.release(cjob)
             s.release(tjob)
             idle(host,[control,treatment])
-            report["initial_provider"]={"control":provider_observation(root,cjob,False),
-                                         "treatment":provider_observation(root,tjob,True)}
+            report["initial_provider"]={"control":provider_observation(root,cjob,False,host,control,candidate_text),
+                                         "treatment":provider_observation(root,tjob,True,host,treatment,candidate_text)}
             report["checks"].append("same-location-concurrent-control-treatment-provider-input")
 
             c2=ordinary_prompt(s,control,"control-continuation")
             t2=ordinary_prompt(s,treatment,"treatment-continuation")
             idle(host,[control,treatment])
-            provider_observation(root,c2,False)
-            provider_observation(root,t2,True)
+            provider_observation(root,c2,False,host,control,candidate_text)
+            provider_observation(root,t2,True,host,treatment,candidate_text)
             report["checks"].append("fixed-content-continuation-and-control-isolation")
 
             # Rejected model-originated tool execution cannot be mistaken for
@@ -258,7 +272,7 @@ def run(args):
                       and e["data"].get("sessionID")==treatment and e["data"].get("tool")=="execute"]
             require(attempts and all(a.get("status")=="error" for a in attempts),
                     "Unqualified Code Mode program executed under active treatment")
-            provider_observation(root,rejected,True)
+            provider_observation(root,rejected,True,host,treatment,candidate_text)
             report["checks"].append("real-unqualified-tool-execution-denied")
 
             host.close()
@@ -268,7 +282,7 @@ def run(args):
                     "Native trial identity did not survive host restart")
             rjob=ordinary_prompt(s,treatment,"treatment-after-restart")
             idle(host,[treatment])
-            provider_observation(root,rjob,True)
+            provider_observation(root,rjob,True,host,treatment,candidate_text)
             report["checks"].append("durable-restart-same-native-variant")
 
             # Real installed Code Mode execute wrapper must permit only the
