@@ -10,8 +10,8 @@ timestamp: 2026-10-19T00:00:00Z
 
 Run commands from the repository root. This is the maintained inventory of every
 tracked path under `tests/`, `tools/` and `.github/workflows/`, plus the seven
-runner/example supports below: **76 + 7 = 83 paths**. There are 44 test entry files
-(18 Node, 23 Bun, 3 Python); file counts are not case counts. Update this guide
+runner/example supports below: **77 + 7 = 84 paths**. There are 45 test entry files
+(18 Node, 24 Bun, 3 Python); file counts are not case counts. Update this guide
 when adding, removing or renaming an entrypoint or support input.
 
 ## Environment and commands
@@ -19,7 +19,7 @@ when adding, removing or renaming an entrypoint or support input.
 Install with `bun install --frozen-lockfile`. `.bun-version` pins **Bun 1.4.2**;
 the supported package range is `>=1.4.2 <2.0.0`. CI uses **Node 22**; Node
 **22.16+** is required for core SQLite tests. Python 3 and Git are also needed as
-noted below. The upgrade-candidate source SDK is `@opencode/plugin@2.1.1`, YAML dependency
+noted below. The upgrade-candidate source SDK is `@opencode/plugin@2.2.6`, YAML dependency
 `js-yaml@4.3.2`, compiler `typescript@7.0.2`. Search uses separately provisioned
 Code Mode **2.0.29**; it does not establish host compatibility. The candidate
 installed-host boot uses SDK/CLI **2.1.1/2.1.1**; earlier 2.0.32 qualification
@@ -97,6 +97,7 @@ additional maintained tests. Do not publish private host reports without inspect
 | tests/manual-backup-restore.test.ts | Published stopped-writer backup/restore, residual WAL, qualified bytes and overwrite/source guards; additionally requires python3 subprocesses and frozen Store. |
 | tests/native.test.ts | SDK/plugin/YAML/SQLite, example, reload/capture/recovery, startup/migration; legacy helper and disposable startup directories. |
 | tests/objective-native.test.ts | Registered production objective/tool/source projection/SQLite: three corrective Coder handbacks, QA evidence, multiple goals per Session/Action, cross-Action continuation, uncertainty/correction, source permissions, gaps, idempotent restart and bounded pagination. Simulated OpenCode native host, not a real-model run. |
+| tests/objective-trends-native.test.ts | Registered read-only objective comparison: 26 distinct source-anchored goals across pages, corrected/recovered and unknown outcomes, shared failure records, cutoff, simultaneous appends, explicit unavailable dimensions and validation; simulated native host with actual SQLite, not a model-driven evaluation. |
 | tests/package-entry.test.ts | SDK public entry resolution/loading, absent optional TUI/RPC, runtime/SDK/search/boot pins; reads package, Bun pin, CI/boot workflows, search test and smoke script as data. |
 | tests/questions-native.test.ts | Registered ask/answer/association/attribution, fail-closed precommit behavior and first blocking-answer eligibility. |
 | tests/resume-native.test.ts | Exact-asker one-shot admission, interruption/deadline/uncertainty/malformed acknowledgements; no retry/transfer, simulated host with real persistence. |
