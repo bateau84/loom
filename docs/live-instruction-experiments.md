@@ -27,9 +27,12 @@ reasoning quality or live provider billing.
 
 The additional controller introduced here requires independent qualification
 on its **exact PR head**. The new registration tests use production Loom code,
-real SQLite and a simulated host, **not** an installed OpenCode CLI. Context
-and model-request hooks are pre-provider stages. No production model-input
-receipt is claimed without separate provider-side evidence.
+real SQLite and a simulated host, **not** an installed OpenCode CLI. The OpenCode 2.2.6 context hook can run before native keyed entries are
+rendered. A missing entry in that early hook is recorded as
+`context-stage-unobserved`, **not** a failed or successful provider receipt.
+The later model-request preflight checks the exact native entry and source,
+but is also pre-provider. No production model-input receipt is claimed without
+separate provider-side evidence.
 
 Unsupported and excluded: native skill loading, attachments, direct file
 reads, model-issued tools, reviewer/critic/evaluator Sessions, direct native
