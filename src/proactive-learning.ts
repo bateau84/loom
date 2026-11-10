@@ -59,27 +59,61 @@ export class ProactiveLearning {
     if (compared.population.eligible_objectives < 3) return []
     const candidates: Array<{ kind: Kind; group: string; count: number;
       sources: Source[] }> = []
-    const rows = compared.items
+    const correction = compared.metrics.with_documented_correction
+    const possiblePositive = compared.groups.filter(group =>
+      group.key !== "not-observed" && group.key !== "multiple-observations" &&
+      group.metrics.reported_pass_without_correction >= 3 &&
+      group.metrics.unknown_or_incomplete === 0 &&
+      group.metrics.with_documented_correction === 0)
+    if (correction < 3 && possiblePositive.length === 0) return []
+
+    // The aggregate includes the entire frozen population; .items only has
+    // the first page. Later source-linked examples must not silently disappear
+    // merely because unrelated objectives occupied the first 20 rows.
+    const rows = [...compared.items]
+    const distinctAnchors = (selected: typeof rows) => {
+      const used = new Set<string>()
+      return selected.filter(point => {
+        const key = JSON.stringify([point.origin.source_type,point.origin.source_id,
+          point.origin.session_id,point.origin.message_id])
+        if (used.has(key)) return false
+        used.add(key)
+        return true
+      })
+    }
+    const correctedPoints = () => distinctAnchors(rows.filter(point =>
+      point.metrics.with_documented_correction > 0))
+    const positivePoints = (groupKey: string) => distinctAnchors(rows.filter(point =>
+      point.dimensions.instruction_fingerprint === groupKey &&
+      point.metrics.reported_pass_without_correction > 0))
+    const enough = () => (correction < 3 || correctedPoints().length >= 3) &&
+      possiblePositive.every(group => positivePoints(group.key).length >= 3)
+    let page = compared, pages = 1
+    while (!enough() && page.next_cursor !== null && pages < 25) {
+      // Cursor carries the insertion high-water marks. It reuses the identical
+      // scope and cannot count concurrent appends twice or invent extra work.
+      page = this.trends.compare({
+        operation: "compare", population: "all-linked",
+        since_at: start, until_at: now, as_of_at: now,
+        group_by: "instruction-fingerprint", limit: 20, cursor: page.next_cursor,
+      })
+      rows.push(...page.items)
+      pages++
+    }
     const refs = (selected: typeof rows) => selected.slice(0, 8).map(point => ({
       objective_id: point.objective_id,
       source_type: point.origin.source_type,
       source_id: point.origin.source_id,
     }))
-    const correction = compared.metrics.with_documented_correction
-    const corrected = rows.filter(point => point.metrics.with_documented_correction > 0)
+    const corrected = correctedPoints()
     if (correction >= 3 && corrected.length >= 3)
-      candidates.push({ kind: "recurring-correction", group: "all-explicit-objectives",
+      candidates.push({ kind: "recurring-correction", group: "independently-anchored-objectives",
         count: correction, sources: refs(corrected) })
-    for (const group of compared.groups) {
-      if (group.key === "not-observed" || group.key === "multiple-observations") continue
-      const positive = group.metrics.reported_pass_without_correction
-      if (positive < 3 || group.metrics.unknown_or_incomplete > 0 ||
-          group.metrics.with_documented_correction > 0) continue
-      const selected = rows.filter(point => point.dimensions.instruction_fingerprint === group.key &&
-        point.metrics.reported_pass_without_correction > 0)
-      if (selected.length < 3) continue // No source-linked examples: never fabricate them.
+    for (const group of possiblePositive) {
+      const selected = positivePoints(group.key)
+      if (selected.length < 3) continue
       candidates.push({ kind: "retained-practice", group: group.key,
-        count: positive, sources: refs(selected) })
+        count: group.metrics.reported_pass_without_correction, sources: refs(selected) })
     }
     const result: Notice[] = []
     for (const candidate of candidates.slice(0, 3)) {
