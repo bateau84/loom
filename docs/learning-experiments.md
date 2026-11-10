@@ -96,6 +96,12 @@ This case supports one local regression correction and illustrates why tool-leve
 
 A bounded trial using existing tools would use `loom_action` and `loom_record` to retain the explicit objective, original verification and correction references, `loom_trace` for authorized parent/child evidence, and `loom_tweak` to propose and later recover exact candidate content and attributed reports. Report `not-exercised` if no treatment was actually applied. Historical CI links do not prove model exposure. The native Session evidence and an independent eligible comparison population for a *skill experiment* were not available in this delivery, so no such effectiveness claim has been made.
 
+### Installed-host mechanical qualification (OpenCode 2.2.6)
+
+`tests/installed_objectives.py` runs separately from the registered simulated-host tests. The installed-questions CI workflow packs the candidate plugin, installs it with exact OpenCode CLI/SDK **2.2.6**, then exercises the **real native host and Loom production tool callbacks** using a deterministic local model. A disposable parent Session and three actual child Sessions supply original user-message IDs, native ancestry, authorized sanitized exports, and authored child handbacks. The host's **native edit tool** makes three revisions to a disposable Python program; a separate subprocess executes the requested scenario after each revision and observes **fail, fail, pass**. The parent links the three claims and original QA records to one objective, then follows bounded source pages and recovers the same identity and links after restarting the host.
+
+This checks **source resolution, attribution, child relationships, interpretation-versus-fact separation, recovery, read authorization and capture-off**, not the quality of any model's work. The local provider is *scripted*; child creation and correction decisions are driven by the harness rather than a reasoning Coder. Original exports may omit history or be altered, and QA records still describe attributed judgments. See the separate `installed-objective-qualification-<commit>` CI artifact for exact source hashes, host version, observed attempts and limitations. This does **not** qualify real-model whole-objective audits, autonomous dispatch, instruction effectiveness or longitudinal comparisons.
+
 ## Live additive Session instructions (qualified subset only)
 
 [Host qualification #221](https://github.com/bateau84/loom/pull/221) passed
