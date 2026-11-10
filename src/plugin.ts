@@ -83,7 +83,7 @@ const specs = [
       session_id: str, export_path: { type: "string", minLength: 1, maxLength: 4096 },
       include_text: { type: "boolean" }, limit: { type: "integer", minimum: 1, maximum: 50 },
       cursor: { type: "string", minLength: 1, maxLength: 4096 } }, ["operation"]) },
-  { name: "insights", description: TOOL_HELP.insights, input: obj({ operation: choice("action", "window"), action_id: str, before: { type: "integer", minimum: 1 }, limit: { type: "integer", minimum: 1, maximum: 200 }, since_at: str, until_at: str }, ["operation"]) },
+  { name: "insights", description: TOOL_HELP.insights, input: obj({ operation: choice("action", "window", "findings"), finding_cursor: { type: "string", maxLength: 512 }, action_id: str, before: { type: "integer", minimum: 1 }, limit: { type: "integer", minimum: 1, maximum: 200 }, since_at: str, until_at: str }, ["operation"]) },
   { name: "objective", description: TOOL_HELP.objective, input: obj({
       operation: choice("create", "link", "read", "list", "find"),
       objective_id: str, label: { type: "string", maxLength: 200 }, unit_key: str,
@@ -205,7 +205,7 @@ export default Plugin.define({
       learning = undefined
     }
     const learningStatus = () => learning
-      ? { available: true, storage: "separate-project-sqlite", automatic_mutation: false }
+      ? { available: true, storage: "separate-project-sqlite", automatic_mutation: false, proactive_findings: "outcome-boundary-only-when-ledger-capture-automatic", automatic_model_calls: false }
       : { available: false, stage: learningFailure ?? "unavailable", automatic_mutation: false,
           note: "Existing Action/record/trace tools and native execution remain available; learning evidence is preserved for operator repair" }
     const requiredLearning = () => {
@@ -379,6 +379,12 @@ export default Plugin.define({
                   if (input.action_id !== undefined) throw new Error("Window insights cannot use action_id")
                   result = requiredLearning().events({ before: input.before as number | undefined, limit: input.limit as number | undefined,
                     since_at: input.since_at as string | undefined, until_at: input.until_at as string | undefined })
+                } else if (input.operation === "findings") {
+                  if (input.action_id !== undefined || input.before !== undefined ||
+                      input.since_at !== undefined || input.until_at !== undefined)
+                    throw new Error("Findings are project-scoped; filters and ledger cursors are unsupported")
+                  result = requiredLearning().proactive.list(input.limit as number | undefined,
+                    input.finding_cursor as string | undefined)
                 } else throw new Error("Unknown insights operation")
                 break
               case "objective": {
@@ -454,14 +460,29 @@ export default Plugin.define({
                   } else throw new Error("Invalid objective source type")
                   if (input.operation === "create") result = index.create(actor, source,
                     input.label as string, input.unit_key as string | undefined)
-                  else result = index.link(actor, {
+                  else {
+                    const linked = index.link(actor, {
                     objective_id: input.objective_id as string, phase: input.phase as ObjectivePhase,
                     source, confidence: input.confidence as "supported" | "uncertain" | undefined,
                     assessment: input.assessment as "reported-done" | "reported-failed" | "pass" | "fail" | "inconclusive" | "confirm" | "reject" | undefined,
                     related_sequence: input.related_sequence as number | undefined,
                     gap_reason: input.gap_reason as "missing-child" | "compacted" | "denied-access" | "opaque-tool" | "missing-source" | "unknown" | undefined,
                     note: input.note as string | undefined,
-                  })
+                    })
+                    result = linked
+                    if (!linked.existing && input.phase === "outcome" &&
+                        snapshot.errors.length === 0 && snapshot.config.ledger.capture === "automatic") {
+                      try {
+                        // Outcome linkage is the only automatic reporting boundary.
+                        // The original write is already committed; reporting is
+                        // best-effort, deterministic and never a model invocation.
+                        const notices = requiredLearning().proactive.consider()
+                        if (notices.length) result = { ...linked, new_learning_findings: notices }
+                      } catch (error) {
+                        warn(error) // Do not convert a valid objective into a failed workflow.
+                      }
+                    }
+                  }
                 } else throw new Error("Unknown objective operation")
                 break
               }
