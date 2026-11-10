@@ -248,7 +248,8 @@ export class ObjectiveIndex {
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
       objective, key, source.type, source.id, source.session_id ?? null, source.message_id ?? null,
       source.parent_session_id ?? null, source.action_id ?? null, source.node_id ?? null,
-      source.event_kind ?? null, verification, time ?? null, time ?? Date.parse(recordedAt), recordedAt,
+      source.event_kind ?? null, verification, time ?? null,
+      input.phase === "link-correction" ? Date.parse(recordedAt) : time ?? Date.parse(recordedAt), recordedAt,
       input.phase, confidence, assessment, related, input.gap_reason ?? null, note,
       simple(actor.session_id, "author Session"), simple(actor.agent, "author agent"))
     const row = this.db.prepare("SELECT * FROM learning_objective_links WHERE sequence=last_insert_rowid()").get() as LinkRow
