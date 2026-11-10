@@ -132,7 +132,13 @@ export async function registeredLoom(initialSkills: any[] = [], options: { befor
         }
         return { id: sessionID, projectID: "tool-help", location: { directory } }
       },
-      hook: async (name: string, fn: any) => { hooks.set(name, fn); return registration() },
+      hook: async (name: string, fn: any) => {
+        const previous = hooks.get(name)
+        hooks.set(name, previous
+          ? async (event: any) => { await previous(event); await fn(event) }
+          : fn)
+        return registration()
+      },
     },
   }
   let dispose: (() => Promise<void>) | undefined
