@@ -51,6 +51,7 @@ REQUIRED_INSTALLED_CHECKS = {
     'E5-compaction-context-and-observation',
     'E6-native-trace-and-scope', 'E6-exported-child-history', 'E6-native-text-redaction',
     'E6-native-filesystem-write-denial',
+    'E7-native-learning-record-recovery',
 }
 
 
@@ -763,6 +764,34 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
                     sum(e['type'] == 'model-request' for e in events(root)) == model_before,
                     'Fresh capture host replayed native work during restart')
             s = Scenario(host, root)
+            # Native product-owned public Loom write/read with scripted model.
+            # This proves mechanics only, not any Evaluator's empirical judgment.
+            learning_session = s.session('reader')
+            learning_action = s.invoke(learning_session, 'action', {
+                'operation': 'create', 'title': 'Native learning recovery fixture',
+                'goal': 'Confirm exact evidence storage across installed host restart'
+            })
+            learning_statement = 'Native scripted-provider fixture: no empirical audit or model judgment performed'
+            learning_reference = 'https://github.com/bateau84/loom/pull/217'
+            learning_record = s.invoke(learning_session, 'record', {
+                'operation': 'add', 'action_id': learning_action['id'], 'kind': 'result',
+                'statement': learning_statement,
+                'artifact_refs': [learning_reference]
+            })
+            initial_read = s.invoke(learning_session, 'record', {
+                'operation': 'query', 'action_id': learning_action['id'],
+                'record_id': learning_record['id']
+            })
+            require(len(initial_read['items']) == 1 and
+                    initial_read['items'][0]['id'] == learning_record['id'] and
+                    initial_read['items'][0]['data']['statement'] == learning_statement,
+                    'Native public record write did not produce its full original content')
+            initial_insights = s.invoke(learning_session, 'insights', {
+                'operation': 'action', 'action_id': learning_action['id'], 'limit': 50
+            })
+            require(any(e['record_id'] == learning_record['id'] for e in initial_insights['events']) and
+                    initial_insights['coverage']['action_is_verified_objective'] is False,
+                    'Native public insights lost the source record or fabricated objective verification')
             compaction_session = s.session('reader')
             compaction_action = s.invoke(compaction_session, 'action', {
                 'operation': 'create', 'title': 'Compaction qualification', 'goal': 'Preserve Action context and tool evidence'
@@ -835,6 +864,38 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             unchanged_rows(ledger, saved)
             report['checks'].append({'name': 'E2-E3-restart-no-reconstruction', 'status': 'PASS'})
             s = Scenario(host, root)
+            fresh_learning_reader = s.session('reader')
+            recovered = s.invoke(fresh_learning_reader, 'record', {
+                'operation': 'query', 'action_id': learning_action['id'],
+                'record_id': learning_record['id']
+            })
+            require(len(recovered['items']) == 1 and
+                    recovered['items'][0]['id'] == learning_record['id'] and
+                    recovered['items'][0]['data']['statement'] == learning_statement and
+                    recovered['items'][0]['data']['artifact_refs'] == [learning_reference] and
+                    recovered['items'][0]['session_id'] == learning_session,
+                    'Native public record recovery changed the original evidence or attribution')
+            recovered_thread = s.invoke(fresh_learning_reader, 'record', {
+                'operation': 'query', 'view': 'full_thread',
+                'action_id': learning_action['id'], 'limit': 20
+            })
+            require(learning_record['id'] in recovered_thread['markdown'] and
+                    learning_statement in recovered_thread['markdown'] and
+                    learning_reference in recovered_thread['markdown'],
+                    'Native full_thread omitted stored source and qualification')
+            recovered_insights = s.invoke(fresh_learning_reader, 'insights', {
+                'operation': 'action', 'action_id': learning_action['id'], 'limit': 50
+            })
+            require(any(e['record_id'] == learning_record['id'] for e in recovered_insights['events']),
+                    'Native public insights did not survive installed host restart')
+            report['checks'].append({'name': 'E7-native-learning-record-recovery',
+                                     'status': 'PASS', 'source_record': learning_record['id'],
+                                     'writer_session': learning_session,
+                                     'reader_session': fresh_learning_reader,
+                                     'qualification': 'Exact native registered Loom record/insights/full_thread '
+                                                      'round-trip after host process restart; scripted local '
+                                                      'model, not native Evaluator judgment or original '
+                                                      'real-work Session reconstruction'})
             typed_asker, typed_reader = s.session('asker'), s.session('reader')
             # Fully installed typed-OQ path: real native child, model request,
             # Loom callback, durable answer and exact-typed_asker synthetic admission.
