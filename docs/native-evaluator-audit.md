@@ -55,6 +55,23 @@ Read the effective native agent roster and Loom's registered `loom_agents {}` ou
 
 OpenCode 2.2.6's tagged CLI implements `opencode session export SESSION_ID --sanitize`. Export the original parent and *each* relevant child separately to a private, non-tracked directory under the same project for Loom's read-permission checks. Set restrictive permissions, add the directory to local `.git/info/exclude` (not the committed `.gitignore`), inspect sanitization before use, and remove the exports after the audit. Verify source Session/project identities, page boundaries, missing windows and export authenticity limits. Do not commit the exports.
 
+Example local preparation (inspect the export before exposing it to the agent):
+
+```sh
+cd /ABS/AUTHORIZED/PROJECT
+umask 077
+mkdir -p .private-evaluator
+chmod 700 .private-evaluator
+EXCLUDE="$(git rev-parse --git-path info/exclude)"
+mkdir -p "$(dirname "$EXCLUDE")"
+printf '/.private-evaluator/\\n' >> "$EXCLUDE"
+opencode session export "$ORIGINAL_PARENT_SESSION" --sanitize > ".private-evaluator/$ORIGINAL_PARENT_SESSION.json"
+# Repeat the export for each original child Session ID, not only the parent.
+chmod 600 .private-evaluator/*.json
+```
+
+Do not create a new Session or a new failure to fill a missing original export. Note that returning to the original parent to request the audit appends a new, distinguishable audit turn; do not count that turn as part of the historical engineering outcome.
+
 Loom `loom_trace` has two different boundaries:
 
 - `{"operation":"children","session_id":"PARENT_ID","limit":20}` enumerates direct children **only in the caller's native Session family**; follow `next_cursor` and relevant descendants. Running a detached Evaluator root cannot claim this proof.
