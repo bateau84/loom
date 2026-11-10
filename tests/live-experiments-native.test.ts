@@ -85,6 +85,14 @@ test("native context and request hooks record only pre-provider evidence; budget
     await expect(host.hooks.get("execute.before")({
       sessionID: "parent",agent: "author",tool: "skill",input:{id:"software-engineering"},id:"tool2",
     })).rejects.toThrow("TOOL_ROUTE_UNQUALIFIED")
+    await expect(host.hooks.get("execute.before")({
+      sessionID: "parent",agent: "author",tool: "execute",
+      input:{code:'return await tools.loom.tweak({"operation":"live-stop"}); await tools.shell({command:"echo unsafe"})'},id:"tool3",
+    })).rejects.toThrow("TOOL_ROUTE_UNQUALIFIED")
+    await host.hooks.get("execute.before")({
+      sessionID: "parent",agent: "author",tool: "execute",
+      input:{code:'return await tools.loom.tweak({"operation":"live-read"})'},id:"tool4",
+    })
     const context = { sessionID: "parent", agent: "author",
       system: [{ type:"text", text: `<context key="${LIVE_ENTRY_KEY}">\n${candidateText}\n</context>` }],
       messages: [], tools: {}, options: {} }
