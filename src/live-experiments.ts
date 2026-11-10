@@ -189,8 +189,9 @@ export class SessionExperiments {
       await host.put(candidate.content)
       if (await this.ownValue(host) !== candidate.content) throw new Error("LOOM_LIVE_ASSIGNMENT_READBACK_MISMATCH")
       this.transaction(() => {
-        this.db.prepare("UPDATE learning_live_experiments SET status='assigned' WHERE id=? AND status='installing'")
+        const result = this.db.prepare("UPDATE learning_live_experiments SET status='assigned' WHERE id=? AND status='installing'")
           .run(trialID)
+        if (result.changes !== 1) throw new Error("LOOM_LIVE_ASSIGNMENT_RACE: withdrawal or recovery occurred during native write")
         this.event(trialID, "native-entry-readback", "Candidate SHA-256 verified at native Session-entry storage; NOT provider exposure")
       })
     } catch (error) {
@@ -277,14 +278,28 @@ export class SessionExperiments {
     if (!["assigned","possible-exposure"].includes(row.status))
       throw new Error("LOOM_LIVE_RECOVERY_REQUIRED: incomplete assignment, stop this Session trial")
     if (kind !== "primary") throw new Error("LOOM_LIVE_ROUTE_UNQUALIFIED: only primary model requests are eligible")
-    if (Date.now() >= Date.parse(row.expires_at)) throw new Error("LOOM_LIVE_EXPIRED: withdraw the experiment before continuing")
-    if (row.preflight_count >= row.budget_requests) throw new Error("LOOM_LIVE_BUDGET_EXHAUSTED: withdraw the experiment")
+    if (Date.now() >= Date.parse(row.expires_at) || row.preflight_count >= row.budget_requests) {
+      const expired = Date.now() >= Date.parse(row.expires_at)
+      // A model cannot invoke loom_tweak live-stop after the budget is already
+      // spent: the very request needed to reach Code Mode would be denied.
+      // Withdraw automatically at that boundary, then fail the current
+      // request visibly. The next ordinary request may proceed, but the
+      // previously exposed Session is permanently ineligible as a control.
+      await this.stop({ session_id: host.sessionID, agent: host.agent }, host)
+      throw new Error(expired
+        ? "LOOM_LIVE_EXPIRED: native treatment withdrawn; retry ordinary work, not a clean control"
+        : "LOOM_LIVE_BUDGET_EXHAUSTED: native treatment withdrawn; retry ordinary work, not a clean control")
+    }
     const candidate = await this.current(host,row)
     if (await this.ownValue(host) !== candidate.content)
       throw new Error("LOOM_LIVE_ENTRY_DRIFT: native instruction entry changed or vanished")
     this.transaction(() => {
-      this.db.prepare("UPDATE learning_live_experiments SET preflight_count=preflight_count+1,status='possible-exposure' WHERE id=? AND preflight_count<?")
+      const updated = this.db.prepare(`UPDATE learning_live_experiments
+        SET preflight_count=preflight_count+1,status='possible-exposure'
+        WHERE id=? AND status IN ('assigned','possible-exposure') AND preflight_count<?`)
         .run(row.id,row.budget_requests)
+      if (updated.changes !== 1)
+        throw new Error("LOOM_LIVE_CONCURRENT_WITHDRAWAL: preflight cannot revive a stopped trial")
       this.event(row.id,"primary-pretransport", "Native request reached pre-transport hook; provider delivery NOT certified")
     })
   }
