@@ -24,6 +24,7 @@ scan root so the profile is discovered; it declares no mandatory link counts.
 
 - [Deep retrospective session tracing](retrospective-trace.md) — Original Session evidence sources, access checks and coverage limits
 - [Learning evidence and provisional experiments](learning-experiments.md) — Bounded insight statistics, content fingerprints and manual tweak trials
+- [Native Evaluator audit qualification](native-evaluator-audit.md) — Exact-host preflight, original Session evidence, durable write/reopen gates and unproven execution record
 - [Collaboration](collaboration.md) — Progress reports and contextual questions
 - [Context relevance](context-relevance.md) — Bounded useful context and scope
 - [Evidence reliability](evidence-reliability.md) — Pairing, capture gaps and recovery
