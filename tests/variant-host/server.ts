@@ -60,7 +60,8 @@ export default Plugin.define({
           if (Date.now() > deadline) throw new Error("Variant provider barrier timed out")
           await new Promise(done => setTimeout(done, 25))
         }
-        const output = userText.includes("You MUST use this format for your response")
+        const contextText = JSON.stringify(prompt)
+        const output = contextText.includes("You MUST use this format for your response") && contextText.includes("## Objective")
           ? "## Objective\n- Qualify a local instruction boundary.\n\n## Work State\n### Completed\n- Native request observed.\n\n## Next Move\n1. Continue the fixture."
           : "VARIANT_FIXTURE_OK"
         const events: any[] = [
