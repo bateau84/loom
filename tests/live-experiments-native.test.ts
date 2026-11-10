@@ -97,6 +97,13 @@ test("native context and request hooks record only pre-provider evidence; budget
       system: [{ type:"text", text: `<context key="${LIVE_ENTRY_KEY}">\n${candidateText}\n</context>` }],
       messages: [], tools: {}, options: {} }
     await host.hooks.get("context")(context)
+    // The exact 2.2.6 host can render native entries after this early hook.
+    // Missing here must remain an explicitly unverified stage, not abort a
+    // request whose final provider input is tested by installed acceptance.
+    await host.hooks.get("context")({ ...context, system: [] })
+    const staged = (await call(host, "read")).result
+    expect(staged.events.some((e: any) => e.kind === "context-stage-unobserved")).toBe(true)
+    expect(staged.observed_provider_receipts).toBe(0)
     const native = { sessionID: "parent", agent: "author", kind: "primary",
       model: { providerID: "fixture", id: "scripted" } }
     await host.hooks.get("model.request")(native)
