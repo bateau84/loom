@@ -512,7 +512,7 @@ export default Plugin.define({
                       (message as {id?:unknown}).id === input.authorization_ref &&
                       (message as {type?:unknown}).type === "user" &&
                       typeof (message as {text?:unknown}).text === "string" &&
-                      (message as {text:string}).text.split("\\n").some(line => line.trim() === approvedLine)
+                      (message as {text:string}).text.split("\n").some(line => line.trim() === approvedLine)
                     ) : []
                     if (found.length !== 1)
                       throw new Error("LOOM_LIVE_NOT_AUTHORIZED: missing exact native user approval for candidate, objective and budget")
