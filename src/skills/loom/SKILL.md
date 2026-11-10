@@ -2,10 +2,9 @@
 
 ## Keep Loom optional
 
-A conversation needs no Action. An Action needs no Plan. OpenCode owns
-Sessions, execution, delegation, skills, models and permissions. Loom records
-intent, context and history; it is not a scheduler. Role checks restrict only
-companion loaders, not native execution.
+Action and Plan are optional. OpenCode owns Sessions, execution, delegation,
+skills, models and permissions. Loom records intent and history, not execution;
+role checks restrict companion loaders only.
 
 ## Find the right tool
 
@@ -18,7 +17,7 @@ companion loaders, not native execution.
 | `loom_context` | Select work, pin a result handoff or limit prior opinions during independent review. |
 | `loom_record` | Store/query concerns, claims, results, reviews, progress, questions and history. |
 | `loom_insights` | Read bounded, descriptive project/Action statistics with source IDs and coverage limits; not an objective verdict. |
-| `loom_objective` | Explicitly link one goal's original sources, child handbacks, corrective attempts and checks; no automatic acceptance or outcome proof. |
+| `loom_objective` | Link one goal's original sources, corrective attempts and verification; no outcome proof. |
 | `loom_tweak` | Store fingerprinted tweak proposals and trials; no activation. |
 | `loom_assessment` | Load ASSESSMENT.md; requires configured assessment role. |
 | `loom_qa` | Load QA.md; requires configured qa role. |
