@@ -25,9 +25,9 @@ MANIFEST = "loom-state-manifest.json"
 DATABASES = ("ledger.sqlite", "learning.sqlite")
 SIDECARS = ("-wal", "-shm", "-journal")
 REQUIRED_TABLES = {
+    # Historical sender/fence tables are optional in fresh installations.
     "ledger.sqlite": {
         "actions", "plans", "ledger", "focus", "action_versions",
-        "primary_deliveries",
     },
     "learning.sqlite": {"learning_candidates", "learning_trials"},
 }
