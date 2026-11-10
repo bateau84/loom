@@ -81,6 +81,19 @@ test("proactive corrections require three whole objectives, not three Coder hand
     const sixth = await objectiveWithCorrection(host, 6)
     expect(sixth.result.new_learning_findings).toHaveLength(1)
     expect((await host.invoke("insights", { operation: "findings" })).result.items).toHaveLength(2)
+    const firstPage = (await host.invoke("insights", { operation: "findings", limit: 1 })).result
+    expect(firstPage.items).toHaveLength(1)
+    expect(typeof firstPage.next_cursor).toBe("string")
+    const secondPage = (await host.invoke("insights", {
+      operation: "findings", limit: 1, finding_cursor: firstPage.next_cursor,
+    })).result
+    expect(secondPage.items).toHaveLength(1)
+    expect(secondPage.items[0].signature).not.toBe(firstPage.items[0].signature)
+    expect(secondPage.next_cursor).toBeNull()
+    expect(secondPage.snapshot_max_rowid).toBe(firstPage.snapshot_max_rowid)
+    await expect(host.invoke("insights", {
+      operation: "findings", finding_cursor: "not-a-real-cursor",
+    })).rejects.toThrow("Invalid findings cursor")
     await host.close(); host = undefined
 
     // Disabling ordinary capture suppresses all automatic findings even for
