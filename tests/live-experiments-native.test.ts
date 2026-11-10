@@ -166,6 +166,22 @@ test("a stopped or crashed trial retains history across plugin restart and canno
   } finally { await rm(directory,{recursive:true,force:true}) }
 })
 
+test("orphaned native instruction entry cannot run after learning history is lost", async () => {
+  const host = await registeredLoom([], { versionedHost: true })
+  try {
+    host.sessions.set("orphan", {
+      id: "orphan", agent: "author", projectID: "tool-help",
+      location: { directory: host.directory },
+    })
+    host.instructionEntries.set("orphan", new Map([[LIVE_ENTRY_KEY, candidateText]]))
+    await expect(host.hooks.get("model.request")({
+      sessionID: "orphan", agent: "author", kind: "primary",
+      model: { providerID: "fixture", id: "scripted" },
+    })).rejects.toThrow("LOOM_LIVE_ORPHAN_ENTRY")
+    expect(host.instructionEntries.get("orphan")?.has(LIVE_ENTRY_KEY)).toBe(true)
+  } finally { await host.close() }
+})
+
 test("retiring an active candidate is denied until a verified withdrawal", async () => {
   const h = await registeredLoom([], { versionedHost: true })
   try {
