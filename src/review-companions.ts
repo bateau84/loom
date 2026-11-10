@@ -90,8 +90,10 @@ export async function registerReviewCompanions(ctx: Plugin.Context, observe?: (r
   const directory = await realpath(ctx.location.directory)
   const paths = configPaths(directory)
   const lifetime = new AbortController()
+  const warned = new Set<ReviewLens>()
   const registration = await ctx.tool.transform(editor => {
-    for (const lens of ["assessment", "qa"] as const) editor.add({
+    for (const lens of ["assessment", "qa"] as const) {
+      try { editor.add({
       name: lens,
       description: companionHelp(lens),
       options: { namespace: "loom", codemode: true },
@@ -162,7 +164,18 @@ export async function registerReviewCompanions(ctx: Plugin.Context, observe?: (r
         }
         return { content: rendered }
       },
-    })
+      })
+      } catch (error) {
+        // A deferred native transform replay must not disable the core guard.
+        // Bound diagnostics to one per lens, even for repeated failed rebuilds.
+        if (warned.has(lens)) continue
+        warned.add(lens)
+        try {
+          console.warn("Loom: optional review " + lens + " transform unavailable:",
+            error instanceof Error ? error.message : String(error))
+        } catch { /* A logger failure must never remove the safety guard. */ }
+      }
+    }
   })
   return async () => { lifetime.abort(); await registration.dispose() }
 }
