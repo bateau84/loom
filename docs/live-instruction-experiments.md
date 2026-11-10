@@ -8,10 +8,13 @@ timestamp: 2026-11-10T00:00:00Z
 
 # Opt-in additive Session instruction trials
 
-**Default: inactive.** This implementation is a **draft** awaiting its own
-exact-host production-path acceptance and independent review. Do not interpret
-qualifying a manually assigned fixture as qualifying the production controller.
-There is no global rollout, random allocation, skill rewrite or automatic promotion.
+**Default: inactive.** The actual production controller has now passed
+[12 exact-host checks](https://github.com/bateau84/loom/actions/runs/42905765436)
+at Loom code commit `de895ca131cd51cb132bdf9ce542277f99074a01`
+against an unmodified OpenCode 2.2.6 host and a local scripted provider.
+**This remains a draft awaiting independent review**, not permission to activate
+experiments globally or claim real-work effectiveness. There is no automatic
+allocation, skill rewrite or promotion.
 
 ## The qualified boundary
 
@@ -25,14 +28,21 @@ may retain previously delivered content after removal. The fixture used a
 scripted local provider with tool use disabled; it says nothing about model
 reasoning quality or live provider billing.
 
-The additional controller introduced here requires independent qualification
-on its **exact PR head**. The new registration tests use production Loom code,
-real SQLite and a simulated host, **not** an installed OpenCode CLI. The OpenCode 2.2.6 context hook can run before native keyed entries are
-rendered. A missing entry in that early hook is recorded as
-`context-stage-unobserved`, **not** a failed or successful provider receipt.
-The later model-request preflight checks the exact native entry and source,
-but is also pre-provider. No production model-input receipt is claimed without
-separate provider-side evidence.
+The controller's installed qualification uses the actual packed Loom plugin,
+native source-linked objectives, user approval messages, original native
+Session IDs and an external scripted provider observing final SDK input.
+The narrower Bun registration tests use real SQLite but a simulated host;
+**they are not installed-host evidence**.
+
+OpenCode 2.2.6 can deliver newly added instructions as a generated **user-role
+context delta** in a Session that already has history. A missing entry in the
+earlier context hook is recorded as `context-stage-unobserved` rather than a
+false denial. The native model-request hook verifies source/entry freshness
+but remains pre-provider. The installed provider oracle independently verifies
+exact entry readback, absence of marker text in original native user messages,
+and uncontaminated concurrent control and sibling Sessions. Model-delivery
+receipts are **external qualification evidence**, not host-certified receipts
+from the Loom tool, and do not establish actual instruction effectiveness.
 
 Unsupported and excluded: native skill loading, attachments, direct file
 reads, model-issued tools, reviewer/critic/evaluator Sessions, direct native
@@ -136,14 +146,19 @@ or enable paid overage.
 
 ## Acceptance and evaluation
 
-Before this draft can be made ready, run the new controller **inside the
-unmodified exact installed CLI** with a local scripted provider observing
-the final SDK input, and prove control/treatment isolation; explicit child
-eligibility; multiple primary requests; drift and wrong-host rejection;
-native tool exclusions; interruption, restart, withdrawal and the stale
-post-withdrawal marker counterexample. Repeat the installed run on the exact
-PR head and retain the unedited receipts. A simulated registration fixture
-alone is insufficient.
+The actual controller was run at `de895ca131cd51cb132bdf9ce542277f99074a01`
+with the unmodified `@opencode/cli@2.2.6` and packed candidate. The
+[installed qualification report](https://github.com/bateau84/loom/actions/runs/42905765436)
+contains 12 passing checks: native approval and assignment, simultaneous
+control/treatment isolation, stable continuation, tool-denial evidence,
+restart, withdrawal, unchanged registries, user-authored marker rejection,
+explicit eligible child versus unassigned sibling, interruption, child
+withdrawal, and **real native-entry drift rejection before provider input**.
+The wrong-host version gate and source-fingerprint guard are also exercised
+by component tests; no claim is made for a second live host version.
+Preserve exact-head CI evidence, and obtain independent review before use.
+A passing scripted-host test does not qualify arbitrary skills, tool routes,
+real model reasoning or live provider/billing behavior.
 
 A genuine live engineering pilot also needs an authorized comparable
 objective population, explicit baseline, independent outcome checks and

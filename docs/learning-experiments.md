@@ -113,10 +113,14 @@ route.
 Draft [opt-in live experiment operating procedure](live-instruction-experiments.md)
 adds explicit authorization and bounded Session entry assignment, source
 freshness, pre-provider observations, stop and recovery. It remains inactive
-without an approved native user message and permission. Its own installed
-production-controller/provider-input evidence is **still required**; do not
-treat simulated registration tests as native-host acceptance. A matching entry
-hash or context hook is not certified provider exposure.
+without an approved native user message and permission. Its exact-host
+[installed controller suite](https://github.com/bateau84/loom/actions/runs/42905765436)
+passed 12 provider-observed mechanical checks at `de895ca1`: concurrent
+control/treatment, explicitly enrolled child and uninvolved sibling,
+interruption, restart, withdrawal, and drift rejection. Model-delivery
+receipts in that suite are local scripted-provider evidence; production Loom
+context hooks or a matching entry hash alone do **not** certify exposure,
+and no real-work effectiveness has been established.
 
 Keep manual isolated worktree/host trials for skill replacements and
 unqualified routes. Never toggle the location-scoped registry while concurrent

@@ -13,6 +13,9 @@ on:
       - tests/question-host/**
       - tests/installed_questions.py
       - tests/installed_host_smoke.py
+      - docs/live-instruction-experiments.md
+      - docs/learning-experiments.md
+      - docs/testing.md
 permissions:
   contents: read
 jobs:
