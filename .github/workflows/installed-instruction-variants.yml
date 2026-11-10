@@ -41,15 +41,18 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/loom-variant-plugin" --no-audit --no-fund "$RUNNER_TEMP/loom-variant-artifacts/$ARTIFACT"
       - name: Install unmodified exact external CLI
         run: npm install --prefix "$RUNNER_TEMP/loom-variant-host" --no-audit --no-fund @opencode/cli@2.2.6
-      - name: Exercise concurrent Sessions at native provider input
-        run: >-
-          python3 tests/installed_instruction_variants.py
-          --opencode "$RUNNER_TEMP/loom-variant-host/node_modules/.bin/opencode"
-          --repository .
-          --plugin "$RUNNER_TEMP/loom-variant-plugin/node_modules/loom-plugin"
-          --artifact "$(find "$RUNNER_TEMP/loom-variant-artifacts" -maxdepth 1 -name 'loom-plugin-*.tgz' -print -quit)"
-          --expect-plugin-version "$(node -p 'require("./package.json").version')"
-          --report-directory "$RUNNER_TEMP/loom-variant-report"
+      - name: Exercise three independent native-host isolation runs
+        run: |
+          for iteration in 1 2 3; do
+            echo "Running isolated instruction-variant qualification iteration $iteration"
+            python3 tests/installed_instruction_variants.py \
+              --opencode "$RUNNER_TEMP/loom-variant-host/node_modules/.bin/opencode" \
+              --repository . \
+              --plugin "$RUNNER_TEMP/loom-variant-plugin/node_modules/loom-plugin" \
+              --artifact "$(find "$RUNNER_TEMP/loom-variant-artifacts" -maxdepth 1 -name 'loom-plugin-*.tgz' -print -quit)" \
+              --expect-plugin-version "$(node -p 'require("./package.json").version')" \
+              --report-directory "$RUNNER_TEMP/loom-variant-report/iteration-$iteration"
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
