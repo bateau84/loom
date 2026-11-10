@@ -24,6 +24,7 @@ function python(args: string[], stopped = "yes") {
   })
 }
 function ok(run: ReturnType<typeof python>) {
+  if (run.exitCode !== 0) throw new Error("recovery command failed: " + run.stderr.toString())
   expect(run.exitCode).toBe(0)
   expect(run.stderr.toString()).toBe("")
   return run.stdout.toString()
@@ -31,10 +32,6 @@ function ok(run: ReturnType<typeof python>) {
 function rejected(run: ReturnType<typeof python>, phrase: string) {
   expect(run.exitCode).not.toBe(0)
   expect(run.stderr.toString()).toContain(phrase)
-}
-function hashes(directory: string) {
-  return Object.fromEntries(readdirSync(directory).sort().map(name =>
-    [name, fingerprint(readFileSync(join(directory, name)).toString("binary"))]))
 }
 // Hash raw bytes (the backup format never normalizes text or SQLite pages).
 function rawHashes(directory: string) {
@@ -73,7 +70,7 @@ for (const mode of ["closed", "residual-WAL"] as const) {
         original = (await host.invoke("tweak", { operation: "propose", target_kind: "agent",
           target_id: "evaluator", base_sha256: fingerprint("agent base"),
           candidate_content: "Version A: use all source records", hypothesis: "Reduce false successes",
-          evidence_refs: [evidence.id] })).result
+          evidence_refs: [evidence.id] })).result;
         (await host.invoke("tweak", { operation: "trial", id: original.id,
           observed_effect: "harmful", observed_sha256: original.candidate_sha256,
           statement: "First negative episode", evidence_refs: [evidence.id] }))
