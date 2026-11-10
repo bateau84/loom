@@ -8,12 +8,19 @@ timestamp: 2026-11-10T00:00:00Z
 
 # Session-isolated instruction variants: host qualification
 
-**Verdict before the installed harness has produced a clean report: UNPROVEN.**
-The tagged 2.2.6 implementation supports **additive native per-Session instruction
-entries**, not session-scoped replacement of arbitrary skills or agents. This PR
-adds disposable, manually assigned test entries and a provider-side evidence
-harness. It does **not** activate variants in Loom, change shared skills, approve
-candidate effectiveness, register trial success or authorize production routing.
+**Verdict: QUALIFIED_BOUNDED for additive native per-Session instruction
+entries on exact OpenCode 2.2.6, with manual Session assignment and local
+scripted-provider observation.** The [installed workflow run
+42887016522](https://github.com/bateau84/loom/actions/runs/42887016522)
+passed three independent disposable-host iterations at tested code revision
+`30198149cd26a332011cf7d17c1c195858b561ad`. This is **not**
+a general-purpose skill substitution or a production-enrollment approval.
+
+The tagged host supports additive Session instructions, not session-scoped
+replacement of arbitrary skills or agents. This PR adds a test-only marker and
+provider-side evidence harness. It does **not** activate variants in Loom,
+change shared skills, approve candidate effectiveness, register trial success
+or authorize production routing.
 
 ## Exact scope
 
@@ -35,6 +42,37 @@ Sources at that tag:
 This API is explicitly **experimental** in the tagged host. Future host/SDK
 versions must requalify it, not silently inherit a 2.2.6 result. No authorization
 policy for accepting arbitrary user/agent-supplied Session IDs is claimed.
+
+## Installed evidence and failure interpretation
+
+At the tagged 2.2.6 provider boundary, each of the three successful,
+independently initialized runs recorded **12 primary scenarios**, one explicit
+native compaction model request and nine passed qualification checks.
+Concurrent control and treatment Sessions shared a working location and
+native agent definition. Every observed treatment attempt carried the exact
+candidate SHA-256; unassigned controls and siblings did not. No agent/skill
+registry or fixture skill-file digest changed.
+
+A test-only Session reached the SDK provider with candidate content, but its
+full receipt was deliberately suppressed. All three runs rejected that
+partial exposure as `RECEIPT_GAP`; none credited it as a successful trial.
+Interruption did not remove the assignment; restart restored it, and the
+same Session continued to receive its candidate after native compaction.
+
+**Withdrawal counterexample:** After native DELETE and an empty entry-list
+readback, all three runs still observed the previously delivered marker in the
+withdrawn Session's later model input. The existing Session must not be
+treated as an uncontaminated baseline.
+
+Earlier single-run revisions intermittently failed because the harness
+assumed one SDK attempt per user prompt and identified compaction solely from
+user text. The revised evidence collector separately tracks each
+fixture-local SDK attempt, requires complete matching receipts, uses native
+Session settlement and the native compaction request kind, and runs three
+fresh-host repetitions. A retry is not an additional successful trial.
+These results do **not** qualify native error-driven retries or provide a
+host-certified global request/attempt identity; those remain explicitly
+outside this contract.
 
 ## Supported *candidate* contract (subject to installed PASS)
 
@@ -124,8 +162,8 @@ exact PR head**, not an earlier run or a source-unit pass.
 
 The [installed CI workflow](../.github/workflows/installed-instruction-variants.yml)
 packs the PR candidate separately from the pinned CLI, typechecks the fixture,
-runs the strict negative oracle tests, executes the real native host and
-uploads `report.json` even when a blocking check fails.
+runs the strict negative oracle tests, executes **three independent** native-host
+iterations and uploads each `iteration-N/report.json` even if one fails.
 
 ### Positive and negative controls
 
@@ -140,8 +178,9 @@ uploads `report.json` even when a blocking check fails.
   native agent/skill registries are compared across the run. No active user
   skill/agent registry is written by the harness.
 - Negative oracle controls reject wrong exact host, source/registry drift,
-  missing or incomplete provider receipts, candidate hash mismatch, a marker
-  inserted only in user text and contamination of an unassigned control.
+  missing or incomplete per-attempt provider receipts, candidate hash mismatch,
+  divergent effective instructions between attempts, a marker inserted only
+  in user text and contamination of an unassigned control.
   These are **oracle fault-injection tests**, not claims that each failure was
   independently injected into a running OpenCode process.
 - An interrupt does not erase prior exposure; verify the Session's assignment
