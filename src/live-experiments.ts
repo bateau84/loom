@@ -70,7 +70,8 @@ export class SessionExperiments {
       budget_requests INTEGER NOT NULL CHECK(budget_requests BETWEEN 1 AND 8),
       preflight_count INTEGER NOT NULL DEFAULT 0, context_count INTEGER NOT NULL DEFAULT 0,
       expires_at TEXT NOT NULL, status TEXT NOT NULL,
-      created_at TEXT NOT NULL, stopped_at TEXT
+      created_at TEXT NOT NULL, stopped_at TEXT,
+      omitted_event_count INTEGER NOT NULL DEFAULT 0 CHECK(omitted_event_count >= 0)
     );
     CREATE INDEX IF NOT EXISTS learning_live_by_candidate ON learning_live_experiments(candidate_id,status);
     CREATE TABLE IF NOT EXISTS learning_live_events (
@@ -79,6 +80,11 @@ export class SessionExperiments {
       at TEXT NOT NULL, kind TEXT NOT NULL, detail TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS learning_live_event_order ON learning_live_events(experiment_id,seq);`)
+    // Draft databases created before this field must remain readable. The
+    // migration is additive and does not alter immutable trial identities.
+    const columns = db.prepare("PRAGMA table_info(learning_live_experiments)").all() as Array<{ name: string }>
+    if (!columns.some(column => column.name === "omitted_event_count"))
+      db.exec("ALTER TABLE learning_live_experiments ADD COLUMN omitted_event_count INTEGER NOT NULL DEFAULT 0 CHECK(omitted_event_count >= 0)")
   }
 
   private transaction<T>(fn: () => T): T {
@@ -92,7 +98,15 @@ export class SessionExperiments {
   private event(trialID: string, kind: string, detail: string) {
     const count = this.db.prepare("SELECT COUNT(*) AS n FROM learning_live_events WHERE experiment_id=?")
       .get(trialID) as { n: number }
-    if (count.n >= 64) throw new Error("LOOM_LIVE_EVENT_LIMIT: preserve existing history and stop the trial")
+    if (count.n >= 64) {
+      // Event saturation must never block native withdrawal. Preserve the
+      // original 64 entries and count each omitted observation durably so
+      // readers know this is not a complete activity/receipt history.
+      this.db.prepare(`UPDATE learning_live_experiments
+        SET omitted_event_count=MIN(omitted_event_count+1,2147483647)
+        WHERE id=?`).run(trialID)
+      return
+    }
     this.db.prepare("INSERT INTO learning_live_events(experiment_id,at,kind,detail) VALUES(?,?,?,?)")
       .run(trialID, utc(), kind, detail)
   }
@@ -308,7 +322,11 @@ export class SessionExperiments {
     if (!row) throw new Error("LOOM_LIVE_NO_TRIAL: no trial exists for calling Session")
     if (host.sessionID !== actor.session_id || host.agent !== actor.agent) throw new Error("LOOM_LIVE_SCOPE_DRIFT")
     this.assertHost(host,row)
-    if (row.status === "stopped") return this.read(actor.session_id)
+    if (row.status === "stopped") {
+      if (await this.ownValue(host) !== undefined)
+        throw new Error("LOOM_LIVE_WITHDRAWAL_UNCERTAIN: a native entry reappeared after verified stop")
+      return this.read(actor.session_id)
+    }
     // Reserve withdrawal before touching native storage: in-flight new request
     // preflights now reject "stopping". A prior admitted provider call cannot
     // be recalled, so its possible exposure remains in the durable history.
@@ -350,10 +368,12 @@ export class SessionExperiments {
     const events = this.db.prepare(`SELECT seq,at,kind,detail FROM learning_live_events WHERE experiment_id=?
       ORDER BY seq DESC LIMIT 20`).all(row.id)
     return { ...row, events, entry_key: LIVE_ENTRY_KEY,
+      audit_history_complete: row.omitted_event_count === 0,
       observed_provider_receipts: 0, exposure_verification: "unknown: native context/model.request hooks are pre-provider, not actual provider input",
       control_eligible: false, objective_effectiveness: "not-evaluated",
-      note: row.status === "stopped"
+      note: (row.status === "stopped"
         ? "Entry removed, but historic model inputs may still contain candidate; do not reuse as control."
-        : "Treat as partial or possible exposure until independently verified. Missing provider receipts do not certify treatment." }
+        : "Treat as partial or possible exposure until independently verified. Missing provider receipts do not certify treatment.") +
+        (row.omitted_event_count > 0 ? " Audit limit reached: some events omitted; history is incomplete." : "") }
   }
 }
