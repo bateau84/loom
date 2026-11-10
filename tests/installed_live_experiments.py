@@ -1,0 +1,285 @@
+"""Installed OpenCode 2.2.6 acceptance of Loom's REAL live-trial controller.
+
+Uses the packed Loom plugin, unmodified CLI and local scripted provider. Unlike
+the earlier manual-entry qualification, assignment and withdrawal must travel
+through production loom_tweak callbacks. No paid inference or user files.
+"""
+from __future__ import annotations
+
+import argparse
+import base64
+import hashlib
+import json
+import secrets
+import subprocess
+import tempfile
+import time
+from pathlib import Path
+from urllib.request import Request
+
+from installed_host_smoke import PrivateHost, installed_plugin_inventory, isolated_environment, require
+from installed_questions import Scenario, events, idle, request
+
+KEY = "loom.live-instruction.v1"
+MARKER = "LOOM_INSTALLED_TREATMENT_V1"
+HOST = "2.2.6"
+SYSTEM = "Follow the deterministic local verification script."
+
+
+def digest(value):
+    if isinstance(value, str):
+        value = value.encode("utf-8")
+    return hashlib.sha256(value).hexdigest()
+
+
+def native_entries(host, session):
+    token = base64.b64encode(("opencode:" + host.password).encode()).decode()
+    path = f"/api/experimental/session/{session}/instructions/entries"
+    req = Request(host.url + path, headers={"Authorization": "Basic " + token})
+    with host.opener.open(req, timeout=15) as response:
+        data = response.read(1024 * 1024 + 1)
+    require(len(data) <= 1024 * 1024, "Native Session entry list exceeded budget")
+    decoded = json.loads(data)
+    value = decoded.get("data", decoded) if isinstance(decoded, dict) else decoded
+    require(isinstance(value, list), "Native instruction entry API unavailable")
+    return value
+
+
+def exact_message(host, session, line):
+    rows = request(host, "GET", f"/api/session/{session}/message?order=desc&limit=100")
+    require(isinstance(rows, list), "Native messages API unavailable")
+    matching = [m for m in rows if m.get("type") == "user" and
+                isinstance(m.get("id"), str) and m.get("text") == line]
+    require(len(matching) == 1, "Exact original user approval message missing or ambiguous")
+    return matching[0]["id"]
+
+
+def code_result_events(root, start, session, name):
+    return [e["data"] for e in events(root)[start:]
+            if e["type"] == "tool-after" and e["data"].get("sessionID") == session
+            and e["data"].get("tool") in ("loom_" + name, "loom." + name)]
+
+
+def model_requests_for(root, job):
+    marker = "LOOM_HARNESS_JOB:" + job
+    return [e["data"] for e in events(root)
+            if e["type"] == "provider-request" and marker in json.dumps(e["data"].get("prompt"))]
+
+
+def prompt_text(event, role):
+    parts = []
+    for message in event.get("prompt", []):
+        if message.get("role") != role:
+            continue
+        content = message.get("content")
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            parts.extend(value.get("text", "") for value in content if isinstance(value, dict) and isinstance(value.get("text"), str))
+    return "\n".join(parts)
+
+
+def provider_observation(root, job, treatment):
+    rows = model_requests_for(root, job)
+    require(rows, "PROVIDER_RECEIPT_MISSING: no final SDK input observed")
+    for row in rows:
+        system = prompt_text(row, "system")
+        user = prompt_text(row, "user")
+        require("LOOM_HARNESS_JOB:" + job in user, "Provider receipt not linked to exact scripted request")
+        require(MARKER not in user, "Marker entered through user text rather than native instructions")
+        seen = MARKER in system and f'<context key="{KEY}">' in system
+        require(seen is treatment,
+                "PROVIDER_CONTROL_CONTAMINATION" if not treatment else "PROVIDER_TREATMENT_MISSING")
+    return {"attempts": len(rows), "candidate_at_provider": treatment,
+            "system_fingerprints": sorted({digest(prompt_text(row, "system")) for row in rows})}
+
+
+def ordinary_prompt(scenario, session, case, hold=None):
+    job, _ = scenario.begin(session, None, hold=hold)
+    return job
+
+
+def run(args):
+    output = args.report_directory.resolve()
+    output.mkdir(parents=True, exist_ok=False)
+    report = {"status": "UNPROVEN", "kind": "installed-live-controller-2.2.6",
+              "checks": [], "host": HOST, "sdk": HOST,
+              "limits": ["Local scripted provider only; no live billing/provider or behavior-effectiveness claim.",
+                         "Only explicitly authorized additive Session entries, never skill replacement.",
+                         "Native tool use during treatment is excluded except bounded read/withdrawal.",
+                         "Provider-side receipts are external to Loom; Loom does not certify delivery.",
+                         "Existing model history is not cleansed by withdrawing an entry."]}
+    host = None
+    try:
+        report["candidate"] = installed_plugin_inventory(
+            args.artifact.resolve(), args.plugin.resolve(), args.expect_plugin_version, HOST)
+        version = subprocess.check_output([str(args.opencode.resolve()), "--version"],text=True,timeout=15).strip()
+        require(version in (HOST,"opencode v" + HOST), "EXACT_HOST_MISMATCH")
+        with tempfile.TemporaryDirectory(prefix="loom-live-trials-") as temporary:
+            root = Path(temporary).resolve()
+            project = root / "project"
+            project.mkdir()
+            env = isolated_environment(root)
+            env["LOOM_QUESTION_FIXTURE"] = str(root)
+            (root / "jobs.json").write_text("{}")
+            (project / ".loom.yaml").write_text("agents: {}\ninstructions: {enabled: false}\nledger: {capture: off}\n")
+            config = {
+                "plugins": ["*", str(args.plugin.resolve()),str((args.repository.resolve() / "tests/question-host").resolve())],
+                "agents": {"question-reader": {
+                    "description": "Private installed live experiment author",
+                    "mode": "primary", "model": "question-fixture/reader", "system": SYSTEM,
+                    "permissions": [{"action":"loom-live-instruction-experiment","resource":"*","effect":"allow"}],
+                }},
+                "model":"question-fixture/reader","update":"disable","share":"disabled",
+            }
+            config_file = Path(env["OPENCODE_CONFIG_DIR"]) / "opencode.json"
+            config_file.write_text(json.dumps(config))
+            subprocess.run(["git","init","-q",str(project)],env=env,check=True,timeout=10)
+            original_config_hash = digest(config_file.read_bytes())
+            def start(label):
+                candidate = PrivateHost(str(args.opencode.resolve()),project,env,output,label)
+                try:
+                    require(json.loads(candidate.get("/api/info", "info")).get("version") == HOST,"Host version mismatch")
+                    candidate.wait_roster("/api/plugin","plugins",lambda rows: all(any(
+                        item.get("id") == name and item.get("state",{}).get("status")=="active"
+                        for item in rows) for name in ("loom","loom.question.fixture")))
+                    return candidate
+                except Exception:
+                    candidate.close()
+                    raise
+
+            host = start("initial")
+            s = Scenario(host, root)
+            treatment = s.session("reader")
+            control = s.session("reader")
+            require(treatment != control,"Native Sessions unexpectedly identical")
+            s.command(treatment,"return await tools.loom.agents({})")
+            original = [m for m in request(host,"GET",f"/api/session/{treatment}/message?order=desc&limit=100")
+                        if m.get("type")=="user" and str(m.get("text","")).startswith("LOOM_HARNESS_JOB:")]
+            require(original,"Missing real native source for objective")
+            obj = s.invoke(treatment,"objective", {
+                "operation":"create","source_type":"native-message","source_id":original[-1]["id"],
+                "label":"Installed bounded response experiment","unit_key":"live-qualification",
+            })
+            require(obj.get("id") and obj.get("existing") is False, "Native source objective not created")
+            candidate_text = MARKER + "\nThis harmless additive marker must stay Session-scoped."
+            proposal = s.invoke(treatment,"tweak", {
+                "operation":"propose","target_kind":"agent","target_id":"question-reader",
+                "base_sha256":digest(SYSTEM),"candidate_content":candidate_text,
+                "hypothesis":"Test whether the Session-scoped delivery boundary remains isolated",
+                "evidence_refs":[original[-1]["id"]],
+            })
+            require(proposal["candidate_sha256"] == digest(candidate_text), "Proposed content identity incorrect")
+            approval = (f'LOOM-TRIAL-APPROVE candidate={proposal["id"]} '
+                        f'objective={obj["id"]} budget=8')
+            request(host,"POST",f"/api/session/{treatment}/prompt",{"text":approval})
+            idle(host,[treatment])
+            approval_id = exact_message(host,treatment,approval)
+            require(not any(e.get("key")==KEY for e in native_entries(host,treatment)),
+                    "Native assignment existed before authorization")
+            prior = s.invoke(control,"tweak",{"operation":"live-read"})
+            require(prior.get("status")=="inactive","Control had preexisting trial")
+            assigned = s.invoke(treatment,"tweak",{
+                "operation":"live-start","objective_id":obj["id"],"candidate_id":proposal["id"],
+                "authorize":True,"authorization_ref":approval_id,
+                "eligibility":"Only this native author Session and exact no-tool text route",
+                "evaluation_criteria":"Provider input isolation and independent runtime checks; no model-quality verdict",
+                "preserved_guarantees":"No canonical changes, native permissions and billing guards unchanged",
+                "budget_requests":8,
+                "expires_at":__import__("datetime").datetime.fromtimestamp(time.time()+3500,__import__("datetime").timezone.utc).isoformat(),
+            })
+            require(assigned.get("status")=="assigned" and assigned.get("provider_receipt") is None,
+                    "Assignment was incorrectly credited as provider exposure")
+            require(native_entries(host,treatment)==[{"key":KEY,"value":candidate_text}],
+                    "Actual native Session storage does not match assigned candidate")
+            require(native_entries(host,control)==[], "Concurrent control inherited treatment entry")
+            report["checks"].append("explicit-native-user-authorization-and-assignment-readback")
+
+            # Concurrent requests must overlap at provider input, not merely at
+            # Python submit time. Fixture blocks after doStream receipts exist.
+            cjob=ordinary_prompt(s,control,"control",hold="after")
+            tjob=ordinary_prompt(s,treatment,"treatment",hold="after")
+            for job in (cjob,tjob):
+                s.await_event(lambda e,j=job:e["type"]=="provider-held" and e["data"].get("job")==j)
+            s.release(cjob)
+            s.release(tjob)
+            idle(host,[control,treatment])
+            report["initial_provider"]={"control":provider_observation(root,cjob,False),
+                                         "treatment":provider_observation(root,tjob,True)}
+            report["checks"].append("same-location-concurrent-control-treatment-provider-input")
+
+            c2=ordinary_prompt(s,control,"control-continuation")
+            t2=ordinary_prompt(s,treatment,"treatment-continuation")
+            idle(host,[control,treatment])
+            provider_observation(root,c2,False)
+            provider_observation(root,t2,True)
+            report["checks"].append("fixed-content-continuation-and-control-isolation")
+
+            # Rejected model-originated tool execution cannot be mistaken for
+            # legitimate work. The real native execute tool is invoked and must
+            # fail under the Loom pre-execute guard before its supplied code runs.
+            started=len(events(root))
+            unsafe='return await tools.loom.agents({})'
+            rejected,_=s.begin(treatment,unsafe)
+            idle(host,[treatment])
+            attempts=[e["data"] for e in events(root)[started:] if e["type"]=="tool-after"
+                      and e["data"].get("sessionID")==treatment and e["data"].get("tool")=="execute"]
+            require(attempts and all(a.get("status")=="error" for a in attempts),
+                    "Unqualified Code Mode program executed under active treatment")
+            provider_observation(root,rejected,True)
+            report["checks"].append("real-unqualified-tool-execution-denied")
+
+            host.close()
+            host=start("restarted")
+            s.host=host
+            require(native_entries(host,treatment)==[{"key":KEY,"value":candidate_text}],
+                    "Native trial identity did not survive host restart")
+            rjob=ordinary_prompt(s,treatment,"treatment-after-restart")
+            idle(host,[treatment])
+            provider_observation(root,rjob,True)
+            report["checks"].append("durable-restart-same-native-variant")
+
+            # Real installed Code Mode execute wrapper must permit only the
+            # exact recovery tool, even though ordinary tools are excluded.
+            stopped=s.invoke(treatment,"tweak",{"operation":"live-stop"})
+            require(stopped["status"]=="stopped" and stopped["control_eligible"] is False,
+                    "Withdrawal misreported the previously exposed Session as a control")
+            require(native_entries(host,treatment)==[], "Native experiment key not removed")
+            report["checks"].append("qualified-native-withdrawal-and-history-preservation")
+            after=ordinary_prompt(s,treatment,"withdrawn")
+            idle(host,[treatment])
+            rows=model_requests_for(root,after)
+            require(rows,"Withdrawn Session did not resume ordinary native execution")
+            report["withdrawn"]={"provider_attempts":len(rows),
+                                 "historical_marker_still_present":any(MARKER in prompt_text(x,"system") for x in rows)}
+            require(digest(config_file.read_bytes())==original_config_hash,
+                    "Shared native agent/provider registry file changed during experiment")
+            report["checks"].append("no-location-registry-or-canonical-file-mutation")
+            report["status"]="QUALIFIED_BOUNDED"
+    except Exception as error:
+        report["status"]="UNPROVEN"
+        report["blocker"]=type(error).__name__+": "+str(error)
+    finally:
+        if host is not None:
+            host.close()
+        (output / "report.json").write_text(json.dumps(report,indent=2,sort_keys=True)+"\n")
+    return report
+
+
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--opencode",type=Path,required=True)
+    parser.add_argument("--repository",type=Path,required=True)
+    parser.add_argument("--plugin",type=Path,required=True)
+    parser.add_argument("--artifact",type=Path,required=True)
+    parser.add_argument("--expect-plugin-version",required=True)
+    parser.add_argument("--report-directory",type=Path,required=True)
+    args=parser.parse_args()
+    result=run(args)
+    print(json.dumps({k:result.get(k) for k in ("status","checks","blocker")},indent=2))
+    if result["status"]!="QUALIFIED_BOUNDED":
+        raise SystemExit(1)
+
+
+if __name__=="__main__":
+    main()
