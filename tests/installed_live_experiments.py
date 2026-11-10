@@ -360,6 +360,86 @@ def run(args):
             else:
                 raise RuntimeError("FAIL_OPEN: user-typed marker was accepted as native treatment")
             report["checks"].append("user-authored-marker-cannot-qualify-native-exposure")
+
+            # Native ancestry never enrolls an experiment: only the child's own
+            # verified original source, separate approval and tool call can do
+            # so. Exercise an actual child and an unassigned sibling with the
+            # same registered agent and same project.
+            def child_session(label):
+                info=request(host,"POST","/api/session",{
+                    "parentID":treatment, "agent":"question-reader",
+                    "title":"Disposable "+label, "model":{"providerID":"question-fixture","id":"reader"},
+                    "location":{"directory":str(project)},
+                })
+                require(info.get("parentID")==treatment and isinstance(info.get("id"),str),
+                        "Native child relationship not established")
+                return info["id"]
+
+            child=child_session("enrolled child")
+            sibling=child_session("unassigned sibling")
+            require(native_entries(host,child)==[] and native_entries(host,sibling)==[],
+                    "Native Session ancestry installed a treatment without explicit assignment")
+            s.command(child,"return await tools.loom.agents({})")
+            source_messages=request(host,"GET",f"/api/session/{child}/message?order=desc&limit=100")
+            source=[m for m in source_messages
+                    if m.get("type")=="user" and
+                    str(m.get("text","")).startswith("LOOM_HARNESS_JOB:")]
+            require(source and isinstance(source[-1].get("id"),str),
+                    "Native child original user source unavailable")
+            child_obj=s.invoke(child,"objective",{
+                "operation":"create","source_type":"native-message","source_id":source[-1]["id"],
+                "label":"Explicit child-only objective", "unit_key":"eligible-child",
+            })
+            child_approval=(f'LOOM-TRIAL-APPROVE candidate={proposal["id"]} '
+                            f'objective={child_obj["id"]} budget=6')
+            request(host,"POST",f"/api/session/{child}/prompt",{"text":child_approval})
+            native_wait(host,child)
+            approval_id=exact_message(host,child,child_approval)
+            child_trial=s.invoke(child,"tweak",{
+                "operation":"live-start","objective_id":child_obj["id"],"candidate_id":proposal["id"],
+                "authorize":True,"authorization_ref":approval_id,
+                "eligibility":"Exactly verified child, never inferred from parent Session",
+                "evaluation_criteria":"Actual provider input differs from sibling and preserves original objective",
+                "preserved_guarantees":"Native permission/billing and reviewer independence unchanged",
+                "budget_requests":6,
+                "expires_at":__import__("datetime").datetime.fromtimestamp(
+                    time.time()+3500,__import__("datetime").timezone.utc).isoformat(),
+            })
+            require(child_trial.get("status")=="assigned" and native_entries(host,sibling)==[],
+                    "Child enrollment or sibling isolation failed")
+            child_job=ordinary_prompt(s,child,"explicit-child",hold="after")
+            sibling_job=ordinary_prompt(s,sibling,"unassigned-sibling",hold="after")
+            for job in (child_job,sibling_job):
+                s.await_event(lambda e,j=job:e["type"]=="provider-held" and e["data"].get("job")==j)
+            s.release(child_job)
+            s.release(sibling_job)
+            for sid in (child,sibling):
+                native_wait(host,sid)
+            provider_observation(root,child_job,True,host,child,candidate_text)
+            provider_observation(root,sibling_job,False,host,sibling,candidate_text)
+            report["checks"].append("explicit-eligible-child-and-unassigned-sibling-isolation")
+
+            # Interruption can arrive AFTER the provider received the
+            # candidate; it must never be called an unexercised control, and
+            # the native entry must remain until explicit withdrawal.
+            held_job=ordinary_prompt(s,child,"child-interruption",hold="after")
+            s.await_event(lambda e:e["type"]=="provider-held" and
+                          e["data"].get("job")==held_job)
+            interrupted=request(host,"POST",f"/api/session/{child}/interrupt")
+            require(interrupted.get("interrupted") is True,
+                    "Native interruption was not accepted while provider input was in flight")
+            s.release(held_job)
+            native_wait(host,child)
+            provider_observation(root,held_job,True,host,child,candidate_text)
+            require(native_entries(host,child)==[{"key":KEY,"value":candidate_text}],
+                    "Native Session interruption removed a durable assigned candidate")
+            report["checks"].append("native-interruption-preserves-possible-exposure")
+            stopped_child=s.invoke(child,"tweak",{"operation":"live-stop"})
+            require(stopped_child.get("status")=="stopped" and
+                    stopped_child.get("control_eligible") is False and
+                    native_entries(host,child)==[],
+                    "Explicit child withdrawal incorrectly cleansed history or retained native entry")
+            report["checks"].append("explicit-child-withdrawal-no-clean-control")
             report["status"]="QUALIFIED_BOUNDED"
     except Exception as error:
         report["status"]="UNPROVEN"
