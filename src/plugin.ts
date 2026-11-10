@@ -100,6 +100,19 @@ const specs = [
       cursor: { type: "string", minLength: 1, maxLength: 512 },
       limit: { type: "integer", minimum: 1, maximum: 50 }, offset: num,
     }, ["operation"]) },
+  { name: "trends", description: TOOL_HELP.trends, input: obj({
+      operation: choice("compare"),
+      since_at: str, until_at: str, as_of_at: str,
+      population: choice("all-linked", "selected"),
+      objective_ids: { type: "array", items: str, maxItems: 50 },
+      source_type: choice("native-message", "native-call", "ledger-record", "external-ref"),
+      unit_key: str,
+      group_by: choice("start-month", "unit-key", "source-type", "origin-verification",
+        "outcome-author-agent", "instruction-fingerprint", "work-type", "model", "provider",
+        "host-revision", "tool-revision", "rubric", "actual-instruction-exposure"),
+      cursor: { type: "string", minLength: 1, maxLength: 16000 },
+      limit: { type: "integer", minimum: 1, maximum: 20 },
+    }, ["operation", "since_at", "until_at", "as_of_at", "population"]) },
   { name: "tweak", description: TOOL_HELP.tweak, input: obj({ operation: choice("propose", "list", "read", "retire", "trial"), id: str, target_kind: choice("skill", "assessment", "qa", "agent"), target_id: str, base_sha256: str, candidate_content: str, hypothesis: str, evidence_refs: { type: "array", items: str, maxItems: 20 }, revised_from: str, trial_before: { type: "integer", minimum: 1 }, observed_sha256: str, observed_effect: choice("promising", "harmful", "neutral", "inconclusive", "not-exercised"), statement: str, offset: { type: "integer", minimum: 0 } }, ["operation"]) },
   { name: "action", description: TOOL_HELP.action, input: obj({ operation: choice("list", "create", "update", "sessions"), action_id: str, title: str, goal: str, state: choice("active", "paused", "completed", "cancelled"), expected_revision: num, offset: num, archived: { type: "boolean" }, cursor: { type: "string", minLength: 1, maxLength: 4096 }, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
   { name: "plan", description: TOOL_HELP.plan, input: obj({ operation: choice("read", "save"), action_id: str, revision: num, expected_revision: num, nodes: { type: "array", maxItems: 300, items: obj({ id: str, kind: choice("phase", "wave", "task", "subtask"), title: str, parent: str, depends_on: list, outcome: str, context: str, criteria: list, skills: list, roles: list, agent: str }, ["id", "kind", "title"]) } }, ["operation", "action_id"]) },
@@ -452,6 +465,21 @@ export default Plugin.define({
                 } else throw new Error("Unknown objective operation")
                 break
               }
+              case "trends":
+                result = requiredLearning().trends.compare({
+                  operation: input.operation as "compare",
+                  since_at: input.since_at as string,
+                  until_at: input.until_at as string,
+                  as_of_at: input.as_of_at as string,
+                  population: input.population as "all-linked" | "selected",
+                  objective_ids: input.objective_ids as string[] | undefined,
+                  source_type: input.source_type as string | undefined,
+                  unit_key: input.unit_key as string | undefined,
+                  group_by: input.group_by as string | undefined,
+                  cursor: input.cursor as string | undefined,
+                  limit: input.limit as number | undefined,
+                })
+                break
               case "tweak":
                 if (input.operation === "propose") result = requiredLearning().propose(actor, {
                   target_kind: input.target_kind as string, target_id: input.target_id as string,
