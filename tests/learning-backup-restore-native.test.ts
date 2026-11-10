@@ -137,56 +137,16 @@ for (const mode of ["closed", "residual-WAL"] as const) {
       expect(rawHashes(backup)).toEqual(backupHashes)
       expect(rawHashes(source(project))).toEqual(originalHashes)
 
-      // Re-open the verified isolated directory through actual registered public
-      // tools, not a private SQL reader or simple plugin restart at the source.
-      const recovered = await registeredLoom([], { directory: project, stateHome: restoreHome, versionedHost: true })
-      try {
-        const actions = (await recovered.invoke("action", { operation: "list" })).result.items
-        expect(actions.find((a: any) => a.id === action.id)).toMatchObject(action)
-        const insights = (await recovered.invoke("insights", { operation: "window", limit: 200 })).result
-        expect(insights.events.map((e: any) => e.record_id)).toContain(evidence.id)
-        if (wal) expect(insights.events.map((e: any) => e.record_id)).toContain(wal.evidence)
-        const records = (await recovered.invoke("record", { operation: "query", session_only: true })).result.items
-        expect(records.find((r: any) => r.id === evidence.id)?.data.statement).toBe("Original negative verification evidence")
-        const candidateList = (await recovered.invoke("tweak", { operation: "list" })).result.items
-        expect(candidateList.map((c: any) => c.id)).toContain(original.id)
-        expect(candidateList.map((c: any) => c.id)).toContain(revision.id)
-        const first = (await recovered.invoke("tweak", { operation: "read", id: original.id })).result
-        expect(first).toMatchObject({ id: original.id, base_sha256: original.base_sha256,
-          candidate_sha256: original.candidate_sha256, content: original.content, status: "retired",
-          evidence_refs: [evidence.id] })
-        expect(first.trials[0]).toMatchObject({ observed_effect: "harmful", evidence_refs: [evidence.id] })
-        const second = (await recovered.invoke("tweak", { operation: "read", id: revision.id })).result
-        expect(second).toMatchObject({ id: revision.id, revised_from: original.id,
-          base_sha256: revision.base_sha256, candidate_sha256: revision.candidate_sha256,
-          content: revision.content, status: "retired", evidence_refs: [evidence.id] })
-        expect(second.trials_more).toBe(true)
-        let page = second
-        const all: any[] = []
-        while (true) {
-          all.push(...page.trials)
-          if (page.trials_next_before === null) break
-          page = (await recovered.invoke("tweak", {
-            operation: "read", id: revision.id, trial_before: page.trials_next_before,
-          })).result
-        }
-        expect(all).toHaveLength(29)
-        expect(new Set(all.map(t => t.id))).toEqual(new Set(expected.map(t => t.id)))
-        for (const trial of expected) {
-          const actual = all.find(t => t.id === trial.id)
-          expect(actual).toMatchObject({ id: trial.id, observed_effect: trial.observed_effect,
-            observed_sha256: revision.candidate_sha256, statement: trial.statement,
-            evidence_refs: trial.evidence_refs, session_id: trial.session_id, agent: trial.agent })
-        }
-        for (const negative of older) expect(all.find(t => t.id === negative.id)?.observed_effect).toBe("harmful")
-        if (wal) {
-          const walRead = (await recovered.invoke("tweak", { operation: "read", id: wal.candidate })).result
-          expect(walRead.evidence_refs).toEqual([wal.evidence])
-          expect(walRead.candidate_sha256).toBe(fingerprint("WAL-only content"))
-        }
-        expect(recovered.sessionPrompts).toHaveLength(0)
-        expect(recovered.sessionCreates).toHaveLength(0)
-      } finally { await recovered.close() }
+      // Verify public readers in a separate process, so test files sharing an
+      // environment cannot redirect the host to the original state home.
+      const expectedFile = join(root, "reader-expectations.json")
+      writeFileSync(expectedFile, JSON.stringify({ action, evidence, original, revision,
+        expected, older, wal: wal && { ...wal, candidateHash: fingerprint("WAL-only content") } }))
+      const reader = Bun.spawnSync([process.execPath,
+        new URL("./helpers/learning-recovery-reader.ts", import.meta.url).pathname,
+        project, restoreHome, expectedFile])
+      if (reader.exitCode !== 0) throw new Error("isolated public readers failed: " + reader.stderr.toString())
+      expect(reader.stdout.toString()).toContain("PASS: verified public Action/learning readers")
       expect(rawHashes(source(project))).toEqual(originalHashes)
       expect(rawHashes(backup)).toEqual(backupHashes)
     } finally { rmSync(root, { recursive: true, force: true }) }
