@@ -12,6 +12,48 @@ Loom exposes **observations and authored comparisons**, not a built-in verifier 
 
 **Storage and recovery:** Loom keeps provisional candidates/trials in a separate project-local `learning.sqlite` next to its existing `ledger.sqlite`. Failed learning initialization degrades only `loom_insights`, `loom_objective`, `loom_trends` and `loom_tweak`, with an explicit `LOOM_LEARNING_UNAVAILABLE` error and `loom_agents` status; core Action history, capture, and native routing remain intact. Inspect and repair learning state separately while keeping the failed file for recovery. This prevents changes to the Action Store's frozen SQLite schema. The legacy offline Action Store copy procedure remains **ledger-only**. For complete learning-history preservation and isolated recovery, use the [manifest-bound stopped-writers backup-set companion](manual-backup-restore.md): it binds both databases and applicable sidecars with project/revision identity and SHA-256 checksums and verifies disposable SQLite copies. Never treat an unmarked absent `learning.sqlite` as a complete backup. Recovery is qualified only on isolated real SQLite fixtures and public Loom readers, not on production/native Session continuity.
 
+## Proactive evidence findings (bounded, no model calls)
+
+When an agent explicitly appends an **outcome** to a source-linked objective using
+`loom_objective link`, Loom can return `new_learning_findings` as part of the
+ordinary tool result. This requires a valid config with `ledger.capture: automatic`.
+It is not a new watcher or scheduler: no native Session is prompted, no Evaluator
+is automatically dispatched, and turning capture off suppresses new notices.
+Failed optional analysis cannot roll back an already persisted outcome.
+
+The reporter uses a bounded 90-day `loom_trends` population, not tool-error
+counts or Coder handbacks. It surfaces correction load only after **three
+explicitly anchored objectives** with documented corrective dispatches, or a
+positive association where three authored-pass objectives share one **exact
+observed** instruction fingerprint and have no recorded correction. A source
+fingerprint does not prove final model exposure; reported passes are not
+independent verification and goals can still share causes. Missing linked
+history and shifting host/model/task mixes remain unknown, not successes.
+
+Findings are append-only metadata with exact original objective and source
+IDs, uncertainty, observed counts and an actionable question for Evaluator.
+They contain no raw transcript or candidate instruction text. Identical
+evidence does not notify repeatedly: the reporter retains only a new
+three-objective milestone and source identity. Output is bounded to three
+new findings per outcome, eight cited original objectives per finding, 20
+read results, and 2048 retained findings. If the reporting table is full or
+the trend population exceeds safe bounds, ordinary work continues; new
+findings are not fabricated.
+
+To retrieve historical findings:
+
+```json
+{"operation":"findings","limit":20}
+```
+
+Pass this to `loom_insights`. The notice is **not** an accepted lesson,
+approval, permission or a candidate to execute. Evaluator must inspect the
+authorized original objective histories, working safeguards and
+counterexamples, and only separately reviewed changes may update
+canonical agent/skill content. This mechanism identifies useful evidence
+to examine, not causal improvement. It does not establish a real-model
+Evaluator run or live effectiveness experiment.
+
 ## Whole-objective evidence
 
 A user goal can span parent and child OpenCode Sessions, several reported Task completions, corrective redispatches, checks, and a later delivered outcome. Three Coder DONE handbacks whose first two implementations fail through the real execution path are **one eventual objective with corrective rework**, if original source evidence links them to that objective. Do not count three successes or two independent failures.
