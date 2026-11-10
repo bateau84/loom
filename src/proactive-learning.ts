@@ -49,6 +49,8 @@ export class ProactiveLearning {
     const end = Date.parse(now)
     if (!Number.isFinite(end)) throw new Error("Invalid reporting clock")
     const start = earliest(end)
+    const count = this.db.prepare("SELECT COUNT(*) AS n FROM learning_objectives").get() as { n: number }
+    if (count.n < 3) return [] // Avoid invoking trend reconstruction for an anecdote.
     const compared = this.trends.compare({
       operation: "compare", population: "all-linked",
       since_at: start, until_at: now, as_of_at: now,
@@ -111,13 +113,48 @@ export class ProactiveLearning {
     return result
   }
 
-  list(limit = 20) {
+  /** Keyset cursor with an insertion high-water mark, not an unstable offset.
+   * Concurrent appended findings are excluded from the original report page set. */
+  list(limit = 20, cursor?: string) {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 20)
       throw new Error("Findings limit must be 1–20")
-    const rows = this.db.prepare(`SELECT * FROM learning_findings
-      ORDER BY created_at DESC, signature DESC LIMIT ?`).all(limit) as Row[]
+    const highWater = (this.db.prepare("SELECT COALESCE(MAX(rowid),0) AS n FROM learning_findings")
+      .get() as { n: number }).n
+    let high = highWater, at: string | undefined, id: string | undefined
+    if (cursor !== undefined) {
+      if (typeof cursor !== "string" || cursor.length > 512 || !/^[a-zA-Z0-9_-]+$/.test(cursor))
+        throw new Error("Invalid findings cursor")
+      let decoded: unknown
+      try { decoded = JSON.parse(Buffer.from(cursor,"base64url").toString("utf8")) }
+      catch { throw new Error("Invalid findings cursor") }
+      if (!decoded || typeof decoded !== "object" || Array.isArray(decoded))
+        throw new Error("Invalid findings cursor")
+      const pos = decoded as { v?: unknown; max?: unknown; at?: unknown; id?: unknown }
+      if (pos.v !== 1 || !Number.isSafeInteger(pos.max) ||
+          (pos.max as number) < 0 || (pos.max as number) > highWater ||
+          typeof pos.at !== "string" || !Number.isFinite(Date.parse(pos.at)) ||
+          typeof pos.id !== "string" || !/^[0-9a-f]{64}$/.test(pos.id) ||
+          Object.keys(pos).sort().join(",") !== "at,id,max,v")
+        throw new Error("Invalid findings cursor or stale snapshot")
+      high = pos.max as number
+      at = pos.at; id = pos.id
+    }
+    const filter = at === undefined ? "" :
+      " AND (created_at<? OR (created_at=? AND signature<?))"
+    const args: unknown[] = [high]
+    if (at !== undefined) args.push(at,at,id)
+    args.push(limit+1)
+    const rows = this.db.prepare(`SELECT * FROM learning_findings WHERE rowid<=?` +
+      filter + ` ORDER BY created_at DESC, signature DESC LIMIT ?`).all(...args) as Row[]
+    const page = rows.slice(0,limit)
+    const last = page.at(-1)
+    const next_cursor = rows.length > limit && last
+      ? Buffer.from(JSON.stringify({ v:1,max:high,at:last.created_at,id:last.signature }))
+        .toString("base64url")
+      : null
     return {
-      items: rows.map(row => ({ ...row, source_refs: JSON.parse(row.source_refs) as Source[] })),
+      items: page.map(row => ({ ...row, source_refs: JSON.parse(row.source_refs) as Source[] })),
+      next_cursor, snapshot_max_rowid: high,
       interpretation: "Observational, source-linked prompts for Evaluator; never approval or automatic instruction promotion.",
       retention: "Append-only bounded to 2048 deduplicated findings per project; oldest findings are preserved.",
     }
