@@ -253,7 +253,15 @@ export class SessionExperiments {
   }
   async beforeRequest(host: ExperimentHost, kind: string) {
     const row = this.row(host.sessionID)
-    if (!row) return
+    if (!row) {
+      // After restoring native Session storage without learning.sqlite, the
+      // qualified host may still contain a treatment. Never send it without
+      // its original authorization and preflight state. Keep other host
+      // versions and unavailable experiment installations inactive.
+      if (host.version === HOST_VERSION && await this.ownValue(host) !== undefined)
+        throw new Error("LOOM_LIVE_ORPHAN_ENTRY: native treatment exists without authorized trial history")
+      return
+    }
     if (["stopped","stop-uncertain"].includes(row.status)) {
       // Withdrawal never removes past instruction exposure. Do not claim control.
       if (await this.ownValue(host) !== undefined)
