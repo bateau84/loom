@@ -196,7 +196,7 @@ test("manifest rejects missing learning, mixed files, wrong identity and revisio
     rejected(python(restoreArgs(project, backup, restored)), "Missing or non-regular backup manifest")
     writeFileSync(manifestPath, manifest)
     unlinkSync(mixed)
-    rejected(python(restoreArgs(project, backup, restored)), "Missing")
+    rejected(python(restoreArgs(project, backup, restored)), "Orphan sidecar without learning.sqlite")
     expect(existsSync(restored)).toBe(false)
     expect(rawHashes(source(project))).toEqual(Object.fromEntries(
       Object.entries(pristine).filter(([name]) => name !== "loom-state-manifest.json")))
