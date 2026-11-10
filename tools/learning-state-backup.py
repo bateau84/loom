@@ -245,10 +245,10 @@ def do_restore(args):
             "Restore destination exists; refusal to overwrite")
     require(not destination.is_relative_to(backup) and not backup.is_relative_to(destination),
             "Restore must be outside preserved backup")
+    data, before = validate_backup(backup, args)
     scope = project_scope(args.project_id, args.project_canonical)
     require(destination.name == scope,
             "Restore destination must end in the manifest project scope")
-    data, before = validate_backup(backup, args)
     # No destination is created before manifest, checksum and SQL validation.
     destination.mkdir(mode=0o700)
     copy_files(backup, destination, before)
