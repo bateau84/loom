@@ -99,7 +99,7 @@ export class ProactiveLearning {
         interpretation:message.interpretation,next_action:message.next_action,
         uncertainty:"Authored outcomes are not host-certified correctness; linked objective IDs may still share causes. Model, host, task and observer mix are incomplete. Correlation does not establish causation.",
       }
-      this.db.prepare(`INSERT OR IGNORE INTO learning_findings
+      const write = this.db.prepare(`INSERT OR IGNORE INTO learning_findings
         (signature,kind,group_key,created_at,since_at,until_at,population,
          matching_objectives,source_refs,interpretation,next_action,uncertainty)
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).run(
@@ -107,8 +107,10 @@ export class ProactiveLearning {
         notice.since_at,notice.until_at,notice.population,notice.matching_objectives,
         JSON.stringify(notice.source_refs),notice.interpretation,notice.next_action,
         notice.uncertainty,
-      )
-      result.push(notice)
+      ) as { changes: number }
+      // Concurrent objective completions can race after the lookup. Emit only
+      // the winning INSERT; the other process observes an unchanged finding.
+      if (write.changes === 1) result.push(notice)
     }
     return result
   }
