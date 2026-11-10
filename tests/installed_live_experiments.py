@@ -152,7 +152,8 @@ def run(args):
             s = Scenario(host, root)
             treatment = s.session("reader")
             control = s.session("reader")
-            require(treatment != control,"Native Sessions unexpectedly identical")
+            proposer = s.session("reader")
+            require(len({treatment,control,proposer}) == 3,"Native Sessions unexpectedly identical")
             s.command(treatment,"return await tools.loom.agents({})")
             original = [m for m in request(host,"GET",f"/api/session/{treatment}/message?order=desc&limit=100")
                         if m.get("type")=="user" and str(m.get("text","")).startswith("LOOM_HARNESS_JOB:")]
@@ -163,7 +164,10 @@ def run(args):
             })
             require(obj.get("id") and obj.get("existing") is False, "Native source objective not created")
             candidate_text = MARKER + "\nThis harmless additive marker must stay Session-scoped."
-            proposal = s.invoke(treatment,"tweak", {
+            # Candidate content is authored outside BOTH comparison Sessions.
+            # Otherwise a prior Code Mode tool result contaminates the future
+            # treatment's user-role SDK input before native assignment.
+            proposal = s.invoke(proposer,"tweak", {
                 "operation":"propose","target_kind":"agent","target_id":"question-reader",
                 "base_sha256":digest(SYSTEM),"candidate_content":candidate_text,
                 "hypothesis":"Test whether the Session-scoped delivery boundary remains isolated",
