@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
-      # Same trusted publishers/tags as the existing CI; no secrets or write token.
+      # Same trusted publishers/tags as existing CI. No secrets or write credentials.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -20,24 +20,33 @@ jobs:
           bun-version-file: .bun-version
       - run: bun install --frozen-lockfile
       - name: Install exact standalone verification tools
-        run: |
-          npm install --prefix "$RUNNER_TEMP/qualification-tools" --no-audit --no-fund @opencode/cli@2.2.6 @opencode/codemode@2.0.29
+        run: npm install --prefix "$RUNNER_TEMP/qualification-tools" --no-audit --no-fund @opencode/cli@2.2.6 @opencode/codemode@2.0.29
       - name: Package source and pinned dependencies only
         shell: bash
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/qualification-workspace"
-          mkdir -p "$out"
-          git bundle create "$out/loom.bundle" --all
-          git rev-parse HEAD > "$out/source-sha.txt"
+          mkdir -p "$out" "$RUNNER_TEMP/tools-bundle"
+          git archive HEAD | gzip > "$out/source.tar.gz"
+          git archive origin/main | gzip > "$out/main.tar.gz"
+          git rev-parse HEAD origin/main > "$out/source-sha.txt"
           tar -czf "$out/dependencies.tar.gz" node_modules
-          tar -C "$RUNNER_TEMP/qualification-tools" -czf "$out/tools.tar.gz" node_modules package.json package-lock.json
+          tar -C "$RUNNER_TEMP/qualification-tools" -czf "$RUNNER_TEMP/tools-bundle/tools.tar.gz" node_modules package.json package-lock.json
           cp "$(command -v bun)" "$out/bun"
           cd "$out"
-          sha256sum loom.bundle dependencies.tar.gz tools.tar.gz bun source-sha.txt > SHA256SUMS
+          sha256sum source.tar.gz main.tar.gz dependencies.tar.gz bun source-sha.txt > SHA256SUMS
+          cd "$RUNNER_TEMP/tools-bundle"
+          sha256sum tools.tar.gz > SHA256SUMS
+          du -h "$out"/* ./*
       - uses: actions/upload-artifact@v4
         with:
           name: learning-qualification-workspace
           path: ${{ runner.temp }}/qualification-workspace/
+          if-no-files-found: error
+          retention-days: 2
+      - uses: actions/upload-artifact@v4
+        with:
+          name: learning-qualification-tools
+          path: ${{ runner.temp }}/tools-bundle/
           if-no-files-found: error
           retention-days: 2
