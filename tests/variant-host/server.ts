@@ -116,6 +116,12 @@ export default Plugin.define({
           model: event.model.id, providerID: event.model.providerID,
         })
       }))
+      disposers.push(await ctx.session.hook("retry", event => {
+        audit("native-retry", {
+          sessionID: event.sessionID, attempt: event.attempt,
+          decisionRetry: event.decision.retry,
+        })
+      }))
       disposers.push(await ctx.session.hook("context", event => {
         // Earlier-than-provider evidence, never treated as the final payload.
         audit("context-hook", {
