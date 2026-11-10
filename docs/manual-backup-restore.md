@@ -253,30 +253,30 @@ verification. The repository's `.bun-version` pin is 1.4.2; this run used 1.4.3.
 
 ## Complete Action and learning backup set
 
-Use the repository's \`tools/learning-state-backup.py\` for **one identified offline
-set** containing \`ledger.sqlite\`, \`learning.sqlite\`, all present applicable
-\`-wal\` / \`-shm\` / \`-journal\` sidecars, and
-\`loom-state-manifest.json\`. It is a separate companion to the historical
+Use the repository's `tools/learning-state-backup.py` for **one identified offline
+set** containing `ledger.sqlite`, `learning.sqlite`, all present applicable
+`-wal` / `-shm` / `-journal` sidecars, and
+`loom-state-manifest.json`. It is a separate companion to the historical
 ledger-only procedure above, not a replacement for it.
 
 **Required stop boundary:** Stop *all* SQLite writers and connections for **both**
 databases, including other OpenCode hosts, inspection tools and plugin instances,
 and prevent automatic restart for the entire snapshot. Do not infer this from
-quiet activity or \`ledger.capture: off\`. This command does not stop any process:
-\`LOOM_WRITERS_STOPPED=yes\` is only an operator assertion. If the stop boundary is
+quiet activity or `ledger.capture: off`. This command does not stop any process:
+`LOOM_WRITERS_STOPPED=yes` is only an operator assertion. If the stop boundary is
 not established, **do not proceed**. Never remove or checkpoint an active WAL.
 
 Identify the exact project ID, native canonical project path, project scope
 directory and installed Loom revision **from the target host**, rather than
 guessing a directory by name. The scope is the SHA-256 of Loom's canonical
-serialization of \`{ project: id, canonical: path }\`. Both database files must
+serialization of `{ project: id, canonical: path }`. Both database files must
 be in that same project-scope directory. Use Python 3.11+ with SQLite support,
 enough private disk space for inspection copies, and existing trusted canonical
 parent directories. This is for local trusted state, not hostile archive parsing.
 
 From the matching Loom checkout:
 
-\`\`\`sh
+```sh
 # Replace placeholders with the values observed from the stopped host.
 export LOOM_WRITERS_STOPPED=yes
 PROJECT_ID="actual-native-project-id"
@@ -300,12 +300,12 @@ python3 tools/learning-state-backup.py restore \
   --destination-dir "$RESTORE_HOME/loom/actions-v1/$SCOPE" \
   --project-id "$PROJECT_ID" --project-canonical "$PROJECT_CANONICAL" \
   --loom-revision "$REVISION" --package-version "$PACKAGE_VERSION"
-\`\`\`
+```
 
-\`backup\` reserves a **new** private directory and copies the stopped file set
+`backup` reserves a **new** private directory and copies the stopped file set
 without opening originals with SQLite. It checks source and copied bytes, then
-opens *disposable copies* for \`integrity_check\`, \`foreign_key_check\`, required
-tables/columns, Store \`user_version=1\` and learning \`user_version=0\`.
+opens *disposable copies* for `integrity_check`, `foreign_key_check`, required
+tables/columns, Store `user_version=1` and learning `user_version=0`.
 The learning database currently has no explicit migration version: its full
 SQLite schema SHA-256 is also recorded. The manifest is written last, with a
 unique set ID, project identity/scope, exact operator-supplied Loom revision and
@@ -313,7 +313,7 @@ package version, database membership/formats, SQLite checker version, each file
 name/size/SHA-256 and the stopped-writers boundary. It does not represent an
 attestation of the supplied revision or an independently signed archive.
 
-\`restore\` requires the original manifest and exact project/revision/package
+`restore` requires the original manifest and exact project/revision/package
 values; validates every member, checksum and SQL structure *before creating the
 destination*; then copies the set into a previously nonexistent isolated scope
 directory, verifies bytes and SQL again on disposable copies and reports the
@@ -325,10 +325,10 @@ never re-use it or interpret it as verified. Source and preserved backup remain
 unchanged, including residual WAL bytes.
 
 **Pre-learning installations:** if the source genuinely predates learning state
-and neither \`learning.sqlite\` nor its sidecars exists, and the operator has
+and neither `learning.sqlite` nor its sidecars exists, and the operator has
 independently established that this absence is legitimate, pass
-\`--legacy-no-learning\` on the **backup** command only. That explicit assertion
-records \`learning: absent-pre-learning\` in the manifest and preserves the
+`--legacy-no-learning` on the **backup** command only. That explicit assertion
+records `learning: absent-pre-learning` in the manifest and preserves the
 ledger-only restore path. An unmarked missing learning database is an error, not
 an automatic legacy inference. Never use the legacy flag to explain a database
 lost from an otherwise complete backup. Opening such a restored ledger with
@@ -339,18 +339,18 @@ restored learning history.
 
 From a separate checkout with the pinned Bun and dependencies:
 
-\`\`\`sh
+```sh
 bun test tests/learning-backup-restore-native.test.ts
 bun test tests/manual-backup-restore.test.ts
-\`\`\`
+```
 
 The new regression creates meaningful candidates, a revised and retired
 candidate chain, over one page of mixed trial reports and Action evidence IDs.
 It backs up stopped real SQLite files, including a killed disposable writer's
 committed residual WAL, restores under a different state home, and recovers
 the same IDs, statuses, content hashes and oldest negative reports through
-the registered **public** \`loom_tweak\`, \`loom_insights\`, \`loom_action\` and
-\`loom_record\` readers. It also tests explicit legacy absence and refusal of
+the registered **public** `loom_tweak`, `loom_insights`, `loom_action` and
+`loom_record` readers. It also tests explicit legacy absence and refusal of
 partial/mixed/corrupt/incompatible copies. This is isolated recovery evidence,
 **not** qualification of power-loss durability, multi-host backup, online copy,
 native Session history or production disaster recovery.
