@@ -50,9 +50,9 @@ Read the Plan before edits:
 {"operation":"read","action_id":"ACTION_ID"}
 ```
 
-A Plan has optional phase/wave/task/subtask nodes. Required: `id`, `kind`, `title`; optional: `outcome`, `criteria`, `context`, `depends_on`, `parent`, `agent`, `roles`, `skills`. Save the complete node list with Plan `expected_revision` (0 for a new Plan), retain IDs and reconcile conflicts. Action updates use the Action's separate current revision. New revisions record native `saved_by` Session/agent.
+Plan nodes can be phase/wave/task/subtask; each requires `id`, `kind`, `title`. Optional: `outcome`, `criteria`, `context`, `depends_on`, `parent`, `agent`, `roles`, `skills`. Save all nodes with Plan `expected_revision` (0 initially), preserving IDs and reconciling conflicts. Action revision is separate; Plan changes record native `saved_by`.
 
-For delegated planning with `action_id`, select it via `loom_context`, read/save with `loom_plan`, and return Action ID, revision and node IDs. General verifies the saved Plan. Chat or `docs/plan/` alone is not Plan storage. Without an ID, propose without inventing an Action; report save failures.
+For delegated planning, select the given Action via `loom_context`, read/save via `loom_plan`, and return Action/revision/node IDs for General to verify. Chat/`docs/plan/` is not Plan storage. Without an Action ID, propose without creating one. Report failed saves.
 
 Explicitly select the work before performing it:
 
@@ -66,7 +66,7 @@ Each child selects its own work; selection is not inherited.
 
 ### Handoffs and independent first review
 
-Write a `kind:result` handoff with goal/revision, decisions, evidence/limits and next step. Pass its ID, not the chat. Pin same-Action results with `handoff_id`; read via `loom_record` using `action_id`+`record_id` (no `node_id`). A pointer is not proof of completion.
+Record `kind:result` handoffs with goal/revision, decisions, evidence/limits and next step. Pass the ID, not chat. Pin same-Action `handoff_id`; read with `loom_record` using `action_id`+`record_id` (no `node_id`). A pointer does not prove completion.
 
 For independent Assessment, start a fresh Session and select `mode:"independent"` before reading opinions. Without an Action, context is Session-only and no selection is saved. Action-linked independent mode withholds Loom history, but cannot erase native messages, task text or earlier conversation. Record original findings before switching to continuation to reconcile prior work. Without an Action, query Session history with `session_only:true`. Mode persists; default is continuation. Save failure leaves the old mode. See [handoff limits and recovery](../../../docs/handoffs.md).
 
@@ -166,7 +166,7 @@ Historical records remain readable; assignment/delivery views retired.
 
 ## Deep retrospective evidence
 
-`loom_trace timeline` reads the caller's post-compaction context; other Sessions require authorized exports. `loom_trace children` lists direct child Sessions. Page with `next_cursor`. Code Mode can hide nested calls. `include_text:true` adds best-effort masked excerpts; unknown secrets may remain. Cite IDs and disclose gaps; never store raw transcripts or secrets.
+`loom_trace timeline` reads only caller post-compaction context; other Sessions need authorized exports. `loom_trace children` lists direct children. Follow `next_cursor`. Code Mode may hide nested calls; `include_text:true` masks only best effort. Cite IDs and gaps; never store raw transcripts or secrets.
 
 ## Complete stored history
 
