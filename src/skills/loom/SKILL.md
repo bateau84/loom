@@ -50,7 +50,7 @@ Read the Plan before edits:
 {"operation":"read","action_id":"ACTION_ID"}
 ```
 
-Plan nodes can be phase/wave/task/subtask; each requires `id`, `kind`, `title`. Optional: `outcome`, `criteria`, `context`, `depends_on`, `parent`, `agent`, `roles`, `skills`. Save all nodes with Plan `expected_revision` (0 initially), preserving IDs and reconciling conflicts. Action revision is separate; Plan changes record native `saved_by`.
+Plan nodes can be phase/wave/task/subtask; each requires `id`, `kind`, `title`. Optional: `outcome`, `criteria`, `context`, `depends_on`, `parent`, `agent`, `roles`, `skills`. Save the complete node list with Plan `expected_revision` (0 initially), preserving IDs and reconciling conflicts. Action updates use the Action's separate current revision; Plan saves record native `saved_by`.
 
 For delegated planning, select the given Action via `loom_context`, read/save via `loom_plan`, and return Action/revision/node IDs for General to verify. Chat/`docs/plan/` is not Plan storage. Without an Action ID, propose without creating one. Report failed saves.
 
