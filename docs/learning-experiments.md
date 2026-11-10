@@ -96,11 +96,25 @@ This case supports one local regression correction and illustrates why tool-leve
 
 A bounded trial using existing tools would use `loom_action` and `loom_record` to retain the explicit objective, original verification and correction references, `loom_trace` for authorized parent/child evidence, and `loom_tweak` to propose and later recover exact candidate content and attributed reports. Report `not-exercised` if no treatment was actually applied. Historical CI links do not prove model exposure. The native Session evidence and an independent eligible comparison population for a *skill experiment* were not available in this delivery, so no such effectiveness claim has been made.
 
-## Why live substitution is not enabled
+## Live additive Session instructions (qualified subset only)
 
-OpenCode 2.2.6 has a mutable skill registry at the shared *location* scope. Toggling that global registry can contaminate concurrent Sessions. Native context hooks appear able to deliver per-Session overlays, but this branch has **not** qualified all relevant routes (native skill tool, attachment, ordinary file read, context compaction, review companion). No automatic variant assignment or mutation has been installed.
+[Host qualification #221](https://github.com/bateau84/loom/pull/221) passed
+its pinned OpenCode 2.2.6 installed local-provider tests for **additive**
+per-Session instruction entries. It did **not** prove safe replacement of
+a loaded skill, an agent's canonical system text or every native delivery
+route.
 
-Use an **explicitly isolated manual experiment** in a disposable worktree/host when useful. Keep current and candidate content fingerprints, actual exposure, Session family and end-to-end outcome evidence together. Do not alter canonical guidance just because one run succeeded. Before enabling a live experiment hook in a future focused change, prove native delivery isolation and failure paths on an exact installed host with concurrent control and treatment Sessions, no shared-registry writes, stable variant assignment, trustworthy receipts and rollback after interrupted work.
+Draft [opt-in live experiment operating procedure](live-instruction-experiments.md)
+adds explicit authorization and bounded Session entry assignment, source
+freshness, pre-provider observations, stop and recovery. It remains inactive
+without an approved native user message and permission. Its own installed
+production-controller/provider-input evidence is **still required**; do not
+treat simulated registration tests as native-host acceptance. A matching entry
+hash or context hook is not certified provider exposure.
+
+Keep manual isolated worktree/host trials for skill replacements and
+unqualified routes. Never toggle the location-scoped registry while concurrent
+controls run. Neither withdrawal nor restart cleanses prior model context.
 
 ## Boundaries
 
