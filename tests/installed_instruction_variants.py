@@ -267,16 +267,19 @@ def run(args) -> dict:
                 env["OPENCODE_FILEWATCHER_DISABLE"] = "1"
                 report["limitations"].append("Filewatcher disabled only for isolated host.")
             (root / "variant-barrier.json").write_text('{"release":true}')
+            no_tools = [{"action": "*", "resource": "*", "effect": "deny"}]
             config = {
                 "plugins": ["*", str(args.plugin.resolve()),
                             str((args.repository / "tests/variant-host").resolve())],
                 "agents": {
                     "variant-agent": {"description": "Local controller", "mode": "primary",
                                       "model": "variant-fixture/scripted",
-                                      "system": "Use only the local scripted fixture."},
+                                      "system": "Use only the local scripted fixture.",
+                                      "permissions": no_tools},
                     "variant-child": {"description": "Local child", "mode": "subagent",
                                       "model": "variant-fixture/scripted",
-                                      "system": "Use only the local scripted fixture."},
+                                      "system": "Use only the local scripted fixture.",
+                                      "permissions": no_tools},
                 }, "model": "variant-fixture/scripted",
                 "update": "disable", "share": "disabled",
             }
@@ -333,6 +336,25 @@ def run(args) -> dict:
             probe.pair([(child, "child-explicit", True),
                         (sibling, "child-unassigned", False)])
             report["checks"].append("explicit-child-not-ancestry")
+            # Interruption is accepted by the real Session coordinator while a
+            # native provider request is held; it never undoes exposure.
+            probe.set_barrier(False)
+            try:
+                probe.prompt(treatment, "treatment-interrupted")
+                await_events(root, lambda e: e["type"] == "provider-request" and
+                             e["data"].get("testCase") == "treatment-interrupted", 1)
+                interruption = request(host, "POST",
+                                       "/api/session/" + treatment + "/interrupt")
+                require(isinstance(interruption, dict) and interruption.get("interrupted") is True,
+                        "Native interruption was not accepted at a held model boundary")
+            finally:
+                probe.set_barrier(True)
+            idle(host, [treatment])
+            probe.check(treatment, "treatment-interrupted", True)
+            probe.one(treatment, "treatment-after-interrupt", True)
+            require(entry_list(host, treatment) == [{"key": KEY, "value": CANDIDATE}],
+                    "Treatment assignment was lost after interruption")
+            report["checks"].append("native-interruption-without-exposure-revocation")
             # Real native manual compaction, not an invented context-hook event.
             before_compact = len([e for e in events(root) if e["type"] == "native-request"
                                   and e["data"].get("sessionID") == treatment and
