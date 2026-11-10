@@ -4,7 +4,7 @@ import { join } from "node:path"
 import plugin from "../../server.js"
 
 /** Actual public plugin setup/storage with a simulated registration host, not a live CLI. */
-export async function registeredLoom(initialSkills: any[] = []) {
+export async function registeredLoom(initialSkills: any[] = [], options: { beforeSetup?: (directory: string) => Promise<void> } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "loom-tool-help-"))
   const previous = { state: process.env.XDG_STATE_HOME, config: process.env.OPENCODE_CONFIG_DIR }
   process.env.XDG_STATE_HOME = join(directory, "state")
@@ -120,6 +120,7 @@ export async function registeredLoom(initialSkills: any[] = []) {
   try {
     // Discovery must not depend on an agent role, injected guide or selected Action.
     await writeFile(join(directory, ".loom.yaml"), "agents: {}\ninstructions: {enabled: false}\nledger: {capture: off}\n")
+    await options.beforeSetup?.(directory)
     dispose = await (plugin as any).setup(ctx)
     return {
       tools, namespaces, close, directory, hooks, sessions, skills, reloadSkills, nativeInputs, sessionReads, nativeListRequests, nativePages, nativeContexts,
