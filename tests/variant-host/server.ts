@@ -50,7 +50,15 @@ export default Plugin.define({
           system_bytes: Buffer.byteLength(system, "utf8"),
           user_marker_seen: userText.includes(marker),
         }
-        audit("provider-request", payload)
+        if (testCase === "fault-partial-exposure") {
+          // Real model input was reached, but the deliberate malformed receipt
+          // has no effective fingerprint. The harness must refuse to count it.
+          audit("partial-provider-exposure", {
+            testCase, entry_seen: payload.entry_seen, marker_seen: payload.marker_seen,
+          })
+        } else {
+          audit("provider-request", payload)
+        }
         // Concurrency proof: both requests must reach the actual model boundary
         // before the harness releases either. A stalled or broken barrier fails.
         const deadline = Date.now() + 30000
