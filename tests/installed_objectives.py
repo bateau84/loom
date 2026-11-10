@@ -219,7 +219,7 @@ def exercise(host, scenario, root, project):
         require(db.execute("SELECT COUNT(*) FROM learning_objectives").fetchone()[0] == 2,
                 "A child handback or correction became a duplicate objective")
         require(db.execute("SELECT COUNT(*) FROM learning_objective_links WHERE objective_id=?",
-                           (objective["id"],)).fetchone()[0] == ceiling + 1,
+                           (objective["id"],)).fetchone()[0] == len(saved) + 1,
                 "Stored source trajectory count disagrees with the public cursor")
     return {"objective_id": objective["id"], "original_message": original,
             "other_objective_id": other["id"], "parent": parent,
