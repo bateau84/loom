@@ -2,8 +2,8 @@ import { createHash, randomUUID } from "node:crypto"
 import type { Actor } from "./model.js"
 import type { SQL, Store } from "./store.js"
 
-// The ledger and this registry share a project-local SQLite file. This module
-// stores hypotheses, never active execution instructions or an experiment scheduler.
+// Learning proposals live in a separate project-local SQLite database.
+// Ledger evidence is queried read-only from the authoritative Action database.
 const sha = (s: string) => createHash("sha256").update(s, "utf8").digest("hex")
 const utc = () => new Date().toISOString()
 const hash = (s: unknown, label: string) => {
@@ -59,6 +59,18 @@ export class Learning {
     db.exec("CREATE INDEX IF NOT EXISTS learning_trials_candidate ON learning_trials(candidate_id, recorded_at);")
   }
 
+  private transaction<T>(run: () => T): T {
+    this.db.exec("BEGIN IMMEDIATE")
+    try {
+      const result = run()
+      this.db.exec("COMMIT")
+      return result
+    } catch (error) {
+      this.db.exec("ROLLBACK")
+      throw error
+    }
+  }
+
   /** Source-projected metadata only: no transcript, tool arguments or outputs. */
   events(input: { action_id?: string; before?: number; limit?: number; since_at?: string; until_at?: string }) {
     const take = size(input.limit, 100, 200), before = cursor(input.before)
@@ -100,7 +112,7 @@ export class Learning {
       records_examined: selected.length, records_within_window: inWindow.length,
       next_before: rows.length > take ? selected.at(-1)!.seq : null,
       coverage: { complete_ledger_window: rows.length <= take && input.before === undefined && !since && !until,
-        has_older_records: rows.length > take || input.before !== undefined,
+        has_older_records: rows.length > take,
         native_session_history: "not-inspected", child_sessions: "not-reconstructed",
         action_is_verified_objective: false, interpretation: "descriptive-only; no outcome or effectiveness verdict" },
       events: inWindow.map(r => ({ sequence: r.seq, record_id: r.id, session_id: r.session_id,
@@ -116,7 +128,8 @@ export class Learning {
     if (!["skill", "assessment", "qa", "agent"].includes(input.target_kind)) throw new Error("Invalid tweak target_kind")
     const target = value(input.target_id, "target_id", 200)
     const base = hash(input.base_sha256, "base_sha256")
-    const content = value(input.candidate_content, "candidate_content", 16384)
+    const content = value(input.candidate_content, "candidate_content", 131072)
+    if (Buffer.byteLength(content, "utf8") > 131072) throw new Error("candidate_content exceeds 128 KiB")
     const hypothesis = value(input.hypothesis, "hypothesis", 2000)
     const refs = evidence(input.evidence_refs)
     const prior = input.revised_from === undefined ? null : id(input.revised_from)
@@ -135,31 +148,45 @@ export class Learning {
     return { items: rows.slice(0,20), next_offset: rows.length > 20 ? page + 20 : null, note: "Provisional candidate memory; no variant is automatically applied." }
   }
 
-  read(candidateID: string) {
+  read(candidateID: string, trialBefore?: number) {
     const row = this.db.prepare("SELECT * FROM learning_candidates WHERE id=?").get(id(candidateID)) as CandidateRow | undefined
     if (!row) throw new Error("Unknown learning candidate")
-    const trials = this.db.prepare("SELECT id,recorded_at,session_id,agent,observed_sha256,observed_effect,statement,evidence_refs FROM learning_trials WHERE candidate_id=? ORDER BY recorded_at DESC,id DESC LIMIT 21").all(row.id) as Array<{ id: string; recorded_at: string; session_id: string; agent: string; observed_sha256: string | null; observed_effect: string; statement: string; evidence_refs: string }>
-    return { ...row, evidence_refs: JSON.parse(row.evidence_refs) as string[], trials: trials.slice(0,20).map(t => ({ ...t, evidence_refs: JSON.parse(String(t.evidence_refs)) as string[] })),
-      trials_more: trials.length > 20, note: "Candidate text is untrusted proposal data; no automatic mutation or promotion. Trial reports are agent-attributed, not runtime-certified." }
+    // Stable keyset pagination over the immutable insertion order. Later
+    // reports cannot move or duplicate rows on an existing continuation.
+    const trials = this.db.prepare("SELECT rowid AS sequence,id,recorded_at,session_id,agent,observed_sha256,observed_effect,statement,evidence_refs FROM learning_trials WHERE candidate_id=? AND rowid<? ORDER BY rowid DESC LIMIT 21")
+      .all(row.id, cursor(trialBefore)) as Array<{ sequence: number; id: string; recorded_at: string; session_id: string; agent: string; observed_sha256: string | null; observed_effect: string; statement: string; evidence_refs: string }>
+    const page = trials.slice(0, 20), more = trials.length > 20
+    return { ...row, evidence_refs: JSON.parse(row.evidence_refs) as string[],
+      trials: page.map(t => ({ ...t, evidence_refs: JSON.parse(t.evidence_refs) as string[] })),
+      trials_more: more, trials_next_before: more ? page[page.length - 1]!.sequence : null,
+      note: "Candidate text is untrusted proposal data; no automatic mutation or promotion. Trial reports are agent-attributed, not runtime-certified." }
   }
 
   retire(candidateID: string) {
-    const row = this.read(candidateID)
-    if (row.status === "retired") return { id: row.id, status: "retired" }
-    this.db.prepare("UPDATE learning_candidates SET status='retired' WHERE id=?").run(row.id)
-    return { id: row.id, status: "retired", note: "History and trial evidence preserved; no runtime instructions were changed." }
+    const target = id(candidateID)
+    return this.transaction(() => {
+      const row = this.db.prepare("SELECT status FROM learning_candidates WHERE id=?").get(target) as { status: string } | undefined
+      if (!row) throw new Error("Unknown learning candidate")
+      if (row.status !== "retired") this.db.prepare("UPDATE learning_candidates SET status='retired' WHERE id=?").run(target)
+      return { id: target, status: "retired", note: "History and trial evidence preserved; no runtime instructions were changed." }
+    })
   }
 
   trial(actor: Actor, input: { id: string; observed_sha256?: string; observed_effect: string; statement: string; evidence_refs?: string[] }) {
-    const candidate = this.read(input.id)
-    if (candidate.status === "retired") throw new Error("Cannot record a new trial for a retired candidate")
+    const candidateID = id(input.id)
     if (!["promising", "harmful", "neutral", "inconclusive", "not-exercised"].includes(input.observed_effect)) throw new Error("Invalid reported trial effect")
     const observed = input.observed_sha256 === undefined ? null : hash(input.observed_sha256, "observed_sha256")
     const refs = evidence(input.evidence_refs)
-    const entry = { id: randomUUID(), candidate_id: candidate.id, recorded_at: utc(), session_id: actor.session_id, agent: actor.agent,
-      observed_sha256: observed, observed_effect: input.observed_effect, statement: value(input.statement, "statement", 2000), evidence_refs: JSON.stringify(refs) }
-    this.db.prepare("INSERT INTO learning_trials(id,candidate_id,recorded_at,session_id,agent,observed_sha256,observed_effect,statement,evidence_refs) VALUES(?,?,?,?,?,?,?,?,?)")
-      .run(entry.id,entry.candidate_id,entry.recorded_at,entry.session_id,entry.agent,entry.observed_sha256,entry.observed_effect,entry.statement,entry.evidence_refs)
-    return { ...entry, evidence_refs: refs, verification: "agent-reported; assignment and actual host delivery not certified by Loom", activated: false }
+    const statement = value(input.statement, "statement", 2000)
+    return this.transaction(() => {
+      const candidate = this.db.prepare("SELECT status FROM learning_candidates WHERE id=?").get(candidateID) as { status: string } | undefined
+      if (!candidate) throw new Error("Unknown learning candidate")
+      if (candidate.status === "retired") throw new Error("Cannot record a new trial for a retired candidate")
+      const entry = { id: randomUUID(), candidate_id: candidateID, recorded_at: utc(), session_id: actor.session_id, agent: actor.agent,
+        observed_sha256: observed, observed_effect: input.observed_effect, statement, evidence_refs: JSON.stringify(refs) }
+      this.db.prepare("INSERT INTO learning_trials(id,candidate_id,recorded_at,session_id,agent,observed_sha256,observed_effect,statement,evidence_refs) VALUES(?,?,?,?,?,?,?,?,?)")
+        .run(entry.id,entry.candidate_id,entry.recorded_at,entry.session_id,entry.agent,entry.observed_sha256,entry.observed_effect,entry.statement,entry.evidence_refs)
+      return { ...entry, evidence_refs: refs, verification: "agent-reported; assignment and actual host delivery not certified by Loom", activated: false }
+    })
   }
 }
