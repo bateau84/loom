@@ -47,7 +47,7 @@ async function prepare(host: Host, sessionID = "parent", agent = "author") {
   return { obj, proposal }
 }
 const call = (host: Host, operation: string, fields: Record<string, unknown> = {}, sessionID = "parent", agent = "author") =>
-  host.invoke("tweak", { operation: "live-" + operation, ...fields }, sessionID, agent)
+  host.invoke("tweak", { ...fields, operation: "live-" + operation }, sessionID, agent)
 
 test("an explicitly authorized objective-linked candidate is assigned to only its native Session; assignment is not exposure", async () => {
   const host = await registeredLoom([], { versionedHost: true })
