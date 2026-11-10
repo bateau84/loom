@@ -113,6 +113,13 @@ test("source drift, native denial and inherited/unknown objective never write in
     const control = "child"
     host.sessions.set(control, { id: control, agent: "author", parentID: "parent",
       projectID: "tool-help", location: { directory: host.directory } })
+    // A second, independent native user approval is still not a source-linked
+    // objective. No implicit child inheritance of authorization or treatment.
+    host.nativeContexts.set(control,{data:[{
+      id:"human-request-id-1",type:"user",
+      text:`LOOM-TRIAL-APPROVE candidate=${proposal.id} objective=${obj.id} budget=2`,
+      time:{created:Date.now()},
+    }]})
     await expect(call(host,"start",startInput(obj.id,proposal.id),control)).rejects.toThrow("OBJECTIVE_UNBOUND")
     await expect(call(host,"start",startInput(obj.id,proposal.id,{authorize:false}))).rejects.toThrow("NOT_AUTHORIZED")
     host.permission.error = new Error("Native user denied")
