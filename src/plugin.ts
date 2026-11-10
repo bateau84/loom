@@ -860,6 +860,9 @@ export default Plugin.define({
           }
         } catch (error) { warn(error) } // A missing ledger or invalid config must not block native reasoning.
       }))
+      disposers.push(await ctx.tool.hook("execute.before", event => {
+        experiments?.guardTool(event.sessionID,event.tool,event.input)
+      }))
       disposers.push(await ctx.tool.hook("execute.before", async event => {
         if (/^loom[_.]/.test(event.tool)) return
         try {
