@@ -1,5 +1,10 @@
 import { test, expect } from "bun:test"
 import { registeredLoom } from "./helpers/registered-loom.js"
+import { Database } from "bun:sqlite"
+import { createHash } from "node:crypto"
+import { join } from "node:path"
+import { digest } from "../src/model.js"
+import { Store } from "../src/store.js"
 
 const hour = 60 * 60 * 1000
 const message = (id: string, at: number) => ({
@@ -154,5 +159,114 @@ test("known and unknown evidence, reporting cutoff, absent dimensions and select
     await expect(host.invoke("trends", { ...scope, cursor: "not-a-cursor" })).rejects.toThrow()
     const tooOld = { ...scope, as_of_at: new Date(start + 2 * hour).toISOString() }
     expect((await host.invoke("trends", tooOld)).result.population.eligible_objectives).toBe(0)
+  } finally { await host.close() }
+})
+
+test("late counterevidence and rejected uncertain links cannot disappear behind an earlier pass", async () => {
+  const host = await registeredLoom()
+  try {
+    const start = Date.now() - 24 * hour
+    host.nativeContexts.set("parent", { data: [message("runtime-target", start)] })
+    const objective = (await host.invoke("objective", {
+      operation: "create", source_type: "native-message", source_id: "runtime-target",
+      label: "Safe guarded runtime feature",
+    }, "parent")).result
+    const action = (await host.invoke("action", { operation: "create",
+      title: "Verifications", goal: "Real boundary checks" }, "parent")).result
+    const mkQa = async (verdict: "pass" | "fail", statement: string) =>
+      (await host.invoke("record", { operation: "add", action_id: action.id, kind: "qa",
+        verdict, statement }, "parent")).result
+    const good = await mkQa("pass", "Previous known acceptance")
+    await host.invoke("objective", { operation: "link", objective_id: objective.id,
+      phase: "outcome", source_type: "ledger-record", source_id: good.id,
+      assessment: "pass",
+    }, "parent")
+    const risk = (await host.invoke("record", {
+      operation: "add", action_id: action.id, kind: "concern",
+      statement: "Protective operator decision; effect still unverified",
+    }, "parent")).result
+    await host.invoke("objective", { operation: "link", objective_id: objective.id,
+      phase: "coordination", source_type: "ledger-record", source_id: risk.id,
+    }, "parent")
+    await host.invoke("objective", { operation: "link", objective_id: objective.id,
+      phase: "coverage-gap", source_type: "unavailable", source_id: "unknown-child",
+      gap_reason: "missing-child",
+    }, "parent")
+    const doubtful = await mkQa("fail", "Uncertain and later rejected evidence")
+    const attempted = (await host.invoke("objective", { operation: "link", objective_id: objective.id,
+      phase: "verification", source_type: "ledger-record", source_id: doubtful.id,
+      confidence: "uncertain", assessment: "fail", note: "May belong to another goal",
+    }, "parent")).result
+    await host.invoke("objective", { operation: "link", objective_id: objective.id,
+      phase: "link-correction", source_type: "ledger-record", source_id: doubtful.id,
+      assessment: "reject", related_sequence: attempted.sequence,
+    }, "parent")
+    const query = { operation: "compare", since_at: new Date(start - hour).toISOString(),
+      until_at: new Date(start + hour).toISOString(), as_of_at: new Date(Date.now() + hour).toISOString(),
+      population: "all-linked" }
+    const before = (await host.invoke("trends", query)).result
+    expect(before.metrics.reported_pass).toBe(1)
+    expect(before.metrics.verification_failures).toBe(0)
+    expect(before.metrics.rejected_links).toBe(1)
+    expect(before.metrics.coverage_gaps).toBe(1)
+    expect(before.metrics.concern_source_links).toBe(1)
+    expect(before.items[0].evidence.rejected.sources[0].id).toBe(doubtful.id)
+    const realFail = await mkQa("fail", "Later failing runtime scenario disproved original pass")
+    await host.invoke("objective", { operation: "link", objective_id: objective.id,
+      phase: "verification", source_type: "ledger-record", source_id: realFail.id,
+      assessment: "fail",
+    }, "parent")
+    const after = (await host.invoke("trends", query)).result
+    expect(after.metrics.reported_pass).toBe(0)
+    expect(after.metrics.contested).toBe(1)
+    expect(after.metrics.unknown_or_incomplete).toBe(1)
+    expect(after.metrics.verification_failures).toBe(1)
+    expect(after.items[0].evidence.verification_fails.sources[0].id).toBe(realFail.id)
+    expect(after.items[0].evidence.coverage_gaps.total).toBe(1)
+  } finally { await host.close() }
+})
+
+test("grouping uses explicitly linked historical skill-result receipts, not today's content or assignment", async () => {
+  const host = await registeredLoom()
+  try {
+    const start = Date.now() - 24 * hour
+    host.nativeContexts.set("parent", { data: [
+      message("fingerprint-root-one", start), message("fingerprint-root-two", start + 1000),
+    ] })
+    const create = async (id: string) => (await host.invoke("objective", {
+      operation: "create", source_type: "native-message", source_id: id, label: id,
+    }, "parent")).result
+    const one = await create("fingerprint-root-one")
+    const two = await create("fingerprint-root-two")
+    const root = join(host.directory, "state", "loom", "actions-v1",
+      digest({ project: "tool-help", canonical: host.directory }))
+    const db = new Database(join(root, "ledger.sqlite"))
+    const fingerprint = createHash("sha256").update("historic exact tool result").digest("hex")
+    let recordID = ""
+    try {
+      const store = new Store(db)
+      const written = store.observe({ session_id: "parent", agent: "author" }, undefined,
+        { phase: "skill-load-result", skill_id: "software-engineering",
+          rendered_sha256: fingerprint,
+          registry_content_sha256: createHash("sha256").update("different registry snapshot").digest("hex"),
+        })
+      recordID = written.id
+    } finally { db.close() }
+    await host.invoke("objective", { operation: "link", objective_id: one.id,
+      phase: "coordination", source_type: "ledger-record", source_id: recordID,
+    }, "parent")
+    const result = (await host.invoke("trends", { operation: "compare", population: "selected",
+      objective_ids: [one.id, two.id], since_at: new Date(start - hour).toISOString(),
+      until_at: new Date(start + hour).toISOString(), as_of_at: new Date(Date.now() + hour).toISOString(),
+      group_by: "instruction-fingerprint",
+    })).result
+    expect(result.metrics.eligible_objectives).toBe(2)
+    expect(result.groups.map((g: any) => g.key)).toEqual(["not-observed",
+      "skill-load-result:software-engineering:" + fingerprint])
+    expect(result.items.find((p: any) => p.objective_id === one.id)
+      .instruction_observations.observations[0].source_id).toBe(recordID)
+    expect(result.items.find((p: any) => p.objective_id === two.id)
+      .instruction_observations.group_key).toBe("not-observed")
+    expect(result.unavailable_dimensions.actual_instruction_exposure).toContain("do not prove")
   } finally { await host.close() }
 })
