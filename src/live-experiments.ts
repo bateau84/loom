@@ -216,6 +216,21 @@ export class SessionExperiments {
     const fields = input && typeof input === "object" && !Array.isArray(input)
       ? input as {operation?:unknown} : {}
     if (/^loom[._]tweak$/.test(tool) && ["live-read","live-stop"].includes(String(fields.operation))) return
+    // Code Mode is an outer native tool. Admit ONLY its exact, side-effect-free
+    // invocation of the recovery/read tools; never a general execute program.
+    // The nested Loom tool still passes the same guard independently.
+    if (tool === "execute" && typeof (fields as { code?: unknown }).code === "string") {
+      const code = (fields as { code: string }).code.trim()
+      const prefix = "return await tools.loom.tweak("
+      if (code.startsWith(prefix) && code.endsWith(")")) {
+        let args: unknown
+        try { args = JSON.parse(code.slice(prefix.length, -1)) } catch { /* reject */ }
+        if (args && typeof args === "object" && !Array.isArray(args)) {
+          const operation = (args as { operation?: unknown }).operation
+          if (Object.keys(args).length === 1 && (operation === "live-stop" || operation === "live-read")) return
+        }
+      }
+    }
     throw new Error("LOOM_LIVE_TOOL_ROUTE_UNQUALIFIED: stop the Session experiment before other native/model tools")
   }
   /** Context-stage observation is useful for diagnosing omissions, never a receipt. */
