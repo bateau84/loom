@@ -446,12 +446,12 @@ def run(args) -> dict:
             before_compact = len([e for e in events(root) if e["type"] == "native-request"
                                   and e["data"].get("sessionID") == treatment and
                                   e["data"].get("kind") == "compaction"])
-            before_unlabelled = len([e for e in events(root)
-                                     if e["type"] == "provider-request" and
-                                     e["data"].get("testCase") is None])
-            before_unlabelled_arrival = len([e for e in events(root)
-                                             if e["type"] == "provider-arrival" and
-                                             e["data"].get("testCase") is None])
+            # Compaction can include an earlier user message in the prompt.
+            # A user-text case label is NOT a native compaction request ID.
+            # No other Sessions are active here; use a bounded event interval
+            # and the separate native model.request kind=compaction witness.
+            before_provider = len([e for e in events(root) if e["type"] == "provider-request"])
+            before_arrival = len([e for e in events(root) if e["type"] == "provider-arrival"])
             request(host, "POST", "/api/session/" + treatment + "/compact", {})
             await_events(root, lambda e: e["type"] == "native-request" and
                          e["data"].get("sessionID") == treatment and
@@ -463,11 +463,9 @@ def run(args) -> dict:
                        e["data"].get("kind") == "compaction"]
             require(len(compact) == before_compact + 1, "Expected one native compaction request")
             provider_compact = [e["data"] for e in events(root)
-                                if e["type"] == "provider-request" and
-                                e["data"].get("testCase") is None][before_unlabelled:]
+                                if e["type"] == "provider-request"][before_provider:]
             arrived_compact = [e["data"] for e in events(root)
-                               if e["type"] == "provider-arrival" and
-                               e["data"].get("testCase") is None][before_unlabelled_arrival:]
+                               if e["type"] == "provider-arrival"][before_arrival:]
             checked_compact = verify_attempt_receipts(
                 arrived_compact, provider_compact, expected_candidate=True,
                 candidate_sha=sha(CANDIDATE))
