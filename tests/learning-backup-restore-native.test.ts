@@ -150,7 +150,7 @@ for (const mode of ["closed", "residual-WAL"] as const) {
           evidence_refs: [evidence.id],
         })).result
         const approval = "user-approval-recovery-trial"
-        host.nativeContexts.get(treatmentSession).data.push({
+        (host.nativeContexts.get(treatmentSession) as {data:Array<Record<string,unknown>>}).data.push({
           id: approval, type: "user",
           text: `LOOM-TRIAL-APPROVE candidate=${liveCandidate.id} objective=${liveObjective.id} budget=2`,
           time: { created: Date.now() },
