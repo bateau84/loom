@@ -355,18 +355,60 @@ def run(args) -> dict:
             require(entry_list(host, treatment) == [{"key": KEY, "value": CANDIDATE}],
                     "Treatment assignment was lost after interruption")
             report["checks"].append("native-interruption-without-exposure-revocation")
+            # A separate assigned native Session reaches the provider, but the
+            # fixture deliberately emits only a partial receipt. It must not
+            # become an accepted trial regardless of successful model output.
+            fault = create_session(host, project)
+            probe.assign(fault)
+            probe.set_barrier(True)
+            probe.prompt(fault, "fault-partial-exposure")
+            partial = await_events(
+                root, lambda e: e["type"] == "partial-provider-exposure" and
+                e["data"].get("testCase") == "fault-partial-exposure", 1)[-1]["data"]
+            idle(host, [fault])
+            require(partial["entry_seen"] is True and partial["marker_seen"] is True,
+                    "Fault fixture did not expose the candidate before receipt loss")
+            try:
+                probe.check(fault, "fault-partial-exposure", True)
+            except RuntimeError as error:
+                require("RECEIPT_AMBIGUOUS" in str(error),
+                        "Partial exposure was rejected for an unexpected reason: " + str(error))
+            else:
+                raise RuntimeError("FAIL_OPEN: unreceipted native exposure was credited")
+            report["negative_controls"] = {
+                "partial_exposure_at_provider": True, "complete_delivery_receipt": False,
+                "counted_as_trial": False, "rejection": "RECEIPT_AMBIGUOUS",
+            }
+            report["checks"].append("native-partial-exposure-is-not-credited")
             # Real native manual compaction, not an invented context-hook event.
             before_compact = len([e for e in events(root) if e["type"] == "native-request"
                                   and e["data"].get("sessionID") == treatment and
                                   e["data"].get("kind") == "compaction"])
+            before_unlabelled = len([e for e in events(root)
+                                     if e["type"] == "provider-request" and
+                                     e["data"].get("testCase") is None])
             request(host, "POST", "/api/session/" + treatment + "/compact", {})
             idle(host, [treatment])
             compact = [e["data"] for e in events(root) if e["type"] == "native-request"
                        and e["data"].get("sessionID") == treatment and
                        e["data"].get("kind") == "compaction"]
-            require(len(compact) > before_compact, "Native compaction request not observed")
+            require(len(compact) == before_compact + 1, "Expected one native compaction request")
+            provider_compact = [e["data"] for e in events(root)
+                                if e["type"] == "provider-request" and
+                                e["data"].get("testCase") is None][before_unlabelled:]
+            require(len(provider_compact) == 1,
+                    "No unique actual provider input for native compaction")
+            observed_compact = verify_receipt(provider_compact[0],
+                                              expected_candidate=True,
+                                              candidate_sha=sha(CANDIDATE))
+            report["compaction"] = {
+                "native_kind": "compaction",
+                "provider_stage": "local AI SDK doStream input",
+                "candidate_sha256": observed_compact["candidate_sha256"],
+                "effective_sha256": observed_compact["effective_sha256"],
+            }
             probe.one(treatment, "treatment-postcompact", True)
-            report["checks"].append("native-compaction-and-continuation")
+            report["checks"].append("native-compaction-provider-input-and-continuation")
             # A private host restart tests persistence, not erased history.
             host.close()
             host = start("restarted")
