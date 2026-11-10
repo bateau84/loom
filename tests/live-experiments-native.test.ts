@@ -189,6 +189,35 @@ test("orphaned native instruction entry cannot run after learning history is los
   } finally { await host.close() }
 })
 
+test("unqualified host version cannot activate a native entry or reserve an experiment", async () => {
+  const host = await registeredLoom()
+  try {
+    const { obj, proposal } = await prepare(host)
+    await expect(call(host, "start", startInput(obj.id, proposal.id))).rejects.toThrow("HOST_UNQUALIFIED")
+    expect(host.nativeInstructionWrites).toHaveLength(0)
+    expect((await call(host, "read")).result.status).toBe("inactive")
+  } finally { await host.close() }
+})
+
+test("active native source drift blocks request before transport and preserves explicit withdrawal", async () => {
+  const host = await registeredLoom([], { versionedHost: true })
+  try {
+    const { obj, proposal } = await prepare(host)
+    await call(host, "start", startInput(obj.id, proposal.id))
+    host.nativeAgents.find(a => a.id === "author")!.system = "Changed native agent system after enrollment."
+    await expect(host.hooks.get("model.request")({
+      sessionID: "parent", agent: "author", kind: "primary",
+      model: { providerID: "fixture", id: "scripted" },
+    })).rejects.toThrow("SOURCE_DRIFT")
+    expect((await call(host, "read")).result.preflight_count).toBe(0)
+    expect(host.instructionEntries.get("parent")?.get(LIVE_ENTRY_KEY)).toBe(candidateText)
+    const stopped = (await call(host, "stop")).result
+    expect(stopped.status).toBe("stopped")
+    expect(stopped.control_eligible).toBe(false)
+    expect(host.instructionEntries.get("parent")?.has(LIVE_ENTRY_KEY)).not.toBe(true)
+  } finally { await host.close() }
+})
+
 test("retiring an active candidate is denied until a verified withdrawal", async () => {
   const h = await registeredLoom([], { versionedHost: true })
   try {
