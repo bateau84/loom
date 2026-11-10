@@ -635,11 +635,14 @@ export default Plugin.define({
             const selectedAgent = matches.length === 1 ? matches[0] as { system?: unknown } : undefined
             const nativeSystem = typeof selectedAgent?.system === "string" && Buffer.byteLength(selectedAgent.system, "utf8") <= 131072
               ? selectedAgent.system : undefined
-            const systemParts = event.system.filter(part => part?.type === "text" && typeof part.text === "string").map(part => part.text)
-            const contentSha = nativeSystem === undefined ? undefined : createHash("sha256").update(nativeSystem, "utf8").digest("hex")
-            const contextSha = createHash("sha256").update(JSON.stringify(systemParts), "utf8").digest("hex")
-            const key = event.sessionID + ":" + event.agent, stamp = (contentSha ?? "unavailable") + ":" + contextSha
-            if (lastAgentContent.get(key) !== stamp) {
+            // An absent native agent system has no source identity to attest.
+            // Do not add a meaningless context-only record to unrelated history.
+            if (nativeSystem !== undefined) {
+              const systemParts = event.system.filter(part => part?.type === "text" && typeof part.text === "string").map(part => part.text)
+              const contentSha = createHash("sha256").update(nativeSystem, "utf8").digest("hex")
+              const contextSha = createHash("sha256").update(JSON.stringify(systemParts), "utf8").digest("hex")
+              const key = event.sessionID + ":" + event.agent, stamp = contentSha + ":" + contextSha
+              if (lastAgentContent.get(key) !== stamp) {
               if (lastAgentContent.size >= 1024) lastAgentContent.clear()
               store.observe({ session_id: event.sessionID, agent: event.agent }, focus, {
                 phase: "agent-context-snapshot", agent_id: event.agent,
@@ -649,6 +652,7 @@ export default Plugin.define({
                 observation: "native agent system and post-Loom context snapshot; not proof of final provider input or instruction application",
               })
               lastAgentContent.set(key, stamp)
+              }
             }
           }
         } catch (error) { warn(error) } // A missing ledger or invalid config must not block native reasoning.
