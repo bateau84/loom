@@ -285,30 +285,36 @@ def run(args):
                          and e["data"].get("sessionID")==treatment]
             before=[e["data"] for e in tool_events if e["type"]=="tool-before"]
             after=[e["data"] for e in tool_events if e["type"]=="tool-after"]
-            if not any(e["tool"]=="execute" for e in before):
-                report["denial_diagnostic"] = {
+            # OpenCode fires pre-execute hooks in registration order. A
+            # rejecting Loom hook can stop the call BEFORE the passive audit
+            # plugin's later execute.before callback runs. Prove the actual
+            # native assistant tool-call failed with Loom's exact guard error,
+            # not the presence of a hook invocation that may be skipped.
+            native_messages=request(host,"GET",f"/api/session/{treatment}/message?order=desc&limit=100")
+            native_calls=[
+                part for m in native_messages if m.get("type")=="assistant"
+                for part in (m.get("content") or [])
+                if isinstance(part,dict) and part.get("type")=="tool" and part.get("name")=="execute"
+            ]
+            denied=[p for p in native_calls
+                    if "LOOM_LIVE_TOOL_ROUTE_UNQUALIFIED" in json.dumps(p)]
+            if not denied:
+                report["denial_diagnostic"]={
                     "job":rejected,
-                    "events":[{"type":e["type"],
-                               "tool":e["data"].get("tool"),
-                               "status":e["data"].get("status"),
-                               "session":e["data"].get("sessionID")}
-                              for e in events(root)[started:][-24:]],
-                    "messages":[{"type":m.get("type"),
-                                 "has_error":bool(m.get("error")),
-                                 "error_code":str((m.get("error") or {}).get("type",""))[:80]
-                                 if isinstance(m.get("error"),dict) else "unknown"}
-                                for m in request(host,"GET",
-                                    f"/api/session/{treatment}/message?order=desc&limit=14")],
+                    "native_tool_states":[{"status":(p.get("state") or {}).get("status"),
+                                           "type":p.get("type"),"name":p.get("name"),
+                                           "error_excerpt":str((p.get("state") or {}).get("error",""))[:190]}
+                                          for p in native_calls[-8:]],
+                    "audit_events":[{"type":e["type"],"tool":e["data"].get("tool"),
+                                     "status":e["data"].get("status")}
+                                    for e in tool_events],
                 }
-            require(any(e["tool"]=="execute" for e in before),
-                    "Negative fixture never attempted the real native execute tool")
+            require(denied,
+                    "Expected native failed execute call with Loom's exact pre-execute denial")
             require(not any(e["tool"] in ("loom_agents","loom.agents") for e in before),
                     "FAIL_OPEN: disallowed inner Loom tool actually ran")
             require(not any(e["tool"]=="execute" and e["status"]=="completed" for e in after),
                     "FAIL_OPEN: disallowed outer Code Mode program succeeded")
-            native_messages=request(host,"GET",f"/api/session/{treatment}/message?order=desc&limit=100")
-            require(any("LOOM_LIVE_TOOL_ROUTE_UNQUALIFIED" in json.dumps(m) for m in native_messages),
-                    "Negative result did not carry Loom's exact Tool.Error in actual native history")
             provider_observation(root,rejected,True,host,treatment,candidate_text)
             report["checks"].append("real-unqualified-tool-execution-denied")
 
