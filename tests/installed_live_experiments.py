@@ -86,7 +86,17 @@ def provider_observation(root, job, treatment):
         system = prompt_text(row, "system")
         user = prompt_text(row, "user")
         require("LOOM_HARNESS_JOB:" + job in user, "Provider receipt not linked to exact scripted request")
-        require(MARKER not in user, "Marker entered through user text rather than native instructions")
+        stage = {
+            "roles": [m.get("role") for m in row.get("prompt", [])],
+            "marker_system": MARKER in system,
+            "marker_user": MARKER in user,
+            "keyed_system": f'<context key="{KEY}">' in system,
+            "keyed_user": f'<context key="{KEY}">' in user,
+            "marker_user_occurrences": user.count(MARKER),
+            "marker_system_occurrences": system.count(MARKER),
+        }
+        require(MARKER not in user,
+                "PROVIDER_SOURCE_AMBIGUOUS: "+json.dumps(stage,sort_keys=True))
         seen = MARKER in system and f'<context key="{KEY}">' in system
         require(seen is treatment,
                 "PROVIDER_CONTROL_CONTAMINATION" if not treatment else "PROVIDER_TREATMENT_MISSING")
