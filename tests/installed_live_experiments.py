@@ -45,6 +45,18 @@ def native_entries(host, session):
     return value
 
 
+def native_replace_entry(host, session, value):
+    """Deliberately mutate only a disposable host's native Session entry."""
+    token = base64.b64encode(("opencode:" + host.password).encode()).decode()
+    path = f"/api/experimental/session/{session}/instructions/entries/{KEY}"
+    req = Request(host.url + path, method="PUT",
+                  data=json.dumps({"value":value}).encode(),
+                  headers={"Authorization":"Basic "+token,"Content-Type":"application/json"})
+    with host.opener.open(req,timeout=15) as response:
+        result=response.read(1025)
+    require(len(result)<=1024, "Native drift mutation result exceeded budget")
+
+
 def exact_message(host, session, line):
     rows = request(host, "GET", f"/api/session/{session}/message?order=desc&limit=100")
     require(isinstance(rows, list), "Native messages API unavailable")
@@ -440,6 +452,69 @@ def run(args):
                     native_entries(host,child)==[],
                     "Explicit child withdrawal incorrectly cleansed history or retained native entry")
             report["checks"].append("explicit-child-withdrawal-no-clean-control")
+
+            # Native source/entry freshness remains load-bearing on *every*
+            # admitted request. A changed native value must prevent transport,
+            # retain the source-linked partial history and require operator
+            # recovery; it must never count as a clean control or treatment.
+            drift=s.session("reader")
+            s.command(drift,"return await tools.loom.agents({})")
+            source_rows=request(host,"GET",f"/api/session/{drift}/message?order=desc&limit=100")
+            source_drift=[m for m in source_rows
+                          if m.get("type")=="user" and
+                          str(m.get("text","")).startswith("LOOM_HARNESS_JOB:")]
+            require(source_drift,"Source for drift test was not observed")
+            drift_obj=s.invoke(drift,"objective",{
+                "operation":"create","source_type":"native-message",
+                "source_id":source_drift[-1]["id"],
+                "label":"Reject changed native Session instruction identity",
+                "unit_key":"entry-drift-test",
+            })
+            drift_approval=(f'LOOM-TRIAL-APPROVE candidate={proposal["id"]} '
+                            f'objective={drift_obj["id"]} budget=3')
+            request(host,"POST",f"/api/session/{drift}/prompt",{"text":drift_approval})
+            native_wait(host,drift)
+            drift_authorization=exact_message(host,drift,drift_approval)
+            enrolled=s.invoke(drift,"tweak",{
+                "operation":"live-start","objective_id":drift_obj["id"],
+                "candidate_id":proposal["id"],"authorize":True,
+                "authorization_ref":drift_authorization,
+                "eligibility":"Only exact native Session entry remains authorized",
+                "evaluation_criteria":"No provider request after native entry mutation",
+                "preserved_guarantees":"No registry mutation or silent default model fallback",
+                "budget_requests":3,
+                "expires_at":__import__("datetime").datetime.fromtimestamp(
+                    time.time()+3500,__import__("datetime").timezone.utc).isoformat(),
+            })
+            require(enrolled.get("status")=="assigned" and
+                    native_entries(host,drift)==[{"key":KEY,"value":candidate_text}],
+                    "Drift negative control was never genuinely assigned")
+            different="DISPOSABLE_UNAUTHORIZED_ENTRY_REPLACEMENT"
+            native_replace_entry(host,drift,different)
+            require(native_entries(host,drift)==[{"key":KEY,"value":different}],
+                    "Native mutation did not reach actual Session entry persistence")
+            drift_job=ordinary_prompt(s,drift,"changed-entry-must-deny")
+            native_wait(host,drift)
+            idle(host,[drift])
+            require(not model_requests_for(root,drift_job),
+                    "FAIL_OPEN: changed native entry reached provider without fresh fingerprint")
+            native_drift_messages=request(host,"GET",f"/api/session/{drift}/message?order=desc&limit=100")
+            require(any("LOOM_LIVE_ENTRY_DRIFT" in json.dumps(m) for m in native_drift_messages),
+                    "Native execution did not report exact entry drift pre-transport error")
+            import sqlite3
+            stores=list((root/"state/loom/actions-v1").glob("*/learning.sqlite"))
+            require(len(stores)==1, "No unambiguous project-local learning history for drift test")
+            with sqlite3.connect(stores[0]) as db:
+                row=db.execute("SELECT status,preflight_count FROM learning_live_experiments WHERE session_id=?",
+                               (drift,)).fetchone()
+            require(row and row[0] in ("assigned","possible-exposure") and row[1]>=1,
+                    "Drift invalidated or erased the stored trial instead of preserving uncertain history")
+            report["drift"]={"native_entry_mutated":True,
+                             "provider_received_changed_request":False,
+                             "error":"LOOM_LIVE_ENTRY_DRIFT",
+                             "trial_status_after_denial":row[0],
+                             "recovery":"operator-required; not a clean control"}
+            report["checks"].append("installed-native-entry-drift-denied-before-provider")
             report["status"]="QUALIFIED_BOUNDED"
     except Exception as error:
         report["status"]="UNPROVEN"
