@@ -40,6 +40,10 @@ async function prepare(host: Host, sessionID = "parent", agent = "author") {
     hypothesis: "Reduce repeated runtime corrections for a comparable objective",
     evidence_refs: ["source:prior-objectives"],
   }, sessionID, agent)).result
+  const current = host.nativeContexts.get(sessionID) as { data: Array<Record<string,unknown>> }
+  current.data.push({ id: "human-request-id-1", type:"user",
+    text: `LOOM-TRIAL-APPROVE candidate=${proposal.id} objective=${obj.id} budget=2`,
+    time: { created: Date.now() } })
   return { obj, proposal }
 }
 const call = (host: Host, operation: string, fields: Record<string, unknown> = {}, sessionID = "parent", agent = "author") =>
