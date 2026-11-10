@@ -6,7 +6,8 @@ import { Learning } from "../src/learning.js"
 import { Observer } from "../src/context.js"
 import { digest } from "../src/model.js"
 import { join } from "node:path"
-import { mkdir, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import { registeredLoom } from "./helpers/registered-loom.js"
 
 const actor = { session_id: "coder-parent", agent: "coder" }
@@ -267,4 +268,39 @@ for (const routingEnabled of [true, false]) test("corrupt optional learning stor
       kind: "result", statement: "Original Action evidence remains writable" })).result
     expect((await f.invoke("record", { operation: "query", action_id: created.id })).result.items.some((a: any) => a.id === record.id)).toBe(true)
   } finally { await f.close() }
+})
+
+test("public candidate and trial history survive plugin teardown and reopening with immutable earlier fingerprints", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "loom-learning-reopen-"))
+  try {
+    const first = await registeredLoom([], { directory })
+    let candidateID = ""
+    let olderTrialID = ""
+    try {
+      const created = (await first.invoke("tweak", { operation: "propose", target_kind: "agent",
+        target_id: "evaluator", base_sha256: fingerprint("native-agent-A"),
+        candidate_content: "Evaluator candidate B", hypothesis: "Inspect real-work effectiveness",
+        evidence_refs: ["https://github.com/bateau84/agents/blob/04a57028fcdb51da2f1d3e5791148c6b5256b533/agents/evaluator.md"] })).result
+      candidateID = created.id
+      for (let i = 0; i < 24; i++) {
+        const trial = (await first.invoke("tweak", { operation: "trial", id: candidateID,
+          observed_effect: i === 0 ? "harmful" : "inconclusive",
+          observed_sha256: created.candidate_sha256,
+          statement: "Source-backed but host-uncertified trial " + i,
+          evidence_refs: ["https://github.com/bateau84/loom/pull/217"] })).result
+        if (i === 0) olderTrialID = trial.id
+      }
+    } finally { await first.close() }
+    const reopened = await registeredLoom([], { directory })
+    try {
+      const firstPage = (await reopened.invoke("tweak", { operation: "read", id: candidateID })).result
+      const secondPage = (await reopened.invoke("tweak", { operation: "read", id: candidateID,
+        trial_before: firstPage.trials_next_before })).result
+      expect(secondPage.trials.map((x: any) => x.id)).toContain(olderTrialID)
+      expect(secondPage.trials[0].observed_effect).toBe("inconclusive")
+      expect(secondPage.trials.some((x: any) => x.observed_effect === "harmful")).toBe(true)
+      expect(firstPage.base_sha256).toBe(fingerprint("native-agent-A"))
+      expect(firstPage.candidate_sha256).toBe(fingerprint("Evaluator candidate B"))
+    } finally { await reopened.close() }
+  } finally { await rm(directory, { recursive: true, force: true }) }
 })

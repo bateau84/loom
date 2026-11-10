@@ -57,6 +57,9 @@ export class Learning {
     db.exec("CREATE INDEX IF NOT EXISTS learning_candidates_created ON learning_candidates(created_at, id);")
     db.exec("CREATE TABLE IF NOT EXISTS learning_trials (id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL REFERENCES learning_candidates(id), recorded_at TEXT NOT NULL, session_id TEXT NOT NULL, agent TEXT NOT NULL, observed_sha256 TEXT, observed_effect TEXT NOT NULL, statement TEXT NOT NULL, evidence_refs TEXT NOT NULL);")
     db.exec("CREATE INDEX IF NOT EXISTS learning_trials_candidate ON learning_trials(candidate_id, recorded_at);")
+    // SQLite secondary indexes include the rowid; support insertion-order
+    // keyset continuation without sorting every older report for a candidate.
+    db.exec("CREATE INDEX IF NOT EXISTS learning_trials_order ON learning_trials(candidate_id);")
   }
 
   private transaction<T>(run: () => T): T {

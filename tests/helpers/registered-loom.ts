@@ -4,8 +4,8 @@ import { join } from "node:path"
 import plugin from "../../server.js"
 
 /** Actual public plugin setup/storage with a simulated registration host, not a live CLI. */
-export async function registeredLoom(initialSkills: any[] = [], options: { beforeSetup?: (directory: string) => Promise<void>; versionedHost?: boolean } = {}) {
-  const directory = await mkdtemp(join(tmpdir(), "loom-tool-help-"))
+export async function registeredLoom(initialSkills: any[] = [], options: { beforeSetup?: (directory: string) => Promise<void>; versionedHost?: boolean; directory?: string } = {}) {
+  const directory = options.directory ?? await mkdtemp(join(tmpdir(), "loom-tool-help-"))
   const previous = { state: process.env.XDG_STATE_HOME, config: process.env.OPENCODE_CONFIG_DIR }
   process.env.XDG_STATE_HOME = join(directory, "state")
   process.env.OPENCODE_CONFIG_DIR = join(directory, "config")
@@ -120,7 +120,7 @@ export async function registeredLoom(initialSkills: any[] = [], options: { befor
     finally {
       if (previous.state === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = previous.state
       if (previous.config === undefined) delete process.env.OPENCODE_CONFIG_DIR; else process.env.OPENCODE_CONFIG_DIR = previous.config
-      await rm(directory, { recursive: true, force: true })
+      if (!options.directory) await rm(directory, { recursive: true, force: true })
     }
   }
   try {

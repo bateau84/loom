@@ -44,6 +44,8 @@ Successful permission-checked `loom_assessment` and `loom_qa` loads also retain 
 
 The base hash is the author's claimed source fingerprint, not automatically verified by this tool. `candidate_sha256` hashes the exact proposed UTF-8 content. Propose stores a **candidate**, not an activated treatment. Read it later by ID, list candidates with pagination, follow `trials_next_before` via `trial_before` on `operation:read` to recover earlier reports, submit a new candidate linked with `revised_from`, or retire an obsolete candidate. Retiring preserves historical evidence instead of erasing the record. Do not store private transcripts, secrets or original tool outputs in candidates.
 
+For real-work experiments, record the objective and eligibility in an Action/Session, retain original Session/child references, observed checks and human intervention, and treat each corrective dispatch as part of the same objective. A source ID and hash do not establish that the intervention was delivered. Compare independently relevant objectives over an appropriate period, including negative counterexamples and uncertainty. If no comparable population or authorized native history exists, mark the evaluation inconclusive; do not manufacture a success rate.
+
 A `trial` record describes the calling Session's observation (`promising`, `harmful`, `neutral`, `inconclusive`, or `not-exercised`). It is explicitly **agent-reported**, not a host-certified assignment or evidence that the candidate was injected. Reference actual verification records. Trial effects are not aggregated into a claim of benefit by Loom.
 
 ## Why live substitution is not enabled
