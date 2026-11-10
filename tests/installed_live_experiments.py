@@ -199,8 +199,13 @@ def run(args):
             # Python submit time. Fixture blocks after doStream receipts exist.
             cjob=ordinary_prompt(s,control,"control",hold="after")
             tjob=ordinary_prompt(s,treatment,"treatment",hold="after")
-            for job in (cjob,tjob):
-                s.await_event(lambda e,j=job:e["type"]=="provider-held" and e["data"].get("job")==j)
+            report["barrier_jobs"] = {"control": cjob, "treatment": tjob}
+            for label,job in (("control",cjob),("treatment",tjob)):
+                report["stage"] = "provider-barrier-" + label
+                try:
+                    s.await_event(lambda e,j=job:e["type"]=="provider-held" and e["data"].get("job")==j)
+                except Exception as error:
+                    raise RuntimeError(f"PROVIDER_BARRIER_MISSING_{label}: {error}") from error
             s.release(cjob)
             s.release(tjob)
             idle(host,[control,treatment])
@@ -259,6 +264,19 @@ def run(args):
     except Exception as error:
         report["status"]="UNPROVEN"
         report["blocker"]=type(error).__name__+": "+str(error)
+        if "root" in locals():
+            # Bounded source-reduced diagnostic: never persist full prompts,
+            # tool inputs, native message bodies, or provider credentials.
+            report["event_summary"] = [{
+                "type":e.get("type"),
+                "sessionID":e.get("data",{}).get("sessionID"),
+                "agent":e.get("data",{}).get("agent"),
+                "tool":e.get("data",{}).get("tool"),
+                "status":e.get("data",{}).get("status"),
+                "kind":e.get("data",{}).get("kind"),
+                "job":e.get("data",{}).get("job"),
+                "role":e.get("data",{}).get("role"),
+            } for e in events(root)[-60:]]
     finally:
         if host is not None:
             host.close()
@@ -276,7 +294,7 @@ def main():
     parser.add_argument("--report-directory",type=Path,required=True)
     args=parser.parse_args()
     result=run(args)
-    print(json.dumps({k:result.get(k) for k in ("status","checks","blocker")},indent=2))
+    print(json.dumps({k:result.get(k) for k in ("status","checks","stage","blocker","barrier_jobs","event_summary")},indent=2))
     if result["status"]!="QUALIFIED_BOUNDED":
         raise SystemExit(1)
 
