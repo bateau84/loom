@@ -127,11 +127,29 @@ A bounded trial using existing tools would use `loom_action` and `loom_record` t
 
 This checks **source resolution, attribution, child relationships, interpretation-versus-fact separation, recovery, read authorization and capture-off**, not the quality of any model's work. The local provider is *scripted*; child creation and correction decisions are driven by the harness rather than a reasoning Coder. Original exports may omit history or be altered, and QA records still describe attributed judgments. See the separate `installed-objective-qualification-<commit>` CI artifact for exact source hashes, host version, observed attempts and limitations. This does **not** qualify real-model whole-objective audits, autonomous dispatch, instruction effectiveness or longitudinal comparisons.
 
-## Why live substitution is not enabled
+## Live additive Session instructions (qualified subset only)
 
-OpenCode 2.2.6 has a mutable skill registry at the shared *location* scope. Toggling that global registry can contaminate concurrent Sessions. Native context hooks appear able to deliver per-Session overlays, but this branch has **not** qualified all relevant routes (native skill tool, attachment, ordinary file read, context compaction, review companion). No automatic variant assignment or mutation has been installed.
+[Host qualification #221](https://github.com/bateau84/loom/pull/221) passed
+its pinned OpenCode 2.2.6 installed local-provider tests for **additive**
+per-Session instruction entries. It did **not** prove safe replacement of
+a loaded skill, an agent's canonical system text or every native delivery
+route.
 
-Use an **explicitly isolated manual experiment** in a disposable worktree/host when useful. Keep current and candidate content fingerprints, actual exposure, Session family and end-to-end outcome evidence together. Do not alter canonical guidance just because one run succeeded. Before enabling a live experiment hook in a future focused change, prove native delivery isolation and failure paths on an exact installed host with concurrent control and treatment Sessions, no shared-registry writes, stable variant assignment, trustworthy receipts and rollback after interrupted work.
+Draft [opt-in live experiment operating procedure](live-instruction-experiments.md)
+adds explicit authorization and bounded Session entry assignment, source
+freshness, pre-provider observations, stop and recovery. It remains inactive
+without an approved native user message and permission. Its exact-host
+[installed controller suite](https://github.com/bateau84/loom/actions/runs/42905765436)
+passed 12 provider-observed mechanical checks at `de895ca1`: concurrent
+control/treatment, explicitly enrolled child and uninvolved sibling,
+interruption, restart, withdrawal, and drift rejection. Model-delivery
+receipts in that suite are local scripted-provider evidence; production Loom
+context hooks or a matching entry hash alone do **not** certify exposure,
+and no real-work effectiveness has been established.
+
+Keep manual isolated worktree/host trials for skill replacements and
+unqualified routes. Never toggle the location-scoped registry while concurrent
+controls run. Neither withdrawal nor restart cleanses prior model context.
 
 ## Boundaries
 
