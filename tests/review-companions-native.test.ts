@@ -229,3 +229,26 @@ test("foreign Sessions and cancellation cannot load a companion", async () => {
     await expect(readCompanion(join(f.skillDirectory, "ASSESSMENT.md"), abort.signal)).rejects.toThrow("Cancelled review load")
   } finally { await f.close() }
 })
+
+test("successful companion revisions leave source-linked fingerprints, while failed loads do not", async () => {
+  const f = await fixture()
+  try {
+    await writeFile(join(f.directory, ".loom.yaml"), JSON.stringify({ agents: {
+      custom: { roles: ["assessment"] }, challenger: { roles: ["qa"] },
+    }, instructions: { enabled: false }, ledger: { capture: "automatic" } }))
+    const path = join(f.skillDirectory, "ASSESSMENT.md")
+    const before = await readFile(path)
+    const first = (await f.invoke("assessment", { skill: "domain-skill" }, "audit", "custom")).result
+    await writeFile(path, "Revised assessment revision B\n")
+    const second = (await f.invoke("assessment", { skill: "domain-skill" }, "audit", "custom")).result
+    expect(first.sha256).toBe(createHash("sha256").update(before).digest("hex"))
+    expect(first.sha256).not.toBe(second.sha256)
+    const history = (await f.invoke("record", { operation: "query", session_only: true }, "audit", "custom")).result.items
+    const captures = history.filter((r: any) => r.data.phase === "companion-load-result")
+    expect(captures.map((r: any) => r.data.content_sha256)).toEqual([first.sha256, second.sha256])
+    expect(captures.map((r: any) => r.data.lens)).toEqual(["assessment", "assessment"])
+    await expect(f.invoke("qa", { skill: "domain-skill" }, "audit", "custom")).rejects.toThrow("requires the qa role")
+    const after = (await f.invoke("record", { operation: "query", session_only: true }, "audit", "custom")).result.items
+    expect(after.filter((r: any) => r.data.phase === "companion-load-result")).toHaveLength(2)
+  } finally { await f.close() }
+})

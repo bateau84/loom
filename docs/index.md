@@ -23,6 +23,7 @@ scan root so the profile is discovered; it declares no mandatory link counts.
 ## Agent work and evidence
 
 - [Deep retrospective session tracing](retrospective-trace.md) — Original Session evidence sources, access checks and coverage limits
+- [Learning evidence and provisional experiments](learning-experiments.md) — Bounded insight statistics, content fingerprints and manual tweak trials
 - [Collaboration](collaboration.md) — Progress reports and contextual questions
 - [Context relevance](context-relevance.md) — Bounded useful context and scope
 - [Evidence reliability](evidence-reliability.md) — Pairing, capture gaps and recovery

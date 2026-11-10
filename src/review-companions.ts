@@ -9,6 +9,10 @@ import { decodeConfigYaml } from "./config-parser.js"
 import { reviewCompanionMarkdown } from "./response-format.js"
 
 export type ReviewLens = "assessment" | "qa"
+export type CompanionReceipt = {
+  sessionID: string; agent: string; messageID: string; callID: string;
+  skillID: string; lens: ReviewLens; contentSha256: string;
+}
 export const COMPANION_MAX_BYTES = 65536
 const filenames = { assessment: "ASSESSMENT.md", qa: "QA.md" } as const
 
@@ -82,7 +86,7 @@ export async function readCompanion(path: string, signal: AbortSignal): Promise<
 }
 
 /** Read-only native-skill adapters: no dependency on the Action store or workflow history. */
-export async function registerReviewCompanions(ctx: Plugin.Context): Promise<() => Promise<void>> {
+export async function registerReviewCompanions(ctx: Plugin.Context, observe?: (receipt: CompanionReceipt) => Promise<void>): Promise<() => Promise<void>> {
   const directory = await realpath(ctx.location.directory)
   const paths = configPaths(directory)
   const lifetime = new AbortController()
@@ -145,7 +149,18 @@ export async function registerReviewCompanions(ctx: Plugin.Context): Promise<() 
         const result = companion
           ? { skill: id, methodology: lens, available: true, path, ...companion }
           : { skill: id, methodology: lens, available: false, path, reason: "companion-not-found" }
-        return { content: record(raw).response_format === "json" ? JSON.stringify({ result }) : reviewCompanionMarkdown(result) }
+        const rendered = record(raw).response_format === "json" ? JSON.stringify({ result }) : reviewCompanionMarkdown(result)
+        // At this producer boundary the exact authorized file bytes and tool
+        // response are known; final model consumption is not.
+        if (companion && observe) {
+          try {
+            await observe({ sessionID: tool.sessionID, agent: tool.agent, messageID: tool.messageID,
+              callID: tool.id, skillID: id, lens, contentSha256: companion.sha256 })
+          } catch (error) {
+            console.warn("Loom companion provenance unavailable:", error instanceof Error ? error.message : String(error))
+          }
+        }
+        return { content: rendered }
       },
     })
   })

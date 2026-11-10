@@ -17,6 +17,8 @@ companion loaders, not native execution.
 | `loom_plan` | Read/replace optional nodes; no dispatch or skill loading. |
 | `loom_context` | Select work, pin a result handoff or limit prior opinions during independent review. |
 | `loom_record` | Store/query concerns, claims, results, reviews, progress, questions and history. |
+| `loom_insights` | Read bounded, descriptive project/Action statistics with source IDs and coverage limits; not an objective verdict. |
+| `loom_tweak` | Store fingerprinted tweak proposals and trials; no activation. |
 | `loom_assessment` | Load ASSESSMENT.md; requires configured assessment role. |
 | `loom_qa` | Load QA.md; requires configured qa role. |
 
@@ -117,7 +119,7 @@ actual outcome. Do not fetch a newer reference to make old work look current.
 `result` alone is not completion. Check `view:progress`; changed contracts may
 need reconfirmation, while unrelated replanning does not erase history.
 
-Completion does not complete parents/Actions or establish acceptance. At review start, select relevant skills independently from task/artifacts. Producer skill IDs are optional pointers: add/reject them; do not replay every implementation skill. Assessment checks conformance/obligations; QA challenges failures, regressions and shared assumptions. Load the relevant lens with `loom_assessment` or `loom_qa`, using exact IDs. Matching role and native permission are required; no Action, Plan or prior receipt. Missing companions return `available:false`, never SKILL.md. Loading/passing does not establish independent acceptance or task success. Record actual `pass`/`fail`/`inconclusive` findings with `loom_record`. Without an Action, verdicts use the calling Session; `session_only:true` overrides selected Action, and Session evidence IDs must be unscoped observations. No gate is created.
+Completion never completes parent/Action or proves acceptance. Select review skills from actual work, not only producer pointers. Assessment checks conformance; QA seeks hidden failures. Load exact IDs with `loom_assessment` or `loom_qa`; role and native permission are required, not an Action/Plan/receipt. Missing companions return `available:false`, never SKILL.md. A lens load or reported pass does not establish independent acceptance. Record real `pass`/`fail`/`inconclusive` findings via `loom_record`. Without Action, findings stay with Session; `session_only:true` overrides selection and Session evidence must cite unscoped observations. No gate is created.
 
 `reopen` appends a reason without erasing history or undoing native side effects.
 Update Action state separately; paused/cancelled labels do not stop execution.

@@ -52,10 +52,10 @@ test("actual Code Mode search returns each full registered description and calla
   })
 })
 
-test("namespace search carries all eight manuals without file reads, selected work or injected roles", async () => {
+test("namespace search carries the complete current tool inventory without file reads, selected work or injected roles", async () => {
   await withSearch(async (search, f) => {
-    const result = await search({ namespace: "loom", limit: 8 })
-    expect(result.items).toHaveLength(8)
+    const result = await search({ namespace: "loom", limit: f.tools.size })
+    expect(result.items).toHaveLength(f.tools.size)
     expect(result.remaining).toBe(0)
     for (const item of result.items) {
       const name = item.path.split(".").at(-1)

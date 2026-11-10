@@ -9,7 +9,14 @@ timestamp: 2026-10-24T00:00:00Z
 # Manual stopped-writers backup and restore
 
 This is an offline, operator-initiated procedure for the Action Store, not the
-legacy configuration exporter. It preserves the original files and restores to a
+legacy configuration exporter.
+
+**Learning-state exception:** `loom_tweak` proposals and trial reports are stored
+separately in `learning.sqlite` alongside the Action Store. This tested procedure
+backs up and restores **only `ledger.sqlite`**, not the learning database. For
+now preserve a separate stopped-writers copy of `learning.sqlite` and its WAL
+sidecars. That separate restore path has not been qualified; do not claim a
+complete learning-state backup from this procedure. It preserves the original files and restores to a
 **separate, previously nonexistent directory**. It does not install the restored
 state into a running host, migrate schemas, or repair damaged data.
 

@@ -4,8 +4,8 @@ import { join } from "node:path"
 import plugin from "../../server.js"
 
 /** Actual public plugin setup/storage with a simulated registration host, not a live CLI. */
-export async function registeredLoom(initialSkills: any[] = []) {
-  const directory = await mkdtemp(join(tmpdir(), "loom-tool-help-"))
+export async function registeredLoom(initialSkills: any[] = [], options: { beforeSetup?: (directory: string) => Promise<void>; versionedHost?: boolean; directory?: string } = {}) {
+  const directory = options.directory ?? await mkdtemp(join(tmpdir(), "loom-tool-help-"))
   const previous = { state: process.env.XDG_STATE_HOME, config: process.env.OPENCODE_CONFIG_DIR }
   process.env.XDG_STATE_HOME = join(directory, "state")
   process.env.OPENCODE_CONFIG_DIR = join(directory, "config")
@@ -33,6 +33,12 @@ export async function registeredLoom(initialSkills: any[] = []) {
   }
   const registration = () => ({ dispose: async () => {} })
   const ctx = {
+    ...(options.versionedHost ? {
+      app: { version: "2.2.6" },
+      model: { list: async () => ({ data: [] }) },
+      provider: { list: async () => ({ data: [] }) },
+      integration: { connection: { active: async () => undefined } },
+    } : {}),
     location: { directory, project: { id: "tool-help", canonical: directory, directory } },
     agent: { list: async () => nativeAgents, transform: () => { throw new Error("No agent rewriting") } },
     permission: {
@@ -114,12 +120,13 @@ export async function registeredLoom(initialSkills: any[] = []) {
     finally {
       if (previous.state === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = previous.state
       if (previous.config === undefined) delete process.env.OPENCODE_CONFIG_DIR; else process.env.OPENCODE_CONFIG_DIR = previous.config
-      await rm(directory, { recursive: true, force: true })
+      if (!options.directory) await rm(directory, { recursive: true, force: true })
     }
   }
   try {
     // Discovery must not depend on an agent role, injected guide or selected Action.
     await writeFile(join(directory, ".loom.yaml"), "agents: {}\ninstructions: {enabled: false}\nledger: {capture: off}\n")
+    await options.beforeSetup?.(directory)
     dispose = await (plugin as any).setup(ctx)
     return {
       tools, namespaces, close, directory, hooks, sessions, skills, reloadSkills, nativeInputs, sessionReads, nativeListRequests, nativePages, nativeContexts,
