@@ -2,9 +2,9 @@
 
 ## Keep Loom optional
 
-Action and Plan are optional. OpenCode owns Sessions, execution, delegation,
-skills, models and permissions. Loom records intent and history, not execution;
-role checks restrict companion loaders only.
+A conversation needs no Action. An Action needs no Plan. OpenCode owns
+Sessions, execution, delegation, skills, models and permissions. Loom records
+intent and history; it is not a scheduler. Role checks restrict companion loaders.
 
 ## Find the right tool
 
