@@ -310,7 +310,7 @@ def run(args):
                     "Passive host observation failed; native evidence invalid")
             report["native_model_requests"] = sum(e["type"] == "model-request" for e in events(root))
             require(report["native_model_requests"] > 0, "Installed host made no actual model request")
-            require(all(e["data"]["providerID"] == "question-fixture"
+            require(all(e["data"].get("model", {}).get("providerID") == "question-fixture"
                         for e in events(root) if e["type"] == "model-request"),
                     "A non-scripted paid or unqualified model was requested")
             report["status"] = "PASS"
