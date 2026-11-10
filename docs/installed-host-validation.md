@@ -51,10 +51,23 @@ must be escalated. Record PASS/FAIL/UNPROVEN, substitutions, logs and limitation
 repeat affected proof when content changes. No normal-host API, config, DB,
 restart, active integration or activation is authorized by this document.
 
-## OpenCode 2.2.0 upgrade candidate
+## OpenCode 2.2.6 compatibility candidate
+
+The current PR pins `@opencode/plugin@2.2.6` and separately installs
+`@opencode/cli@2.2.6` in both installed-host workflows. It also updates
+the exact-version checks and the native Session read-denial applicability
+oracle after inspection of the tagged 2.2.6 implementation.
+
+These workflows must run on the proposed commit before 2.2.6 is
+qualified. Boot-only evidence must not be interpreted as question,
+compaction, provider, MCP, or billing proof. The older 2.2.0 results are
+historical and do not carry over; see
+[2.2.6 upgrade notes](opencode-2.2.6.md).
+
+## OpenCode 2.2.0 (historical upgrade record)
 
 The candidate source dependency, the isolated CLI used by both host workflows,
-and the installed smoke/question harnesses are now pinned to **2.2.0**.
+and the installed smoke/question harnesses were pinned to **2.2.0**.
 These changes do not retroactively upgrade the historical 2.0.32 evidence.
 
 In addition to E1–E3, the installed question harness now requires
@@ -98,7 +111,7 @@ A historical, separately copied 2.0.29 artifact boot run (SHA-256
 `d984373ec43823906ace9d9202bb2b37175ef7e36d84fdafad159c56463782de`) used SDK/CLI
 2.0.29. It is retained only as historical evidence and is **not supported or
 maintained**; its workflow has been removed. OpenCode 2.0.32 was the sole
-qualified predecessor; 2.2.0 must pass its own assembled-host checks.
+qualified predecessor at that time; 2.2.0 needed its own assembled-host checks.
 
 The installed-question qualification has passed for the exact packed candidate
 `loom-plugin@2.0.0-alpha.1`, SHA-256

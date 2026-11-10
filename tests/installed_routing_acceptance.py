@@ -25,12 +25,12 @@ from routing_acceptance_oracle import (
     expect_failed_local_provider, run_mutation_controls,
 )
 
-HOST_VERSION = "2.2.0"
-SDK_VERSION = "2.2.0"
+HOST_VERSION = "2.2.6"
+SDK_VERSION = "2.2.6"
 PROVIDERS = ("route-primary", "route-secondary", "route-metered")
 AGENTS = ("architect", "coder", "reviewer")
 
-# These require capabilities outside the current SDK/CLI 2.2.0 host-unqualified
+# These require capabilities outside the current SDK/CLI 2.2.6 host-unqualified
 # routing foundation. Do not convert simulated calls or skipped cases to PASS.
 REQUIREMENTS = [
     (1, "UNPROVEN", "Positive role-to-model selection on installed host needs verified included billing; mocked adapter tests are separate."),
@@ -40,30 +40,30 @@ REQUIREMENTS = [
     (5, "UNPROVEN", "Mocked pre-dispatch rejection is tested; local installed fixtures have no eligible committed route."),
     (6, "UNPROVEN", "Independent Bun processes share real SQLite quota blocks/recovery; assembled native dispatch lacks included attestation."),
     (7, "UNPROVEN", "Real shared store isolates synthetic provider accounts; installed native account switching is not proven."),
-    (8, "UNPROVEN", "Managed routing on 2.2.0 is rejected at the host-unqualified guard, before model billing policy is evaluated."),
+    (8, "UNPROVEN", "Managed routing on 2.2.6 is rejected at the host-unqualified guard, before model billing policy is evaluated."),
     (9, "UNPROVEN", "Global-default transport is denied locally, but the scenario also has no eligible route; the mismatch-specific guard is not isolated."),
     (10, "UNPROVEN", "In-process adapter has an account/route guard; native stream/account lease cannot be proven."),
     (11, "UNPROVEN", "Native disabled-path errors and tools are counted; managed-tool interruption and any live fallback remain unproven."),
-    (12, "PASS", "Actual installed OpenCode 2.2.0 host executes routing-disabled primary, alternate and tool-continuation paths."),
+    (12, "PASS", "Actual installed OpenCode 2.2.6 host executes routing-disabled primary, alternate and tool-continuation paths."),
 ]
 
 # These require trusted native host / provider capabilities not supplied by
 # local in-memory language models. A simulated response is never a PASS here.
 NOT_PROVEN = {
     "positive-eligible-managed-native-request":
-        "OpenCode 2.2.0 managed routing is host-unqualified and local providers cannot attest included subscriptions",
+        "OpenCode 2.2.6 managed routing is host-unqualified and local providers cannot attest included subscriptions",
     "initial-replan-after-shared-exhaustion":
         "Replanning is mocked with test-only attestations, not observed on an installed eligible route",
     "committed-request-pre-dispatch-block":
         "The installed local fixtures have no previously committed verified-included route to pre-block",
     "live-provider-account-lease":
-        "No account-bound native stream lease is proven for current SDK/CLI 2.2.0 managed routing",
+        "No account-bound native stream lease is proven for current SDK/CLI 2.2.6 managed routing",
     "real-opencode-go-quota":
         "OpenCode Go has no supported provider-enforced, no-paid inclusion attestation in this setup",
     "real-provider-billing":
         "No real provider credentials or authorized paid API requests are supplied",
     "positive-managed-route-with-matched-sdk":
-        "Installed CLI and plugin SDK both use 2.2.0; exact matching is proven, but successful managed routing on this pair is intentionally host-unqualified and UNPROVEN",
+        "Installed CLI and plugin SDK both use 2.2.6; exact matching is proven, but successful managed routing on this pair is intentionally host-unqualified and UNPROVEN",
     "live-fallback-out-of-scope":
         "No safe in-flight model/provider replacement API is available or tested",
 }
@@ -320,7 +320,7 @@ def run_case(
             require(quota_db.is_file() and stat.S_IMODE(quota_db.stat().st_mode) == 0o600,
                     "Corrupt private fixture must remain intact and private")
         elif enabled:
-            require(not quota_db.exists(), "Unqualified 2.2.0 managed routing must not open shared quota state")
+            require(not quota_db.exists(), "Unqualified 2.2.6 managed routing must not open shared quota state")
         elif name == "disabled-primary":
             require(not quota_db.exists(), "Routing-disabled native mode opened the shared quota DB")
         # The external fixture already omits raw prompts/headers/accounts.
@@ -363,7 +363,7 @@ def run(cli: Path, repo: Path, plugin: Path, artifact: Path, output: Path,
         "protection_controls": "NOT RUN", "live_provider_status": "UNPROVEN",
         "no_real_provider_credentials_used": True,
         "no_paid_provider_requests_allowed": True,
-        "version_qualification": "OpenCode CLI 2.2.0 with matched SDK 2.2.0; managed routing remains host-unqualified",
+        "version_qualification": "OpenCode CLI 2.2.6 with matched SDK 2.2.6; managed routing remains host-unqualified",
         "requirements": [{"id": number, "status": status, "evidence": evidence}
                          for number, status, evidence in REQUIREMENTS],
         "cases": [], "negative_controls": None,
@@ -385,7 +385,7 @@ def run(cli: Path, repo: Path, plugin: Path, artifact: Path, output: Path,
         observed = subprocess.check_output([str(cli), "--version"], timeout=15, text=True).strip()
         report["host_version_observed"] = observed
         require(observed in (HOST_VERSION, "opencode v" + HOST_VERSION),
-                "Host must be an unmodified OpenCode 2.1.4")
+                "Host must be an unmodified OpenCode 2.2.6")
         with tempfile.TemporaryDirectory(prefix="loom-routing-acceptance-") as temp:
             root = Path(temp).resolve()
             project = root / "project"
