@@ -500,6 +500,24 @@ export default Plugin.define({
                 if (input.operation === "read") result = e.read(actor.session_id)
                 else if (input.operation === "stop") result = await e.stop(actor, host)
                 else if (input.operation === "start") {
+                  // The native user's exact affirmative message is required.
+                  // Agent-supplied flags or arbitrary evidence URLs alone grant nothing.
+                  const verifyApproval = async () => {
+                    const messages = unwrapped(await ctx.session.context({
+                      sessionID: actor.session_id as Parameters<typeof ctx.session.context>[0]["sessionID"],
+                    }))
+                    const approvedLine = `LOOM-TRIAL-APPROVE candidate=${String(input.candidate_id)} objective=${String(input.objective_id)} budget=${String(input.budget_requests)}`
+                    const found = Array.isArray(messages) ? messages.filter(message =>
+                      message && typeof message === "object" && !Array.isArray(message) &&
+                      (message as {id?:unknown}).id === input.authorization_ref &&
+                      (message as {type?:unknown}).type === "user" &&
+                      typeof (message as {text?:unknown}).text === "string" &&
+                      (message as {text:string}).text.split("\\n").some(line => line.trim() === approvedLine)
+                    ) : []
+                    if (found.length !== 1)
+                      throw new Error("LOOM_LIVE_NOT_AUTHORIZED: missing exact native user approval for candidate, objective and budget")
+                  }
+                  await verifyApproval()
                   result = await e.start(actor, input as unknown as StartExperiment, host, async () => {
                     // Explicit native permission gate, with no persisted grant requested.
                     // Tool caller's opt-in alone does not satisfy authorization.
@@ -508,6 +526,7 @@ export default Plugin.define({
                       sessionID: actor.session_id, agent: actor.agent,
                       source: { type: "tool", messageID: toolContext.messageID, id: toolContext.id } })
                     toolContext.signal.throwIfAborted()
+                    await verifyApproval()
                   })
                 } else throw new Error("Unknown live experiment operation")
                 break
