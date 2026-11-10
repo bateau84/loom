@@ -138,7 +138,7 @@ export default Plugin.define({
     let filename = join(state, "ledger.sqlite")
     let stage = "state-directory"
     let db: Database | undefined, learningDB: Database | undefined
-    let store: Store, observer: Observer, learning: Learning
+    let store: Store, observer: Observer, learning: Learning | undefined
     try {
       await mkdir(state, { recursive: true, mode: 0o700 })
       stage = "database-file"
@@ -149,21 +149,38 @@ export default Plugin.define({
       db = new Database(filename)
       stage = "store-initialization"
       store = new Store(db, projectScope)
-      stage = "learning-database-file"
-      const learningPath = join(state, "learning.sqlite")
-      const learningHandle = await open(learningPath, "a", 0o600)
-      await learningHandle.close()
-      stage = "learning-database-open"
-      learningDB = new Database(await realpath(learningPath))
-      stage = "learning-initialization"
-      learning = new Learning(learningDB, store, db)
       stage = "observer-initialization"
       observer = new Observer(store)
     } catch (error) {
       // Cleanup must not replace the initialization cause. No recovery or retry here.
-      try { learningDB?.close() } catch { /* Preserve the primary failure. */ }
       try { db?.close() } catch { /* Preserve the primary failure. */ }
       throw new Error(`Loom startup failed (stage=${stage}, database=${JSON.stringify(filename)}): ${error instanceof Error ? error.message : String(error)}`, { cause: error })
+    }
+    // Learning history is optional; corruption must never remove the healthy
+    // Action tools, observation capture or the independently guarded routing path.
+    let learningStage = "learning-database-file", learningFailure: string | undefined
+    try {
+      const learningPath = join(state, "learning.sqlite")
+      const learningHandle = await open(learningPath, "a", 0o600)
+      await learningHandle.close()
+      learningStage = "learning-database-open"
+      learningDB = new Database(await realpath(learningPath))
+      learningStage = "learning-initialization"
+      learning = new Learning(learningDB, store, db)
+    } catch (error) {
+      learningFailure = learningStage
+      console.warn(`Loom optional learning unavailable (${learningStage}): ${error instanceof Error ? error.message : String(error)}`)
+      try { learningDB?.close() } catch { /* Keep the original learning failure. */ }
+      learningDB = undefined
+      learning = undefined
+    }
+    const learningStatus = () => learning
+      ? { available: true, storage: "separate-project-sqlite", automatic_mutation: false }
+      : { available: false, stage: learningFailure ?? "unavailable", automatic_mutation: false,
+          note: "Existing Action/record/trace tools and native execution remain available; learning evidence is preserved for operator repair" }
+    const requiredLearning = () => {
+      if (!learning) throw new Error(`LOOM_LEARNING_UNAVAILABLE: learning subsystem failed at ${learningFailure ?? "unknown"}; existing Action history is still available`)
+      return learning
     }
     const database = db, learningDatabase = learningDB
     // Scoped to one live plugin instance; never recover a dispatch token from untrusted history.
@@ -249,6 +266,7 @@ export default Plugin.define({
                 result = {
                   agents: entries, role_descriptions: roleDescriptions(snapshot.config), config_loads: configLoadStatus(),
                   evidence: { capture: snapshot.config.ledger.capture, ...observer.status() },
+                  learning: learningStatus(),
                   config_sources: snapshot.sources, errors: snapshot.errors,
                   warnings: entries.filter(a => a.configured && !a.available).map(a => `Configured agent is unavailable: ${a.id}`),
                   ...(modelPolicies || routing.status === "blocked-config" ? {
@@ -324,24 +342,24 @@ export default Plugin.define({
                 if (input.operation === "action") {
                   const actionID = input.action_id === undefined ? store.selected(actor.session_id)?.action_id : String(input.action_id)
                   if (!actionID) throw new Error("Insights action view requires explicit or selected action_id")
-                  result = learning.events({ action_id: actionID, before: input.before as number | undefined, limit: input.limit as number | undefined,
+                  result = requiredLearning().events({ action_id: actionID, before: input.before as number | undefined, limit: input.limit as number | undefined,
                     since_at: input.since_at as string | undefined, until_at: input.until_at as string | undefined })
                 } else if (input.operation === "window") {
                   if (input.action_id !== undefined) throw new Error("Window insights cannot use action_id")
-                  result = learning.events({ before: input.before as number | undefined, limit: input.limit as number | undefined,
+                  result = requiredLearning().events({ before: input.before as number | undefined, limit: input.limit as number | undefined,
                     since_at: input.since_at as string | undefined, until_at: input.until_at as string | undefined })
                 } else throw new Error("Unknown insights operation")
                 break
               case "tweak":
-                if (input.operation === "propose") result = learning.propose(actor, {
+                if (input.operation === "propose") result = requiredLearning().propose(actor, {
                   target_kind: input.target_kind as string, target_id: input.target_id as string,
                   base_sha256: input.base_sha256 as string, candidate_content: input.candidate_content as string,
                   hypothesis: input.hypothesis as string, evidence_refs: input.evidence_refs as string[] | undefined,
                   revised_from: input.revised_from as string | undefined })
-                else if (input.operation === "list") result = learning.list(input.offset as number | undefined)
-                else if (input.operation === "read") result = learning.read(String(input.id), input.trial_before as number | undefined)
-                else if (input.operation === "retire") result = learning.retire(String(input.id))
-                else if (input.operation === "trial") result = learning.trial(actor, { id: String(input.id),
+                else if (input.operation === "list") result = requiredLearning().list(input.offset as number | undefined)
+                else if (input.operation === "read") result = requiredLearning().read(String(input.id), input.trial_before as number | undefined)
+                else if (input.operation === "retire") result = requiredLearning().retire(String(input.id))
+                else if (input.operation === "trial") result = requiredLearning().trial(actor, { id: String(input.id),
                   observed_sha256: input.observed_sha256 as string | undefined,
                   observed_effect: input.observed_effect as string, statement: input.statement as string,
                   evidence_refs: input.evidence_refs as string[] | undefined })
@@ -662,8 +680,7 @@ export default Plugin.define({
     } catch (error) {
       lifetime.abort()
       await Promise.allSettled(disposers.map(d => d.dispose()))
-      learningDatabase.close()
-      database.close()
+      try { learningDatabase?.close() } finally { database.close() }
       throw error
     }
     // The early guard remains restrictive until the entire plugin initialized.
@@ -685,8 +702,7 @@ export default Plugin.define({
       startupDispatch = "deny"
       lifetime.abort()
       await Promise.allSettled(disposers.map(d => d.dispose()))
-      learningDatabase.close()
-      database.close()
+      try { learningDatabase?.close() } finally { database.close() }
       await disposeStartupGuard()
     }
     } catch (error) {
