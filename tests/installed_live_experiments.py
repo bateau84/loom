@@ -118,6 +118,17 @@ def provider_observation(root, job, treatment, host, session, candidate_text):
             "system_fingerprints": sorted({digest(prompt_text(row, "system")) for row in rows})}
 
 
+def native_wait(host, session):
+    """Wait for the actual native coordinator; /active alone can briefly be empty."""
+    token = base64.b64encode(("opencode:" + host.password).encode()).decode()
+    req = Request(host.url + f"/api/experimental/session/{session}/wait",
+                  data=b"", method="POST",
+                  headers={"Authorization": "Basic " + token, "Content-Type": "application/json"})
+    with host.opener.open(req, timeout=30) as response:
+        payload = response.read(1024 + 1)
+    require(len(payload) <= 1024, "Native coordinator wait returned oversized result")
+
+
 def ordinary_prompt(scenario, session, case, hold=None):
     job, _ = scenario.begin(session, None, hold=hold)
     return job
@@ -267,11 +278,28 @@ def run(args):
             started=len(events(root))
             unsafe='return await tools.loom.agents({})'
             rejected,_=s.begin(treatment,unsafe)
+            s.await_event(lambda e:e["type"]=="provider-inputs" and e["data"].get("job")==rejected)
+            native_wait(host,treatment)
             idle(host,[treatment])
             tool_events=[e for e in events(root)[started:] if e["type"] in ("tool-before","tool-after")
                          and e["data"].get("sessionID")==treatment]
             before=[e["data"] for e in tool_events if e["type"]=="tool-before"]
             after=[e["data"] for e in tool_events if e["type"]=="tool-after"]
+            if not any(e["tool"]=="execute" for e in before):
+                report["denial_diagnostic"] = {
+                    "job":rejected,
+                    "events":[{"type":e["type"],
+                               "tool":e["data"].get("tool"),
+                               "status":e["data"].get("status"),
+                               "session":e["data"].get("sessionID")}
+                              for e in events(root)[started:][-24:]],
+                    "messages":[{"type":m.get("type"),
+                                 "has_error":bool(m.get("error")),
+                                 "error_code":str((m.get("error") or {}).get("type",""))[:80]
+                                 if isinstance(m.get("error"),dict) else "unknown"}
+                                for m in request(host,"GET",
+                                    f"/api/session/{treatment}/message?order=desc&limit=14")],
+                }
             require(any(e["tool"]=="execute" for e in before),
                     "Negative fixture never attempted the real native execute tool")
             require(not any(e["tool"] in ("loom_agents","loom.agents") for e in before),
@@ -360,7 +388,7 @@ def main():
     parser.add_argument("--report-directory",type=Path,required=True)
     args=parser.parse_args()
     result=run(args)
-    print(json.dumps({k:result.get(k) for k in ("status","checks","stage","blocker","barrier_jobs","barrier_debug","treatment_message_errors")},indent=2))
+    print(json.dumps({k:result.get(k) for k in ("status","checks","stage","blocker","denial_diagnostic")},indent=2))
     if result["status"]!="QUALIFIED_BOUNDED":
         raise SystemExit(1)
 
