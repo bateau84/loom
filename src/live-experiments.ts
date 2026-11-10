@@ -207,6 +207,17 @@ export class SessionExperiments {
       assignment: "native Session entry readback", exposure: "NOT_VERIFIED", provider_receipt: null,
       note: "Assignment is not a trial outcome or evidence of model consumption; the additive entry does not replace native agent/skill instructions." }
   }
+  /** Reject every unqualified tool route while the trial may still be active.
+   * Only this Session's own inspection/withdrawal remains available; tools and
+   * direct reads are NOT part of the installed provider-isolation qualification. */
+  guardTool(sessionID: string, tool: string, input: unknown) {
+    const row = this.row(sessionID)
+    if (!row || row.status === "stopped") return
+    const fields = input && typeof input === "object" && !Array.isArray(input)
+      ? input as {operation?:unknown} : {}
+    if (/^loom[._]tweak$/.test(tool) && ["live-read","live-stop"].includes(String(fields.operation))) return
+    throw new Error("LOOM_LIVE_TOOL_ROUTE_UNQUALIFIED: stop the Session experiment before other native/model tools")
+  }
   /** Context-stage observation is useful for diagnosing omissions, never a receipt. */
   onContext(host: Pick<ExperimentHost,"sessionID"|"agent"|"version">, system: Array<{ type: string; text: string }>) {
     const row = this.row(host.sessionID)
