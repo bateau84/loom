@@ -4,6 +4,10 @@ type: Log
 
 # Update Log
 
+## 2026-11-10
+
+**Native Evaluator audit qualification procedure:** Added an exact-source, installed-host preflight and reproducible real-work protocol for the merged Evaluator, agent-run-audit and Loom learning interfaces. The procedure separates native child execution, original Session evidence, actual skill exposure, source-linked records, restart retrieval and genuine instruction experiments. Its initial evidence ledger is **UNPROVEN** because the preparation environment had no installed OpenCode host, provider access, or original Session database. No native dispatch, instruction activation, model charge or learning-state write was attempted; no effectiveness or trend is claimed. See [qualification playbook](native-evaluator-audit.md).
+
 ## 2026-11-06
 
 **Dispatcher question routing:** Corrected parent notices and General guidance so
