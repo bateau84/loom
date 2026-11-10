@@ -62,6 +62,26 @@ opencode session export "$SOURCE_SESSION_ID" --sanitize > "$private_dir/source.j
 
 Use real `loom_trace` calls with `{"operation":"timeline","session_id":"SESSION_ID","export_path":"PROJECT_RELATIVE_PRIVATE_EXPORT.json","include_text":false,"limit":25}`. Follow `next_cursor` through the final page. `{"operation":"children","session_id":"SESSION_ID","limit":20}` can enumerate children **only within the caller's own native Session family**; it cannot enumerate arbitrary historical source Sessions from an unrelated new audit. For historical objectives, obtain each parent/child ID through authorized native Session inventory, export metadata and explicit work links, then supply a separate permitted export for each timeline. Do not misrepresent inaccessible children as inspected. Record missing/compacted/opaque history. Inspect user requirements, actual dispatches, child work, corrections, tool calls, loaded instructions and tests/CI, not only the handback. An Action ledger or a source export is not automatically complete native history. Never commit raw exports or private transcripts.
 
+## Executable source-export preflight (no inference)
+
+Before attempting any model run, export the authorized original parent and each linked child through the installed OpenCode CLI, then check the byte-bounded native export structure:
+
+~~~sh
+umask 077
+# Export in the original work's project; never publish these JSON files.
+opencode session export "$PARENT_SESSION_ID" --sanitize > "$private_dir/parent.json"
+opencode session export "$CHILD_SESSION_ID" --sanitize > "$private_dir/child.json"
+
+python3 tools/native_evaluator_preflight.py \
+  --parent-export "$private_dir/parent.json" \
+  --child-export "$private_dir/child.json" \
+  --report "$private_dir/source-preflight.json"
+~~~
+
+For additional descendants, repeat \`--child-export\`. The preflight checks native Session IDs, parent chains, common project identity, recorded paths where visible, user messages, export size and stable byte hashes; it rejects unrelated/duplicate Sessions, nonregular/symlink files, malformed exports and missing children. It writes only a mode-0600 redacted summary, never transcript text. **A successful source-shape preflight is still UNPROVEN for source authenticity, comprehensive coverage, native Evaluator execution, correctness or instruction effectiveness.** The run stops before model inference; the full native host still needs to own and authorize those Sessions for \`loom_trace\`. The CLI output itself is not proof that the Evaluator inspected or understood it.
+
+Run the component checks with \`python3 -m unittest discover -s tests -p 'test_native_evaluator_preflight.py'\`. Synthetic test exports are negative/structural fixtures, **not** completed native audit work.
+
 ## Execute native dispatch, not role imitation
 
 The shipped Evaluator is `mode: subagent`. The primary path is to ask **installed General** to dispatch it using the host's **native delegation**. Capture the actual child Session identity and the actual tool/skill call receipts. A role-labelled response without a native child is UNPROVEN, not a delegated audit.
@@ -92,7 +112,7 @@ After inspecting actual evidence, write a concise attributed record:
 {"operation":"add","action_id":"ACTION_ID","kind":"result","statement":"ONE objective. OBSERVED: [source IDs and verification]. POSITIVE: [supported practice]. FRICTION: [supported episode]. INTERPRETATION: [qualified explanation]. UNKNOWN: [missing original history / instruction exposure / user feedback]. No trend or treatment established.","artifact_refs":["ACTUAL_SOURCE_REFERENCE"]}
 ~~~
 
-Await the returned write, retain its real ID and read full content with `loom_record {"operation":"query","action_id":"ACTION_ID","record_id":"RECORD_ID","response_format":"json"}`. Read `loom_record {"operation":"query","view":"full_thread","action_id":"ACTION_ID","response_format":"json","limit":20}` through its cursor.
+Await the returned write, retain its real ID and read full content with `loom_record {"operation":"query","action_id":"ACTION_ID","record_id":"RECORD_ID"}`. Read `loom_record {"operation":"query","view":"full_thread","action_id":"ACTION_ID","response_format":"json","limit":20}` through its cursor.
 
 **Reopen the same host-owned Loom state** and use a fresh native Session to retrieve the same Action/record ID, full content, sources and qualifications through public tools. Requery bounded insights. Compare exact records rather than accepting a model's summary. Simulated plugin reopening, a direct SQLite query, or a new empty database is not this proof.
 
