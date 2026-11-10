@@ -205,6 +205,19 @@ def run(args):
                 try:
                     s.await_event(lambda e,j=job:e["type"]=="provider-held" and e["data"].get("job")==j)
                 except Exception as error:
+                    report["barrier_debug"] = [{
+                        "type":e.get("type"),
+                        "session":e.get("data",{}).get("sessionID"),
+                        "kind":e.get("data",{}).get("kind"),
+                        "status":e.get("data",{}).get("status"),
+                        "tool":e.get("data",{}).get("tool"),
+                        "job":e.get("data",{}).get("job"),
+                        "role":e.get("data",{}).get("role"),
+                    } for e in events(root)[-100:]]
+                    messages=request(host,"GET",f"/api/session/{treatment}/message?order=desc&limit=12")
+                    report["treatment_message_errors"] = [
+                        {"type":m.get("type"),"error":str(m.get("error",""))[:320]}
+                        for m in messages if m.get("error")]
                     raise RuntimeError(f"PROVIDER_BARRIER_MISSING_{label}: {error}") from error
             s.release(cjob)
             s.release(tjob)
@@ -294,7 +307,7 @@ def main():
     parser.add_argument("--report-directory",type=Path,required=True)
     args=parser.parse_args()
     result=run(args)
-    print(json.dumps({k:result.get(k) for k in ("status","checks","stage","blocker","barrier_jobs","event_summary")},indent=2))
+    print(json.dumps({k:result.get(k) for k in ("status","checks","stage","blocker","barrier_jobs","barrier_debug","treatment_message_errors")},indent=2))
     if result["status"]!="QUALIFIED_BOUNDED":
         raise SystemExit(1)
 
