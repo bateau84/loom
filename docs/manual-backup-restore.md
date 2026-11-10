@@ -11,14 +11,12 @@ timestamp: 2026-10-24T00:00:00Z
 This is an offline, operator-initiated procedure for the Action Store, not the
 legacy configuration exporter.
 
-**Learning-state exception:** `loom_tweak` proposals and trial reports are stored
-separately in `learning.sqlite` alongside the Action Store. This tested procedure
-backs up and restores **only `ledger.sqlite`**, not the learning database. For
-now preserve a separate stopped-writers copy of `learning.sqlite` and its WAL
-sidecars. That separate restore path has not been qualified; do not claim a
-complete learning-state backup from this procedure. It preserves the original files and restores to a
-**separate, previously nonexistent directory**. It does not install the restored
-state into a running host, migrate schemas, or repair damaged data.
+**Scope:** The original `copy-ledger.py` / `verify-ledger.py` blocks below
+remain the ledger-only recovery procedure. For complete Action **and** learning
+history use the manifest-bound [two-database companion](#complete-action-and-learning-backup-set)
+added below. Do not mistake a ledger-only copy for a complete learning-state
+backup. Neither procedure writes over the original state, installs a restore
+into a running host, migrates schemas or repairs damaged data.
 
 This is the manual procedure referenced by the [alpha operating policy](operating-policy.md)
 and the repository `README.md`. Keep it separate from the configuration exporter and
@@ -251,3 +249,117 @@ Action version and one delivery fence. The clean fixture retained two Actions;
 the residual-WAL fixture retained a third, WAL-only Action. Omitting WAL,
 removing a result's qualification, or substituting an empty Store failed
 verification. The repository's `.bun-version` pin is 1.4.2; this run used 1.4.3.
+
+
+## Complete Action and learning backup set
+
+Use the repository's \`tools/learning-state-backup.py\` for **one identified offline
+set** containing \`ledger.sqlite\`, \`learning.sqlite\`, all present applicable
+\`-wal\` / \`-shm\` / \`-journal\` sidecars, and
+\`loom-state-manifest.json\`. It is a separate companion to the historical
+ledger-only procedure above, not a replacement for it.
+
+**Required stop boundary:** Stop *all* SQLite writers and connections for **both**
+databases, including other OpenCode hosts, inspection tools and plugin instances,
+and prevent automatic restart for the entire snapshot. Do not infer this from
+quiet activity or \`ledger.capture: off\`. This command does not stop any process:
+\`LOOM_WRITERS_STOPPED=yes\` is only an operator assertion. If the stop boundary is
+not established, **do not proceed**. Never remove or checkpoint an active WAL.
+
+Identify the exact project ID, native canonical project path, project scope
+directory and installed Loom revision **from the target host**, rather than
+guessing a directory by name. The scope is the SHA-256 of Loom's canonical
+serialization of \`{ project: id, canonical: path }\`. Both database files must
+be in that same project-scope directory. Use Python 3.11+ with SQLite support,
+enough private disk space for inspection copies, and existing trusted canonical
+parent directories. This is for local trusted state, not hostile archive parsing.
+
+From the matching Loom checkout:
+
+\`\`\`sh
+# Replace placeholders with the values observed from the stopped host.
+export LOOM_WRITERS_STOPPED=yes
+PROJECT_ID="actual-native-project-id"
+PROJECT_CANONICAL="/absolute/native/project/canonical/path"
+REVISION="$(git rev-parse HEAD)"           # exact installed Loom source revision
+PACKAGE_VERSION="2.0.0-alpha.1"            # installed package.json version
+SOURCE_DIR="/absolute/state/loom/actions-v1/actual-project-scope"
+BACKUP_DIR="/absolute/private/backup-set-001"  # must NOT already exist
+RESTORE_HOME="/absolute/private/isolated-home"
+SCOPE="$(basename "$SOURCE_DIR")"
+
+python3 tools/learning-state-backup.py backup \
+  --source-dir "$SOURCE_DIR" --backup-dir "$BACKUP_DIR" \
+  --project-id "$PROJECT_ID" --project-canonical "$PROJECT_CANONICAL" \
+  --loom-revision "$REVISION" --package-version "$PACKAGE_VERSION"
+
+# Only after a successful, intact backup. Prepare the parent, NOT the target.
+mkdir -p "$RESTORE_HOME/loom/actions-v1"
+python3 tools/learning-state-backup.py restore \
+  --backup-dir "$BACKUP_DIR" \
+  --destination-dir "$RESTORE_HOME/loom/actions-v1/$SCOPE" \
+  --project-id "$PROJECT_ID" --project-canonical "$PROJECT_CANONICAL" \
+  --loom-revision "$REVISION" --package-version "$PACKAGE_VERSION"
+\`\`\`
+
+\`backup\` reserves a **new** private directory and copies the stopped file set
+without opening originals with SQLite. It checks source and copied bytes, then
+opens *disposable copies* for \`integrity_check\`, \`foreign_key_check\`, required
+tables/columns, Store \`user_version=1\` and learning \`user_version=0\`.
+The learning database currently has no explicit migration version: its full
+SQLite schema SHA-256 is also recorded. The manifest is written last, with a
+unique set ID, project identity/scope, exact operator-supplied Loom revision and
+package version, database membership/formats, SQLite checker version, each file
+name/size/SHA-256 and the stopped-writers boundary. It does not represent an
+attestation of the supplied revision or an independently signed archive.
+
+\`restore\` requires the original manifest and exact project/revision/package
+values; validates every member, checksum and SQL structure *before creating the
+destination*; then copies the set into a previously nonexistent isolated scope
+directory, verifies bytes and SQL again on disposable copies and reports the
+matching set ID. An existing directory, dangling symlink, unexpected file or
+SQLite sidecar, missing manifest/member, corrupt database, unknown schema or
+version, or a file from another snapshot is rejected rather than repaired.
+A failed operation can leave a **partial new destination** for diagnosis;
+never re-use it or interpret it as verified. Source and preserved backup remain
+unchanged, including residual WAL bytes.
+
+**Pre-learning installations:** if the source genuinely predates learning state
+and neither \`learning.sqlite\` nor its sidecars exists, and the operator has
+independently established that this absence is legitimate, pass
+\`--legacy-no-learning\` on the **backup** command only. That explicit assertion
+records \`learning: absent-pre-learning\` in the manifest and preserves the
+ledger-only restore path. An unmarked missing learning database is an error, not
+an automatic legacy inference. Never use the legacy flag to explain a database
+lost from an otherwise complete backup. Opening such a restored ledger with
+current Loom may subsequently create **new empty** learning state; that is not
+restored learning history.
+
+### Qualification and limits
+
+From a separate checkout with the pinned Bun and dependencies:
+
+\`\`\`sh
+bun test tests/learning-backup-restore-native.test.ts
+bun test tests/manual-backup-restore.test.ts
+\`\`\`
+
+The new regression creates meaningful candidates, a revised and retired
+candidate chain, over one page of mixed trial reports and Action evidence IDs.
+It backs up stopped real SQLite files, including a killed disposable writer's
+committed residual WAL, restores under a different state home, and recovers
+the same IDs, statuses, content hashes and oldest negative reports through
+the registered **public** \`loom_tweak\`, \`loom_insights\`, \`loom_action\` and
+\`loom_record\` readers. It also tests explicit legacy absence and refusal of
+partial/mixed/corrupt/incompatible copies. This is isolated recovery evidence,
+**not** qualification of power-loss durability, multi-host backup, online copy,
+native Session history or production disaster recovery.
+
+Restore does not open the destination with the plugin, dispatch a model,
+resume a Session, retry an uncertain delivery, change permissions or routing
+guards, or authorize new work. The test's separate public reader explicitly
+checks for no native Session creation or prompt submission. Before considering
+a restored state for operation, independently inspect real Action evidence,
+external artifacts and native Session history under existing permissions.
+The manifest fingerprints bytes, not the content of external references, and
+cannot establish whether an agent actually consumed an instruction.
