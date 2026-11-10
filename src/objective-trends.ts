@@ -33,7 +33,7 @@ type FingerprintRow = {
   content_sha256: string | null; registry_content_sha256: string | null
 }
 type Metrics = ReturnType<typeof zeroMetrics>
-type ObjectivePoint = ReturnType<ObjectiveTrends["point"]>
+type GroupPoint = { start_at: string; dimensions: { unit_key: string; source_type: string; origin_verification: string; outcome_author_agent: string | null; instruction_fingerprint: string } }
 
 const MAX_OBJECTIVES = 500
 const MAX_LINKS = 500
@@ -320,7 +320,7 @@ export class ObjectiveTrends {
     }
   }
 
-  private key(point: ObjectivePoint, groupBy: string) {
+  private key(point: GroupPoint, groupBy: string) {
     if (groupBy === "start-month") return point.start_at.slice(0, 7)
     if (groupBy === "unit-key") return point.dimensions.unit_key
     if (groupBy === "source-type") return point.dimensions.source_type
@@ -345,7 +345,7 @@ export class ObjectiveTrends {
       if (pos.max_objective > current.max_objective || pos.max_link > current.max_link)
         throw new Error("Comparison snapshot is no longer present; do not silently resume")
       const origins = this.originals(scope, pos)
-      const points: ObjectivePoint[] = []
+      const points: Array<ReturnType<typeof this.point>> = []
       let excludedRejected = 0, excludedUncertain = 0
       for (const origin of origins) {
         const links = this.links(origin.id, pos)
