@@ -22,10 +22,9 @@ role checks restrict companion loaders only.
 | `loom_assessment` | Load ASSESSMENT.md; requires configured assessment role. |
 | `loom_qa` | Load QA.md; requires configured qa role. |
 
-Tool search provides syntax. Structured outputs use JSON with `result` and optional `config_errors`.
-Assessment/QA and `full_thread` return Markdown by default; pass `response_format:"json"` for scripts.
-Only JSON outputs should be passed to JSON.parse. Await writes; sequence dependent calls.
-Use Promise.allSettled for independent calls and inspect outcomes.
+Tool search supplies syntax. JSON outputs contain `result` and optional `config_errors`.
+Assessment/QA and `full_thread` default to Markdown; use `response_format:"json"` for scripts.
+Parse only JSON. Await and sequence dependent writes; inspect Promise.allSettled results.
 
 ## Start or resume work
 
