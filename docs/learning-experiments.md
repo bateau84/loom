@@ -48,6 +48,14 @@ For real-work experiments, record the objective and eligibility in an Action/Ses
 
 A `trial` record describes the calling Session's observation (`promising`, `harmful`, `neutral`, `inconclusive`, or `not-exercised`). It is explicitly **agent-reported**, not a host-certified assignment or evidence that the candidate was injected. Reference actual verification records. Trial effects are not aggregated into a claim of benefit by Loom.
 
+## Bounded example from actual engineering work
+
+This feature's own [PR #217](https://github.com/bateau84/loom/pull/217) supplies one observable engineering objective with corrective rework, not a trend across independent objectives. [Plugin CI run 42715887637](https://github.com/bateau84/loom/actions/runs/42715887637) failed because a real Code Mode discovery test still expected eight tools after Loom registered ten. After corrective changes, [run 42835238699](https://github.com/bateau84/loom/actions/runs/42835238699) passed that pipeline. These are real CI results at different revisions; they are **not** independent feature successes or a measured improvement in a skill. Inspection of original PR commits and tests is needed to understand the changes.
+
+This case supports one local regression correction and illustrates why tool-level error counts and successive CI results cannot be treated as objective-level agent scores. It does **not** support general changes to the Coder skill: there is one identified objective, not a comparable longitudinal population. The agent's actual instruction exposure, user effort, and model cost are unknown. A future Evaluator may choose a real-work trial only after identifying a repeated relevant pattern and preserving a baseline.
+
+A bounded trial using existing tools would use `loom_action` and `loom_record` to retain the explicit objective, original verification and correction references, `loom_trace` for authorized parent/child evidence, and `loom_tweak` to propose and later recover exact candidate content and attributed reports. Report `not-exercised` if no treatment was actually applied. Historical CI links do not prove model exposure. The native Session evidence and an independent eligible comparison population for a *skill experiment* were not available in this delivery, so no such effectiveness claim has been made.
+
 ## Why live substitution is not enabled
 
 OpenCode 2.2.6 has a mutable skill registry at the shared *location* scope. Toggling that global registry can contaminate concurrent Sessions. Native context hooks appear able to deliver per-Session overlays, but this branch has **not** qualified all relevant routes (native skill tool, attachment, ordinary file read, context compaction, review companion). No automatic variant assignment or mutation has been installed.
