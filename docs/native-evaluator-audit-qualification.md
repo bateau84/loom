@@ -78,9 +78,9 @@ python3 tools/native_evaluator_preflight.py \
   --report "$private_dir/source-preflight.json"
 ~~~
 
-For additional descendants, repeat \`--child-export\`. The preflight checks native Session IDs, parent chains, common project identity, recorded paths where visible, user messages, export size and stable byte hashes; it rejects unrelated/duplicate Sessions, nonregular/symlink files, malformed exports and missing children. It writes only a mode-0600 redacted summary, never transcript text. **A successful source-shape preflight is still UNPROVEN for source authenticity, comprehensive coverage, native Evaluator execution, correctness or instruction effectiveness.** The run stops before model inference; the full native host still needs to own and authorize those Sessions for \`loom_trace\`. The CLI output itself is not proof that the Evaluator inspected or understood it.
+For additional descendants, repeat `--child-export`. The preflight checks native Session IDs, parent chains, common project identity, recorded paths where visible, user messages, export size and stable byte hashes; it rejects unrelated/duplicate Sessions, nonregular/symlink files, malformed exports and missing children. It writes only a mode-0600 redacted summary, never transcript text. **A successful source-shape preflight is still UNPROVEN for source authenticity, comprehensive coverage, native Evaluator execution, correctness or instruction effectiveness.** The run stops before model inference; the full native host still needs to own and authorize those Sessions for `loom_trace`. The CLI output itself is not proof that the Evaluator inspected or understood it.
 
-Run the component checks with \`python3 -m unittest discover -s tests -p 'test_native_evaluator_preflight.py'\`. Synthetic test exports are negative/structural fixtures, **not** completed native audit work.
+Run the component checks with `python3 -m unittest discover -s tests -p 'test_native_evaluator_preflight.py'`. Synthetic test exports are negative/structural fixtures, **not** completed native audit work.
 
 ## Execute native dispatch, not role imitation
 
