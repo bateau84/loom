@@ -90,13 +90,13 @@ for (const scenario of ["missing-column", "unsupported-version", "healthy", "emp
       expect(failure.message).toContain(failure.cause.message)
       expect(failure.cause.message).toContain("Unsupported Loom Action database version")
       expect(`${failure.message}\n${failure.stack}\n${failure.cause.stack}`).not.toContain("PRIVATE-RECORD-CONTENT")
-      expect(registrations).toEqual(["skill"])
+      expect(registrations).toEqual([]) // Core startup fails before optional registrations
       expect(tools).toEqual([])
     }
     // Healthy hosts own a separate learning DB. Unsupported Action-store versions
     // fail before it is opened; both paths must close every acquired connection.
     expect(closed).toHaveLength(healthy ? 2 : 1)
-    expect(skillDisposals).toBe(1)
+    expect(skillDisposals).toBe(healthy ? 1 : 0)
     expect(hostIO).toEqual([])
     for (const connection of closed) expect(() => connection.query("SELECT 1")).toThrow()
     close.mockRestore()
