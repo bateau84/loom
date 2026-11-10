@@ -19,17 +19,17 @@ candidate effectiveness, register trial success or authorize production routing.
 
 | Component | Source |
 | --- | --- |
-| Loom base | bateau84/loom \`edab7a96e7c5a9172ceb98b8518c47c48a1d7c09\` |
-| OpenCode host and SDK | \`@opencode/cli@2.2.6\`, \`@opencode/plugin@2.2.6\` |
-| Tagged upstream implementation | anomalyco/opencode \`dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06\` (\`v2.2.6\`) |
-| Runtime environment | Independent disposable loopback host; locally scripted \`variant-fixture/scripted\` provider |
+| Loom base | bateau84/loom `edab7a96e7c5a9172ceb98b8518c47c48a1d7c09` |
+| OpenCode host and SDK | `@opencode/cli@2.2.6`, `@opencode/plugin@2.2.6` |
+| Tagged upstream implementation | anomalyco/opencode `dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06` (`v2.2.6`) |
+| Runtime environment | Independent disposable loopback host; locally scripted `variant-fixture/scripted` provider |
 | Change type | Test fixture, qualification runner, fail-closed oracles and PR CI only |
 
 Sources at that tag:
 - [Session instruction entries](https://github.com/anomalyco/opencode/blob/v2.2.6/packages/core/src/session/instruction-entry.ts) persist by Session ID and key; put/list/remove are separate from skill/agent registry state.
-- [Session context](https://github.com/anomalyco/opencode/blob/v2.2.6/packages/core/src/session/context.ts) composes \`entries.load(sessionID)\` with the built-in instruction sources, including skills and discovery.
-- [Model request](https://github.com/anomalyco/opencode/blob/v2.2.6/packages/core/src/session/model-request.ts) renders those instructions into system parts, then calls the \`context\` hook for primary requests. Other request kinds use different hooks.
-- [Instruction-entry API](https://github.com/anomalyco/opencode/blob/v2.2.6/packages/client/src/promise/generated/client.ts) and [host endpoints](https://github.com/anomalyco/opencode/blob/v2.2.6/packages/server/src/handlers/session.ts) expose GET/PUT/DELETE under \`/api/experimental/session/:id/instructions/entries\`.
+- [Session context](https://github.com/anomalyco/opencode/blob/v2.2.6/packages/core/src/session/context.ts) composes `entries.load(sessionID)` with the built-in instruction sources, including skills and discovery.
+- [Model request](https://github.com/anomalyco/opencode/blob/v2.2.6/packages/core/src/session/model-request.ts) renders those instructions into system parts, then calls the `context` hook for primary requests. Other request kinds use different hooks.
+- [Instruction-entry API](https://github.com/anomalyco/opencode/blob/v2.2.6/packages/client/src/promise/generated/client.ts) and [host endpoints](https://github.com/anomalyco/opencode/blob/v2.2.6/packages/server/src/handlers/session.ts) expose GET/PUT/DELETE under `/api/experimental/session/:id/instructions/entries`.
 - [Tagged upstream tests](https://github.com/anomalyco/opencode/blob/v2.2.6/packages/core/test/plugin/session-instructions.test.ts) check Promise-plugin put/list/remove and initial/change/removal deltas. Those tests alone do not prove provider input or cross-Session isolation in an installed CLI.
 
 This API is explicitly **experimental** in the tagged host. Future host/SDK
@@ -40,7 +40,7 @@ policy for accepting arbitrary user/agent-supplied Session IDs is claimed.
 
 The smallest defensible implementation would be **explicit, fixed, additive
 Session context** under a dedicated namespaced entry key. It is not a modified
-\`SKILL.md\` and is not a replacement for an agent's native \`system\` field.
+`SKILL.md` and is not a replacement for an agent's native `system` field.
 
 1. A trusted controller verifies an **exact native Session ID**, workspace,
    project, and explicit work eligibility. Parentage and agent name alone grant
@@ -69,13 +69,13 @@ Session context** under a dedicated namespaced entry key. It is not a modified
 
 | Route | Tagged 2.2.6 mechanism | Status for experiment |
 | --- | --- | --- |
-| Additive keyed Session instructions | Native \`session.instructions.entry\` storage and context loading | **Only route under installed qualification** |
+| Additive keyed Session instructions | Native `session.instructions.entry` storage and context loading | **Only route under installed qualification** |
 | Existing native agent system instructions | Shared agent definitions, prepended to model request | Preserve; **no mutation/substitution** |
-| Native \`skill\` tool loads | Location-scoped skill registry and skill-content tool result | **Not substituted**; experiment must exclude |
+| Native `skill` tool loads | Location-scoped skill registry and skill-content tool result | **Not substituted**; experiment must exclude |
 | Explicit native skill attachment | Session skill API/inbox, distinct delivery | **Not substituted**; exclude |
-| Direct \`read\` of instruction files | Read actual workspace files via tool | **Not substituted**; exclude |
-| Loom \`loom_assessment\` / \`loom_qa\` companions | Separate permission-checked file reads and tool output | **Not substituted**; exclude |
-| Discovery/\`AGENTS.md\` and other instruction sources | Native instruction discovery, rendered independently | Preserve; **not substituted** |
+| Direct `read` of instruction files | Read actual workspace files via tool | **Not substituted**; exclude |
+| Loom `loom_assessment` / `loom_qa` companions | Separate permission-checked file reads and tool output | **Not substituted**; exclude |
+| Discovery/`AGENTS.md` and other instruction sources | Native instruction discovery, rendered independently | Preserve; **not substituted** |
 | Review agents/child dispatch | New Session identity; no automatic candidate inheritance | Explicit enrollment only; actual subagent dispatch unqualified |
 | Native compaction, generation and title | Separate request kinds/hooks; compaction has its own context | Report observed stages separately; never infer from primary hook |
 | Manual continuation and restart | Per-Session instruction rows, read on later contexts | Under installed qualification |
@@ -93,7 +93,7 @@ model-originated tool reads. This PR does not provide that gate.
 Requires Linux/POSIX, Python 3, Node/npm and the repository-pinned Bun. Use
 an isolated runner, not an already running OpenCode instance or user profile.
 
-\`\`\`bash
+```bash
 git switch test/session-variant-host-qualification-20261110
 bun install --frozen-lockfile
 bun run typecheck
@@ -113,19 +113,19 @@ python3 tests/installed_instruction_variants.py \
   --expect-plugin-version "$(node -p 'require("./package.json").version')" \
   --report-directory "$root/variant-report"
 cat "$root/variant-report/report.json"
-\`\`\`
+```
 
 The runner creates its own additional temporary HOME, XDG dirs, project, native
 OpenCode database, Loom databases and local provider. It uses loopback Basic
 Auth, an explicit local provider and no credentials or real-model requests.
-It never writes to \`~/.config/opencode\` or a production workspace. The
-\`--report-directory\` must not already exist. Review the **report from the
+It never writes to `~/.config/opencode` or a production workspace. The
+`--report-directory` must not already exist. Review the **report from the
 exact PR head**, not an earlier run or a source-unit pass.
 
 The [installed CI workflow](../.github/workflows/installed-instruction-variants.yml)
 packs the PR candidate separately from the pinned CLI, typechecks the fixture,
 runs the strict negative oracle tests, executes the real native host and
-uploads \`report.json\` even when a blocking check fails.
+uploads `report.json` even when a blocking check fails.
 
 ### Positive and negative controls
 
@@ -150,11 +150,11 @@ uploads \`report.json\` even when a blocking check fails.
 
 ## Interpreting the verdict
 
-\`QUALIFIED_BOUNDED\` means the exact packed candidate and pinned real CLI
+`QUALIFIED_BOUNDED` means the exact packed candidate and pinned real CLI
 passed the listed native-input controls for **additive, manually assigned,
 scripted-provider** instruction entries. It does not authorize production
 injection or prove a user objective improved. Any missing check produces a
-nonzero exit and \`UNPROVEN\` with its blocker in the report, not a false green.
+nonzero exit and `UNPROVEN` with its blocker in the report, not a false green.
 
 A production implementation could rely only on the observed, version-pinned
 subset once independently reviewed. Before any live enrollment it still needs
@@ -165,5 +165,5 @@ unqualified routes. Until those are in place, **manual worktree/host isolation
 remains the safe experiment method**.
 
 See [learning evidence and experiments](learning-experiments.md). A
-\`loom_tweak trial\` report is an agent-reported result, **not** proof of
+`loom_tweak trial` report is an agent-reported result, **not** proof of
 assignment, exposure or causal improvement.
