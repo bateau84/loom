@@ -17,6 +17,7 @@ import { renderFullHistory } from "./history-renderer.js"
 import { fullThreadMarkdown } from "./response-format.js"
 import { Store } from "./store.js"
 import { Learning } from "./learning.js"
+import { LIVE_ENTRY_KEY, SessionExperiments, type ExperimentHost, type StartExperiment } from "./live-experiments.js"
 import type { ObjectiveSource, ObjectivePhase } from "./objectives.js"
 import { QUESTION_DISPATCH, questionRecipient } from "./collaboration.js"
 import { questionRoute, sendQuestion, type NativeModel, type QuestionRoute } from "./question-routing.js"
@@ -101,6 +102,15 @@ const specs = [
       limit: { type: "integer", minimum: 1, maximum: 50 }, offset: num,
     }, ["operation"]) },
   { name: "tweak", description: TOOL_HELP.tweak, input: obj({ operation: choice("propose", "list", "read", "retire", "trial"), id: str, target_kind: choice("skill", "assessment", "qa", "agent"), target_id: str, base_sha256: str, candidate_content: str, hypothesis: str, evidence_refs: { type: "array", items: str, maxItems: 20 }, revised_from: str, trial_before: { type: "integer", minimum: 1 }, observed_sha256: str, observed_effect: choice("promising", "harmful", "neutral", "inconclusive", "not-exercised"), statement: str, offset: { type: "integer", minimum: 0 } }, ["operation"]) },
+  { name: "experiment", description: TOOL_HELP.experiment, input: obj({
+    operation: choice("start","read","stop"),
+    objective_id: str, candidate_id: str, authorization_ref: str,
+    eligibility: { type:"string",minLength:1,maxLength:1000 },
+    evaluation_criteria: { type:"string",minLength:1,maxLength:2000 },
+    preserved_guarantees: { type:"string",minLength:1,maxLength:2000 },
+    budget_requests: { type:"integer",minimum:1,maximum:8 },
+    expires_at: str, authorize: { type:"boolean" },
+  },["operation"]) },
   { name: "action", description: TOOL_HELP.action, input: obj({ operation: choice("list", "create", "update", "sessions"), action_id: str, title: str, goal: str, state: choice("active", "paused", "completed", "cancelled"), expected_revision: num, offset: num, archived: { type: "boolean" }, cursor: { type: "string", minLength: 1, maxLength: 4096 }, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
   { name: "plan", description: TOOL_HELP.plan, input: obj({ operation: choice("read", "save"), action_id: str, revision: num, expected_revision: num, nodes: { type: "array", maxItems: 300, items: obj({ id: str, kind: choice("phase", "wave", "task", "subtask"), title: str, parent: str, depends_on: list, outcome: str, context: str, criteria: list, skills: list, roles: list, agent: str }, ["id", "kind", "title"]) } }, ["operation", "action_id"]) },
   { name: "context", description: TOOL_HELP.context, input: obj({ action_id: str, node_id: str, clear: { type: "boolean" }, mode: choice("continuation", "independent"), handoff_id: { type: ["string", "null"] } }) },
@@ -155,7 +165,7 @@ export default Plugin.define({
     let filename = join(state, "ledger.sqlite")
     let stage = "state-directory"
     let db: Database | undefined, learningDB: Database | undefined
-    let store: Store, observer: Observer, learning: Learning | undefined
+    let store: Store, observer: Observer, learning: Learning | undefined, experiments: SessionExperiments | undefined
     try {
       await mkdir(state, { recursive: true, mode: 0o700 })
       stage = "database-file"
@@ -184,12 +194,14 @@ export default Plugin.define({
       learningDB = new Database(await realpath(learningPath))
       learningStage = "learning-initialization"
       learning = new Learning(learningDB, store, db)
+      experiments = new SessionExperiments(learningDB)
     } catch (error) {
       learningFailure = learningStage
       console.warn(`Loom optional learning unavailable (${learningStage}): ${error instanceof Error ? error.message : String(error)}`)
       try { learningDB?.close() } catch { /* Keep the original learning failure. */ }
       learningDB = undefined
       learning = undefined
+      experiments = undefined
     }
     const learningStatus = () => learning
       ? { available: true, storage: "separate-project-sqlite", automatic_mutation: false }
@@ -198,6 +210,10 @@ export default Plugin.define({
     const requiredLearning = () => {
       if (!learning) throw new Error(`LOOM_LEARNING_UNAVAILABLE: learning subsystem failed at ${learningFailure ?? "unknown"}; existing Action history is still available`)
       return learning
+    }
+    const requiredExperiments = () => {
+      if (!learning || !experiments) throw new Error("LOOM_LIVE_UNAVAILABLE: learning storage is unavailable; no experiment activated")
+      return experiments
     }
     const database = db, learningDatabase = learningDB
     const lastAgentContent = new Map<string, string>()
@@ -223,6 +239,29 @@ export default Plugin.define({
         throw new Error("Session is not in this Loom project/workspace/location")
       return session
     }
+    const experimentHost = (sessionID: string, agent: string): ExperimentHost => ({
+      version: ctx.app?.version ?? "", agent, sessionID,
+      source: async () => {
+        const native = unwrapped(await ctx.agent.list())
+        if (!Array.isArray(native)) throw new Error("LOOM_LIVE_AGENT_UNAVAILABLE: no native registry")
+        const matches = native.filter(v => v && typeof v === "object" && !Array.isArray(v) &&
+          (v as {id?:unknown}).id === agent)
+        if (matches.length !== 1 || typeof (matches[0] as {system?:unknown}).system !== "string")
+          throw new Error("LOOM_LIVE_SOURCE_UNQUALIFIED: agent has no unambiguous native system text")
+        const source = (matches[0] as {system:string}).system
+        if (Buffer.byteLength(source,"utf8") > 131072) throw new Error("LOOM_LIVE_SOURCE_UNQUALIFIED: agent system is too large")
+        return source
+      },
+      list: () => ctx.session.instructions.entry.list({ sessionID: sessionID as Parameters<typeof ctx.session.instructions.entry.list>[0]["sessionID"] }),
+      put: value => ctx.session.instructions.entry.put({
+        sessionID: sessionID as Parameters<typeof ctx.session.instructions.entry.put>[0]["sessionID"],
+        key: LIVE_ENTRY_KEY as Parameters<typeof ctx.session.instructions.entry.put>[0]["key"], value,
+      }),
+      remove: () => ctx.session.instructions.entry.remove({
+        sessionID: sessionID as Parameters<typeof ctx.session.instructions.entry.remove>[0]["sessionID"],
+        key: LIVE_ENTRY_KEY as Parameters<typeof ctx.session.instructions.entry.remove>[0]["key"],
+      }),
+    })
     // Same-project Sessions are not automatically one user's work. Child discovery
     // is restricted to the caller's bounded native parent/child tree.
     const familyRoot = async (sessionID: string): Promise<string> => {
@@ -452,6 +491,27 @@ export default Plugin.define({
                 } else throw new Error("Unknown objective operation")
                 break
               }
+              case "experiment": {
+                const e = requiredExperiments()
+                const session = await checkedSession(actor.session_id)
+                if (session.agent !== actor.agent)
+                  throw new Error("LOOM_LIVE_AGENT_MISMATCH: native agent differs from calling tool identity")
+                const host = experimentHost(actor.session_id, actor.agent)
+                if (input.operation === "read") result = e.read(actor.session_id)
+                else if (input.operation === "stop") result = await e.stop(actor, host)
+                else if (input.operation === "start") {
+                  result = await e.start(actor, input as unknown as StartExperiment, host, async () => {
+                    // Explicit native permission gate, with no persisted grant requested.
+                    // Tool caller's opt-in alone does not satisfy authorization.
+                    await ctx.permission.assert({ action: "loom-live-instruction-experiment",
+                      resources: [String(input.objective_id),String(input.candidate_id),actor.session_id],
+                      sessionID: actor.session_id, agent: actor.agent,
+                      source: { type: "tool", messageID: toolContext.messageID, id: toolContext.id } })
+                    toolContext.signal.throwIfAborted()
+                  })
+                } else throw new Error("Unknown live experiment operation")
+                break
+              }
               case "tweak":
                 if (input.operation === "propose") result = requiredLearning().propose(actor, {
                   target_kind: input.target_kind as string, target_id: input.target_id as string,
@@ -460,7 +520,7 @@ export default Plugin.define({
                   revised_from: input.revised_from as string | undefined })
                 else if (input.operation === "list") result = requiredLearning().list(input.offset as number | undefined)
                 else if (input.operation === "read") result = requiredLearning().read(String(input.id), input.trial_before as number | undefined)
-                else if (input.operation === "retire") result = requiredLearning().retire(String(input.id))
+                else if (input.operation === "retire") { experiments?.assertRetirable(String(input.id)); result = requiredLearning().retire(String(input.id)) }
                 else if (input.operation === "trial") result = requiredLearning().trial(actor, { id: String(input.id),
                   observed_sha256: input.observed_sha256 as string | undefined,
                   observed_effect: input.observed_effect as string, statement: input.statement as string,
@@ -709,6 +769,32 @@ export default Plugin.define({
             return { content }
           },
         })
+      }))
+      // Live trials only observe the qualified additive Session-entry route.
+      // Unlike best-effort ledger capture, failed trial validation must stop
+      // that Session's model request, not be swallowed as telemetry noise.
+      disposers.push(await ctx.session.hook("context", event => {
+        if (!experiments) return
+        experiments.onContext({ sessionID: event.sessionID, agent: event.agent,
+          version: ctx.app?.version ?? "" }, event.system)
+      }))
+      disposers.push(await ctx.session.hook("model.request", async event => {
+        const host = experimentHost(event.sessionID,event.agent)
+        if (!experiments) {
+          // A damaged learning DB must not silently leave a native injected
+          // entry unguarded. Check the exact namespaced key, and only deny
+          // contaminated Sessions. Ordinary Sessions continue unchanged.
+          const raw = unwrapped(await host.list())
+          if (!Array.isArray(raw)) throw new Error("LOOM_LIVE_ENTRY_READBACK_UNAVAILABLE")
+          if (raw.some(v => v && typeof v === "object" && (v as {key?:unknown}).key === LIVE_ENTRY_KEY))
+            throw new Error("LOOM_LIVE_STATE_UNAVAILABLE: native entry exists but Loom cannot validate experiment state")
+          return
+        }
+        const row = experiments.read(event.sessionID)
+        if (row.status === "inactive") return
+        const session = await checkedSession(event.sessionID)
+        if (session.agent !== event.agent) throw new Error("LOOM_LIVE_AGENT_MISMATCH")
+        await experiments.beforeRequest(host,event.kind)
       }))
       disposers.push(await ctx.session.hook("context", async event => {
         try {
