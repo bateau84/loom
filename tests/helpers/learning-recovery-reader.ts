@@ -11,7 +11,7 @@ import { registeredLoom } from "./registered-loom.js"
 
 const [project, restoreHome, inputFile] = process.argv.slice(2)
 assert(project && restoreHome && inputFile, "usage: bun learning-recovery-reader.ts PROJECT STATE_HOME EXPECTED_JSON")
-const { action, evidence, original, revision, objective, trendBounds, expected, older, wal, legacy } = JSON.parse(readFileSync(inputFile, "utf8"))
+const { action, evidence, original, revision, objective, trendBounds, live, expected, older, wal, legacy } = JSON.parse(readFileSync(inputFile, "utf8"))
 const recovered = await registeredLoom([], { directory: project, stateHome: restoreHome, versionedHost: true })
 try {
   const actions = (await recovered.invoke("action", { operation: "list" })).result.items
@@ -44,6 +44,47 @@ try {
       "Restored corrective attempt linkage is absent")
     assert.equal(comparison.items[0].objective_id, objective.id,
       "Trend lost its original objective source link")
+  }
+  if (live) {
+    recovered.sessions.set(live.session_id, {
+      id: live.session_id, agent: "author",
+      projectID: "tool-help", location: { directory: project },
+    })
+    const stored = (await recovered.invoke("tweak", {
+      operation: "live-read",
+    }, live.session_id)).result
+    assert.equal(stored.id, live.experiment_id, "Restored experiment identity changed")
+    assert.equal(stored.objective_id, live.objective_id,
+      "Restored assignment detached from the original objective")
+    assert.equal(stored.candidate_id, live.candidate_id,
+      "Restored assignment silently changed candidate")
+    assert.equal(stored.candidate_sha256, live.candidate_sha256,
+      "Restored experiment changed exact candidate content identity")
+    assert.equal(stored.baseline_sha256, live.baseline_sha256,
+      "Restored experiment changed original agent-system identity")
+    assert.equal(stored.authorization_ref, live.authorization_ref,
+      "Restored historical authorization source disappeared")
+    assert.equal(stored.status, "stopped",
+      "Restored withdrawn experiment must not reactivate treatment")
+    assert.equal(stored.control_eligible, false,
+      "Stopped trial must never become a clean comparison control")
+    assert.equal(stored.observed_provider_receipts, 0,
+      "Synthetic installation cannot certify provider exposure")
+    assert.equal(stored.audit_history_complete, true,
+      "Expected original experiment audit events were omitted")
+    assert.deepEqual([...stored.events].map((event: any) => event.kind).sort(),
+      [...live.event_kinds].sort(),
+      "Restored trial lost audit events or fabricated new ones")
+    assert(stored.events.some((event: any) => event.kind === "native-entry-readback"),
+      "Restored assignment lost original native entry readback")
+    assert(stored.events.some((event: any) => event.kind === "native-entry-removed"),
+      "Restored trial lost verified withdrawal evidence")
+    const historical = (await recovered.invoke("tweak", { operation: "read",
+      id: live.candidate_id })).result
+    assert.equal(historical.candidate_sha256, live.candidate_sha256,
+      "Original candidate bytes were not preserved")
+    assert.equal(historical.status, "proposed",
+      "Unretired candidate lifecycle was changed during backup")
   }
   const insights = (await recovered.invoke("insights", { operation: "window", limit: 200 })).result
   assert(insights.events.some((e: any) => e.record_id === evidence.id), "Source Action evidence missing from insights")
