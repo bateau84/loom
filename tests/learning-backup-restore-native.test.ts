@@ -60,13 +60,47 @@ for (const mode of ["closed", "residual-WAL"] as const) {
     mkdirSync(project)
     try {
       const host = await registeredLoom([], { directory: project, versionedHost: true })
-      let action: any, evidence: any, original: any, revision: any, older: any[]
+      let action: any, evidence: any, original: any, revision: any, older: any[], objective: any, trendBounds: any
       const expected: any[] = []
       try {
         action = (await host.invoke("action", { operation: "create",
           title: "One objective", goal: "Investigate mixed outcomes without counting handbacks as success" })).result
         evidence = (await host.invoke("record", { operation: "add", session_only: true,
           kind: "result", statement: "Original negative verification evidence" })).result
+        // Reconstruct an actual linked corrective objective using original Action
+        // records. This cross-version fixture exercises the final objective and
+        // trend readers after physical restore, not merely SQLite file checksums.
+        objective = (await host.invoke("objective", { operation: "create",
+          label: "Original correction and final outcome", source_type: "ledger-record",
+          source_id: evidence.id, unit_key: "whole" })).result
+        const firstLink = (await host.invoke("objective", {
+          operation: "read", objective_id: objective.id,
+        })).result.entries[0]
+        const failed = (await host.invoke("record", { operation: "add", session_only: true,
+          kind: "result", statement: "First implementation failed real verification" })).result
+        await host.invoke("objective", { operation: "link", objective_id: objective.id,
+          phase: "verification", assessment: "fail", source_type: "ledger-record", source_id: failed.id })
+        const corrected = (await host.invoke("record", { operation: "add", session_only: true,
+          kind: "result", statement: "Corrective implementation dispatched" })).result
+        await host.invoke("objective", { operation: "link", objective_id: objective.id,
+          phase: "corrective-dispatch", related_sequence: firstLink.sequence,
+          source_type: "ledger-record", source_id: corrected.id })
+        const passed = (await host.invoke("record", { operation: "add", session_only: true,
+          kind: "result", statement: "Corrected implementation passed verification" })).result
+        await host.invoke("objective", { operation: "link", objective_id: objective.id,
+          phase: "verification", assessment: "pass", source_type: "ledger-record", source_id: passed.id })
+        const delivered = (await host.invoke("record", { operation: "add", session_only: true,
+          kind: "result", statement: "One final successful objective delivered" })).result
+        await host.invoke("objective", { operation: "link", objective_id: objective.id,
+          phase: "outcome", assessment: "pass", source_type: "ledger-record", source_id: delivered.id })
+        trendBounds = { operation: "compare", population: "selected", objective_ids: [objective.id],
+          since_at: new Date(Date.now()-86400000).toISOString(),
+          until_at: new Date(Date.now()+30000).toISOString(),
+          as_of_at: new Date(Date.now()+30000).toISOString() }
+        const originalTrend = (await host.invoke("trends", trendBounds)).result
+        expect(originalTrend.population.eligible_objectives).toBe(1)
+        expect(originalTrend.metrics.reported_recovery).toBe(1)
+        expect(originalTrend.metrics.with_documented_correction).toBe(1)
         original = (await host.invoke("tweak", { operation: "propose", target_kind: "agent",
           target_id: "evaluator", base_sha256: fingerprint("agent base"),
           candidate_content: "Version A: use all source records", hypothesis: "Reduce false successes",
@@ -140,7 +174,7 @@ for (const mode of ["closed", "residual-WAL"] as const) {
       // Verify public readers in a separate process, so test files sharing an
       // environment cannot redirect the host to the original state home.
       const expectedFile = join(root, "reader-expectations.json")
-      writeFileSync(expectedFile, JSON.stringify({ action, evidence, original, revision,
+      writeFileSync(expectedFile, JSON.stringify({ action, evidence, original, revision, objective, trendBounds,
         expected, older, wal: wal && { ...wal, candidateHash: fingerprint("WAL-only content") } }))
       const reader = Bun.spawnSync([process.execPath,
         new URL("./helpers/learning-recovery-reader.ts", import.meta.url).pathname,
