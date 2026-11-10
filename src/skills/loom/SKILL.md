@@ -24,7 +24,7 @@ intent and history; it is not a scheduler. Role checks restrict companion loader
 
 Tool search supplies syntax. JSON outputs contain `result` and optional `config_errors`.
 Assessment/QA and `full_thread` default to Markdown; use `response_format:"json"` for scripts.
-Parse only JSON. Await and sequence dependent writes; inspect Promise.allSettled results.
+Parse only JSON. Await writes; sequence dependencies; inspect Promise.allSettled results.
 
 ## Start or resume work
 
