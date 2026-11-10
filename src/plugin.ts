@@ -807,9 +807,12 @@ export default Plugin.define({
           return
         }
         const row = experiments.read(event.sessionID)
-        if (row.status === "inactive") return
-        const session = await checkedSession(event.sessionID)
-        if (session.agent !== event.agent) throw new Error("LOOM_LIVE_AGENT_MISMATCH")
+        if (row.status !== "inactive") {
+          const session = await checkedSession(event.sessionID)
+          if (session.agent !== event.agent) throw new Error("LOOM_LIVE_AGENT_MISMATCH")
+        }
+        // Also checks orphaned host-side treatment when learning state was
+        // restored without corresponding trial rows; does not activate it.
         await experiments.beforeRequest(host,event.kind)
       }))
       disposers.push(await ctx.session.hook("context", async event => {
