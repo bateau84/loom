@@ -54,6 +54,8 @@ test("trend windows count whole objectives, not attempts or ledger pages, and fr
     await link(objectiveIDs[1]!, "verification", fail, "fail") // shared incident evidence, not two independent incidents
     await link(objectiveIDs[1]!, "outcome", fail, "fail")
     await link(objectiveIDs[2]!, "outcome", passed, "pass")
+    const latePageFail = await qa("fail", "A failing runtime verification belongs to the last selected objective")
+    await link(objectiveIDs[25]!, "verification", latePageFail, "fail")
     const continuation = await host.invoke("objective", { operation: "link",
       objective_id: objectiveIDs[0], phase: "continuation", source_type: "external-ref",
       source_id: "https://github.com/bateau84/loom/issues/1", related_sequence: 1,
@@ -74,7 +76,7 @@ test("trend windows count whole objectives, not attempts or ledger pages, and fr
     expect(first.metrics.unknown_or_incomplete).toBe(23)
     expect(first.metrics.with_documented_correction).toBe(1)
     expect(first.metrics.reported_recovery).toBe(1)
-    expect(first.metrics.verification_failures).toBe(2)
+    expect(first.metrics.verification_failures).toBe(3)
     expect(first.correlation.shared_failure_sources).toBe(1)
     expect(first.correlation.affected_objectives).toBe(2)
     expect(first.groups.map((g: any) => [g.key, g.metrics.eligible_objectives]))
@@ -90,21 +92,25 @@ test("trend windows count whole objectives, not attempts or ledger pages, and fr
     const later = await qa("fail", "Appended after comparison snapshot")
     await link(objectiveIDs[0]!, "verification", later, "fail")
 
+    const allItems: any[] = [...first.items]
     const seen: string[] = first.items.map((x: any) => x.objective_id)
     let cursor = first.next_cursor
     while (cursor) {
       const page = (await host.invoke("trends", { ...query, cursor })).result
       expect(page.population.eligible_objectives).toBe(26)
-      expect(page.metrics.verification_failures).toBe(2)
+      expect(page.metrics.verification_failures).toBe(3)
       seen.push(...page.items.map((x: any) => x.objective_id))
+      allItems.push(...page.items)
       cursor = page.next_cursor
     }
     expect(seen).toHaveLength(26)
     expect(new Set(seen).size).toBe(26)
     expect(new Set(seen)).toEqual(new Set(objectiveIDs))
+    expect(allItems.find((x: any) => x.objective_id === objectiveIDs[25])
+      .evidence.verification_fails.sources[0].id).toBe(latePageFail.id)
     const updated = (await host.invoke("trends", query)).result
     expect(updated.population.eligible_objectives).toBe(27)
-    expect(updated.metrics.verification_failures).toBe(3)
+    expect(updated.metrics.verification_failures).toBe(4)
     expect(first.items.find((x: any) => x.objective_id === objectiveIDs[0])
       .evidence.verification_fails.total).toBe(1)
     expect(updated.items.find((x: any) => x.objective_id === objectiveIDs[0])
