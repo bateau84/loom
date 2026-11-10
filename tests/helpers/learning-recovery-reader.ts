@@ -11,7 +11,7 @@ import { registeredLoom } from "./registered-loom.js"
 
 const [project, restoreHome, inputFile] = process.argv.slice(2)
 assert(project && restoreHome && inputFile, "usage: bun learning-recovery-reader.ts PROJECT STATE_HOME EXPECTED_JSON")
-const { action, evidence, original, revision, expected, older, wal, legacy } = JSON.parse(readFileSync(inputFile, "utf8"))
+const { action, evidence, original, revision, objective, trendBounds, expected, older, wal, legacy } = JSON.parse(readFileSync(inputFile, "utf8"))
 const recovered = await registeredLoom([], { directory: project, stateHome: restoreHome, versionedHost: true })
 try {
   const actions = (await recovered.invoke("action", { operation: "list" })).result.items
@@ -24,6 +24,27 @@ try {
     assert.deepEqual(recovered.sessionCreates, [])
     process.stdout.write("PASS: legacy Action history recovered without fabricated learning state\\n")
   } else {
+  if (objective) {
+    const linked = (await recovered.invoke("objective", {
+      operation: "read", objective_id: objective.id,
+    })).result
+    assert.equal(linked.objective.id, objective.id,
+      "Restored objective identity changed")
+    assert.deepEqual(linked.entries.map((entry: any) => entry.phase),
+      ["request", "verification", "corrective-dispatch", "verification", "outcome"],
+      "Reconstructed corrective history was lost or reordered")
+    assert(linked.entries.every((entry: any) => entry.verification === "loom-ledger"),
+      "Restored objective no longer points to original Action evidence")
+    const comparison = (await recovered.invoke("trends", trendBounds)).result
+    assert.equal(comparison.population.eligible_objectives, 1,
+      "Restored trends changed objective denominator")
+    assert.equal(comparison.metrics.reported_recovery, 1,
+      "Restored recovery became a separate failure or success")
+    assert.equal(comparison.metrics.with_documented_correction, 1,
+      "Restored corrective attempt linkage is absent")
+    assert.equal(comparison.items[0].objective_id, objective.id,
+      "Trend lost its original objective source link")
+  }
   const insights = (await recovered.invoke("insights", { operation: "window", limit: 200 })).result
   assert(insights.events.some((e: any) => e.record_id === evidence.id), "Source Action evidence missing from insights")
   if (wal) assert(insights.events.some((e: any) => e.record_id === wal.evidence),
