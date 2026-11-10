@@ -22,6 +22,7 @@ As inspected on 2026-11-10:
 | Declared Loom SDK | `@opencode/plugin@2.2.6`; `bun.lock` controls dependencies |
 | Declared verification host | CLI `@opencode/cli@2.2.6` in installed-host workflows; not proof of the operator's installed CLI |
 | Declared Bun | `.bun-version` = `1.4.2`, supported `>=1.4.2 <2.0.0` |
+| Code Mode search fixture | Separately pinned `@opencode/codemode@2.0.29`; not evidence for native Evaluator execution |
 
 **Installed state is a separate identity.** Record the executable path and `opencode --version`, installed Loom package/path and SDK version, enabled native agent IDs and actual agent/skill file SHA-256s, observed native skill-load receipt hashes, selected model and limits, effective Loom capture status, and provider/account entitlement without copying credentials. Git source hashes and file presence are *not* installed instruction fingerprints. The operator must verify the actual Evaluator definition, the `agent-run-audit` skill and applicable `retrospective`/`learning` guidance as seen by this host.
 
@@ -53,7 +54,7 @@ Read the effective native agent roster and Loom's registered `loom_agents {}` ou
 
 ## Original evidence and native dispatch
 
-OpenCode 2.2.6's tagged CLI implements `opencode session export SESSION_ID --sanitize`. Export the original parent and *each* relevant child separately to a private, non-tracked directory under the same project for Loom's read-permission checks. Set restrictive permissions, add the directory to local `.git/info/exclude` (not the committed `.gitignore`), inspect sanitization before use, and remove the exports after the audit. Verify source Session/project identities, page boundaries, missing windows and export authenticity limits. Do not commit the exports.
+The [tagged OpenCode 2.2.6 CLI commands](https://github.com/anomalyco/opencode/blob/v2.2.6/packages/cli/src/commands/commands.ts) implement `opencode session export SESSION_ID --sanitize`. Export the original parent and *each* relevant child separately to a private, non-tracked directory under the same project for Loom's read-permission checks. Set restrictive permissions, add the directory to local `.git/info/exclude` (not the committed `.gitignore`), inspect sanitization before use, and remove the exports after the audit. Verify source Session/project identities, page boundaries, missing windows and export authenticity limits. Do not commit the exports.
 
 Example local preparation (inspect the export before exposing it to the agent):
 
