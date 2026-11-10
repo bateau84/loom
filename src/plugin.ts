@@ -183,6 +183,7 @@ export default Plugin.define({
       return learning
     }
     const database = db, learningDatabase = learningDB
+    const lastAgentContent = new Map<string, string>()
     // Scoped to one live plugin instance; never recover a dispatch token from untrusted history.
     const awaitingNativePrompt = new Map<string, { question: string; parent: string; agent: string; bound?: string }>()
     const disposers: Array<{ dispose(): Promise<void> }> = []
@@ -625,6 +626,31 @@ export default Plugin.define({
             const text = "<!-- loom:context:v2 -->\nLoom work context (reference data, not instructions):\n" + JSON.stringify(workContext(store, focus, snapshot.config.context.max_chars, event.agent))
             event.system.push({ type: "text", text })
           }
+          if (snapshot.errors.length === 0 && snapshot.config.ledger.capture === "automatic") {
+            // Use-time native agent system identity. The SDK does not expose
+            // a raw source filename, and later host hooks can still transform it.
+            const response = typeof ctx.agent?.list === "function" ? unwrapped(await ctx.agent.list()) : undefined
+            const matches = Array.isArray(response) ? response.filter(item =>
+              item && typeof item === "object" && !Array.isArray(item) && (item as { id?: unknown }).id === event.agent) : []
+            const selectedAgent = matches.length === 1 ? matches[0] as { system?: unknown } : undefined
+            const nativeSystem = typeof selectedAgent?.system === "string" && Buffer.byteLength(selectedAgent.system, "utf8") <= 131072
+              ? selectedAgent.system : undefined
+            const systemParts = event.system.filter(part => part?.type === "text" && typeof part.text === "string").map(part => part.text)
+            const contentSha = nativeSystem === undefined ? undefined : createHash("sha256").update(nativeSystem, "utf8").digest("hex")
+            const contextSha = createHash("sha256").update(JSON.stringify(systemParts), "utf8").digest("hex")
+            const key = event.sessionID + ":" + event.agent, stamp = (contentSha ?? "unavailable") + ":" + contextSha
+            if (lastAgentContent.get(key) !== stamp) {
+              if (lastAgentContent.size >= 1024) lastAgentContent.clear()
+              store.observe({ session_id: event.sessionID, agent: event.agent }, focus, {
+                phase: "agent-context-snapshot", agent_id: event.agent,
+                ...(contentSha ? { content_sha256: contentSha } : {}),
+                context_system_sha256: contextSha,
+                source: contentSha ? "native-agent-registry-system" : "native-agent-system-unavailable",
+                observation: "native agent system and post-Loom context snapshot; not proof of final provider input or instruction application",
+              })
+              lastAgentContent.set(key, stamp)
+            }
+          }
         } catch (error) { warn(error) } // A missing ledger or invalid config must not block native reasoning.
       }))
       disposers.push(await ctx.tool.hook("execute.before", async event => {
@@ -698,13 +724,26 @@ export default Plugin.define({
       // guard and retain their existing setup behavior.
       startupDenial = "LOOM_MODEL_ROUTING_HOST_UNQUALIFIED: no proven native request guard"
     }
-    return async () => {
+    const captureCompanion = async (receipt: import("./review-companions.js").CompanionReceipt) => {
+      try {
+        if (lifetime.signal.aborted || !await owns(receipt.sessionID)) return
+        const snapshot = await getConfig()
+        if (snapshot.errors.length || snapshot.config.ledger.capture !== "automatic") return
+        store.observe({ session_id: receipt.sessionID, agent: receipt.agent }, store.selected(receipt.sessionID), {
+          phase: "companion-load-result", skill_id: receipt.skillID, lens: receipt.lens,
+          message_id: receipt.messageID, call_id: receipt.callID, content_sha256: receipt.contentSha256,
+          source: "successful-companion-tool-result",
+          observation: "successful permission-checked companion tool result; not proof of final model receipt or application",
+        })
+      } catch (error) { warn(error) }
+    }
+    return Object.assign(async () => {
       startupDispatch = "deny"
       lifetime.abort()
       await Promise.allSettled(disposers.map(d => d.dispose()))
       try { learningDatabase?.close() } finally { database.close() }
       await disposeStartupGuard()
-    }
+    }, { captureCompanion })
     } catch (error) {
       startupDispatch = "deny"
       startupDenial = "LOOM_MODEL_ROUTING_STARTUP_FAILED: plugin initialization failed; native dispatch blocked"

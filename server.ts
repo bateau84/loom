@@ -1,7 +1,7 @@
 import { Plugin, Skill } from "@opencode/plugin"
 import core from "./src/plugin.js"
 import { loomSkill } from "./src/skill.js"
-import { registerReviewCompanions } from "./src/review-companions.js"
+import { registerReviewCompanions, type CompanionReceipt } from "./src/review-companions.js"
 
 // The public entrypoint composes ledger tools, the usage guide and read-only review lenses.
 export default Plugin.define({
@@ -22,7 +22,10 @@ export default Plugin.define({
     let companions: (() => Promise<void>) | undefined
     try {
       cleanup = await core.setup(ctx)
-      companions = await registerReviewCompanions(ctx)
+      const recorder = cleanup && typeof cleanup === "function"
+        ? (cleanup as typeof cleanup & { captureCompanion?: (receipt: CompanionReceipt) => Promise<void> }).captureCompanion
+        : undefined
+      companions = await registerReviewCompanions(ctx, recorder)
       return async () => {
         try { await cleanup?.() }
         finally {

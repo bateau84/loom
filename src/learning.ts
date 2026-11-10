@@ -41,7 +41,7 @@ const evidence = (raw: unknown) => {
 type EventRow = {
   seq: number; id: string; action_id: string | null; session_id: string; kind: string;
   occurred_at: string | null; phase: string | null; tool: string | null;
-  status: string | null; attribution: string | null; skill_id: string | null; rendered_sha256: string | null
+  status: string | null; attribution: string | null; skill_id: string | null; rendered_sha256: string | null; content_sha256: string | null
 }
 type CandidateRow = {
   id: string; created_at: string; author_session: string; author_agent: string;
@@ -82,7 +82,7 @@ export class Learning {
     const params: unknown[] = [before]
     if (input.action_id !== undefined) params.push(input.action_id)
     params.push(take + 1)
-    const rows = this.actionDB.prepare("SELECT seq,id,action_id,session_id,kind, json_extract(data,'$.created_at') AS occurred_at, json_extract(data,'$.data.phase') AS phase, json_extract(data,'$.data.tool') AS tool, json_extract(data,'$.data.status') AS status, json_extract(data,'$.data.attribution') AS attribution, json_extract(data,'$.data.skill_id') AS skill_id, json_extract(data,'$.data.rendered_sha256') AS rendered_sha256 FROM ledger WHERE seq<?" + action + " ORDER BY seq DESC LIMIT ?")
+    const rows = this.actionDB.prepare("SELECT seq,id,action_id,session_id,kind, json_extract(data,'$.created_at') AS occurred_at, json_extract(data,'$.data.phase') AS phase, json_extract(data,'$.data.tool') AS tool, json_extract(data,'$.data.status') AS status, json_extract(data,'$.data.attribution') AS attribution, json_extract(data,'$.data.skill_id') AS skill_id, json_extract(data,'$.data.rendered_sha256') AS rendered_sha256, json_extract(data,'$.data.content_sha256') AS content_sha256 FROM ledger WHERE seq<?" + action + " ORDER BY seq DESC LIMIT ?")
       .all(...params) as EventRow[]
     const selected = rows.slice(0, take)
     const sessions = new Set<string>(), actions = new Set<string>()
@@ -119,7 +119,7 @@ export class Learning {
         action_id: r.action_id, kind: r.kind, occurred_at: r.occurred_at,
         ...(r.phase ? { phase: r.phase } : {}), ...(r.tool ? { tool: r.tool } : {}),
         ...(r.status ? { status: r.status } : {}), ...(r.attribution ? { attribution: r.attribution } : {}),
-        ...(r.skill_id ? { skill_id: r.skill_id } : {}), ...(r.rendered_sha256 ? { rendered_sha256: r.rendered_sha256 } : {}) })),
+        ...(r.skill_id ? { skill_id: r.skill_id } : {}), ...(r.rendered_sha256 ? { rendered_sha256: r.rendered_sha256 } : {}), ...(r.content_sha256 ? { content_sha256: r.content_sha256 } : {}) })),
       note: "Counts describe bounded Loom ledger evidence, NOT independent objectives, final correctness, verified exposure, or causal skill effects. Follow pages and inspect authorized original Sessions/children and real outcome checks before evaluating trends. Missing native history cannot be inferred from this table.",
     }
   }
