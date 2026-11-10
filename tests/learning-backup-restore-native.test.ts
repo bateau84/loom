@@ -225,13 +225,13 @@ test("explicit pre-learning backup remains ledger-only; corrupt and incompatible
     expect(Object.keys(manifest.databases)).toEqual(["ledger.sqlite"])
     ok(python(restoreArgs(project, backup, restored)))
     expect(rawHashes(origin)).toEqual(before)
-    const recovered = await registeredLoom([], { directory: project, stateHome: restoreHome })
-    try {
-      const actions = (await recovered.invoke("action", { operation: "list" })).result.items
-      expect(actions.find((a: any) => a.id === action.id)).toMatchObject(action)
-      expect((await recovered.invoke("tweak", { operation: "list" })).result.items).toEqual([])
-      expect(recovered.sessionPrompts).toHaveLength(0)
-    } finally { await recovered.close() }
+    const expectedFile = join(root, "legacy-reader-expectations.json")
+    writeFileSync(expectedFile, JSON.stringify({ action, legacy: true }))
+    const reader = Bun.spawnSync([process.execPath,
+      new URL("./helpers/learning-recovery-reader.ts", import.meta.url).pathname,
+      project, restoreHome, expectedFile])
+    if (reader.exitCode !== 0) throw new Error("legacy restored public readers failed: " + reader.stderr.toString())
+    expect(reader.stdout.toString()).toContain("PASS: legacy Action history recovered")
     expect(rawHashes(origin)).toEqual(before)
 
     const badLearning = join(origin, "learning.sqlite")
