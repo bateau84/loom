@@ -7,7 +7,7 @@ import { registeredLoom } from "./helpers/registered-loom.js"
 for (const name of Object.keys(TOOL_HELP) as LoomToolName[]) test(`registered ${name} tool carries complete search help without role injection`, async () => {
   const fixture = await registeredLoom()
   try {
-    expect([...fixture.tools.keys()].sort()).toEqual(["action", "agents", "assessment", "context", "insights", "objective", "plan", "qa", "record", "trace", "tweak"])
+    expect([...fixture.tools.keys()].sort()).toEqual(["action", "agents", "assessment", "context", "insights", "objective", "plan", "qa", "record", "trace", "trends", "tweak"])
     expect(fixture.namespaces.get("loom").description).toBe(LOOM_NAMESPACE_HELP)
     const tool = fixture.tools.get(name)
     expect(tool.description).toBe(TOOL_HELP[name])
