@@ -265,6 +265,13 @@ export class SessionExperiments {
     if (host.sessionID !== actor.session_id || host.agent !== actor.agent) throw new Error("LOOM_LIVE_SCOPE_DRIFT")
     this.assertHost(host,row)
     if (row.status === "stopped") return this.read(actor.session_id)
+    // Reserve withdrawal before touching native storage: in-flight new request
+    // preflights now reject "stopping". A prior admitted provider call cannot
+    // be recalled, so its possible exposure remains in the durable history.
+    this.transaction(() => {
+      this.db.prepare("UPDATE learning_live_experiments SET status='stopping' WHERE id=?").run(row.id)
+      this.event(row.id, "withdrawal-requested", "New trial preflights blocked; already admitted input may still be in flight")
+    })
     try {
       const value = await this.ownValue(host)
       if (value !== undefined) {
@@ -289,7 +296,7 @@ export class SessionExperiments {
   }
   assertRetirable(candidateID: string) {
     const row = this.db.prepare(`SELECT id FROM learning_live_experiments
-      WHERE candidate_id=? AND status IN ('installing','assigned','possible-exposure','recovery-required','stop-uncertain') LIMIT 1`)
+      WHERE candidate_id=? AND status IN ('installing','assigned','possible-exposure','stopping','recovery-required','stop-uncertain') LIMIT 1`)
       .get(candidateID)
     if (row) throw new Error("LOOM_LIVE_ACTIVE: stop/reconcile active or uncertain experimental Session before retiring candidate")
   }
