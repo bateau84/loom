@@ -1,12 +1,12 @@
 ---
 type: API Reference
-title: "Eleven tools, optional structure"
+title: "Twelve tools, optional structure"
 description: "Documents Loom tools, input contracts, scopes and failure semantics."
 tags: [loom, tools, api]
 timestamp: 2026-10-24T00:00:00Z
 ---
 
-# Eleven tools, optional structure
+# Twelve tools, optional structure
 
 Loom retains goals, context and attributed history. OpenCode owns execution,
 native delegation, skills, models and permissions. A conversation needs no Action;
@@ -23,6 +23,7 @@ useful, not simply because work takes multiple steps.
 | `loom_trace` | Inspect authorized original Session messages and child identities; state coverage gaps |
 | `loom_insights` | Read bounded observational Action/project ledger metadata; no success-rate claims |
 | `loom_objective` | Recover one source-linked objective, child-agent handbacks, runtime checks and corrective attempts |
+| `loom_trends` | Compare a bounded, explicitly selected objective population over source-start and reporting windows; no causal verdict |
 | `loom_tweak` | Preserve provisional fingerprinted tweak proposals and trials; never activate them |
 | `loom_plan` | Read/replace optional intended work and relationships |
 | `loom_context` | Read selection, explicitly select work or clear selection |
@@ -43,6 +44,10 @@ this is not an atomic multi-write transaction. Use the exact callable search pat
 ## Source-linked whole-objective history
 
 `loom_objective` is an optional, authored reconstruction index in separate `learning.sqlite`. A `create` request anchors one goal to an original source message/ledger record/declared URL; different goals in the same request use different `unit_key` values. Use `link` with exact native message/call IDs or a validated ledger record for request, coordination, dispatch, handback, verification, corrective dispatch, continuation, changed requirements, planned increments, environmental failure, outcome and explicit coverage gaps. Later verdict or relationship corrections append records, never erase previous claims. `read` pages chronologically; `find` may return several objectives for a shared source. Foreign native Session evidence requires its own authorized export; no private transcript bodies are copied into the index. Original source, link authorship, confidence, status (reported versus verified) and missing coverage remain separate. See [the full evidence contract](learning-experiments.md#source-linked-objective-reconstruction).
+
+## Read-only longitudinal comparisons
+
+`loom_trends` reads the optional source-linked objective index, not individual bounded `loom_insights` ledger pages. Supply explicit `since_at`, `until_at` (exclusive), `as_of_at`, population mode, and optional grouping/filter. Totals are computed across a frozen high-water-mark objective population on **every** page; `next_cursor` pages original objective IDs without reselecting members during concurrent appends. Unknown outcomes and undated starts remain visible. Counts represent authored judgments with original source IDs, not independently verified task success. Same-source failures are identified as correlated evidence, not independent incidents. Work type, model/provider, host/tool revision, observer/rubric and actual instruction exposure must not be inferred from today’s files or current defaults. See [longitudinal comparison details](learning-experiments.md#bounded-longitudinal-comparisons).
 
 ## Assessment and QA lenses
 
