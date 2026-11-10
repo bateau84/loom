@@ -149,7 +149,7 @@ for (const mode of ["closed", "residual-WAL"] as const) {
           hypothesis: "Test faithful retention of trial assignment across backup",
           evidence_refs: [evidence.id],
         })).result
-        const approval = "user-approval-recovery-trial"
+        const approval = "user-approval-recovery-trial";
         (host.nativeContexts.get(treatmentSession) as {data:Array<Record<string,unknown>>}).data.push({
           id: approval, type: "user",
           text: `LOOM-TRIAL-APPROVE candidate=${liveCandidate.id} objective=${liveObjective.id} budget=2`,
