@@ -1,0 +1,43 @@
+name: Learning qualification workspace
+on:
+  pull_request:
+    paths:
+      - .github/workflows/learning-workspace.yml
+permissions:
+  contents: read
+jobs:
+  workspace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      # Same trusted publishers/tags as the existing CI; no secrets or write token.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - run: bun install --frozen-lockfile
+      - name: Install exact standalone verification tools
+        run: |
+          npm install --prefix "$RUNNER_TEMP/qualification-tools" --no-audit --no-fund @opencode/cli@2.2.6 @opencode/codemode@2.0.29
+      - name: Package source and pinned dependencies only
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/qualification-workspace"
+          mkdir -p "$out"
+          git bundle create "$out/loom.bundle" --all
+          git rev-parse HEAD > "$out/source-sha.txt"
+          tar -czf "$out/dependencies.tar.gz" node_modules
+          tar -C "$RUNNER_TEMP/qualification-tools" -czf "$out/tools.tar.gz" node_modules package.json package-lock.json
+          cp "$(command -v bun)" "$out/bun"
+          cd "$out"
+          sha256sum loom.bundle dependencies.tar.gz tools.tar.gz bun source-sha.txt > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: learning-qualification-workspace
+          path: ${{ runner.temp }}/qualification-workspace/
+          if-no-files-found: error
+          retention-days: 2
