@@ -60,7 +60,7 @@ for (const mode of ["closed", "residual-WAL"] as const) {
     mkdirSync(project)
     try {
       const host = await registeredLoom([], { directory: project, versionedHost: true })
-      let action: any, evidence: any, original: any, revision: any, older: any[], objective: any, trendBounds: any
+      let action: any, evidence: any, original: any, revision: any, older: any[], objective: any, trendBounds: any, live: any
       const expected: any[] = []
       try {
         action = (await host.invoke("action", { operation: "create",
@@ -123,6 +123,64 @@ for (const mode of ["closed", "residual-WAL"] as const) {
         }
         older = expected.slice(0, 6)
         expect((await host.invoke("tweak", { operation: "retire", id: revision.id })).result.status).toBe("retired")
+        // Exercise the final production Session-trial tables and audit history.
+        // This is a deterministic host fixture: assignment is NOT observed
+        // provider delivery or real user authorization.
+        const treatmentSession = "recovery-trial"
+        const baseline = "Original native author system instructions."
+        const candidateText = "Proposed additive Session context: record original source evidence."
+        host.nativeAgents.find((a: any) => a.id === "author").system = baseline
+        host.sessions.set(treatmentSession, {
+          id: treatmentSession, agent: "author", projectID: "tool-help",
+          location: { directory: project },
+        })
+        host.nativeContexts.set(treatmentSession, { data: [{
+          id: "request-recovery-trial", type: "user",
+          text: "Reconstruct one exact engineering objective for a bounded instruction trial",
+          time: { created: Date.now() },
+        }] })
+        const liveObjective = (await host.invoke("objective", {
+          operation: "create", source_type: "native-message",
+          source_id: "request-recovery-trial", label: "Original native Session trial goal",
+        }, treatmentSession)).result
+        const liveCandidate = (await host.invoke("tweak", {
+          operation: "propose", target_kind: "agent", target_id: "author",
+          base_sha256: fingerprint(baseline), candidate_content: candidateText,
+          hypothesis: "Test faithful retention of trial assignment across backup",
+          evidence_refs: [evidence.id],
+        })).result
+        const approval = "user-approval-recovery-trial"
+        host.nativeContexts.get(treatmentSession).data.push({
+          id: approval, type: "user",
+          text: `LOOM-TRIAL-APPROVE candidate=${liveCandidate.id} objective=${liveObjective.id} budget=2`,
+          time: { created: Date.now() },
+        })
+        const assignment = (await host.invoke("tweak", {
+          operation: "live-start", objective_id: liveObjective.id,
+          candidate_id: liveCandidate.id, authorize: true,
+          authorization_ref: approval,
+          eligibility: "The exact original author Session and approved objective",
+          evaluation_criteria: "Verify original sources and avoid counting attempts as objectives",
+          preserved_guarantees: "No registry edits, no permission bypass and no paid provider",
+          budget_requests: 2, expires_at: new Date(Date.now()+180000).toISOString(),
+        }, treatmentSession)).result
+        expect(assignment.status).toBe("assigned")
+        expect(assignment.exposure).toBe("NOT_VERIFIED")
+        // Withdraw through the actual tool. Preserve all historical
+        // assignments/events without carrying an orphaned native entry into
+        // a recovered host that has no model-visible Session history.
+        const stopped = (await host.invoke("tweak", {
+          operation: "live-stop",
+        }, treatmentSession)).result
+        expect(stopped.status).toBe("stopped")
+        const observedTrial = (await host.invoke("tweak", {
+          operation: "live-read",
+        }, treatmentSession)).result
+        expect(observedTrial.events.some((e: any) => e.kind === "native-entry-readback")).toBe(true)
+        live = { session_id: treatmentSession, experiment_id: assignment.experiment_id,
+          candidate_id: liveCandidate.id, candidate_sha256: liveCandidate.candidate_sha256,
+          objective_id: liveObjective.id, baseline_sha256: fingerprint(baseline),
+          authorization_ref: approval, event_kinds: observedTrial.events.map((e: any) => e.kind) }
       } finally { await host.close() }
 
       let wal: { evidence: string; candidate: string } | undefined
@@ -174,7 +232,7 @@ for (const mode of ["closed", "residual-WAL"] as const) {
       // Verify public readers in a separate process, so test files sharing an
       // environment cannot redirect the host to the original state home.
       const expectedFile = join(root, "reader-expectations.json")
-      writeFileSync(expectedFile, JSON.stringify({ action, evidence, original, revision, objective, trendBounds,
+      writeFileSync(expectedFile, JSON.stringify({ action, evidence, original, revision, objective, trendBounds, live,
         expected, older, wal: wal && { ...wal, candidateHash: fingerprint("WAL-only content") } }))
       const reader = Bun.spawnSync([process.execPath,
         new URL("./helpers/learning-recovery-reader.ts", import.meta.url).pathname,
