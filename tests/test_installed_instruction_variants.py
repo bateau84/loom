@@ -3,6 +3,7 @@ import unittest
 
 from installed_instruction_variants import (
     HOST, sha, source_guard, verify_host_version, verify_receipt,
+    verify_attempt_receipts,
 )
 
 CANDIDATE = "harmless test variant"
@@ -75,6 +76,48 @@ class VariantOracleTest(unittest.TestCase):
             with self.subTest(version=version):
                 with self.assertRaisesRegex(RuntimeError, "HOST_MISMATCH"):
                     verify_host_version(version)
+
+    def test_multiple_complete_provider_attempts_are_one_scenario(self):
+        arrivals = [{"attemptID": "a"}, {"attemptID": "b"}]
+        receipts = [{**receipt(candidate=True), "attemptID": name}
+                    for name in ("a", "b")]
+        verified = verify_attempt_receipts(arrivals, receipts,
+                                           expected_candidate=True,
+                                           candidate_sha=sha(CANDIDATE))
+        self.assertEqual(len(verified), 2)
+        self.assertEqual({value["effective_sha256"] for value in verified}, {"1" * 64})
+
+    def test_one_missing_attempt_receipt_fails_even_if_another_completed(self):
+        arrivals = [{"attemptID": "a"}, {"attemptID": "b"}]
+        receipts = [{**receipt(candidate=True), "attemptID": "a"}]
+        with self.assertRaisesRegex(RuntimeError, "RECEIPT_GAP"):
+            verify_attempt_receipts(arrivals, receipts,
+                                    expected_candidate=True,
+                                    candidate_sha=sha(CANDIDATE))
+
+    def test_duplicate_foreign_and_empty_attempt_identifiers_fail(self):
+        scenarios = [
+            ([{"attemptID": "a"}, {"attemptID": "a"}],
+             [{**receipt(), "attemptID": "a"}]),
+            ([{"attemptID": "a"}], [{**receipt(), "attemptID": "b"}]),
+            ([{"attemptID": None}], [{**receipt(), "attemptID": None}]),
+        ]
+        for arrivals, receipts in scenarios:
+            with self.subTest(arrivals=arrivals):
+                with self.assertRaisesRegex(RuntimeError, "RECEIPT_GAP"):
+                    verify_attempt_receipts(arrivals, receipts,
+                                            expected_candidate=False,
+                                            candidate_sha=sha(CANDIDATE))
+
+    def test_changed_effective_system_across_attempts_fails(self):
+        arrivals = [{"attemptID": "a"}, {"attemptID": "b"}]
+        receipts = [{**receipt(), "attemptID": "a"},
+                    {**receipt(), "attemptID": "b",
+                     "effective_sha256": "2" * 64}]
+        with self.assertRaisesRegex(RuntimeError, "EFFECTIVE_DRIFT"):
+            verify_attempt_receipts(arrivals, receipts,
+                                    expected_candidate=False,
+                                    candidate_sha=sha(CANDIDATE))
 
     def test_source_and_registry_drift_cannot_be_a_clean_baseline(self):
         baseline = {"skill_file_sha256": "a" * 64, "agents": "b" * 64,
