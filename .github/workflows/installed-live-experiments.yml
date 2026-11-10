@@ -1,0 +1,67 @@
+name: Installed OpenCode 2.2.6 live Session controller qualification
+on:
+  pull_request:
+    branches: [main, feat/objective-source-links-20261110]
+    paths:
+      - .github/workflows/installed-live-experiments.yml
+      - src/live-experiments.ts
+      - src/plugin.ts
+      - src/learning.ts
+      - src/objectives.ts
+      - tests/installed_live_experiments.py
+      - tests/live-experiments-native.test.ts
+      - tests/question-host/**
+      - tests/installed_questions.py
+      - tests/installed_host_smoke.py
+      - docs/live-instruction-experiments.md
+      - docs/learning-experiments.md
+      - docs/testing.md
+permissions:
+  contents: read
+jobs:
+  installed-live-controller:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - name: Native controller component contracts (not installed qualification)
+        run: bun test tests/live-experiments-native.test.ts
+      - name: Typecheck disposable scripted provider
+        run: >-
+          ./node_modules/.bin/tsc --noEmit --ignoreConfig --target ES2022 --module NodeNext
+          --moduleResolution NodeNext --strict --skipLibCheck --types bun,node
+          tests/question-host/server.ts
+      - name: Pack candidate and install outside its checkout
+        run: |
+          mkdir -p "$RUNNER_TEMP/live-packed"
+          npm pack --json --pack-destination "$RUNNER_TEMP/live-packed" > "$RUNNER_TEMP/live-packed/pack.json"
+          ARTIFACT=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))[0].filename)' "$RUNNER_TEMP/live-packed/pack.json")
+          npm install --prefix "$RUNNER_TEMP/live-plugin" --no-audit --no-fund "$RUNNER_TEMP/live-packed/$ARTIFACT"
+      - name: Install independent unmodified OpenCode 2.2.6 host
+        run: npm install --prefix "$RUNNER_TEMP/live-host" --no-audit --no-fund @opencode/cli@2.2.6
+      - name: Prove production live controller through real installed host
+        run: >-
+          python3 tests/installed_live_experiments.py
+          --opencode "$RUNNER_TEMP/live-host/node_modules/.bin/opencode"
+          --plugin "$RUNNER_TEMP/live-plugin/node_modules/loom-plugin"
+          --artifact "$(find "$RUNNER_TEMP/live-packed" -maxdepth 1 -name 'loom-plugin-*.tgz' -print -quit)"
+          --repository "$GITHUB_WORKSPACE"
+          --expect-plugin-version "$(node -p 'require("./package.json").version')"
+          --report-directory "$RUNNER_TEMP/live-controller-report"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installed-live-controller-${{ github.sha }}
+          path: ${{ runner.temp }}/live-controller-report/
+          if-no-files-found: warn
+          retention-days: 7
