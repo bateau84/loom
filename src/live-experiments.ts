@@ -190,7 +190,7 @@ export class SessionExperiments {
       if (await this.ownValue(host) !== candidate.content) throw new Error("LOOM_LIVE_ASSIGNMENT_READBACK_MISMATCH")
       this.transaction(() => {
         const result = this.db.prepare("UPDATE learning_live_experiments SET status='assigned' WHERE id=? AND status='installing'")
-          .run(trialID)
+          .run(trialID) as { changes: number }
         if (result.changes !== 1) throw new Error("LOOM_LIVE_ASSIGNMENT_RACE: withdrawal or recovery occurred during native write")
         this.event(trialID, "native-entry-readback", "Candidate SHA-256 verified at native Session-entry storage; NOT provider exposure")
       })
@@ -297,7 +297,7 @@ export class SessionExperiments {
       const updated = this.db.prepare(`UPDATE learning_live_experiments
         SET preflight_count=preflight_count+1,status='possible-exposure'
         WHERE id=? AND status IN ('assigned','possible-exposure') AND preflight_count<?`)
-        .run(row.id,row.budget_requests)
+        .run(row.id,row.budget_requests) as { changes: number }
       if (updated.changes !== 1)
         throw new Error("LOOM_LIVE_CONCURRENT_WITHDRAWAL: preflight cannot revive a stopped trial")
       this.event(row.id,"primary-pretransport", "Native request reached pre-transport hook; provider delivery NOT certified")
