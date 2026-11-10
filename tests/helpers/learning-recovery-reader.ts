@@ -11,12 +11,19 @@ import { registeredLoom } from "./registered-loom.js"
 
 const [project, restoreHome, inputFile] = process.argv.slice(2)
 assert(project && restoreHome && inputFile, "usage: bun learning-recovery-reader.ts PROJECT STATE_HOME EXPECTED_JSON")
-const { action, evidence, original, revision, expected, older, wal } = JSON.parse(readFileSync(inputFile, "utf8"))
+const { action, evidence, original, revision, expected, older, wal, legacy } = JSON.parse(readFileSync(inputFile, "utf8"))
 const recovered = await registeredLoom([], { directory: project, stateHome: restoreHome, versionedHost: true })
 try {
   const actions = (await recovered.invoke("action", { operation: "list" })).result.items
   assert.deepEqual(actions.find((a: any) => a.id === action.id), action)
 
+  if (legacy) {
+    assert.deepEqual((await recovered.invoke("tweak", { operation: "list" })).result.items, [],
+      "A pre-learning backup must not invent learning history")
+    assert.deepEqual(recovered.sessionPrompts, [])
+    assert.deepEqual(recovered.sessionCreates, [])
+    process.stdout.write("PASS: legacy Action history recovered without fabricated learning state\\n")
+  } else {
   const insights = (await recovered.invoke("insights", { operation: "window", limit: 200 })).result
   assert(insights.events.some((e: any) => e.record_id === evidence.id), "Source Action evidence missing from insights")
   if (wal) assert(insights.events.some((e: any) => e.record_id === wal.evidence),
@@ -77,6 +84,7 @@ try {
   assert.deepEqual(recovered.sessionCreates, [], "Inspection must never create a native Session")
   process.stdout.write("PASS: verified public Action/learning readers, IDs, hashes, cross-db refs, " +
     all.length + " reports and oldest harmful outcomes\n")
+  }
 } finally {
   await recovered.close()
 }
