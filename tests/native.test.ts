@@ -302,7 +302,7 @@ test("removed-task recovery is injected, repeatable, non-mutating and cleared by
   try {
     await writeFile(path, config)
     cleanup = await (plugin as any).setup(ctx)
-    expect(tools.size).toBe(9)
+    expect(tools.size).toBe(10)
     const action = await invoke("action", { operation: "create", title: "A", goal: "Goal" })
     const old = { id: "old", kind: "task", title: "Old work" }, next = { id: "next", kind: "task", title: "New work" }
     await invoke("plan", { operation: "save", action_id: action.id, expected_revision: 0, nodes: [old, next] })
@@ -362,7 +362,7 @@ test("removed-task recovery is injected, repeatable, non-mutating and cleared by
     expect(injected()).toHaveLength(0)
     expect((await invoke("context", {})).selected).toBeNull()
     expect((await invoke("record", { operation: "query", action_id: action.id, record_id: record.id })).items[0].node_id).toBe("old")
-    expect(tools.size).toBe(9)
+    expect(tools.size).toBe(10)
   } finally {
     await cleanup?.()
     if (oldState === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = oldState
@@ -445,7 +445,7 @@ for (const gapKind of ["off", "write-failure"] as const) test(`registered plugin
     expect(hooks.size).toBe(0)
     await configure("automatic")
     cleanup = await (plugin as any).setup(ctx)
-    expect(tools.size).toBe(9)
+    expect(tools.size).toBe(10)
     await invoke("context", { action_id: action.id, node_id: "new" })
     await hooks.get("execute.before")({ ...call, input: { path: "same" } })
     await hooks.get("execute.after")({ ...call, status: "completed", result: { content: "older finishes first" } })
