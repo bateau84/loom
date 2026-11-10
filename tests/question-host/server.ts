@@ -71,8 +71,17 @@ export default Plugin.define({
         if (code) {
           events.push({ type: "tool-call", toolCallId: randomUUID(), toolName: "execute", input: JSON.stringify({ code }) })
         } else if (nativeEdit) {
+          // The installed-objective fixture exercises real native edits against
+          // a disposable runtime scenario. Existing permission-gate tests keep
+          // their exact legacy input. No arbitrary edit targets are admitted.
+          const proposed = jobs[id!]?.edit
+          const change = proposed?.path === "objective_runtime.py"
+            && typeof proposed.oldString === "string"
+            && typeof proposed.newString === "string"
+            && proposed.oldString.length < 80 && proposed.newString.length < 80
+            ? proposed : { path: "permission-gate.txt", oldString: "prototype", newString: "safe" }
           events.push({ type: "tool-call", toolCallId: randomUUID(), toolName: "edit",
-            input: JSON.stringify({ path: "permission-gate.txt", oldString: "prototype", newString: "safe" }) })
+            input: JSON.stringify(change) })
         } else if (checkPolicy) {
           // Two real negative controls: the omitted shell tool must not dispatch, and the
           // still-advertised native skill tool must honor the switched agent's deny-all policy.
