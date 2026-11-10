@@ -46,6 +46,8 @@ test("three Coder DONE reports followed by two runtime failures remain one sourc
     const phases: string[] = ["request"]
     let failedVerificationSequence = 0
     const verificationIDs: string[] = []
+    const handbackSequences: number[] = []
+    const verificationSequences: number[] = []
     for (let n = 1; n <= 3; n++) {
       await pause()
       const msg = "dispatch-" + n, call = "call-" + n
@@ -69,6 +71,7 @@ test("three Coder DONE reports followed by two runtime failures remain one sourc
         assessment: "reported-done", note: "Child reported DONE, not an acceptance result",
       }, "parent")).result
       expect(handback.verification).toBe("provided-export-unverified")
+      handbackSequences.push(handback.sequence)
       expect(handback.parent_session_id).toBe("parent")
       expect(handback.author_session).toBe("parent")
       phases.push("handback")
@@ -81,19 +84,27 @@ test("three Coder DONE reports followed by two runtime failures remain one sourc
       const verified = (await host.invoke("objective", {
         operation: "link", objective_id: objective.id, phase: "verification",
         source_type: "ledger-record", source_id: original.id, assessment: n < 3 ? "fail" : "pass",
-        note: "Authored verification interpretation of the original QA record",
+        related_sequence: handback.sequence,
+        note: "Runtime verification explicitly challenges this reported DONE handback",
       }, "parent")).result
       expect(verified.source_id).toBe(original.id)
       expect(verified.source_session_id).toBe("parent")
       expect(verified.action_id).toBe(action.id)
       failedVerificationSequence = verified.sequence
+      verificationSequences.push(verified.sequence)
       phases.push("verification")
     }
+    const delivered = (await host.invoke("objective", { operation: "link", objective_id: objective.id,
+      phase: "outcome", source_type: "ledger-record", source_id: verificationIDs[2],
+      related_sequence: verificationSequences[2], assessment: "pass",
+      note: "Final claimed delivered outcome; not host-certified success" }, "parent")).result
+    expect(delivered.related_sequence).toBe(verificationSequences[2])
+    phases.push("outcome")
 
     const original = (await host.invoke("record", { operation: "query", action_id: action.id, limit: 20 }, "parent")).result.items
     expect(original.filter((r: any) => r.kind === "qa").map((r: any) => r.data.verdict)).toEqual(["fail", "fail", "pass"])
     const page = (await host.invoke("objective", { operation: "read", objective_id: objective.id }, "parent")).result
-    expect(page.entries).toHaveLength(10)
+    expect(page.entries).toHaveLength(11)
     expect(page.entries.map((r: any) => r.phase)).toEqual(phases)
     expect(page.entries.filter((r: any) => r.phase === "handback").map((r: any) => r.assessment))
       .toEqual(["reported-done", "reported-done", "reported-done"])
@@ -101,6 +112,8 @@ test("three Coder DONE reports followed by two runtime failures remain one sourc
       .toEqual(["fail", "fail", "pass"])
     expect(page.entries.filter((r: any) => r.phase === "verification").map((r: any) => r.source_id))
       .toEqual(verificationIDs)
+    expect(page.entries.filter((r: any) => r.phase === "verification").map((r: any) => r.related_sequence))
+      .toEqual(handbackSequences)
     expect(page.entries.filter((r: any) => r.phase === "corrective-dispatch").map((r: any) => r.related_sequence))
       .toEqual([4, 7])
     expect(page.coverage.completeness).toBe("unknown")
@@ -118,7 +131,7 @@ test("three Coder DONE reports followed by two runtime failures remain one sourc
     const actionDB = new Database(join(root, "ledger.sqlite"))
     try {
       expect((learning.query("SELECT count(*) AS n FROM learning_objectives").get() as any).n).toBe(1)
-      expect((learning.query("SELECT count(*) AS n FROM learning_objective_links").get() as any).n).toBe(10)
+      expect((learning.query("SELECT count(*) AS n FROM learning_objective_links").get() as any).n).toBe(11)
       expect(actionDB.query("SELECT name FROM sqlite_schema WHERE name LIKE 'learning_objective%'").all()).toEqual([])
     } finally { learning.close(); actionDB.close() }
     expect(host.permissionRequests.filter((p: any) => p.action === "read")).toHaveLength(3)
