@@ -373,7 +373,7 @@ test("stop during asynchronous native install never claims clean withdrawal; lat
     await expect(h.hooks.get("model.request")({
       sessionID:"parent",agent:"author",kind:"primary",
       model:{providerID:"fixture",id:"scripted"},
-    })).rejects.toThrow("LOOM_LIVE_RECOVERY_REQUIRED")
+    })).rejects.toThrow("LOOM_LIVE_WITHDRAWAL_UNCERTAIN")
     release()
     await expect(pending).rejects.toThrow("LOOM_LIVE_ASSIGNMENT_RACE")
     expect((await call(h,"read")).result.status).toBe("recovery-required")
