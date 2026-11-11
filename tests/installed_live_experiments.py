@@ -260,13 +260,22 @@ def run(args):
                 "budget_requests":8,"expires_at":expiry,
             }
             if not args.require_qualified_human_approval:
+                # A failed native Code Mode script surfaces a generic wrapper
+                # error. Verify the underlying exact failed execute state,
+                # rather than treating any exception as evidence of denial.
                 try:
                     rejected=s.invoke(treatment,"tweak",request_start)
-                    denial=json.dumps(rejected)
-                except Exception as exc:
-                    denial=str(exc)
-                require("LOOM_LIVE_HUMAN_PROVENANCE_UNQUALIFIED" in denial,
-                        "FAIL_OPEN: orchestrator-authored user-role approval was not rejected by provenance gate: "+denial[:300])
+                except Exception:
+                    rejected=None
+                require(rejected is None, "FAIL_OPEN: native live-start returned success")
+                messages=request(host,"GET",f"/api/session/{treatment}/message?order=desc&limit=100")
+                calls=[part for message in messages if message.get("type")=="assistant"
+                       for part in (message.get("content") or [])
+                       if isinstance(part,dict) and part.get("type")=="tool"
+                       and part.get("name")=="execute"]
+                require(calls and "LOOM_LIVE_HUMAN_PROVENANCE_UNQUALIFIED" in
+                        json.dumps(calls[-1].get("state",{})),
+                        "Native live-start did not expose the exact human-provenance denial")
                 require(native_entries(host,treatment)==[] and native_entries(host,control)==[],
                         "FAIL_OPEN: native instruction entry installed without trusted human")
                 import sqlite3
