@@ -340,6 +340,7 @@ export class ObjectiveTrends {
         unit_key: origin.unit_key, source_type: origin.source_type,
         origin_verification: origin.verification,
         outcome_author_agent: last?.author_agent ?? null,
+        outcome_source_verification: last?.verification ?? "not-observed",
         instruction_fingerprint: fp.group_key,
       },
       evidence: {
@@ -403,6 +404,7 @@ export class ObjectiveTrends {
       const sourceImpacts = new Map<string, Set<string>>(), originImpacts = new Map<string, Set<string>>()
       const mix = { unit_keys: {} as Record<string, number>,
         origin_verifications: {} as Record<string, number>,
+        outcome_source_verifications: {} as Record<string, number>,
         instruction_observations: { one: 0, multiple: 0, none: 0 } }
       for (const point of points) {
         addMetrics(metrics, point.metrics)
@@ -412,6 +414,9 @@ export class ObjectiveTrends {
         mix.unit_keys[point.unit_key] = (mix.unit_keys[point.unit_key] ?? 0) + 1
         const verification = point.origin.verification
         mix.origin_verifications[verification] = (mix.origin_verifications[verification] ?? 0) + 1
+        const outcomeVerification = point.dimensions.outcome_source_verification
+        mix.outcome_source_verifications[outcomeVerification] =
+          (mix.outcome_source_verifications[outcomeVerification] ?? 0) + 1
         if (point.instruction_observations.total === 0) mix.instruction_observations.none++
         else if (point.instruction_observations.total === 1) mix.instruction_observations.one++
         else mix.instruction_observations.multiple++
