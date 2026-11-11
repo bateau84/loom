@@ -46,6 +46,9 @@ export type ExperimentHost = {
   // author/approval attestation must bind exactly these bytes and scope.
   // User-role messages and permission.assert success alone are not this proof.
   verifyHumanApproval?: (binding: HumanApprovalBinding) => Promise<boolean>
+  // Read the actual project's configured agent roles at each admission gate.
+  // The native agent ID alone may not reveal Reviewer/Critic responsibilities.
+  roleIDs?: () => Promise<string[]>
 }
 export type StartExperiment = {
   objective_id: string
@@ -197,8 +200,13 @@ export class SessionExperiments {
     this.assertHost(host)
     if (actor.session_id !== host.sessionID || actor.agent !== host.agent)
       throw new Error("LOOM_LIVE_SCOPE_DRIFT: a Session can enroll only itself")
-    if (/review|critic|evaluat|assess|(^|[-_])qa($|[-_])/i.test(actor.agent))
-      throw new Error("LOOM_LIVE_INDEPENDENCE: independent evaluators/reviewers are excluded")
+    const independentRole = /review|critic|evaluat|assess|(^|[-_])qa($|[-_])/i
+    const assertNotIndependent = async () => {
+      if (independentRole.test(actor.agent) ||
+          (await host.roleIDs?.())?.some(role => independentRole.test(role)))
+        throw new Error("LOOM_LIVE_INDEPENDENCE: independent evaluators/reviewers are excluded")
+    }
+    await assertNotIndependent()
     const objective = id(input.objective_id, "objective_id")
     const eligibility = text(input.eligibility, "eligibility", 1000)
     const criteria = text(input.evaluation_criteria, "evaluation_criteria", 2000)
@@ -228,6 +236,9 @@ export class SessionExperiments {
     // Native permission is required in addition to caller-supplied opt-in. It
     // must run before any durable reservation or instruction mutation.
     await permission()
+    // The role map can change while native permission is pending. A role that
+    // became independent during approval cannot inherit the earlier result.
+    await assertNotIndependent()
     this.assertHost(host)
     this.eligibleObjective(objective, host.sessionID)
     candidate = this.candidate(input.candidate_id)
