@@ -95,10 +95,25 @@ const unavailables = {
   incident_cause: "Matching source IDs show shared evidence, not all shared root causes.",
 }
 
+export type OriginIndependenceQualification = {
+  status: "qualified" | "unqualified"
+  basis: string
+}
+
 /** A frozen high-water mark is carried in every continuation, not a ledger-page offset.
  * Recomputed totals always cover the entire selected objective set. */
 export class ObjectiveTrends {
   constructor(private db: SQL, private actionDB: SQL) {}
+
+  /** OpenCode 2.2.6 has no attested direct originating-request identity.
+   * Distinct ledger or user-role message IDs can be attempts at one request.
+   * There is currently no trusted producer for independence certification. */
+  originIndependenceQualification(): OriginIndependenceQualification {
+    return {
+      status: "unqualified",
+      basis: "Distinct objective, ledger and user-role message IDs can still describe one originating request. The installed host has no verified originating-request independence receipt.",
+    }
+  }
 
   private scope(input: TrendInput): Scope {
     const since_at = timestamp(input.since_at, "since_at")
@@ -310,7 +325,8 @@ export class ObjectiveTrends {
       indexed_at: origin.created_at,
       origin: { source_type: origin.source_type, source_id: origin.source_id,
         session_id: origin.source_session_id, message_id: origin.source_message_id,
-        verification: origin.verification, sequence: origin.sequence },
+        verification: origin.verification, sequence: origin.sequence,
+        originating_request_independence: "unverified" as const },
       origin_key: origin.source_key,
       outcome, chronology: {
         undated_outcomes: outcomes.filter(l => l.source_at_ms === null).length,
@@ -427,7 +443,8 @@ export class ObjectiveTrends {
             unknown_start_scope: scope.population === "selected"
               ? "undated among selected IDs"
               : "undated objectives registered within the period; earlier undated anchors cannot be assigned to a source-time window" },
-          unit: "one explicitly anchored objective ID; shared source origins are disclosed, not automatically merged",
+          unit: "one explicitly anchored objective ID; no independent originating-request denominator is certified",
+          origin_independence: this.originIndependenceQualification(),
         },
         metrics,
         groups: [...groups].sort(([a], [b]) => a.localeCompare(b)).map(([key, counts]) => ({ key, metrics: counts })),
@@ -438,7 +455,7 @@ export class ObjectiveTrends {
           affected_objectives: new Set(shared.flatMap(s => [...s])).size,
           shared_origin_groups: overlap.length,
           affected_objectives_sharing_origin: new Set(overlap.flatMap(s => [...s])).size,
-          note: "A repeated exact source is one shared evidence record, not proof of separate incidents. Distinct sources may still share a cause; objective IDs alone do not certify statistical independence.",
+          note: "A repeated exact source is one shared evidence record, not proof of separate incidents. Even distinct ledger or native user-role source IDs may belong to one original request. Independence is UNQUALIFIED; do not infer recurring independent episodes.",
         },
         unavailable_dimensions: unavailables,
         metric_definitions: {
