@@ -153,6 +153,7 @@ test("second opener tolerates a creator between SQLite header and schema commit"
     let opened: Awaited<ReturnType<typeof openSharedQuotaState>> | undefined
     try {
       creator.exec("PRAGMA journal_mode=WAL; CREATE TABLE staging (id TEXT)")
+      await chmod(path, 0o600)
       const opening = openSharedQuotaState({ path }).then(
         state => ({ state, error: null as unknown }),
         error => ({ state: null, error }),
@@ -185,11 +186,12 @@ test("abandoned SQLite header with no schema version stays rejected and unchange
   fixture(async path => {
     const abandoned = new Database(path)
     try { abandoned.exec("CREATE TABLE staging (id TEXT)") } finally { abandoned.close() }
+    await chmod(path, 0o600)
     await expect(openSharedQuotaState({ path })).rejects.toThrow(/never initialized/)
     const inspection = new Database(path)
     try {
       expect((inspection.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(0)
-      expect(inspection.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='quota'").get()).toBeNull()
+      expect(inspection.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='quota'").get()).toBeFalsy()
     } finally { inspection.close() }
   }))
 
