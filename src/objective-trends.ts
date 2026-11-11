@@ -206,7 +206,11 @@ export class ObjectiveTrends {
     return rows
   }
 
-  private fingerprints(links: LinkRow[]) {
+  private fingerprints(links: LinkRow[], outcome: LinkRow | undefined) {
+    // Only a source-dated observation strictly before a source-dated outcome can
+    // support a pre-outcome association. Recording time is not a substitute.
+    const outcomeAt = outcome?.source_at_ms ?? null
+    let excludedUnknownTime = 0, excludedAfterOutcome = 0
     const matched: Array<{ stage: string; skill_id: string | null; sha256: string; source_id: string }> = []
     const seen = new Set<string>()
     const statement = this.actionDB.prepare(
@@ -219,6 +223,8 @@ export class ObjectiveTrends {
     )
     for (const l of links) {
       if (l.source_type !== "ledger-record" || l.event_kind !== "observation") continue
+      if (outcomeAt === null || l.source_at_ms === null) { excludedUnknownTime++; continue }
+      if (l.source_at_ms >= outcomeAt) { excludedAfterOutcome++; continue }
       const event = statement.get(l.source_id) as FingerprintRow | undefined
       if (!event || event.kind !== "observation") continue
       const sha = event.phase === "skill-load-result" ? event.rendered_sha256
@@ -237,6 +243,9 @@ export class ObjectiveTrends {
         : "multiple-observations",
       observations: matched.slice(0, 8), total: matched.length,
       omitted: Math.max(0, matched.length - 8),
+      excluded_unknown_chronology: excludedUnknownTime,
+      excluded_at_or_after_outcome: excludedAfterOutcome,
+      stage: "source-dated observation before source-dated outcome; not confirmed model exposure",
     }
   }
 
@@ -256,21 +265,25 @@ export class ObjectiveTrends {
     const failures = by("verification", "fail")
     const passes = by("verification", "pass")
     const outcomes = by("outcome")
-    const eventTime = (l: LinkRow) => l.source_at_ms ?? Date.parse(l.recorded_at)
-    const chronological = (a: LinkRow, b: LinkRow) => eventTime(a) - eventTime(b) || a.sequence - b.sequence
-    const last = [...outcomes].sort(chronological).at(-1)
-    // A later contrary check is not silently erased by an older pass claim.
+    // An undated outcome has unknown ordering; it must not inherit the date
+    // on which an agent chose to link it. Unordered failures contest a pass.
+    const last = outcomes.every(l => l.source_at_ms !== null)
+      ? [...outcomes].sort((a, b) => a.source_at_ms! - b.source_at_ms! || a.sequence - b.sequence).at(-1)
+      : undefined
     const contrary = last?.assessment === "pass" &&
-      failures.some(f => chronological(f, last) > 0)
+      failures.some(f => f.source_at_ms === null ||
+        f.source_at_ms > last.source_at_ms! ||
+        (f.source_at_ms === last.source_at_ms && f.sequence > last.sequence))
     const outcome = !last ? "unknown" : contrary ? "contested" :
       last.assessment === "pass" ? "reported-pass" :
       last.assessment === "fail" ? "reported-fail" : "inconclusive"
     const corrections = by("corrective-dispatch")
     const hasRecovery = outcome === "reported-pass" && corrections.length > 0 &&
-      passes.some(p => failures.some(f => chronological(f, p) < 0))
+      passes.some(p => p.source_at_ms !== null && failures.some(f =>
+        f.source_at_ms !== null && f.source_at_ms < p.source_at_ms!))
     const gaps = by("coverage-gap")
     const linkedConcerns = active.filter(l => l.event_kind === "concern")
-    const fp = this.fingerprints(active)
+    const fp = this.fingerprints(active, last)
     const metrics = zeroMetrics()
     metrics.eligible_objectives = 1
     if (outcome === "reported-pass") metrics.reported_pass++
@@ -299,7 +312,12 @@ export class ObjectiveTrends {
         session_id: origin.source_session_id, message_id: origin.source_message_id,
         verification: origin.verification, sequence: origin.sequence },
       origin_key: origin.source_key,
-      outcome, outcome_judgment: last ? { ...reference(last), assessment: last.assessment,
+      outcome, chronology: {
+        undated_outcomes: outcomes.filter(l => l.source_at_ms === null).length,
+        undated_verifications: [...failures, ...passes].filter(l => l.source_at_ms === null).length,
+        recording_time_used_as_event_time: false,
+      },
+      outcome_judgment: last ? { ...reference(last), assessment: last.assessment,
         author_agent: last.author_agent, interpretation: "authored-not-host-certified" } : null,
       metrics, instruction_observations: fp,
       dimensions: {
