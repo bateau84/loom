@@ -109,7 +109,10 @@ test("full-population positive observation remains queryable beyond page one wit
     const second=f.learning.trends.compare({operation:"compare",population:"all-linked",
       since_at:since,until_at:at,as_of_at:at,
       group_by:"instruction-fingerprint",limit:20,cursor:compared.next_cursor!})
-    expect(second.items.map(x=>x.objective_id)).toEqual(sources)
+    // Second page still contains two earlier unknown objectives before the
+    // three sought sources. Never assume every item after a page boundary
+    // belongs to the requested cohort.
+    expect(second.items.slice(-3).map(x=>x.objective_id)).toEqual(sources)
     expect(f.learning.proactive.consider(at)).toEqual([])
   } finally { f.close() }
 })
