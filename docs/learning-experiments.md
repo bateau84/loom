@@ -16,8 +16,7 @@ Loom ledger IDs are not attested independent originating human requests:
 three corrective records may represent three attempts at one goal. The
 production trends reader explicitly returns an unqualified
 origin_independence result, keeps distinct authored goals readable, and
-retains cross-Session continuation. Proactive consideration returns no new
-independent-pattern findings while that trust requirement remains unmet.
+retains cross-Session continuation. This release registers no automatic reporter or outcome-analysis hook.
 Previously stored findings are still readable as historical hypotheses,
 never certified independent evidence.
 
@@ -31,8 +30,7 @@ Oversized objective histories (over 500 linked sources) are explicitly
 excluded from comparison with their counts and sampled IDs disclosed; a
 partial history cannot be silently treated as a success.
 
-The gated proactive boundary avoids the current large-population synchronous
-comparison cost on ordinary outcomes. A future independent-origin
+No automatic analysis runs at the outcome boundary. A future independent-origin
 qualification must still benchmark admitted workloads before enabling
 automatic notices. A real original-work Evaluator audit and real-model,
 provider-delivery and billing evidence remain separate unsatisfied gates.
@@ -40,49 +38,35 @@ provider-delivery and billing evidence remain separate unsatisfied gates.
 
 Loom exposes **observations and authored comparisons**, not a built-in verifier of whether a user objective succeeded. `loom_insights` reports bounded project/Action ledger metadata; `loom_objective` links complete work trajectories; `loom_trends` compares explicit objective populations; `loom_tweak` keeps proposed instruction content and reported trials. Neither modifies live skills or agents, schedules an experiment, selects a model, or produces an approval verdict.
 
-**Storage and recovery:** Loom keeps provisional candidates/trials in a separate project-local `learning.sqlite` next to its existing `ledger.sqlite`. Failed learning initialization degrades only `loom_insights`, `loom_objective`, `loom_trends` and `loom_tweak`, with an explicit `LOOM_LEARNING_UNAVAILABLE` error and `loom_agents` status; core Action history, capture, and native routing remain intact. Inspect and repair learning state separately while keeping the failed file for recovery. This prevents changes to the Action Store's frozen SQLite schema. The current [offline Action Store backup procedure](manual-backup-restore.md) covers **only `ledger.sqlite`** and does not back up these learning records; retain a separately stopped-writers copy of `learning.sqlite` (and applicable sidecars) for now. Recovery of that separate file has not been independently qualified. Do not describe an Action Store backup as a full learning-memory backup.
+**Storage and recovery:** Loom keeps provisional candidates/trials in a separate project-local `learning.sqlite` next to its existing `ledger.sqlite`. Failed learning initialization degrades only `loom_insights`, `loom_objective`, `loom_trends` and `loom_tweak`, with an explicit `LOOM_LEARNING_UNAVAILABLE` error and `loom_agents` status; core Action history, capture, and native routing remain intact. Inspect and repair learning state separately while keeping the failed file for recovery. This prevents changes to the Action Store's frozen SQLite schema. The legacy offline Action Store copy procedure remains **ledger-only**. For complete learning-history preservation and isolated recovery, use the [manifest-bound stopped-writers backup-set companion](manual-backup-restore.md): it binds both databases and applicable sidecars with project/revision identity and SHA-256 checksums and verifies disposable SQLite copies. Never treat an unmarked absent `learning.sqlite` as a complete backup. Recovery is qualified only on isolated real SQLite fixtures and public Loom readers, not on production/native Session continuity.
 
-## Proactive evidence findings (bounded, no model calls)
+## Historical findings (read-only)
 
-When an agent explicitly appends an **outcome** to a source-linked objective using
-`loom_objective link`, Loom can return `new_learning_findings` as part of the
-ordinary tool result. This requires a valid config with `ledger.capture: automatic`.
-It is not a new watcher or scheduler: no native Session is prompted, no Evaluator
-is automatically dispatched, and turning capture off suppresses new notices.
-Failed optional analysis cannot roll back an already persisted outcome.
-
-The reporter uses a bounded 90-day `loom_trends` population, not tool-error
-counts or Coder handbacks. It surfaces correction load only after **three
-explicitly anchored objectives** with documented corrective dispatches, or a
-positive association where three authored-pass objectives share one **exact
-observed** instruction fingerprint and have no recorded correction. A source
-fingerprint does not prove final model exposure; reported passes are not
-independent verification and goals can still share causes. Missing linked
-history and shifting host/model/task mixes remain unknown, not successes.
-
-Findings are append-only metadata with exact original objective and source
-IDs, uncertainty, observed counts and an actionable question for Evaluator.
-They contain no raw transcript or candidate instruction text. Identical
-evidence does not notify repeatedly: the reporter retains only a new
-three-objective milestone and source identity. Output is bounded to three
-new findings per outcome, eight cited original objectives per finding, 20
-read results, and 2048 retained findings. If the reporting table is full or
-the trend population exceeds safe bounds, ordinary work continues; new
-findings are not fabricated.
-
-To retrieve historical findings:
+`loom_insights` can retrieve findings preserved by an earlier experimental
+installation. This release does not generate new independent-pattern notices,
+run analysis on objective completion, or add a model-request dependency.
+Capture-off still allows explicitly requested historical reads; native tool
+permissions and project boundaries apply as for other learning readers.
 
 ```json
 {"operation":"findings","limit":20}
 ```
 
-Pass this to `loom_insights`. The notice is **not** an accepted lesson,
-approval, permission or a candidate to execute. Evaluator must inspect the
-authorized original objective histories, working safeguards and
-counterexamples, and only separately reviewed changes may update
-canonical agent/skill content. This mechanism identifies useful evidence
-to examine, not causal improvement. It does not establish a real-model
-Evaluator run or live effectiveness experiment.
+Follow `next_cursor` as `finding_cursor` to read the same snapshot. Concurrent
+appends are excluded from that snapshot. Original signatures, objective/source
+references, recorded positive or corrective interpretations, uncertainty and
+next-action text are preserved across restart and offline backup/restore.
+Returned text is historical evidence to assess, never approval or instructions
+to execute. Read the original authorized sources before accepting any claim.
+
+The automatic reporter remains preserved at
+[`deferred/automatic-learning-reporter-20261111`](https://github.com/bateau84/loom/tree/deferred/automatic-learning-reporter-20261111).
+Reopening requires trustworthy originating-request lineage, adversarial checks
+for mixed positive/negative cohorts and instruction chronology, and a bounded
+latency design that keeps ordinary outcome writes independent of analysis.
+The authoritative follow-up and owners are in [#227](https://github.com/bateau84/loom/issues/227).
+
+Before switching from a manually installed #225 or #228 experiment build, follow the [native treatment withdrawal prerequisite](migration.md#leaving-an-experimental-live-session-build). Native Session entries are outside the Loom backup set.
 
 ## Whole-objective evidence
 
@@ -138,7 +122,7 @@ Available phases distinguish `request`, `coordination`, `dispatch`, `handback`, 
 
 `operation:read` returns bounded chronological pages (default 20, max 50) with `next_cursor`, source IDs/verification, recorded author, explicit attempted links and coverage limits. When the original event time is available, it orders by that time; later *relationship corrections* are ordered by their recorded interpretation time, while retaining the source's original timestamp. Pagination freezes the maximum inserted sequence for the continuation so concurrent later records are not duplicated into older pages. An individual page is **not a globally complete snapshot**, and events without source clocks are ordered by local record time. `operation:list` and `operation:find` return 20-item pages with `next_offset`.
 
-**Privacy and operation:** There is no background indexing, Session scanning, automatic observer capture, dispatch, status mutation, acceptance gate, proof of correct behavior or scheduled reporting. An explicit `loom_trends` query can aggregate linked objective interpretations without proving correctness. An operator/agent must explicitly submit source references and interpretations; `ledger.capture: off` stays off. Only projected metadata and deliberately authored labels/notes are persisted, never native transcript bodies, hidden reasoning, tool input/output or instruction content. Do not put secrets in labels, notes or URLs. Storage remains project-local and optional; a broken learning DB must not disable the Action Store. Backups must keep `learning.sqlite` with its authoritative `ledger.sqlite` source set; the original backup qualification limitation below still applies.
+**Privacy and operation:** There is no background indexing, Session scanning, automatic observer capture, dispatch, status mutation, acceptance gate, proof of correct behavior or scheduled reporting. An explicit `loom_trends` query can aggregate linked objective interpretations without proving correctness. An operator/agent must explicitly submit source references and interpretations; `ledger.capture: off` stays off. Only projected metadata and deliberately authored labels/notes are persisted, never native transcript bodies, hidden reasoning, tool input/output or instruction content. Do not put secrets in labels, notes or URLs. Storage remains project-local and optional; a broken learning DB must not disable the Action Store. Backups must keep `learning.sqlite` with its authoritative `ledger.sqlite` source set; use the [stopped-writers backup procedure](manual-backup-restore.md).
 
 ### Bounded longitudinal comparisons
 
@@ -155,7 +139,7 @@ Example for a reporting consumer:
 **Time and selection:**
 - `since_at` inclusive and `until_at` exclusive select the **first source-linked request's original source clock**, not when its index row happened to be written. One objective ID contributes one denominator unit regardless of continuation, dispatch count, repeated DONE handbacks or corrective attempts. If the original start lacks a reliable source timestamp, do not assign it to a dated window: count undated candidates separately, limited to registrations within the period for `all-linked`.
 - `as_of_at` is the reporting cutoff, at least the period end. Only linked interpretations recorded by this cutoff with source event times no later than the cutoff are considered. An objective created after cutoff is not retrospectively included. Later independent verification can update an objective that started within the window, provided it is visible by cutoff.
-- Each `next_cursor` freezes the original objective and link insertion bounds and binds the exact time window, population, grouping and filters. The **aggregate totals are for the full selected population on every page**; only `items` page (20 objective IDs maximum). Concurrent new sources and objectives cannot change old pages; start a fresh query to include them. The tool fails rather than truncating a window over 366 days, more than 500 candidate objective starts, more than 500 links for an objective, or more than 50 groups.
+- Each `next_cursor` freezes the original objective and link insertion bounds and binds the exact time window, population, grouping and filters. The **aggregate totals are for the full selected population on every page**; only `items` page (20 objective IDs maximum). Concurrent new sources and objectives cannot change old pages; start a fresh query to include them. The tool fails rather than truncating a window over 366 days, more than 500 candidate objective starts, or more than 50 groups. An objective with more than 500 links is excluded and explicitly disclosed; other eligible objectives remain in the comparison.
 
 **Meaning and evidence:** Response `population` includes eligible, excluded and undated start counts. `metrics` shows attributed pass/fail outcomes, unknown/incomplete, contested and inconclusive claims, documented corrections, later recovery, verification judgments, missing coverage and concerns. `groups` and `mix` reveal changing goal-key and observed-origin mix. Each item keeps original source IDs, recorded time, author, source verification and counterevidence; follow `loom_objective read` and authorized `loom_trace` to review originals.
 

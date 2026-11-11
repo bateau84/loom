@@ -317,3 +317,32 @@ test("one oversized linked history is disclosed and excluded without losing anot
     expect(compared.mix.outcome_source_verifications["not-observed"]).toBeUndefined()
   } finally {learningDB.close();actionDB.close()}
 })
+
+test("caller goal keys matching Object members retain numeric full-population mix counts", async () => {
+  const host = await registeredLoom()
+  try {
+    const start = Date.now() - hour
+    const keys = ["constructor", "constructor", "toString", "feature"]
+    host.nativeContexts.set("parent", { data: keys.map((_, i) => message("prototype-key-" + i, start + i)) })
+    for (const [i, unit_key] of keys.entries()) {
+      await host.invoke("objective", { operation: "create", source_type: "native-message",
+        source_id: "prototype-key-" + i, label: "Goal " + i, unit_key }, "parent")
+    }
+    await expect(host.invoke("objective", { operation: "create", source_type: "native-message",
+      source_id: "prototype-key-0", label: "Invalid goal key", unit_key: "__proto__" }, "parent"))
+      .rejects.toThrow("unit_key")
+    const query = { operation: "compare", population: "all-linked", group_by: "unit-key", limit: 1,
+      since_at: new Date(start - hour).toISOString(), until_at: new Date(start + hour).toISOString(),
+      as_of_at: new Date(Date.now() + hour).toISOString() }
+    const first = (await host.invoke("trends", query, "parent")).result
+    expect(first.population.eligible_objectives).toBe(4)
+    expect(first.mix.unit_keys.constructor).toBe(2)
+    expect(first.mix.unit_keys.toString).toBe(1)
+    expect(first.mix.unit_keys).toEqual({ constructor: 2, toString: 1, feature: 1 })
+    expect(first.groups.map((group: any) => [group.key, group.metrics.eligible_objectives]))
+      .toEqual([["constructor", 2], ["feature", 1], ["toString", 1]])
+    const next = (await host.invoke("trends", { ...query, cursor: first.next_cursor }, "parent")).result
+    expect(next.mix.unit_keys).toEqual(first.mix.unit_keys)
+    expect(Object.values(next.mix.unit_keys).reduce((sum: number, n: any) => sum + n, 0)).toBe(4)
+  } finally { await host.close() }
+})

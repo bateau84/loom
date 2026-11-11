@@ -1,3 +1,4 @@
+// Comparison regressions preserved from PR #229 without automatic reporter dependencies.
 import { test, expect } from "bun:test"
 import { Database } from "bun:sqlite"
 import { createHash } from "node:crypto"
@@ -22,7 +23,7 @@ function fixture() {
       ...(related_sequence ? {related_sequence} : {}),
     })
   const close = () => { learningDB.close(); actionDB.close() }
-  return {store,learning,source,link,close}
+  return {store,learning,source,link,close,actionDB}
 }
 
 test("dated pre-outcome instruction fingerprints remain eligible in trends, but origin independence is not certified", async () => {
@@ -50,8 +51,6 @@ test("dated pre-outcome instruction fingerprints remain eligible in trends, but 
     expect(compared.items.every(x=>x.instruction_observations.total===1 &&
       x.instruction_observations.excluded_at_or_after_outcome===0)).toBe(true)
     expect(compared.population.origin_independence.status).toBe("unqualified")
-    expect(f.learning.proactive.consider(at)).toEqual([])
-    expect(f.learning.proactive.list().independent_pattern_qualification.status).toBe("unqualified")
   } finally { f.close() }
 })
 
@@ -71,8 +70,6 @@ test("three authored objectives sharing one original request do not prove three 
       until_at:nowAfterSource(),as_of_at:nowAfterSource(),limit:20})
     expect(trends.metrics.with_documented_correction).toBe(3)
     expect(trends.correlation.shared_origin_groups).toBe(1)
-    expect(f.learning.proactive.consider(nowAfterSource())).toEqual([])
-    expect(f.learning.proactive.list().items).toHaveLength(0)
   } finally { f.close() }
 })
 
@@ -113,11 +110,10 @@ test("full-population positive observation remains queryable beyond page one wit
     // three sought sources. Never assume every item after a page boundary
     // belongs to the requested cohort.
     expect(second.items.slice(-3).map(x=>x.objective_id)).toEqual(sources)
-    expect(f.learning.proactive.consider(at)).toEqual([])
   } finally { f.close() }
 })
 
-test("three passes and five failures under the same observed fingerprint cannot be retained practice", async () => {
+test("three passes and five failures stay visible in the same historical-fingerprint cohort", async () => {
   const f = fixture()
   try {
     const fingerprint = hash("mixed-cohort-instruction")
@@ -142,7 +138,6 @@ test("three passes and five failures under the same observed fingerprint cannot 
     const cohort = comparison.groups.find(g=>g.key.includes(fingerprint))
     expect(cohort?.metrics.reported_pass_without_correction).toBe(3)
     expect(cohort?.metrics.reported_fail).toBe(5)
-    expect(f.learning.proactive.consider(at)).toEqual([])
   } finally { f.close() }
 })
 
@@ -167,11 +162,10 @@ test("instruction observed after passing outcome is excluded by the production t
     expect(comparison.groups.some(g=>g.key.includes(fingerprint))).toBe(false)
     expect(comparison.items.every(item=>item.instruction_observations.total===0 &&
       item.instruction_observations.excluded_at_or_after_outcome>0)).toBe(true)
-    expect(f.learning.proactive.consider(at)).toEqual([])
   } finally { f.close() }
 })
 
-test("undated outcomes and observations never inherit link-insertion chronology", async () => {
+test("undated outcomes never inherit link-insertion chronology", async () => {
   const f = fixture()
   try {
     const request=f.source("Undated original")
@@ -192,11 +186,35 @@ test("undated outcomes and observations never inherit link-insertion chronology"
     expect(comparison.items[0]?.outcome).toBe("unknown")
     expect(comparison.items[0]?.chronology.undated_outcomes).toBe(1)
     expect(comparison.items[0]?.instruction_observations.total).toBe(0)
-    expect(f.learning.proactive.consider(at)).toEqual([])
   } finally { f.close() }
 })
 
-test("one original request with three distinct corrective-ledger anchors does not produce three independent episodes", () => {
+test("an original instruction observation missing its clock receives no pre-outcome success credit", () => {
+  const f=fixture()
+  try {
+    const request=f.source("Goal with incomplete historical instruction evidence")
+    const objective=f.learning.objectives.create(actor,f.learning.objectives.ledgerSource(request.id),
+      "Incomplete instruction chronology")
+    const observation=f.store.observe(actor,undefined,{
+      phase:"skill-load-result",skill_id:"undated-instruction",rendered_sha256:hash("undated-instruction"),
+    })
+    // Simulate an original historical record whose event clock was not captured.
+    // Source resolution must preserve that absence, even though linking occurs now.
+    f.actionDB.prepare("UPDATE ledger SET data=json_remove(data,'$.created_at') WHERE id=?").run(observation.id)
+    f.link(objective.id,"coordination",observation.id)
+    f.link(objective.id,"outcome",f.source("Later authored passing outcome").id)
+    const at=nowAfterSource()
+    const compared=f.learning.trends.compare({operation:"compare",population:"all-linked",
+      since_at:new Date(Date.now()-86400000).toISOString(),until_at:at,as_of_at:at,
+      group_by:"instruction-fingerprint",limit:20})
+    expect(compared.metrics.reported_pass).toBe(1)
+    expect(compared.items[0]?.instruction_observations.total).toBe(0)
+    expect(compared.items[0]?.instruction_observations.excluded_unknown_chronology).toBe(1)
+    expect(compared.groups.map(group=>group.key)).toEqual(["not-observed"])
+  } finally { f.close() }
+})
+
+test("one original request with three distinct corrective-ledger anchors leaves independence unqualified", () => {
   const f=fixture()
   try {
     const original=f.source("The one actual user request")
@@ -223,8 +241,6 @@ test("one original request with three distinct corrective-ledger anchors does no
     expect(compared.metrics.with_documented_correction).toBe(3)
     expect(compared.population.origin_independence.status).toBe("unqualified")
     expect(compared.population.eligible_objectives).toBe(4)
-    expect(f.learning.proactive.consider(at)).toEqual([])
-    expect(f.learning.proactive.list().items).toEqual([])
     expect(new Set(attempts).size).toBe(3)
     expect(anchored.id).toBeDefined()
   } finally { f.close() }

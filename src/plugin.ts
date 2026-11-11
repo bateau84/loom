@@ -199,13 +199,14 @@ export default Plugin.define({
       learning = new Learning(learningDB, store, db)
     } catch (error) {
       learningFailure = learningStage
-      console.warn(`Loom optional learning unavailable (${learningStage}): ${error instanceof Error ? error.message : String(error)}`)
+      try { console.warn(`Loom optional learning unavailable (${learningStage}): ${error instanceof Error ? error.message : String(error)}`) }
+      catch { /* Diagnostic sink failure cannot disable core startup or its native deny guard. */ }
       try { learningDB?.close() } catch { /* Keep the original learning failure. */ }
       learningDB = undefined
       learning = undefined
     }
     const learningStatus = () => learning
-      ? { available: true, storage: "separate-project-sqlite", automatic_mutation: false, proactive_findings: "outcome-boundary-only-when-ledger-capture-automatic", automatic_model_calls: false }
+      ? { available: true, storage: "separate-project-sqlite", automatic_mutation: false, findings: "historical-read-only", automatic_findings: false, automatic_model_calls: false }
       : { available: false, stage: learningFailure ?? "unavailable", automatic_mutation: false,
           note: "Existing Action/record/trace tools and native execution remain available; learning evidence is preserved for operator repair" }
     const requiredLearning = () => {
@@ -219,8 +220,10 @@ export default Plugin.define({
     const disposers: Array<{ dispose(): Promise<void> }> = []
     let lastWarning = ""
     const warn = (error: unknown) => {
-      const message = `Loom: ${error instanceof Error ? error.message : String(error)}`
-      if (message !== lastWarning) { console.warn(message); lastWarning = message }
+      try {
+        const message = `Loom: ${error instanceof Error ? error.message : String(error)}`
+        if (message !== lastWarning) { lastWarning = message; console.warn(message) }
+      } catch { /* A failed diagnostic sink never controls native safety or source recording. */ }
     }
     // A plugin instance's location is not necessarily the location of all server events.
     const sessionIsLocal = async (session: Record<string, unknown>) => {
@@ -383,7 +386,7 @@ export default Plugin.define({
                   if (input.action_id !== undefined || input.before !== undefined ||
                       input.since_at !== undefined || input.until_at !== undefined)
                     throw new Error("Findings are project-scoped; filters and ledger cursors are unsupported")
-                  result = requiredLearning().proactive.list(input.limit as number | undefined,
+                  result = requiredLearning().findings.list(input.limit as number | undefined,
                     input.finding_cursor as string | undefined)
                 } else throw new Error("Unknown insights operation")
                 break
@@ -460,29 +463,14 @@ export default Plugin.define({
                   } else throw new Error("Invalid objective source type")
                   if (input.operation === "create") result = index.create(actor, source,
                     input.label as string, input.unit_key as string | undefined)
-                  else {
-                    const linked = index.link(actor, {
+                  else result = index.link(actor, {
                     objective_id: input.objective_id as string, phase: input.phase as ObjectivePhase,
                     source, confidence: input.confidence as "supported" | "uncertain" | undefined,
                     assessment: input.assessment as "reported-done" | "reported-failed" | "pass" | "fail" | "inconclusive" | "confirm" | "reject" | undefined,
                     related_sequence: input.related_sequence as number | undefined,
                     gap_reason: input.gap_reason as "missing-child" | "compacted" | "denied-access" | "opaque-tool" | "missing-source" | "unknown" | undefined,
                     note: input.note as string | undefined,
-                    })
-                    result = linked
-                    if (!linked.existing && input.phase === "outcome" &&
-                        snapshot.errors.length === 0 && snapshot.config.ledger.capture === "automatic") {
-                      try {
-                        // Outcome linkage is the only automatic reporting boundary.
-                        // The original write is already committed; reporting is
-                        // best-effort, deterministic and never a model invocation.
-                        const notices = requiredLearning().proactive.consider()
-                        if (notices.length) result = { ...linked, new_learning_findings: notices }
-                      } catch (error) {
-                        warn(error) // Do not convert a valid objective into a failed workflow.
-                      }
-                    }
-                  }
+                  })
                 } else throw new Error("Unknown objective operation")
                 break
               }
@@ -918,7 +906,8 @@ export default Plugin.define({
         await disposeStartupGuard()
         throw error
       }
-      console.error("Loom startup failed; keeping native model dispatch denied:", error instanceof Error ? error.message : String(error))
+      try { console.error("Loom startup failed; keeping native model dispatch denied:", error instanceof Error ? error.message : String(error)) }
+      catch { /* Keep the installed deny hook even when logging fails. */ }
       // Resolving setup retains the installed deny hook. Throwing would let
       // OpenCode unload that hook and continue with an unguarded global model.
       return async () => { startupDispatch = "deny"; await disposeStartupGuard() }

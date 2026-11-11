@@ -46,8 +46,8 @@ async function objectiveWithCorrection(host: Host, n: number) {
   return { objective, result }
 }
 
-test("three corrective-ledger objectives are not independently certified; historical findings survive restart", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "loom-proactive-findings-"))
+test("historical findings stay read-only across outcomes, restart and capture-off", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "loom-historical-findings-"))
   let host: Host | undefined
   try {
     host = await registeredLoom([], { directory, versionedHost: true,
@@ -67,7 +67,8 @@ test("three corrective-ledger objectives are not independently certified; histor
     expect((await host.invoke("insights", {operation:"findings"})).result.items).toEqual([])
 
     // Simulate previously persisted observation-only findings from an earlier
-    // installation. The new unqualified-origin gate must not erase them.
+    // installation. Retrieval must preserve both positive and corrective claims
+    // without certifying them or generating replacements.
     const root=join(directory,"state","loom","actions-v1",
       digest({project:"tool-help",canonical:directory}))
     const learning=new Database(join(root,"learning.sqlite"))
@@ -78,7 +79,7 @@ test("three corrective-ledger objectives are not independently certified; histor
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`)
       for(let i=0;i<2;i++) {
         const signature=createHash("sha256").update("historical hypothesis "+i).digest("hex")
-        insert.run(signature,"recurring-correction","historical-unqualified",
+        insert.run(signature,i === 0 ? "recurring-correction" : "retained-practice","historical-unqualified",
           new Date(Date.now()+i).toISOString(),new Date(Date.now()-86400000).toISOString(),
           at,3,3,JSON.stringify([{objective_id:objectiveIDs[i]!,
             source_type:"ledger-record",source_id:"historical-test-record"}]),
@@ -89,6 +90,8 @@ test("three corrective-ledger objectives are not independently certified; histor
 
     const first=(await host.invoke("insights", {operation:"findings"})).result
     expect(first.items).toHaveLength(2)
+    expect(first.items.map((item: any) => item.kind).sort())
+      .toEqual(["recurring-correction", "retained-practice"])
     expect(first.independent_pattern_qualification.status).toBe("unqualified")
     await host.close();host=undefined
 
@@ -101,11 +104,25 @@ test("three corrective-ledger objectives are not independently certified; histor
     const paged=(await host.invoke("insights",{operation:"findings",limit:1})).result
     expect(paged.items).toHaveLength(1)
     expect(paged.next_cursor).not.toBeNull()
+    // A backdated concurrent append would enter page two without the rowid
+    // high-water bound. A newest-first append would not test that protection.
+    const appended = new Database(join(root,"learning.sqlite"))
+    try {
+      appended.prepare(`INSERT INTO learning_findings
+        SELECT ?,kind,group_key,?,since_at,until_at,population,
+          matching_objectives,source_refs,interpretation,next_action,uncertainty
+        FROM learning_findings LIMIT 1`).run(
+          createHash("sha256").update("concurrent historical import").digest("hex"),
+          new Date(Date.now()-3600000).toISOString())
+    } finally { appended.close() }
     const page2=(await host.invoke("insights",{operation:"findings",limit:1,
       finding_cursor:paged.next_cursor})).result
     expect(page2.items).toHaveLength(1)
     expect(page2.next_cursor).toBeNull()
     expect(page2.snapshot_max_rowid).toBe(paged.snapshot_max_rowid)
+    expect([paged.items[0].signature,page2.items[0].signature])
+      .toEqual(first.items.map((item: any) => item.signature))
+    expect((await host.invoke("insights",{operation:"findings"})).result.items).toHaveLength(3)
     await expect(host.invoke("insights",{operation:"findings",
       finding_cursor:"not-a-real-cursor"})).rejects.toThrow("Invalid findings cursor")
     await host.close();host=undefined
@@ -117,9 +134,26 @@ test("three corrective-ledger objectives are not independently certified; histor
       expect(item.result.new_learning_findings).toBeUndefined()
     }
     const final=(await host.invoke("insights",{operation:"findings"})).result
-    expect(final.items).toHaveLength(2)
+    expect(final.items).toHaveLength(3)
     await expect(host.invoke("insights",{operation:"findings",limit:21}))
       .rejects.toThrow("Findings limit")
+    host.sessions.set("foreign", { id:"foreign", projectID:"another-project",
+      location:{directory} })
+    await expect(host.invoke("insights",{operation:"findings"},"foreign"))
+      .rejects.toThrow("does not own")
+    await expect(host.invoke("tweak",{operation:"live-start"}))
+      .rejects.toThrow("Unknown tweak operation")
+
+    // A malformed archived finding makes its explicit read fail. No reader or
+    // analysis is invoked by the ordinary objective outcome path.
+    const damaged = new Database(join(root,"learning.sqlite"))
+    try { damaged.exec("UPDATE learning_findings SET source_refs='invalid-json'") }
+    finally { damaged.close() }
+    await expect(host.invoke("insights",{operation:"findings"})).rejects.toThrow()
+    const ordinary = await objectiveWithCorrection(host,8)
+    expect(ordinary.result.new_learning_findings).toBeUndefined()
+    expect((await host.invoke("objective",{operation:"read",objective_id:ordinary.objective.id}))
+      .result.entries.some((entry: any) => entry.phase === "outcome")).toBe(true)
   } finally {
     await host?.close()
     await rm(directory,{recursive:true,force:true})
