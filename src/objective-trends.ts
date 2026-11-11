@@ -216,9 +216,9 @@ export class ObjectiveTrends {
       " WHERE objective_id=? AND sequence<=? AND recorded_at<=?" +
       " AND (source_at_ms IS NULL OR source_at_ms<=?) ORDER BY sequence LIMIT ?"
     ).all(objectiveID, pos.max_link, pos.scope.as_of_at, Date.parse(pos.scope.as_of_at), MAX_LINKS + 1) as LinkRow[]
-    if (rows.length > MAX_LINKS)
-      throw new Error("Objective " + objectiveID + " exceeds 500 observed links; refuse incomplete comparisons")
-    return rows
+    // Incomplete histories can never become verified outcomes.
+    // Retain the complete subset of other objectives rather than aborting.
+    return { rows: rows.slice(0, MAX_LINKS), complete: rows.length <= MAX_LINKS }
   }
 
   private fingerprints(links: LinkRow[], outcome: LinkRow | undefined) {
@@ -380,9 +380,16 @@ export class ObjectiveTrends {
         throw new Error("Comparison snapshot is no longer present; do not silently resume")
       const origins = this.originals(scope, pos)
       const points: Array<ReturnType<typeof this.point>> = []
-      let excludedRejected = 0, excludedUncertain = 0
+      let excludedRejected = 0, excludedUncertain = 0, excludedOversized = 0
+      const oversizedSample: string[] = []
       for (const origin of origins) {
-        const links = this.links(origin.id, pos)
+        const history = this.links(origin.id, pos)
+        if (!history.complete) {
+          excludedOversized++
+          if (oversizedSample.length < 20) oversizedSample.push(origin.id)
+          continue
+        }
+        const links = history.rows
         const anchor = links.find(l => l.sequence === origin.sequence)
         if (!anchor) { excludedUncertain++; continue }
         const corrections = links.filter(l => l.phase === "link-correction" &&
@@ -436,14 +443,16 @@ export class ObjectiveTrends {
         population: {
           eligible_objectives: points.length,
           excluded: { rejected_origin_links: excludedRejected, uncertain_or_missing_origin_links: excludedUncertain,
-            undated_origin_registration_candidates: unknownStart },
+            undated_origin_registration_candidates: unknownStart,
+             over_budget_histories: excludedOversized, over_budget_objective_ids_sample: oversizedSample },
           coverage: { outcome_claims: metrics.reported_pass + metrics.reported_fail,
             denominator: points.length,
+            over_budget_histories_excluded_from_denominator: excludedOversized,
             fraction: points.length ? (metrics.reported_pass + metrics.reported_fail) / points.length : null,
             unknown_start_scope: scope.population === "selected"
               ? "undated among selected IDs"
               : "undated objectives registered within the period; earlier undated anchors cannot be assigned to a source-time window" },
-          unit: "one explicitly anchored objective ID; no independent originating-request denominator is certified",
+          unit: "one fully observed explicitly anchored objective ID (over-budget histories excluded and disclosed); no independent originating-request denominator is certified",
           origin_independence: this.originIndependenceQualification(),
         },
         metrics,
