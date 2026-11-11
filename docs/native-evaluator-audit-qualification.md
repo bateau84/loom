@@ -20,6 +20,15 @@ Intended path: **real OpenCode General request → native Evaluator child → in
 | [skills #27](https://github.com/bateau84/skills/pull/27) | `67794eb948bf9e8ab662631aef834cff10a850ef` | Source `agent-run-audit` merged; **not** loaded content |
 | [Loom #217](https://github.com/bateau84/loom/pull/217) | `edab7a96e7c5a9172ceb98b8518c47c48a1d7c09` | Starting source revision; **not** installed plugin identity |
 
+The Phase 2 source check found agents `main` still at `cfbf668d7bf952e285d707d29ff755f14e1c892d` and skills `main` at `5072d3e8163b56bcbe5139b9b008091dbfc8947b`. The inspected source bytes are:
+
+| Definition | Source SHA-256 |
+| --- | --- |
+| `agents/evaluator.md` | `8642064709f2bd67942f0ab99093454905b5fd03265bfc7481153484d210c2e1` |
+| `skills/agent-run-audit/SKILL.md` | `af5445ff71b21db45bfe9b58f71982f94d9226513b4937d3a8601b67842ea80c` |
+
+These are reproducible source identities. Compare with the actual installed files; a matching source hash does not prove that a native request delivered those instructions.
+
 Loom source pins `@opencode/plugin@2.2.6` and tests on Bun 1.4.2 (`>=1.4.2 <2.0.0` supported). Installed-host CI separately provisions `@opencode/cli@2.2.6`; the separate Code Mode *search fixture* is `@opencode/codemode@2.0.29`. These source/test versions do not prove the operator's actual executable, plugin or SDK. A Git revision/blob ID is not an installed file SHA-256.
 
 Collection limits from the source: `loom_trace` has up to 50 projected events per page, a 16 MiB authorized export cap and a 256 KiB response cap; `loom_insights` allows up to 200 observations/page; `loom_record` up to 50 records/page; `loom_tweak` allows 128 KiB candidate content, 20 evidence references and 20 trial reports/page. These are **not** model context, output, quota or cost limits. Verify the live tool descriptions.
@@ -32,10 +41,25 @@ Run from the relevant checkout; record only redacted outputs. **Resolve installe
 git rev-parse HEAD
 opencode --version
 opencode run --help
-opencode agent list
+opencode api agent.list --param "location[directory]=$PWD"
 bun --version
 # From the installed Loom plugin directory:
-node -p 'require("./node_modules/@opencode/plugin/package.json").version'
+node --input-type=module <<'NODE'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+let directory = path.dirname(fileURLToPath(import.meta.resolve('@opencode/plugin')))
+for (;;) {
+  const file = path.join(directory, 'package.json')
+  if (fs.existsSync(file)) {
+    const pkg = JSON.parse(fs.readFileSync(file, 'utf8'))
+    if (pkg.name === '@opencode/plugin') { console.log(pkg.version); break }
+  }
+  const parent = path.dirname(directory)
+  if (parent === directory) throw new Error('Resolved OpenCode SDK package not found')
+  directory = parent
+}
+NODE
 # Replace both placeholders with the ACTUAL paths registered by OpenCode:
 sha256sum /ACTUAL/AGENT/PATH/evaluator.md /ACTUAL/SKILL/PATH/agent-run-audit/SKILL.md
 ~~~
@@ -82,6 +106,75 @@ For additional descendants, repeat `--child-export`. The preflight checks native
 
 Run the component checks with `python3 -m unittest discover -s tests -p 'test_native_evaluator_preflight.py'`. Synthetic test exports are negative/structural fixtures, **not** completed native audit work.
 
+## Observe public receipts during one authorized audit
+
+The opt-in [Evaluator observer](../tools/evaluator-observer/server.ts) records native model-request identities, direct Evaluator-child ancestry, skill-result hashes, source trace page chains, and exact public `loom_record` write/read hashes. It makes no model requests and never captures prompts, statements, source excerpts, skill text, raw errors or credentials. It writes at most 512 receipts and approximately 1 MiB per observer instance, using a private file opened exclusively with mode 0600. A collection failure cannot reject a completed tool or activate learning features.
+
+The observer is a separate qualification plugin. It is **not** enabled by installing Loom. Use the same checked-out Loom revision and locked dependencies, then add the absolute directory `CHECKOUT/tools/evaluator-observer` to the existing OpenCode `plugins` array. Preserve other configuration. Do this only for the one authorized audit. Existing `ledger.capture: off`, invalid capture configuration or a different native project suppress collection; do not override a privacy opt-out just to obtain a receipt.
+
+Prepare private scope before starting the host. OpenCode 2.2.6's `run --session` accepts an explicit new Session ID and creates it when absent; the native Session ID schema requires the `ses` prefix. Random IDs let the observer bind the audit and later reader before either request is sent. Neither an ID nor this settings file is a human-authorization receipt.
+
+~~~sh
+umask 077
+export AUDIT_SESSION_ID="ses_$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
+export RECOVERY_SESSION_ID="ses_$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
+export AUDIT_PROJECT_DIRECTORY="$PWD"
+export AUDIT_PRIVATE_DIRECTORY="$private_dir"
+mkdir -m 700 "$private_dir/receipts"
+export LOOM_EVALUATOR_OBSERVER="$private_dir/observer.json"
+python3 - <<'PY'
+import json, os
+from pathlib import Path
+scope = {
+    'format': 'loom-evaluator-observer/v1',
+    'project_directory': str(Path(os.environ['AUDIT_PROJECT_DIRECTORY']).resolve()),
+    'receipt_directory': str(Path(os.environ['AUDIT_PRIVATE_DIRECTORY']).resolve() / 'receipts'),
+    'audit_session_id': os.environ['AUDIT_SESSION_ID'],
+    'recovery_session_id': os.environ['RECOVERY_SESSION_ID'],
+}
+fd = os.open(os.environ['LOOM_EVALUATOR_OBSERVER'], os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+with os.fdopen(fd, 'w') as out:
+    json.dump(scope, out)
+PY
+~~~
+
+Confirm the observer appears active on the exact host. Use the explicitly authorized provider/model and the prompt in the next section. The fresh reader request must be separately included in the approved budget. These commands execute models; the collector below does not.
+
+~~~sh
+timeout -s TERM -k 20s 600 \
+  opencode run --standalone --session "$AUDIT_SESSION_ID" --agent general \
+  --model "$MODEL" --format json "$(cat "$private_dir/audit-prompt.txt")" \
+  > "$private_dir/native-run.jsonl"
+
+# First retain the actual Action/record IDs returned by the completed Evaluator.
+# Write recovery-prompt.txt with only the exact public read request shown below.
+# A second standalone invocation owns a new host process and a distinct Session.
+timeout -s TERM -k 20s 120 \
+  opencode run --standalone --session "$RECOVERY_SESSION_ID" --agent general \
+  --model "$MODEL" --format json "$(cat "$private_dir/recovery-prompt.txt")" \
+  > "$private_dir/recovery-run.jsonl"
+~~~
+
+For the audit, require a completed native `subagent` call to `evaluator`, the real `skill` call for `agent-run-audit`, all selected original trace pages, one source-linked result write, and its exact record-ID query before returning. For recovery, request `loom_record {"operation":"query","action_id":"ACTUAL_ACTION_ID","record_id":"ACTUAL_RECORD_ID"}` and bounded insights/full-thread readback. A model saying that it performed these operations cannot satisfy the receipt checker.
+
+After both invocations finish, collect the private receipts. Resolve symlinked installed agent/skill paths to their real files first. Repeat `--child-export` for every selected source descendant and `--observer-log` for the actual audit and recovery files (at most four).
+
+~~~sh
+python3 tools/native_evaluator_qualification.py \
+  --observer-log "$private_dir/receipts/ACTUAL_AUDIT_INSTANCE.ndjson" \
+  --observer-log "$private_dir/receipts/ACTUAL_RECOVERY_INSTANCE.ndjson" \
+  --parent-export "$private_dir/parent.json" \
+  --child-export "$private_dir/child.json" \
+  --agent-file /ACTUAL/RESOLVED/AGENT/PATH/evaluator.md \
+  --skill-file /ACTUAL/RESOLVED/SKILL/PATH/agent-run-audit/SKILL.md \
+  --record-id ACTUAL_RECORD_ID \
+  --report "$private_dir/qualification.json"
+~~~
+
+`receipt_consistency: COMPLETE` means the **supplied local receipts agree** on the native child, skill observation, selected trace page chains, exact public record and a distinct observer-instance reader. Exit 0 has only that meaning. Each instance must close normally, preserve the selected audit/recovery scope and agree on native child ancestry. Replaying the same native Session/message/call tuple across instances is rejected; a provider reusing a call ID in a different message is not itself a replay. Native Code Mode can give several nested tool results the same tuple within one instance; those remain separate local observations ordered by receipt sequence, not invented host subcall identities. The report always retains `native_evaluator: UNPROVEN`: local files are editable, a plugin-instance change alone does not attest a host reboot, model-request hooks are not final provider-input receipts, and hashes cannot judge reasoning or billing. Known scripted fixture providers explicitly leave consistency qualification incomplete. Missing events, partial files, repeated instances/calls, changed authors/content, unsupported host versions and incomplete trace pages remain visible failures or gaps.
+
+Retain the process-start/exit evidence privately to corroborate the actual restart. An independent Reviewer should then inspect the original audit and classify **observed facts, agent-reported claims, independent verification, corrective work, interpretation, missing evidence, useful practices and practices to leave unchanged**. Matching mechanical receipts cannot replace that assessment. Share only the reviewed `qualification.json` and concise redacted assessment; do not upload the original exports, raw JSONL, credentials or provider configuration. Remove the observer entry and unset `LOOM_EVALUATOR_OBSERVER` when the bounded audit ends.
+
 ## Execute native dispatch, not role imitation
 
 The shipped Evaluator is `mode: subagent`. The primary path is to ask **installed General** to dispatch it using the host's **native delegation**. Capture the actual child Session identity and the actual tool/skill call receipts. A role-labelled response without a native child is UNPROVEN, not a delegated audit.
@@ -90,15 +183,11 @@ Supply an instruction to General with the actual eligible source IDs:
 
 > Dispatch exactly one read-only audit to the installed evaluator through native delegation. The Evaluator must load agent-run-audit through the real skill tool, inspect original authorized parent/child Session evidence using public loom_trace, and join corrections and verification into one objective when the identities justify it. Preserve favorable practices, friction, observed facts, interpretations, evidence gaps and actual user outcome separately. Use public loom_insights, loom_action and loom_record; persist one redacted source-linked result, return the exact Action ID and record ID. Do not implement work, edit instructions, launch unrelated agents, infer a trend, propose a tweak, or manufacture a candidate. Stop if original history, public operations, budget or authorization cannot be established.
 
-If the installed host supports the flags, a noninteractive Linux invocation is:
-
-~~~sh
-# Write the approved instruction with source IDs to this private file first.
-# MODEL must identify a verified included-only authorized provider/model.
-timeout -s TERM -k 20s 600 \
-  opencode run --agent general --model "$MODEL" --format json "$(cat "$private_dir/audit-prompt.txt")" \
-  > "$private_dir/native-run.jsonl"
-~~~
+Write that instruction with the actual source IDs to
+`$private_dir/audit-prompt.txt` **before** the single scoped audit invocation
+above. Use that `--standalone --session "$AUDIT_SESSION_ID"` command once;
+this section supplies its prompt, not a second audit invocation. Preserve the
+original output instead of overwriting it with a rerun.
 
 Do not pass `--auto`. Capture the native dispatch/child Session, skill-load event and content identities from the real host (keeping JSONL private). A requested dispatch without completed child evidence is not a success. Direct `--agent evaluator` is a distinct boundary; label it separately if the primary delegation is unavailable. Distinguish host-observed skill result hashes from source file-byte hashes and final provider-input exposure, which neither alone attests.
 

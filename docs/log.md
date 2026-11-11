@@ -4,6 +4,18 @@ type: Log
 
 # Update Log
 
+## 2026-11-11
+
+**Learning Phase 2 qualification and recovery:** Added actual-host provenance
+and permission counterexamples, a [host-owned trust contract](learning-host-trust-contract.md),
+an explicit [stopped-host treatment recovery inspector](experiment-recovery.md)
+and scoped [Evaluator observation and receipt collection](native-evaluator-audit-qualification.md).
+Native storage, withdrawal history and public receipt mechanics are qualified
+separately from trusted human consent and real-model reasoning. Independent
+review corrected a report-path collision that could create an input database's
+WAL sidecar. Automatic reporting, live experiments and canonical promotion remain
+disabled; the new tooling does not establish independence, efficacy or billing.
+
 ## 2026-11-10
 
 **Exact-host Session instruction variant qualification:** Added a disposable

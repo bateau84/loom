@@ -35,6 +35,24 @@ qualification must still benchmark admitted workloads before enabling
 automatic notices. A real original-work Evaluator audit and real-model,
 provider-delivery and billing evidence remain separate unsatisfied gates.
 
+## Operator qualification and recovery
+
+The [host trust contract and native counterexamples](learning-host-trust-contract.md)
+separate actual OpenCode identity/permission mechanics from the missing trusted
+origin and direct-human authorization guarantees. Distinct human input turns
+would still need a trustworthy new-goal/continuation relationship before they
+could establish independent objectives. The probe makes no model requests and
+does not enable reporting or experiments.
+
+For an authorized real Evaluator audit, use the
+[native audit qualification procedure](native-evaluator-audit-qualification.md)
+to collect scoped, redacted public-tool receipts. Receipt consistency is
+separate from model reasoning, original-source authenticity and provider billing.
+For an installation that previously ran the deferred experiment controller, use
+the [stopped-host recovery inspector](experiment-recovery.md) to find residual
+native treatment and withdrawal history. It does not withdraw entries, authorize
+Session reuse or label previously exposed Sessions as clean controls.
+
 
 Loom exposes **observations and authored comparisons**, not a built-in verifier of whether a user objective succeeded. `loom_insights` reports bounded project/Action ledger metadata; `loom_objective` links complete work trajectories; `loom_trends` compares explicit objective populations; `loom_tweak` keeps proposed instruction content and reported trials. Neither modifies live skills or agents, schedules an experiment, selects a model, or produces an approval verdict.
 

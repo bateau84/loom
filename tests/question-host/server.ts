@@ -39,7 +39,16 @@ export default Plugin.define({
         const jobs = JSON.parse(readFileSync(join(root, "jobs.json"), "utf8"))
         const jobCode = id && !issued.has(id) ? jobs[id]?.code : undefined
         const nativeEdit = id && !issued.has(id) && jobs[id]?.nativeEdit === true
-        if (jobCode || nativeEdit) issued.add(id!)
+        // Bounded observer qualification uses the real native non-Code-Mode
+        // subagent and skill tools. This changes only the external script.
+        const nativeSkill = id && !issued.has(id) && jobs[id]?.nativeSkill === true
+        const proposedSubagent = id && !issued.has(id) ? jobs[id]?.nativeSubagent : undefined
+        const nativeSubagent = proposedSubagent?.agent === "evaluator"
+          && /^LOOM_HARNESS_JOB:[a-f0-9]{16}$/.test(proposedSubagent.prompt)
+          ? { agent: "evaluator", description: "Observer native child fixture", prompt: proposedSubagent.prompt } : undefined
+        const followupCode = id && issued.has(id) && !issued.has(id + ":followup") ? jobs[id]?.followupCode : undefined
+        if (jobCode || nativeEdit || nativeSkill || nativeSubagent) issued.add(id!)
+        if (followupCode) issued.add(id! + ":followup")
         // Exercise installed native child execution with a deterministic model,
         // not a replacement Loom tool or a fabricated answer record.
         const oqID = [...text.matchAll(/You are being asked a Loom Open Question \(ID: ([^)]+)\)/g)].at(-1)?.[1]
@@ -48,7 +57,7 @@ export default Plugin.define({
           ? `const q = JSON.parse(await tools.loom.record({operation:"query",view:"thread",question_id:${JSON.stringify(oqID)}})); if(q?.result?.question?.id !== ${JSON.stringify(oqID)}) throw new Error("Native OQ thread retrieval failed"); return await tools.loom.record({operation:"answer",question_id:${JSON.stringify(oqID)},answer:"Verified scripted specialist response for installed OQ",context_attachments:["fixture://installed-typed-specialist"]})`
           : undefined
         if (oqCode) issued.add(oqKey!)
-        const code = jobCode ?? oqCode
+        const code = jobCode ?? followupCode ?? oqCode
         if (id && ((code && jobs[id]?.hold === "before") || (!code && jobs[id]?.hold === "after"))) {
           audit("provider-held", { role, job: id, phase: jobs[id].hold })
           for (let i = 0; ; i++) {
@@ -70,6 +79,10 @@ export default Plugin.define({
         const events: any[] = [{ type: "stream-start", warnings: [] }]
         if (code) {
           events.push({ type: "tool-call", toolCallId: randomUUID(), toolName: "execute", input: JSON.stringify({ code }) })
+        } else if (nativeSubagent) {
+          events.push({ type: "tool-call", toolCallId: randomUUID(), toolName: "subagent", input: JSON.stringify(nativeSubagent) })
+        } else if (nativeSkill) {
+          events.push({ type: "tool-call", toolCallId: randomUUID(), toolName: "skill", input: JSON.stringify({ id: "agent-run-audit" }) })
         } else if (nativeEdit) {
           // The installed-objective fixture exercises real native edits against
           // a disposable runtime scenario. Existing permission-gate tests keep
@@ -97,7 +110,8 @@ export default Plugin.define({
               : "HARNESS_IDLE" },
             { type: "text-end", id: "text" })
         }
-        events.push({ type: "finish", finishReason: { unified: code || nativeEdit || checkPolicy ? "tool-calls" : "stop", raw: code || nativeEdit || checkPolicy ? "tool_calls" : "stop" }, usage })
+        const invokedTool = code || nativeEdit || nativeSkill || nativeSubagent || checkPolicy
+        events.push({ type: "finish", finishReason: { unified: invokedTool ? "tool-calls" : "stop", raw: invokedTool ? "tool_calls" : "stop" }, usage })
         return { stream: new ReadableStream({ start(c) { for (const e of events) c.enqueue(e); c.close() } }) }
       },
     })
