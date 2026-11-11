@@ -334,8 +334,11 @@ export class SessionExperiments {
         throw new Error("LOOM_LIVE_ORPHAN_ENTRY: native treatment exists without authorized trial history")
       return
     }
-    if (["stopped","stop-uncertain"].includes(row.status)) {
-      // Withdrawal never removes past instruction exposure. Do not claim control.
+    if (row.status === "stop-uncertain")
+      throw new Error("LOOM_LIVE_WITHDRAWAL_UNCERTAIN: an in-flight write or failed withdrawal may still install treatment; reconcile explicitly")
+    if (row.status === "stopped") {
+      // An old model context is never a clean control. An orphaned/reappeared
+      // key is a separate safety violation even after successful withdrawal.
       if (await this.ownValue(host) !== undefined)
         throw new Error("LOOM_LIVE_WITHDRAWAL_UNCERTAIN: inactive Session still has experiment entry")
       return
