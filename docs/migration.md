@@ -30,6 +30,14 @@ reconciles them during restoration. The deferred controller remains preserved at
 Its authorization, isolation and availability prerequisites remain tracked in
 [#227](https://github.com/bateau84/loom/issues/227).
 
+The [read-only stopped-host recovery inspector](experiment-recovery.md) checks
+private copies of the exact 2.2.6 native database and its sidecars, optionally
+reconciling preserved experimental learning databases. It detects native entries
+even when their Loom assignment history is missing, and retains removed-entry
+tombstones as evidence of possible earlier exposure. Its result covers only the
+supplied snapshots; it is not withdrawal, complete host provenance or permission
+to resume a Session.
+
 ## Historical bundle migration
 
 This is a breaking, draft change. `main` and its history remain unchanged until

@@ -8,21 +8,21 @@ timestamp: 2026-10-19T00:00:00Z
 
 # Tests, scripts and CI
 
-Run commands from the repository root. This is the maintained inventory of every
-tracked path under `tests/`, `tools/` and `.github/workflows/`, plus the seven
-runner/example supports below: **78 + 7 = 85 paths**. There are 45 test entry files
-(18 Node, 24 Bun, 3 Python); file counts are not case counts. Update this guide
-when adding, removing or renaming an entrypoint or support input.
+Run commands from the repository root. This guide records test profiles,
+entrypoints and supporting files. `package.json` and the workflows define the
+actual discovery and CI selection; historical file inventories below are not
+test counts or proof of execution. Update the relevant profile when adding,
+removing or renaming an entrypoint or support input.
 
 ## Environment and commands
 
 Install with `bun install --frozen-lockfile`. `.bun-version` pins **Bun 1.4.2**;
 the supported package range is `>=1.4.2 <2.0.0`. CI uses **Node 22**; Node
 **22.16+** is required for core SQLite tests. Python 3 and Git are also needed as
-noted below. The upgrade-candidate source SDK is `@opencode/plugin@2.2.6`, YAML dependency
+noted below. The current source SDK is `@opencode/plugin@2.2.6`, YAML dependency
 `js-yaml@4.3.2`, compiler `typescript@7.0.2`. Search uses separately provisioned
 Code Mode **2.0.29**; it does not establish host compatibility. The candidate
-installed-host boot uses SDK/CLI **2.1.1/2.1.1**; earlier 2.0.32 qualification
+installed-host boot uses SDK/CLI **2.2.6/2.2.6**; earlier 2.0.32 qualification
 is historical evidence, not approval for the new target.
 A historical 2.0.29 compatibility boot is not maintained or supported. Do not
 install host test tools into the plugin dependency tree or modify its lockfile.
@@ -39,8 +39,8 @@ Component doubles are not installed-host evidence; no suite requires paid infere
 | N | `bun test PATH`; locked dependencies and Bun | Bun report/status; real Bun/SQLite/plugin registration with simulated host. Disposable state/config; fixtures restore environment. Startup cases also write disposable `.test-build/startup-*`. `bun run test:native` discovers root `*native.test.ts` plus explicit package-entry, backup, baseline, question-host and retrospective-source globs; main CI. No installed host/model. |
 | P | `python3 -m unittest discover -s tests -p 'BASENAME'`; stdlib Python, Git for export | unittest report/status; temp files/SQLite, mocks/failure subprocesses, ignored bytecode caches. `bun run test:python` discovers `test_*.py`; main CI. No installed qualification. |
 | S | `LOOM_CODEMODE_ROOT=/ABS/PREFIX bun test tests/tool-search-codemode.test.ts`; first `npm install --prefix /ABS/PREFIX --ignore-scripts --no-audit --no-fund @opencode/codemode@2.0.29` | Verifies exact package and imports real search/effect. Registration/temp state and report/status, no model/CLI. npm writes only external prefix. Separate main CI step, excluded from native aggregate. |
-| H | `python3 tests/installed_host_smoke.py --opencode /ABS/CLI --expect-version 2.1.1 --plugin /ABS/PLUGIN_PREFIX/node_modules/loom-plugin --artifact /ABS/loom-plugin.tgz --expect-plugin-version 2.0.0-alpha.1 --expect-sdk-version 2.1.1 --report-directory /ABS/OUTPUT`; Python, Bun/Node, candidate npm artifact, canonical SDK 2.1.1 and separate CLI 2.1.1 | Starts owned loopback/stdio hosts in private temp config/state, loading the installed artifact rather than checkout. Verifies artifact metadata/hash and SDK pin/version. Boot/restart/removal/roster/empty-ledger checks, no model. Retains version stdout, HTTP JSON, artifact identity and `report.json`; removes temp host state. Installed-host workflow only, or explicit manual invocation. |
-| Q | `python3 tests/installed_questions.py --opencode /ABS/CLI --plugin /ABS/PLUGIN_PREFIX/node_modules/loom-plugin --artifact /ABS/loom-plugin-candidate.tgz --expect-plugin-version 2.0.0-alpha.1 --expect-sdk-version 2.1.1 --repository /ABS/REPO --report-directory /ABS/NEW_OUTPUT --duplicate-input-control`; Python, Bun/Node, packed candidate, isolated SDK/CLI 2.1.1 | Private-host question-path qualification with scripted local-model traffic, not paid/live-provider or external-MCP evidence. Exact candidate SHA-256 `ef7dad9a30ade952cd055fe5c637ff19d1b7b75ef8da590cde07fad58e7efd15`, SDK/CLI 2.0.32/2.0.32: T2 and independent reviewer rerun passed E1-E3, restart, and duplicate-input control. T2 report: `/tmp/opencode/t2-installed-questions-e3c6d3e/rerun-report/report.json` (audit alongside); reviewer report: `/tmp/opencode/reviewer-182-rerun/report.json`. These report paths are temporary and not committed. The historical 2.0.32 evidence is not a 2.1.1 pass; the new harness includes E4 native session/archive, E5 compaction/evidence and E6 trace/native-child export and text-redaction-sentinel checks. E6 runs real plugin/host operations with a scripted local model; successful registration alone is not trace proof. The selective session-read case is N/A (`executed:false`), not a pass; see [installed-host validation](installed-host-validation.md) for its source-qualified rationale and limits. |
+| H | `python3 tests/installed_host_smoke.py --opencode /ABS/CLI --expect-version 2.2.6 --plugin /ABS/PLUGIN_PREFIX/node_modules/loom-plugin --artifact /ABS/loom-plugin.tgz --expect-plugin-version 2.0.0-alpha.1 --expect-sdk-version 2.2.6 --report-directory /ABS/OUTPUT`; Python, Bun/Node, candidate npm artifact, canonical SDK 2.2.6 and separate CLI 2.2.6 | Starts owned loopback/stdio hosts in private temp config/state, loading the installed artifact rather than checkout. Verifies artifact metadata/hash and SDK pin/version. Boot/restart/removal/roster/empty-ledger checks, no model. Retains version stdout, HTTP JSON, artifact identity and `report.json`; removes temp host state. Installed-host workflow only, or explicit manual invocation. |
+| Q | `python3 tests/installed_questions.py --opencode /ABS/CLI --plugin /ABS/PLUGIN_PREFIX/node_modules/loom-plugin --artifact /ABS/loom-plugin-candidate.tgz --expect-plugin-version 2.0.0-alpha.1 --expect-sdk-version 2.2.6 --repository /ABS/REPO --report-directory /ABS/NEW_OUTPUT --duplicate-input-control`; Python, Bun/Node, packed candidate, isolated SDK/CLI 2.2.6 | Private-host question-path qualification with scripted local-model traffic, not paid/live-provider or external-MCP evidence. Exact candidate SHA-256 `ef7dad9a30ade952cd055fe5c637ff19d1b7b75ef8da590cde07fad58e7efd15`, SDK/CLI 2.0.32/2.0.32: T2 and independent reviewer rerun passed E1-E3, restart, and duplicate-input control. T2 report: `/tmp/opencode/t2-installed-questions-e3c6d3e/rerun-report/report.json` (audit alongside); reviewer report: `/tmp/opencode/reviewer-182-rerun/report.json`. These report paths are temporary and not committed. The historical 2.0.32 evidence is not a current-host qualification; the new harness includes E4 native session/archive, E5 compaction/evidence and E6 trace/native-child export and text-redaction-sentinel checks. E6 runs real plugin/host operations with a scripted local model; successful registration alone is not trace proof. The selective session-read case is N/A (`executed:false`), not a pass; see [installed-host validation](installed-host-validation.md) for its source-qualified rationale and limits. |
 
 | O | `python3 tests/installed_objectives.py --opencode /ABS/CLI --plugin /ABS/PLUGIN_PREFIX/node_modules/loom-plugin --artifact /ABS/loom-plugin-candidate.tgz --repository /ABS/REPO --report-directory /ABS/NEW_OUTPUT --expect-plugin-version 2.0.0-alpha.1`; exact isolated SDK/CLI 2.2.6, packed candidate and local scripted provider | **Installed objective mechanics:** native OpenCode 2.2.6 Session and authorized child exports, real native edit tool, executed Python runtime checks failing twice then passing, three attributed child reports and source-linked QA, original metadata in two SQLite DBs, bounded pagination, cross-goal separation, capture-off and recovery after host restart. No paid inference, no real-model reasoning or automatic correctness claim. Writes only disposable host/workspaces/state and private run report. Runs as a required step in installed-questions CI; not in ordinary unit tests. |
 | QB | `python3 tests/retrospective_qab.py --opencode /ABS/CLI --plugin /ABS/PLUGIN --artifact /ABS/CANDIDATE.tgz --skills-repo /ABS/SKILLS --model PROVIDER/MODEL_ID --auth /ABS/PRIVATE/auth.json --report-directory /ABS/NEW_OUTPUT`; exact OpenCode 2.2.0, explicit real model, merged skill commit | **Opt-in real-model deep retrospective acceptance.** Disposable parent/worker/reviewer native Sessions, registered Loom trace evidence, target agent's independent source retrieval, five adversarial controls and private evidence bundle. No question-fixture, automatic provider fallback, ordinary PR CI or implied PASS. See [QA-B runbook](retrospective-qa-b.md); provider-free oracle tests and passive-audit typecheck run in main CI. |
@@ -49,7 +49,7 @@ Component doubles are not installed-host evidence; no suite requires paid infere
 runs `tsc --noEmit`. For H, optional `--repository /ABS/REPO` chooses the source;
 H/Q `--disable-filewatcher` affects owned hosts only and disclaims watcher proof.
 Neither harness installs its CLI. Provision externally, for example
-`npm install --prefix /ABS/HOST --no-audit --no-fund @opencode/cli@2.0.32`, then use
+`npm install --prefix /ABS/HOST --no-audit --no-fund @opencode/cli@2.2.6`, then use
 `/ABS/HOST/node_modules/.bin/opencode`. The package's `test:installed-questions`
 alias invokes Python; the direct Q command above is authoritative (check local
 runner argument forwarding before using the alias).
@@ -60,6 +60,25 @@ host configuration. Backup tests exercise the [stopped-writer manual procedure](
 not permission to experiment against production state. Ignored `node_modules/`,
 `.test-build/`, `__pycache__/`, private logs/reports and backups are outputs, not
 additional maintained tests. Do not publish private host reports without inspection.
+
+## Learning trust, recovery and audit qualification
+
+These additions keep automatic reporting and live treatment disabled. They run
+against exact OpenCode 2.2.6; a newer host requires its own qualification.
+
+| Entry or support | Invocation, behavior and proof limit |
+| --- | --- |
+| `tests/installed_host_trust.py`, `tests/host-trust/server.ts` | `python3 tests/installed_host_trust.py --opencode /ABS/CLI --report-directory /ABS/NEW_REPORT`; isolated native prompt admission/restart and permission counterexamples. Providers removed, prompts never resumed, no treatment writes. Installed-host CI; fixture typechecked in main CI. PASS establishes the counterexamples, not authentic human approval or independent origins. |
+| `tests/test_installed_host_trust.py` | Profile P; admission and HTTP-rejection oracle negatives. These narrow tests do not replace the installed probe. |
+| `tools/inspect_experiment_recovery.py`, `tests/test_experiment_recovery.py`, `tests/fixtures/opencode-2.2.6-recovery.sql` | [Stopped-host scanner procedure](experiment-recovery.md); source files are copied with their sidecars and only private copies are opened. Profile P covers native/archived schema, WAL, exposure uncertainty, bounded inputs and output-path protection. No withdrawal or Session-reuse authorization. |
+| `tests/installed_experiment_recovery.py` | `python3 tests/installed_experiment_recovery.py --opencode /ABS/CLI --report-directory /ABS/NEW_REPORT`; real native PUT/DELETE, stop, production scanner, reopen and retained tombstone check. No prompts; installed-host CI. |
+| `tools/evaluator-observer/server.ts`, `tools/native_evaluator_qualification.py` | [Explicit operator audit procedure](native-evaluator-audit-qualification.md); opt-in private receipt capture and no-inference consistency checking. Not enabled by the packaged Loom plugin. No credentials or source transcripts are exported by the observer. |
+| `tests/native-evaluator-observer-native.test.ts`, `tests/test_native_evaluator_qualification.py` | Profiles N/P; real observer/checker behavior with boundary fixtures, malformed/forged receipt negatives, capture opt-outs and failure isolation. A fixture is not genuine Evaluator reasoning. |
+| `tests/installed_evaluator_observer.py` | Exact packed candidate and native public operations through a local scripted provider, with a separate host process for recovery. Runs in installed-questions CI. Proves receipt projection and recovery mechanics only; original-work Evaluator quality, source authenticity, provider exposure and billing remain UNPROVEN. |
+
+The [host contract](learning-host-trust-contract.md) records the source-inspected
+2.2.7 delta separately from installed 2.2.6 evidence. No current fixture can
+certify the proposed protected-human receipt interface before it exists.
 
 ## Node tests (C)
 

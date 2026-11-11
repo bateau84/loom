@@ -1,4 +1,4 @@
-name: Installed OpenCode boot-only regression
+name: Installed OpenCode boot and trust regression
 on:
   pull_request:
     branches: [main]
@@ -42,10 +42,24 @@ jobs:
           --expect-plugin-version "$(node -p 'require("./package.json").version')"
           --expect-sdk-version 2.2.6
           --report-directory "$RUNNER_TEMP/loom-host-report"
+      - name: Native origin and permission trust boundaries; no model requests
+        run: >-
+          python3 tests/installed_host_trust.py
+          --opencode "$RUNNER_TEMP/loom-opencode-host/node_modules/.bin/opencode"
+          --repository "$GITHUB_WORKSPACE"
+          --report-directory "$RUNNER_TEMP/loom-host-trust-report"
+      - name: Inspect native orphan treatment and withdrawal history; no model requests
+        run: >-
+          python3 tests/installed_experiment_recovery.py
+          --opencode "$RUNNER_TEMP/loom-opencode-host/node_modules/.bin/opencode"
+          --report-directory "$RUNNER_TEMP/loom-experiment-recovery-report"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: installed-host-boot-${{ github.sha }}
-          path: ${{ runner.temp }}/loom-host-report/
+          path: |
+            ${{ runner.temp }}/loom-host-report/
+            ${{ runner.temp }}/loom-host-trust-report/
+            ${{ runner.temp }}/loom-experiment-recovery-report/
           if-no-files-found: warn
           retention-days: 7
