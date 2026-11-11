@@ -46,6 +46,11 @@ export class ProactiveLearning {
    * when automatic capture is enabled. A single objective never emits a trend.
    * Failure to analyze does not roll back the already-authored objective. */
   consider(now = new Date().toISOString()): Notice[] {
+    // Do not promote source ID count into an independent-origin pattern.
+    // The current exact host cannot certify original request lineage, even
+    // when three distinct ledger or native user-role records exist. This
+    // fail-closed preflight is O(1) on normal outcome boundaries.
+    if (this.trends.originIndependenceQualification().status !== "qualified") return []
     const end = Date.parse(now)
     if (!Number.isFinite(end)) throw new Error("Invalid reporting clock")
     const start = earliest(end)
@@ -197,7 +202,8 @@ export class ProactiveLearning {
     return {
       items: page.map(row => ({ ...row, source_refs: JSON.parse(row.source_refs) as Source[] })),
       next_cursor, snapshot_max_rowid: high,
-      interpretation: "Observational, source-linked prompts for Evaluator; never approval or automatic instruction promotion.",
+      interpretation: "Historical observational prompts only; existing notices are not independent-origin certification, approval or automatic instruction promotion.",
+      independent_pattern_qualification: this.trends.originIndependenceQualification(),
       retention: "Append-only bounded to 2048 deduplicated findings per project; oldest findings are preserved.",
     }
   }
