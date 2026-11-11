@@ -184,6 +184,22 @@ test("configured reviewer role aliases cannot start a trial despite an innocent 
   } finally { await host.close() }
 })
 
+test("a Session promoted into an independent review role while native permission is pending cannot enter treatment", async () => {
+  const host = await registeredLoom([], { versionedHost: true, approvalProof: "synthetic" })
+  try {
+    const { obj, proposal } = await prepare(host)
+    host.permission.beforeReturn = async () => {
+      await writeFile(join(host.directory, ".loom.yaml"),
+        "agents:\\n  author:\\n    roles: [qa]\\ninstructions: {enabled: false}\\nledger: {capture: off}\\n".replaceAll("\\n", "\n"))
+    }
+    await expect(call(host, "start", startInput(obj.id, proposal.id)))
+      .rejects.toThrow("LOOM_LIVE_INDEPENDENCE")
+    expect(host.permissionRequests).toHaveLength(1)
+    expect(host.nativeInstructionWrites).toHaveLength(0)
+    expect((await call(host, "read")).result.status).toBe("inactive")
+  } finally { await host.close() }
+})
+
 test("a stopped or crashed trial retains history across plugin restart and cannot become a clean control", async () => {
   const directory = await mkdtemp(join(tmpdir(), "loom-live-restart-"))
   try {
