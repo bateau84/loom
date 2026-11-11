@@ -238,6 +238,10 @@ export default Plugin.define({
     }
     const experimentHost = (sessionID: string, agent: string): ExperimentHost => ({
       version: ctx.app?.version ?? "", agent, sessionID,
+      // OpenCode SDK/CLI 2.2.6 lacks this native attestation.
+      verifyHumanApproval: (ctx.session as unknown as {
+        humanApproval?: {verify?: ExperimentHost["verifyHumanApproval"]}
+      }).humanApproval?.verify,
       source: async () => {
         const native = unwrapped(await ctx.agent.list())
         if (!Array.isArray(native)) throw new Error("LOOM_LIVE_AGENT_UNAVAILABLE: no native registry")
@@ -504,7 +508,8 @@ export default Plugin.define({
                     const messages = unwrapped(await ctx.session.context({
                       sessionID: actor.session_id as Parameters<typeof ctx.session.context>[0]["sessionID"],
                     }))
-                    const approvedLine = `LOOM-TRIAL-APPROVE candidate=${String(input.candidate_id)} objective=${String(input.objective_id)} budget=${String(input.budget_requests)}`
+                    const approvalBinding = e.approvalBinding(actor, input as unknown as StartExperiment)
+                     const approvedLine = approvalBinding.approval_line
                     const found = Array.isArray(messages) ? messages.filter(message =>
                       message && typeof message === "object" && !Array.isArray(message) &&
                       (message as {id?:unknown}).id === input.authorization_ref &&
@@ -520,7 +525,11 @@ export default Plugin.define({
                     // Explicit native permission gate, with no persisted grant requested.
                     // Tool caller's opt-in alone does not satisfy authorization.
                     await ctx.permission.assert({ action: "loom-live-instruction-experiment",
-                      resources: [String(input.objective_id),String(input.candidate_id),actor.session_id],
+                      resources: [approvalBinding.objective_id, approvalBinding.candidate_id,
+                         approvalBinding.candidate_sha256, approvalBinding.session_id,
+                         approvalBinding.agent, approvalBinding.scope,
+                         "budget:"+String(approvalBinding.budget_requests),
+                         approvalBinding.approval_sha256],
                       sessionID: actor.session_id, agent: actor.agent,
                       source: { type: "tool", messageID: toolContext.messageID, id: toolContext.id } })
                     toolContext.signal.throwIfAborted()
