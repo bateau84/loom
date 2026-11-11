@@ -144,6 +144,55 @@ test("multiple simultaneous independent processes preserve every account's updat
   for (const account of accounts) expect(runWorker("read", path, account).reason).toBe("exhausted")
 }))
 
+// A creator can make the SQLite header visible before its schema-version
+// transaction commits. A second opener must wait for that actual creator rather
+// than mistake the valid, temporary user_version=0 state for an abandoned DB.
+test("second opener tolerates a creator between SQLite header and schema commit", async () =>
+  fixture(async path => {
+    const creator = new Database(path)
+    let opened: Awaited<ReturnType<typeof openSharedQuotaState>> | undefined
+    try {
+      creator.exec("PRAGMA journal_mode=WAL; CREATE TABLE staging (id TEXT)")
+      const opening = openSharedQuotaState({ path }).then(
+        state => ({ state, error: null as unknown }),
+        error => ({ state: null, error }),
+      )
+      // Give the reader a real opportunity to observe the still-uninitialized
+      // header; this forces the interleaving that random process races miss.
+      await Bun.sleep(250)
+      creator.exec(`BEGIN IMMEDIATE;
+        DROP TABLE staging;
+        CREATE TABLE quota (
+          id TEXT PRIMARY KEY NOT NULL CHECK(length(id)=64),
+          state TEXT NOT NULL CHECK(state IN ('available','unknown','exhausted','throttled','overloaded','authentication')),
+          evidence TEXT NOT NULL CHECK(evidence IN ('provider','observed','unknown')),
+          revision INTEGER NOT NULL CHECK(revision>=0),
+          until_ms INTEGER, lease_until_ms INTEGER, lease_token TEXT,
+          remaining INTEGER, failures INTEGER NOT NULL CHECK(failures>=0),
+          updated_ms INTEGER NOT NULL, last_success_ms INTEGER,
+          release_revision INTEGER NOT NULL DEFAULT 0 CHECK(release_revision>=0)
+        );
+        PRAGMA user_version=2;
+        COMMIT;`)
+      const result = await opening
+      if (result.error) throw result.error
+      opened = result.state!
+      expect(opened.eligibility(route("late-reader"))).toMatchObject({ eligible: true, quota: "unknown" })
+    } finally { opened?.close(); creator.close() }
+  }))
+
+test("abandoned SQLite header with no schema version stays rejected and unchanged", async () =>
+  fixture(async path => {
+    const abandoned = new Database(path)
+    try { abandoned.exec("CREATE TABLE staging (id TEXT)") } finally { abandoned.close() }
+    await expect(openSharedQuotaState({ path })).rejects.toThrow(/never initialized/)
+    const inspection = new Database(path)
+    try {
+      expect((inspection.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(0)
+      expect(inspection.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='quota'").get()).toBeNull()
+    } finally { inspection.close() }
+  }))
+
 test("only one concurrent process can claim the expired route's probe", async () => fixture(async path => {
   runWorker("exhaust-short", path)
   await Bun.sleep(1300)
