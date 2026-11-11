@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test"
 import { createHash } from "node:crypto"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Database } from "bun:sqlite"
@@ -163,6 +163,24 @@ test("source drift, native denial and inherited/unknown objective never write in
     host.nativeAgents.find(a => a.id === "author")!.system = "Changed canonical native source"
     await expect(call(host,"start",startInput(obj.id,proposal.id))).rejects.toThrow("SOURCE_DRIFT")
     expect(host.nativeInstructionWrites).toHaveLength(0)
+  } finally { await host.close() }
+})
+
+test("configured reviewer role aliases cannot start a trial despite an innocent native agent ID", async () => {
+  const host = await registeredLoom([], {
+    versionedHost: true, approvalProof: "synthetic",
+    beforeSetup: async directory => {
+      await writeFile(join(directory, ".loom.yaml"),
+        "agents:\\n  author:\\n    roles: [assessment]\\ninstructions: {enabled: false}\\nledger: {capture: off}\\n".replaceAll("\\n", "\n"))
+    },
+  })
+  try {
+    const { obj, proposal } = await prepare(host)
+    await expect(call(host, "start", startInput(obj.id, proposal.id)))
+      .rejects.toThrow("LOOM_LIVE_INDEPENDENCE")
+    expect(host.permissionRequests).toHaveLength(0)
+    expect(host.nativeInstructionWrites).toHaveLength(0)
+    expect((await call(host, "read")).result.status).toBe("inactive")
   } finally { await host.close() }
 })
 
