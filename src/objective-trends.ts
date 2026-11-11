@@ -402,7 +402,7 @@ export class ObjectiveTrends {
       }
       const metrics = zeroMetrics(), groups = new Map<string, Metrics>()
       const sourceImpacts = new Map<string, Set<string>>(), originImpacts = new Map<string, Set<string>>()
-      const mix = { unit_keys: {} as Record<string, number>,
+      const mix = { unit_keys: Object.create(null) as Record<string, number>,
         origin_verifications: {} as Record<string, number>,
         outcome_source_verifications: {} as Record<string, number>,
         instruction_observations: { one: 0, multiple: 0, none: 0 } }

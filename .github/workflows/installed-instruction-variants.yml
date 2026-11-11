@@ -1,0 +1,62 @@
+name: Installed OpenCode Session-variant qualification
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/installed-instruction-variants.yml
+      - tests/installed_instruction_variants.py
+      - tests/test_installed_instruction_variants.py
+      - tests/variant-host/**
+      - docs/session-instruction-qualification.md
+permissions:
+  contents: read
+jobs:
+  session-variants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - name: Typecheck the test-only native provider observer
+        run: >-
+          ./node_modules/.bin/tsc --noEmit --ignoreConfig --target ES2022 --module NodeNext
+          --moduleResolution NodeNext --strict --skipLibCheck --types bun,node
+          tests/variant-host/server.ts
+      - name: Negative receipt, drift and version oracles
+        run: python3 -m unittest discover -s tests -p test_installed_instruction_variants.py -v
+      - name: Pack and install the Loom candidate without modifying an active installation
+        run: |
+          mkdir -p "$RUNNER_TEMP/loom-variant-artifacts"
+          npm pack --json --pack-destination "$RUNNER_TEMP/loom-variant-artifacts" > "$RUNNER_TEMP/loom-variant-artifacts/pack.json"
+          ARTIFACT=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))[0].filename)' "$RUNNER_TEMP/loom-variant-artifacts/pack.json")
+          npm install --prefix "$RUNNER_TEMP/loom-variant-plugin" --no-audit --no-fund "$RUNNER_TEMP/loom-variant-artifacts/$ARTIFACT"
+      - name: Install unmodified exact external CLI
+        run: npm install --prefix "$RUNNER_TEMP/loom-variant-host" --no-audit --no-fund @opencode/cli@2.2.6
+      - name: Exercise three independent native-host isolation runs
+        run: |
+          for iteration in 1 2 3; do
+            echo "Running isolated instruction-variant qualification iteration $iteration"
+            python3 tests/installed_instruction_variants.py \
+              --opencode "$RUNNER_TEMP/loom-variant-host/node_modules/.bin/opencode" \
+              --repository . \
+              --plugin "$RUNNER_TEMP/loom-variant-plugin/node_modules/loom-plugin" \
+              --artifact "$(find "$RUNNER_TEMP/loom-variant-artifacts" -maxdepth 1 -name 'loom-plugin-*.tgz' -print -quit)" \
+              --expect-plugin-version "$(node -p 'require("./package.json").version')" \
+              --report-directory "$RUNNER_TEMP/loom-variant-report/iteration-$iteration"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: session-variant-qualification
+          path: ${{ runner.temp }}/loom-variant-report/
+          retention-days: 7
+          if-no-files-found: warn
