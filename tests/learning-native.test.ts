@@ -208,6 +208,11 @@ for (const mode of ["corrupt", "partial"] as const) test("unavailable " + mode +
       statement: "New evidence after optional learning failure" }, actor.session_id, actor.agent)).result
     expect(written.id).toBeTruthy()
     await expect(f.invoke("insights", { operation: "window" })).rejects.toThrow("LOOM_LEARNING_UNAVAILABLE")
+    await expect(f.invoke("insights", { operation: "findings" })).rejects.toThrow("LOOM_LEARNING_UNAVAILABLE")
+    await expect(f.invoke("objective", { operation: "list" })).rejects.toThrow("LOOM_LEARNING_UNAVAILABLE")
+    await expect(f.invoke("trends", { operation: "compare", population: "all-linked",
+      since_at: "2026-01-01T00:00:00Z", until_at: "2026-01-02T00:00:00Z",
+      as_of_at: "2026-01-02T00:00:00Z" })).rejects.toThrow("LOOM_LEARNING_UNAVAILABLE")
     await expect(f.invoke("tweak", { operation: "list" })).rejects.toThrow("LOOM_LEARNING_UNAVAILABLE")
     const call = { sessionID: actor.session_id, agent: actor.agent, messageID: "m", id: "read-1", tool: "read", input: { path: "safe" } }
     await f.hooks.get("execute.before")(call)
