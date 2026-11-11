@@ -99,14 +99,15 @@ test("full-population positive observation remains queryable beyond page one wit
       f.link(obj.id,"outcome",f.source("Final authored pass "+i).id)
     }
     const at=nowAfterSource()
+    const since=new Date(Date.now()-86400000).toISOString()
     const compared=f.learning.trends.compare({operation:"compare",population:"all-linked",
-      since_at:new Date(Date.now()-86400000).toISOString(),until_at:at,as_of_at:at,
+      since_at:since,until_at:at,as_of_at:at,
       group_by:"instruction-fingerprint",limit:20})
     expect(compared.population.eligible_objectives).toBe(25)
     expect(compared.groups.some(g=>g.metrics.reported_pass_without_correction===3)).toBe(true)
     expect(compared.next_cursor).not.toBeNull()
     const second=f.learning.trends.compare({operation:"compare",population:"all-linked",
-      since_at:new Date(Date.now()-86400000).toISOString(),until_at:at,as_of_at:at,
+      since_at:since,until_at:at,as_of_at:at,
       group_by:"instruction-fingerprint",limit:20,cursor:compared.next_cursor!})
     expect(second.items.map(x=>x.objective_id)).toEqual(sources)
     expect(f.learning.proactive.consider(at)).toEqual([])
