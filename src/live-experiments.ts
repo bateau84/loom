@@ -145,7 +145,8 @@ export class SessionExperiments {
       budget_requests: input.budget_requests, expires_at: input.expires_at,
       eligibility: input.eligibility, evaluation_criteria: input.evaluation_criteria,
       preserved_guarantees: input.preserved_guarantees,
-      authorization_ref: input.authorization_ref,
+      // Native message ID is unavailable until the exact approval text is
+      // authored; never make the digest depend on that future message ID.
     }
     const approval_sha256 = sha(JSON.stringify(content))
     return {
