@@ -431,9 +431,12 @@ test("two concurrent starts for one Session reserve at most one trial and one na
     const settled=await Promise.allSettled([first,second])
     expect(settled.filter(x=>x.status==="fulfilled")).toHaveLength(1)
     expect(settled.filter(x=>x.status==="rejected")).toHaveLength(1)
+    // Both an existing durable trial and an already populated native entry
+    // are safe refusals. Scheduling may expose either check first.
     expect(String((settled.find(x=>x.status==="rejected") as PromiseRejectedResult).reason))
-      .toContain("LOOM_LIVE_SESSION_USED")
+      .toMatch(/LOOM_LIVE_(SESSION_USED|ENTRY_OCCUPIED)/)
     expect(h.nativeInstructionWrites).toHaveLength(1)
+    expect((await call(h,"read")).result.status).toBe("assigned")
     await call(h,"stop")
   } finally {await h.close()}
 })
