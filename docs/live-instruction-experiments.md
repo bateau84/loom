@@ -3,10 +3,44 @@ type: Playbook
 title: "Bounded live instruction experiments (exact OpenCode 2.2.6)"
 description: "Explicit, per-Session additive instruction trials with durable uncertain exposure; not production skill substitution."
 tags: [loom, learning, instructions, experiments, opencode]
-timestamp: 2026-11-10T00:00:00Z
+timestamp: 2026-11-11T00:00:00Z
 ---
 
 # Opt-in additive Session instruction trials
+
+## Cold-review remediation status — 2026-11-11
+
+**NO-GO for actual live admission on the unmodified OpenCode 2.2.6 host.**
+A native user-role message may be orchestrator-authored, including within a
+child Session; native permission allow may resolve without a human decision.
+Neither is proof of direct human authorization. This exact host lacks a
+qualified, supported human-origin attestation interface. The production
+controller intentionally supplies no such verifier and rejects live-start
+with LOOM_LIVE_HUMAN_PROVENANCE_UNQUALIFIED before reserving or writing
+an instruction. A permitted child trial remains a future capability once
+separate, exact child authorization is proven.
+
+**Previous installed positive delivery/isolation results are historical only.**
+The 12-check scripted-provider suite did not prove human authorship,
+genuine parent-to-child task-dispatch approval, interactive/denied
+authorization, production billing or real model effectiveness. The revised
+installed test qualifies a negative refusal boundary only, not positive
+activation.
+
+Approval v2 binds the immutable candidate SHA-256, native baseline,
+objective, Session, agent, target scope, exact request budget and expiry,
+eligibility, evaluation criteria and preserved guarantees. Its displayed
+LOOM-TRIAL-APPROVE v=2 line contains this binding's SHA-256 digest and
+must match an exact native message ID. The message ID is excluded from
+the digest to avoid circular creation. Message-role evidence is still
+insufficient without a trusted direct-human provenance receipt.
+
+A stop racing with a pending Session-entry PUT must enter stop-uncertain
+and block provider requests until an explicit subsequent reconciliation;
+an empty read before a delayed write cannot certify a clean withdrawal.
+The simulated unit-only attestor exercises downstream controller
+mechanics but is not a real OpenCode authorization capability.
+
 
 **Default: inactive.** The actual production controller has now passed
 [12 exact-host checks](https://github.com/bateau84/loom/actions/runs/42905765436)
@@ -68,7 +102,7 @@ evaluation criteria. A proposal alone does not grant delivery authority.
    identity**, not an in-place update.
 3. The exact Session must contain a **native user message** with its real
    message ID and an isolated line:
-   `LOOM-TRIAL-APPROVE candidate=CANDIDATE_ID objective=OBJECTIVE_ID budget=N`
+   `LOOM-TRIAL-APPROVE v=2 candidate=CANDIDATE_ID sha256=CANDIDATE_SHA256 objective=OBJECTIVE_ID session=SESSION_ID agent=AGENT_ID budget=N approval_sha256=CONTRACT_SHA256`
    (substitute the actual IDs and 1–8 budget). An agent assertion or arbitrary
    URL is not sufficient authority. The user message is rechecked after native
    permission approval, before reserving a trial.
