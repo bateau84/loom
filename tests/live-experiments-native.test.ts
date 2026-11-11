@@ -6,12 +6,14 @@ import { join } from "node:path"
 import { Database } from "bun:sqlite"
 import { digest } from "../src/model.js"
 import { registeredLoom } from "./helpers/registered-loom.js"
-import { LIVE_ENTRY_KEY } from "../src/live-experiments.js"
+import { LIVE_ENTRY_KEY, SessionExperiments } from "../src/live-experiments.js"
 
 const sha = (s: string) => createHash("sha256").update(s).digest("hex")
 const baseline = "You are the normal native author agent."
 const candidateText = "Experimental additive instruction: cite the actual executable verification."
-const expires = () => new Date(Date.now() + 180000).toISOString()
+// Approval binds the exact expiry; never recompute the digest across calls.
+const sharedExpiry = new Date(Date.now() + 360000).toISOString()
+const expires = () => sharedExpiry
 const startInput = (objective_id: string, candidate_id: string, overrides: Record<string,unknown> = {}) => ({
   operation: "start", objective_id, candidate_id, authorize: true,
   authorization_ref: "human-request-id-1",
@@ -43,16 +45,22 @@ async function prepare(host: Host, sessionID = "parent", agent = "author") {
     evidence_refs: ["source:prior-objectives"],
   }, sessionID, agent)).result
   const current = host.nativeContexts.get(sessionID) as { data: Array<Record<string,unknown>> }
+  const learningDB=new Database(join(host.directory, "state", "loom", "actions-v1",
+    digest({ project:"tool-help",canonical:host.directory }), "learning.sqlite"))
+  let approvalLine: string
+  try {
+    approvalLine=new SessionExperiments(learningDB).approvalBinding(
+      {session_id:sessionID,agent},startInput(obj.id,proposal.id)).approval_line
+  } finally { learningDB.close() }
   current.data.push({ id: "human-request-id-1", type:"user",
-    text: `LOOM-TRIAL-APPROVE candidate=${proposal.id} objective=${obj.id} budget=2`,
-    time: { created: Date.now() } })
+    text:approvalLine, time: { created: Date.now() } })
   return { obj, proposal }
 }
 const call = (host: Host, operation: string, fields: Record<string, unknown> = {}, sessionID = "parent", agent = "author") =>
   host.invoke("tweak", { ...fields, operation: "live-" + operation }, sessionID, agent)
 
 test("an explicitly authorized objective-linked candidate is assigned to only its native Session; assignment is not exposure", async () => {
-  const host = await registeredLoom([], { versionedHost: true })
+  const host = await registeredLoom([], { versionedHost: true, approvalProof:"synthetic" })
   try {
     const { obj, proposal } = await prepare(host)
     host.sessions.set("control", { id: "control", agent: "author", projectID: "tool-help", location: { directory: host.directory } })
@@ -77,7 +85,7 @@ test("an explicitly authorized objective-linked candidate is assigned to only it
 })
 
 test("native context and request hooks record only pre-provider evidence; budget and unqualified routes fail closed", async () => {
-  const host = await registeredLoom([], { versionedHost: true })
+  const host = await registeredLoom([], { versionedHost: true, approvalProof:"synthetic" })
   try {
     const { obj, proposal } = await prepare(host)
     await call(host, "start", startInput(obj.id, proposal.id))
@@ -124,7 +132,7 @@ test("native context and request hooks record only pre-provider evidence; budget
 })
 
 test("source drift, native denial and inherited/unknown objective never write instruction entries", async () => {
-  const host = await registeredLoom([], { versionedHost: true })
+  const host = await registeredLoom([], { versionedHost: true, approvalProof:"synthetic" })
   try {
     const { obj, proposal } = await prepare(host)
     const control = "child"
@@ -152,13 +160,13 @@ test("source drift, native denial and inherited/unknown objective never write in
 test("a stopped or crashed trial retains history across plugin restart and cannot become a clean control", async () => {
   const directory = await mkdtemp(join(tmpdir(), "loom-live-restart-"))
   try {
-    let h = await registeredLoom([], { directory, versionedHost: true })
+    let h = await registeredLoom([], { directory, versionedHost: true, approvalProof:"synthetic" })
     const { obj, proposal } = await prepare(h)
     await call(h,"start",startInput(obj.id,proposal.id))
     // Partial admission is durable even if the plugin unloads before the request.
     h.instructionEntries.get("parent")!.set(LIVE_ENTRY_KEY, candidateText)
     await h.close()
-    h = await registeredLoom([], { directory, versionedHost: true })
+    h = await registeredLoom([], { directory, versionedHost: true, approvalProof:"synthetic" })
     try {
       await prepare(h)
       // Native entry storage is owned by OpenCode, not the Loom database.
@@ -176,7 +184,7 @@ test("a stopped or crashed trial retains history across plugin restart and canno
 })
 
 test("orphaned native instruction entry cannot run after learning history is lost", async () => {
-  const host = await registeredLoom([], { versionedHost: true })
+  const host = await registeredLoom([], { versionedHost: true, approvalProof:"synthetic" })
   try {
     host.sessions.set("orphan", {
       id: "orphan", agent: "author", projectID: "tool-help",
@@ -202,7 +210,7 @@ test("unqualified host version cannot activate a native entry or reserve an expe
 })
 
 test("active native source drift blocks request before transport and preserves explicit withdrawal", async () => {
-  const host = await registeredLoom([], { versionedHost: true })
+  const host = await registeredLoom([], { versionedHost: true, approvalProof:"synthetic" })
   try {
     const { obj, proposal } = await prepare(host)
     await call(host, "start", startInput(obj.id, proposal.id))
@@ -221,7 +229,7 @@ test("active native source drift blocks request before transport and preserves e
 })
 
 test("audit saturation remains bounded, records omissions and never traps explicit withdrawal", async () => {
-  const h = await registeredLoom([], { versionedHost: true })
+  const h = await registeredLoom([], { versionedHost: true, approvalProof:"synthetic" })
   try {
     const { obj, proposal } = await prepare(h)
     await call(h, "start", startInput(obj.id, proposal.id))
@@ -248,7 +256,7 @@ test("audit saturation remains bounded, records omissions and never traps explic
 })
 
 test("a repeated stop does not claim success after its previously withdrawn entry reappears", async () => {
-  const h = await registeredLoom([], { versionedHost: true })
+  const h = await registeredLoom([], { versionedHost: true, approvalProof:"synthetic" })
   try {
     const { obj, proposal } = await prepare(h)
     await call(h, "start", startInput(obj.id, proposal.id))
@@ -263,7 +271,7 @@ test("a repeated stop does not claim success after its previously withdrawn entr
 })
 
 test("retiring an active candidate is denied until a verified withdrawal", async () => {
-  const h = await registeredLoom([], { versionedHost: true })
+  const h = await registeredLoom([], { versionedHost: true, approvalProof:"synthetic" })
   try {
     const {obj,proposal} = await prepare(h)
     await call(h,"start",startInput(obj.id,proposal.id))
@@ -273,4 +281,79 @@ test("retiring an active candidate is denied until a verified withdrawal", async
     const retired = (await h.invoke("tweak",{operation:"retire",id:proposal.id},"parent","author")).result
     expect(retired.status).toBe("retired")
   } finally { await h.close() }
+})
+
+test("agent-authored user-role approval and native auto-allow do not prove direct human approval", async () => {
+  const h=await registeredLoom([], {versionedHost:true,approvalProof:"missing"})
+  try {
+    const {obj,proposal}=await prepare(h)
+    const source=(h.nativeContexts.get("parent") as {data:Array<{type:string;text:string}>}).data
+    expect(source.some(x=>x.type==="user" && x.text.startsWith("LOOM-TRIAL-APPROVE"))).toBe(true)
+    await expect(call(h,"start",startInput(obj.id,proposal.id)))
+      .rejects.toThrow("LOOM_LIVE_HUMAN_PROVENANCE_UNQUALIFIED")
+    expect(h.nativeInstructionWrites).toHaveLength(0)
+    expect(h.permissionRequests).toHaveLength(0)
+    expect((await call(h,"read")).result.status).toBe("inactive")
+  } finally { await h.close() }
+})
+
+test("trusted approval denial blocks candidate write even if user-role text exactly matches", async () => {
+  const h=await registeredLoom([], {versionedHost:true,approvalProof:"denied"})
+  try {
+    const {obj,proposal}=await prepare(h)
+    await expect(call(h,"start",startInput(obj.id,proposal.id)))
+      .rejects.toThrow("LOOM_LIVE_HUMAN_PROVENANCE_UNQUALIFIED")
+    expect(h.nativeInstructionWrites).toHaveLength(0)
+    expect(h.permissionRequests).toHaveLength(0)
+  } finally {await h.close()}
+})
+
+test("approval digest binds candidate content, objective, Session and budget", async () => {
+  const h=await registeredLoom([], {versionedHost:true,approvalProof:"synthetic"})
+  try {
+    const {obj,proposal}=await prepare(h)
+    const db=new Database(join(h.directory,"state","loom","actions-v1",
+      digest({project:"tool-help",canonical:h.directory}),"learning.sqlite"))
+    try {
+      const e=new SessionExperiments(db)
+      const approved=e.approvalBinding({session_id:"parent",agent:"author"},startInput(obj.id,proposal.id))
+      expect(approved.approval_line).toContain("sha256="+sha(candidateText))
+      expect(approved.approval_line).toContain("session=parent")
+      expect(e.approvalBinding({session_id:"parent",agent:"author"},startInput(obj.id,proposal.id,{budget_requests:3})).approval_sha256)
+        .not.toBe(approved.approval_sha256)
+      expect(e.approvalBinding({session_id:"some-other-session",agent:"author"},startInput(obj.id,proposal.id)).approval_sha256)
+        .not.toBe(approved.approval_sha256)
+    } finally {db.close()}
+    await expect(call(h,"start",startInput(obj.id,proposal.id,{budget_requests:3})))
+      .rejects.toThrow("LOOM_LIVE_NOT_AUTHORIZED")
+    expect(h.nativeInstructionWrites).toHaveLength(0)
+  } finally {await h.close()}
+})
+
+test("orchestrator-authored task message in native child user role cannot enroll without provenance", async () => {
+  const h=await registeredLoom([], {versionedHost:true,approvalProof:"missing"})
+  try {
+    const {proposal}=await prepare(h)
+    h.sessions.set("child",{id:"child",parentID:"parent",agent:"author",
+      projectID:"tool-help",location:{directory:h.directory}})
+    h.nativeContexts.set("child",{data:[{id:"req-child",type:"user",
+      text:"Task: implement a correction",time:{created:Date.now()}}]})
+    const obj=(await h.invoke("objective",{
+      operation:"create",source_type:"native-message",source_id:"req-child",
+      label:"Child local objective",
+    },"child","author")).result
+    const db=new Database(join(h.directory,"state","loom","actions-v1",
+      digest({project:"tool-help",canonical:h.directory}),"learning.sqlite"))
+    let line:string
+    try {line=new SessionExperiments(db).approvalBinding(
+      {session_id:"child",agent:"author"},startInput(obj.id,proposal.id)).approval_line
+    } finally {db.close()}
+    ;(h.nativeContexts.get("child") as {data:any[]}).data.push({
+      id:"human-request-id-1",type:"user",text:line,time:{created:Date.now()},
+    })
+    await expect(call(h,"start",startInput(obj.id,proposal.id),"child","author"))
+      .rejects.toThrow("LOOM_LIVE_HUMAN_PROVENANCE_UNQUALIFIED")
+    expect(h.nativeInstructionWrites).toHaveLength(0)
+    expect((await call(h,"read",{},"child","author")).result.status).toBe("inactive")
+  } finally {await h.close()}
 })
