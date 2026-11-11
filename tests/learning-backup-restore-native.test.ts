@@ -7,6 +7,7 @@ import { join } from "node:path"
 import { Store } from "../src/store.js"
 import { digest } from "../src/model.js"
 import { registeredLoom } from "./helpers/registered-loom.js"
+import { SessionExperiments } from "../src/live-experiments.js"
 
 const BASE = "edab7a96e7c5a9172ceb98b8518c47c48a1d7c09"
 const PACKAGE = "2.0.0-alpha.1"
@@ -59,7 +60,7 @@ for (const mode of ["closed", "residual-WAL"] as const) {
     const project = join(root, "project")
     mkdirSync(project)
     try {
-      const host = await registeredLoom([], { directory: project, versionedHost: true })
+      const host = await registeredLoom([], { directory: project, versionedHost: true, approvalProof: "synthetic" })
       let action: any, evidence: any, original: any, revision: any, older: any[], objective: any, trendBounds: any, live: any
       const expected: any[] = []
       try {
@@ -149,13 +150,8 @@ for (const mode of ["closed", "residual-WAL"] as const) {
           hypothesis: "Test faithful retention of trial assignment across backup",
           evidence_refs: [evidence.id],
         })).result
-        const approval = "user-approval-recovery-trial";
-        (host.nativeContexts.get(treatmentSession) as {data:Array<Record<string,unknown>>}).data.push({
-          id: approval, type: "user",
-          text: `LOOM-TRIAL-APPROVE candidate=${liveCandidate.id} objective=${liveObjective.id} budget=2`,
-          time: { created: Date.now() },
-        })
-        const assignment = (await host.invoke("tweak", {
+        const approval = "user-approval-recovery-trial"
+        const trialStart = {
           operation: "live-start", objective_id: liveObjective.id,
           candidate_id: liveCandidate.id, authorize: true,
           authorization_ref: approval,
@@ -163,7 +159,21 @@ for (const mode of ["closed", "residual-WAL"] as const) {
           evaluation_criteria: "Verify original sources and avoid counting attempts as objectives",
           preserved_guarantees: "No registry edits, no permission bypass and no paid provider",
           budget_requests: 2, expires_at: new Date(Date.now()+180000).toISOString(),
-        }, treatmentSession)).result
+        }
+        // Recovery tests use a synthetic trusted-approval fixture solely to
+        // exercise the persisted assignment, never to claim native human consent.
+        // Bind the exact candidate bytes, scope, objective, budget and expiry.
+        const approvalDB = new Database(join(source(project), "learning.sqlite"))
+        let approvalLine: string
+        try {
+          approvalLine = new SessionExperiments(approvalDB).approvalBinding(
+            { session_id: treatmentSession, agent: "author" }, trialStart).approval_line
+        } finally { approvalDB.close() }
+        (host.nativeContexts.get(treatmentSession) as {data:Array<Record<string,unknown>>}).data.push({
+          id: approval, type: "user", text: approvalLine,
+          time: { created: Date.now() },
+        })
+        const assignment = (await host.invoke("tweak", trialStart, treatmentSession)).result
         expect(assignment.status).toBe("assigned")
         expect(assignment.exposure).toBe("NOT_VERIFIED")
         // Withdraw through the actual tool. Preserve all historical
