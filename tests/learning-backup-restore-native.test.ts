@@ -60,13 +60,45 @@ for (const mode of ["closed", "residual-WAL"] as const) {
     mkdirSync(project)
     try {
       const host = await registeredLoom([], { directory: project, versionedHost: true })
-      let action: any, evidence: any, original: any, revision: any, older: any[]
+      let action: any, evidence: any, original: any, revision: any, older: any[], objective: any, trendBounds: any, findings: any
       const expected: any[] = []
       try {
         action = (await host.invoke("action", { operation: "create",
           title: "One objective", goal: "Investigate mixed outcomes without counting handbacks as success" })).result
         evidence = (await host.invoke("record", { operation: "add", session_only: true,
           kind: "result", statement: "Original negative verification evidence" })).result
+        // Reconstruct an actual linked corrective objective using original Action
+        // records. This combined-schema fixture exercises the final objective and
+        // trend readers after physical restore, not merely SQLite file checksums.
+        objective = (await host.invoke("objective", { operation: "create",
+          label: "Original correction and final outcome", source_type: "ledger-record",
+          source_id: evidence.id, unit_key: "whole" })).result
+        const failed = (await host.invoke("record", { operation: "add", session_only: true,
+          kind: "result", statement: "First implementation failed real verification" })).result
+        const failedLink = (await host.invoke("objective", { operation: "link", objective_id: objective.id,
+          phase: "verification", assessment: "fail", source_type: "ledger-record", source_id: failed.id })).result
+        const corrected = (await host.invoke("record", { operation: "add", session_only: true,
+          kind: "result", statement: "Corrective implementation dispatched" })).result
+        await host.invoke("objective", { operation: "link", objective_id: objective.id,
+          phase: "corrective-dispatch", related_sequence: failedLink.sequence,
+          source_type: "ledger-record", source_id: corrected.id })
+        await Bun.sleep(3) // Preserve distinct original verification event clocks.
+        const passed = (await host.invoke("record", { operation: "add", session_only: true,
+          kind: "result", statement: "Corrected implementation passed verification" })).result
+        await host.invoke("objective", { operation: "link", objective_id: objective.id,
+          phase: "verification", assessment: "pass", source_type: "ledger-record", source_id: passed.id })
+        const delivered = (await host.invoke("record", { operation: "add", session_only: true,
+          kind: "result", statement: "One final successful objective delivered" })).result
+        await host.invoke("objective", { operation: "link", objective_id: objective.id,
+          phase: "outcome", assessment: "pass", source_type: "ledger-record", source_id: delivered.id })
+        trendBounds = { operation: "compare", population: "selected", objective_ids: [objective.id],
+          since_at: new Date(Date.now()-86400000).toISOString(),
+          until_at: new Date(Date.now()+30000).toISOString(),
+          as_of_at: new Date(Date.now()+30000).toISOString() }
+        const originalTrend = (await host.invoke("trends", trendBounds)).result
+        expect(originalTrend.population.eligible_objectives).toBe(1)
+        expect(originalTrend.metrics.reported_recovery).toBe(1)
+        expect(originalTrend.metrics.with_documented_correction).toBe(1)
         original = (await host.invoke("tweak", { operation: "propose", target_kind: "agent",
           target_id: "evaluator", base_sha256: fingerprint("agent base"),
           candidate_content: "Version A: use all source records", hypothesis: "Reduce false successes",
@@ -89,6 +121,45 @@ for (const mode of ["closed", "residual-WAL"] as const) {
         }
         older = expected.slice(0, 6)
         expect((await host.invoke("tweak", { operation: "retire", id: revision.id })).result.status).toBe("retired")
+        // Historical notices have no authoring API in this release. Seed their
+        // existing persisted shape, then exercise only registered public readers.
+        const history = new Database(join(source(project), "learning.sqlite"))
+        try {
+          const insert = history.prepare(`INSERT INTO learning_findings
+            (signature,kind,group_key,created_at,since_at,until_at,population,matching_objectives,
+             source_refs,interpretation,next_action,uncertainty) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`)
+          const eventTime = Date.now()
+          const writeHistorical = (i: number, createdAt = eventTime + i * 10) => {
+            const row = {
+              signature: fingerprint(mode + ":historical-finding:" + i),
+              kind: i % 2 ? "retained-practice" : "recurring-correction",
+              group_key: "historical-unqualified",
+              created_at: new Date(createdAt).toISOString(),
+              since_at: new Date(eventTime - 86400000).toISOString(),
+              until_at: new Date(eventTime).toISOString(),
+              population: 1, matching_objectives: 1,
+              source_refs: [{ objective_id: objective.id, source_type: "ledger-record", source_id: evidence.id }],
+              interpretation: "Historical authored hypothesis " + i + "; not independently certified",
+              next_action: "Inspect the original objective evidence before accepting this hypothesis",
+              uncertainty: "Origin independence and causal effectiveness remain unqualified",
+            }
+            insert.run(row.signature, row.kind, row.group_key, row.created_at, row.since_at, row.until_at,
+              row.population, row.matching_objectives, JSON.stringify(row.source_refs),
+              row.interpretation, row.next_action, row.uncertainty)
+            return row
+          }
+          const initial: any[] = []
+          for (let i = 0; i < 23; i++) initial.unshift(writeHistorical(i))
+          const firstPage = (await host.invoke("insights", { operation: "findings", limit: 7 })).result
+          expect(firstPage.items).toEqual(initial.slice(0, 7))
+          expect(firstPage.next_cursor).toBeTruthy()
+          expect(firstPage.independent_pattern_qualification.status).toBe("unqualified")
+          // This later insertion sorts behind the first page, so only its frozen
+          // insertion bound (not the keyset clock alone) can exclude it after restore.
+          const later = writeHistorical(23, eventTime + 85)
+          findings = { initial,
+            all: [...initial, later].sort((a, b) => b.created_at.localeCompare(a.created_at)), firstPage }
+        } finally { history.close() }
       } finally { await host.close() }
 
       let wal: { evidence: string; candidate: string } | undefined
@@ -140,13 +211,16 @@ for (const mode of ["closed", "residual-WAL"] as const) {
       // Verify public readers in a separate process, so test files sharing an
       // environment cannot redirect the host to the original state home.
       const expectedFile = join(root, "reader-expectations.json")
-      writeFileSync(expectedFile, JSON.stringify({ action, evidence, original, revision,
+      writeFileSync(expectedFile, JSON.stringify({ action, evidence, original, revision, objective, trendBounds, findings,
         expected, older, wal: wal && { ...wal, candidateHash: fingerprint("WAL-only content") } }))
-      const reader = Bun.spawnSync([process.execPath,
-        new URL("./helpers/learning-recovery-reader.ts", import.meta.url).pathname,
-        project, restoreHome, expectedFile])
-      if (reader.exitCode !== 0) throw new Error("isolated public readers failed: " + reader.stderr.toString())
-      expect(reader.stdout.toString()).toContain("PASS: verified public Action/learning readers")
+      for (const restart of [false, true]) {
+        const reader = Bun.spawnSync([process.execPath,
+          new URL("./helpers/learning-recovery-reader.ts", import.meta.url).pathname,
+          project, restoreHome, expectedFile])
+        if (reader.exitCode !== 0) throw new Error("isolated public readers failed" +
+          (restart ? " after restart: " : ": ") + reader.stderr.toString())
+        expect(reader.stdout.toString()).toContain("PASS: verified public Action/learning readers")
+      }
       expect(rawHashes(source(project))).toEqual(originalHashes)
       expect(rawHashes(backup)).toEqual(backupHashes)
     } finally { rmSync(root, { recursive: true, force: true }) }

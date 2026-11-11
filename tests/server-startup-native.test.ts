@@ -99,7 +99,8 @@ async function liveCoreFixture(options: { corruptLearning?: boolean } = {}) {
     agents: { architect: { roles: ["architecture"] } },
     roles: { architecture: { "model-class": "strong", reasoning: "medium" } },
   }))
-  const hooks = new Map<string, () => void>()
+  const hooks = new Map<string, (event?: any) => void>()
+  const modelRequestHooks = new Set<(event: unknown) => unknown>()
   const skills = new Map<string, unknown>()
   const tools = new Map<string, unknown>()
   const skillTransforms: Array<(editor: any) => void> = []
@@ -134,10 +135,21 @@ async function liveCoreFixture(options: { corruptLearning?: boolean } = {}) {
     provider: { list: async () => ({ data: [] }) },
     integration: { connection: { active: async () => undefined } },
     session: { hook: async (name: string, fn: any) => {
-      hooks.set(name, fn)
+      // OpenCode composes multiple handlers for the same native hook. A Map
+      // keyed only by name incorrectly overwrites an established deny handler
+      // when another component also installs a model.request hook.
+      if (name === "model.request") {
+        modelRequestHooks.add(fn)
+        hooks.set(name, (event: any) => {
+          for (const callback of modelRequestHooks) callback(event)
+        })
+      } else hooks.set(name, fn)
       return { dispose: async () => {
         disposed.push("session:" + name)
-        hooks.delete(name)
+        if (name === "model.request") {
+          modelRequestHooks.delete(fn)
+          if (modelRequestHooks.size === 0) hooks.delete(name)
+        } else hooks.delete(name)
         if (name === "model.request" && coreDisposalError) throw coreDisposalError
       } }
     } },
