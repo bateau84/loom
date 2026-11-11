@@ -83,7 +83,7 @@ const specs = [
       session_id: str, export_path: { type: "string", minLength: 1, maxLength: 4096 },
       include_text: { type: "boolean" }, limit: { type: "integer", minimum: 1, maximum: 50 },
       cursor: { type: "string", minLength: 1, maxLength: 4096 } }, ["operation"]) },
-  { name: "insights", description: TOOL_HELP.insights, input: obj({ operation: choice("action", "window"), action_id: str, before: { type: "integer", minimum: 1 }, limit: { type: "integer", minimum: 1, maximum: 200 }, since_at: str, until_at: str }, ["operation"]) },
+  { name: "insights", description: TOOL_HELP.insights, input: obj({ operation: choice("action", "window", "findings"), finding_cursor: { type: "string", maxLength: 512 }, action_id: str, before: { type: "integer", minimum: 1 }, limit: { type: "integer", minimum: 1, maximum: 200 }, since_at: str, until_at: str }, ["operation"]) },
   { name: "objective", description: TOOL_HELP.objective, input: obj({
       operation: choice("create", "link", "read", "list", "find"),
       objective_id: str, label: { type: "string", maxLength: 200 }, unit_key: str,
@@ -206,7 +206,7 @@ export default Plugin.define({
       learning = undefined
     }
     const learningStatus = () => learning
-      ? { available: true, storage: "separate-project-sqlite", automatic_mutation: false }
+      ? { available: true, storage: "separate-project-sqlite", automatic_mutation: false, findings: "historical-read-only", automatic_findings: false, automatic_model_calls: false }
       : { available: false, stage: learningFailure ?? "unavailable", automatic_mutation: false,
           note: "Existing Action/record/trace tools and native execution remain available; learning evidence is preserved for operator repair" }
     const requiredLearning = () => {
@@ -382,6 +382,12 @@ export default Plugin.define({
                   if (input.action_id !== undefined) throw new Error("Window insights cannot use action_id")
                   result = requiredLearning().events({ before: input.before as number | undefined, limit: input.limit as number | undefined,
                     since_at: input.since_at as string | undefined, until_at: input.until_at as string | undefined })
+                } else if (input.operation === "findings") {
+                  if (input.action_id !== undefined || input.before !== undefined ||
+                      input.since_at !== undefined || input.until_at !== undefined)
+                    throw new Error("Findings are project-scoped; filters and ledger cursors are unsupported")
+                  result = requiredLearning().findings.list(input.limit as number | undefined,
+                    input.finding_cursor as string | undefined)
                 } else throw new Error("Unknown insights operation")
                 break
               case "objective": {

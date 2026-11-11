@@ -8,6 +8,30 @@ timestamp: 2026-10-24T00:00:00Z
 
 # Moving the OpenCode bundle out
 
+## Leaving an experimental live Session build
+
+The bounded AOS Learning release does not include the draft #225/#228 live
+Session controller or its orphan-entry dispatch guard. If you manually installed
+one of those experimental builds, stop active work and pending enrollment writes
+before changing builds. Use the installed experimental controller to withdraw
+every enrolled or uncertain Session. Verify its stopped state and the absence
+of the native `loom.live-instruction.v1` entry for every affected Session.
+
+If that cannot be established, keep the affected Sessions or host isolated and
+do not resume them under the bounded release. Retiring a candidate, removing the
+plugin or deleting learning state does not withdraw native instructions. Entry
+removal also cannot erase context already delivered; use a fresh Session for an
+unexposed control.
+
+Native Session entries live outside `learning.sqlite`. The [offline Loom backup
+procedure](manual-backup-restore.md) neither backs them up nor removes or
+reconciles them during restoration. The deferred controller remains preserved at
+[`deferred/authorized-session-experiments-20261111`](https://github.com/bateau84/loom/tree/deferred/authorized-session-experiments-20261111).
+Its authorization, isolation and availability prerequisites remain tracked in
+[#227](https://github.com/bateau84/loom/issues/227).
+
+## Historical bundle migration
+
 This is a breaking, draft change. `main` and its history remain unchanged until
 an explicit merge. Do not run the new checkout as your OpenCode config root.
 
