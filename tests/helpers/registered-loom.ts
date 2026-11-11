@@ -22,6 +22,8 @@ export async function registeredLoom(initialSkills: any[] = [], options: { befor
   const instructionEntries = new Map<string, Map<string, unknown>>()
   const nativeInstructionReads: string[] = []
   const nativeInstructionWrites: Array<{ sessionID: string; key: string; value: unknown }> = []
+  // Deterministic native-entry race control in this simulated host only.
+  const instructionControl = { beforePut: undefined as undefined | (() => Promise<void>) }
   const tools = new Map<string, any>(), namespaces = new Map<string, any>()
   const hooks = new Map<string, any>()
   const skills = new Map<string, any>(), skillTransforms = new Set<(editor: any) => void>()
@@ -112,6 +114,7 @@ export async function registeredLoom(initialSkills: any[] = [], options: { befor
             return [...(instructionEntries.get(sessionID) ?? new Map()).entries()].map(([key,value]) => ({key,value}))
           },
           put: async ({sessionID,key,value}: {sessionID:string;key:string;value:unknown}) => {
+            await instructionControl.beforePut?.()
             nativeInstructionWrites.push({sessionID,key,value})
             const entries = instructionEntries.get(sessionID) ?? new Map<string,unknown>()
             entries.set(key,value); instructionEntries.set(sessionID,entries)
@@ -167,7 +170,7 @@ export async function registeredLoom(initialSkills: any[] = [], options: { befor
     dispose = await (plugin as any).setup(ctx)
     return {
       tools, namespaces, close, directory, hooks, sessions, skills, reloadSkills, nativeInputs, sessionReads, nativeListRequests, nativePages, nativeContexts,
-      instructionEntries, nativeInstructionReads, nativeInstructionWrites,
+      instructionEntries, nativeInstructionReads, nativeInstructionWrites, instructionControl,
       nativeAgents, sessionCreates, sessionPrompts, nativeSubagent,
       permission, permissionRequests, skillRequests,
       context: async (sessionID: string, agent: string) => {
