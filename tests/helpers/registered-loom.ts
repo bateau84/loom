@@ -105,7 +105,8 @@ export async function registeredLoom(initialSkills: any[] = [], options: { befor
       // controller mechanics. This is not an OpenCode 2.2.6 capability or a
       // claim of direct human provenance.
       ...(options.approvalProof === "synthetic" || options.approvalProof === "denied" ? {
-        humanApproval: { verify: async (_binding: unknown) => options.approvalProof === "synthetic" },
+        humanApproval: {contract:"opencode-native-human-approval/v1",
+          verify: async (_binding: unknown) => options.approvalProof === "synthetic"},
       } : {}),
       instructions: {
         entry: {
