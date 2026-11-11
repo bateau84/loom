@@ -104,7 +104,8 @@ export async function registeredLoom(initialSkills: any[] = [], options: { befor
       // Synthetic *unit-only* attestation for controller mechanics. Not an
       // OpenCode 2.2.6 author provenance guarantee.
       ...(options.approvalProof === "synthetic" || options.approvalProof === "denied" ? {
-        humanApproval: {verify: async (_binding: unknown) => options.approvalProof === "synthetic"},
+        humanApproval: {contract:"opencode-native-human-approval/v1",
+          verify: async (_binding: unknown) => options.approvalProof === "synthetic"},
       } : {}),
       instructions: {
         entry: {
