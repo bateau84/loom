@@ -25,7 +25,7 @@ function fixture() {
   return {store,learning,source,link,close}
 }
 
-test("positive learning identifies source-linked repeat success with one exact historical skill fingerprint", async () => {
+test("dated pre-outcome instruction fingerprints remain eligible in trends, but origin independence is not certified", async () => {
   const f = fixture()
   try {
     const ids: string[] = []
@@ -42,13 +42,16 @@ test("positive learning identifies source-linked repeat success with one exact h
       await Bun.sleep(3)
       f.link(obj.id,"outcome",f.source("Reported verified result "+i).id)
     }
-    const found = f.learning.proactive.consider(nowAfterSource())
-    expect(found).toHaveLength(1)
-    expect(found[0].kind).toBe("retained-practice")
-    expect(found[0].source_refs.map(ref=>ref.objective_id)).toEqual(ids)
-    expect(found[0].matching_objectives).toBe(3)
-    expect(found[0].interpretation).toContain("positive association")
-    expect(f.learning.proactive.consider(nowAfterSource())).toEqual([])
+    const at = nowAfterSource()
+    const compared = f.learning.trends.compare({operation:"compare",population:"all-linked",
+      since_at:new Date(Date.now()-86400000).toISOString(),until_at:at,as_of_at:at,
+      group_by:"instruction-fingerprint",limit:20})
+    expect(compared.items.map(x=>x.objective_id)).toEqual(ids)
+    expect(compared.items.every(x=>x.instruction_observations.total===1 &&
+      x.instruction_observations.excluded_at_or_after_outcome===0)).toBe(true)
+    expect(compared.population.origin_independence.status).toBe("unqualified")
+    expect(f.learning.proactive.consider(at)).toEqual([])
+    expect(f.learning.proactive.list().independent_pattern_qualification.status).toBe("unqualified")
   } finally { f.close() }
 })
 
@@ -73,7 +76,7 @@ test("three authored objectives sharing one original request do not prove three 
   } finally { f.close() }
 })
 
-test("proactive retained-practice sample traverses a frozen population beyond the first 20 objectives", async () => {
+test("full-population positive observation remains queryable beyond page one without an independence claim", async () => {
   const f = fixture()
   try {
     for (let i=0;i<22;i++) {
@@ -95,11 +98,18 @@ test("proactive retained-practice sample traverses a frozen population beyond th
       await Bun.sleep(3)
       f.link(obj.id,"outcome",f.source("Final authored pass "+i).id)
     }
-    const found = f.learning.proactive.consider(nowAfterSource())
-    expect(found).toHaveLength(1)
-    expect(found[0].kind).toBe("retained-practice")
-    expect(found[0].population).toBe(25)
-    expect(found[0].source_refs.map(ref=>ref.objective_id)).toEqual(sources)
+    const at=nowAfterSource()
+    const compared=f.learning.trends.compare({operation:"compare",population:"all-linked",
+      since_at:new Date(Date.now()-86400000).toISOString(),until_at:at,as_of_at:at,
+      group_by:"instruction-fingerprint",limit:20})
+    expect(compared.population.eligible_objectives).toBe(25)
+    expect(compared.groups.some(g=>g.metrics.reported_pass_without_correction===3)).toBe(true)
+    expect(compared.next_cursor).not.toBeNull()
+    const second=f.learning.trends.compare({operation:"compare",population:"all-linked",
+      since_at:new Date(Date.now()-86400000).toISOString(),until_at:at,as_of_at:at,
+      group_by:"instruction-fingerprint",limit:20,cursor:compared.next_cursor!})
+    expect(second.items.map(x=>x.objective_id)).toEqual(sources)
+    expect(f.learning.proactive.consider(at)).toEqual([])
   } finally { f.close() }
 })
 
@@ -179,5 +189,39 @@ test("undated outcomes and observations never inherit link-insertion chronology"
     expect(comparison.items[0]?.chronology.undated_outcomes).toBe(1)
     expect(comparison.items[0]?.instruction_observations.total).toBe(0)
     expect(f.learning.proactive.consider(at)).toEqual([])
+  } finally { f.close() }
+})
+
+test("one original request with three distinct corrective-ledger anchors does not produce three independent episodes", () => {
+  const f=fixture()
+  try {
+    const original=f.source("The one actual user request")
+    const anchored=f.learning.objectives.create(actor,f.learning.objectives.ledgerSource(original.id),
+      "Canonical original engineering goal")
+    const attempts: string[]=[]
+    for (let i=0;i<3;i++) {
+      const attempt=f.source("Corrective attempt "+i+" for the same original request")
+      const separate=f.learning.objectives.create(actor,f.learning.objectives.ledgerSource(attempt.id),
+        "Incorrectly separated attempt "+i)
+      attempts.push(separate.id)
+      // Explicitly link all three attempts back to the same original source;
+      // that evidence is not a certification of three independent user goals.
+      f.learning.objectives.link(actor,{objective_id:separate.id,phase:"request",
+        source:f.learning.objectives.ledgerSource(original.id)})
+      const first=f.learning.objectives.read(separate.id).entries[0]!
+      f.link(separate.id,"corrective-dispatch",f.source("Fix "+i).id,first.sequence)
+      f.link(separate.id,"outcome",f.source("Attributed output "+i).id)
+    }
+    const at=nowAfterSource()
+    const compared=f.learning.trends.compare({operation:"compare",population:"all-linked",
+      since_at:new Date(Date.now()-86400000).toISOString(),until_at:at,as_of_at:at,
+      limit:20})
+    expect(compared.metrics.with_documented_correction).toBe(3)
+    expect(compared.population.origin_independence.status).toBe("unqualified")
+    expect(compared.population.eligible_objectives).toBe(4)
+    expect(f.learning.proactive.consider(at)).toEqual([])
+    expect(f.learning.proactive.list().items).toEqual([])
+    expect(new Set(attempts).size).toBe(3)
+    expect(anchored.id).toBeDefined()
   } finally { f.close() }
 })
