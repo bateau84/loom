@@ -208,7 +208,7 @@ export class ObjectiveTrends {
     return row.n
   }
 
-  private links(objectiveID: string, pos: Snapshot): LinkRow[] {
+  private links(objectiveID: string, pos: Snapshot): { rows: LinkRow[]; complete: boolean } {
     const rows = this.db.prepare(
       "SELECT sequence,source_key,source_type,source_id,source_session_id,source_message_id," +
       " action_id,verification,source_at_ms,recorded_at,phase,confidence,assessment," +
