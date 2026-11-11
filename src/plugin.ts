@@ -238,6 +238,12 @@ export default Plugin.define({
     }
     const experimentHost = (sessionID: string, agent: string): ExperimentHost => ({
       version: ctx.app?.version ?? "", agent, sessionID,
+      roleIDs: async () => {
+        const snapshot = await getConfig()
+        if (snapshot.errors.length)
+          throw new Error("LOOM_LIVE_CONFIG_UNQUALIFIED: configured independent roles cannot be verified")
+        return snapshot.config.agents[agent]?.roles ?? []
+      },
       // The unmodified OpenCode 2.2.6 host does not expose this native
       // contract. This explicit seam is exercised ONLY by a simulated host
       // in unit tests; no installed host may be declared qualified from it.
