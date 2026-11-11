@@ -283,3 +283,35 @@ test("grouping uses explicitly linked historical skill-result receipts, not toda
     expect(result.unavailable_dimensions.actual_instruction_exposure).toContain("do not prove")
   } finally { await host.close() }
 })
+
+test("one oversized linked history is disclosed and excluded without losing another goal's comparable outcome", async () => {
+  const actionDB=new Database(":memory:")
+  const learningDB=new Database(":memory:")
+  try {
+    const store=new Store(actionDB)
+    const { Learning }=await import("../src/learning.js")
+    const learning=new Learning(learningDB,store,actionDB)
+    const actor={session_id:"history-over-budget",agent:"author"}
+    const origin=store.record(actor,undefined,{kind:"result",statement:"Oversized goal"})
+    const big=learning.objectives.create(actor,learning.objectives.ledgerSource(origin.id),"Oversized goal")
+    for(let i=0;i<501;i++) {
+      const record=store.record(actor,undefined,{kind:"result",statement:"Different evidence "+i})
+      learning.objectives.link(actor,{objective_id:big.id,phase:"coordination",
+        source:learning.objectives.ledgerSource(record.id)})
+    }
+    const other=store.record(actor,undefined,{kind:"result",statement:"Independent second goal"})
+    const small=learning.objectives.create(actor,learning.objectives.ledgerSource(other.id),"Second goal")
+    const result=store.record(actor,undefined,{kind:"result",statement:"Second reported successful outcome"})
+    learning.objectives.link(actor,{objective_id:small.id,phase:"outcome",
+      source:learning.objectives.ledgerSource(result.id),assessment:"pass"})
+    const at=new Date(Date.now()+1000).toISOString()
+    const compared=learning.trends.compare({operation:"compare",population:"all-linked",
+      since_at:new Date(Date.now()-86400000).toISOString(),until_at:at,as_of_at:at,limit:20})
+    expect(compared.population.excluded.over_budget_histories).toBe(1)
+    expect(compared.population.excluded.over_budget_objective_ids_sample).toEqual([big.id])
+    expect(compared.population.eligible_objectives).toBe(1)
+    expect(compared.population.coverage.over_budget_histories_excluded_from_denominator).toBe(1)
+    expect(compared.items.map(x=>x.objective_id)).toEqual([small.id])
+    expect(compared.metrics.reported_pass).toBe(1)
+  } finally {learningDB.close();actionDB.close()}
+})
