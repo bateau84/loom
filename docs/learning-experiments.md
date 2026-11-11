@@ -8,6 +8,36 @@ timestamp: 2026-11-09T00:00:00Z
 
 # Learning evidence and provisional experiments
 
+## Current trust boundary (2026-11-11)
+
+**Independent-pattern notices are blocked until original-request independence
+can be certified.** OpenCode 2.2.6 native user-role message IDs and distinct
+Loom ledger IDs are not attested independent originating human requests:
+three corrective records may represent three attempts at one goal. The
+production trends reader explicitly returns an unqualified
+origin_independence result, keeps distinct authored goals readable, and
+retains cross-Session continuation. Proactive consideration returns no new
+independent-pattern findings while that trust requirement remains unmet.
+Previously stored findings are still readable as historical hypotheses,
+never certified independent evidence.
+
+A dated instruction-load observation is eligible only when its original
+source time strictly precedes a dated, attributable outcome. An observation
+recorded after success or lacking reliable chronology is excluded. Such a
+pre-outcome fingerprint is **association only**, not actual provider/model
+exposure. Mixed groups with observed failures, contested outcomes or
+unresolved coverage cannot produce unqualified retained-practice notices.
+Oversized objective histories (over 500 linked sources) are explicitly
+excluded from comparison with their counts and sampled IDs disclosed; a
+partial history cannot be silently treated as a success.
+
+The gated proactive boundary avoids the current large-population synchronous
+comparison cost on ordinary outcomes. A future independent-origin
+qualification must still benchmark admitted workloads before enabling
+automatic notices. A real original-work Evaluator audit and real-model,
+provider-delivery and billing evidence remain separate unsatisfied gates.
+
+
 Loom exposes **observations and authored comparisons**, not a built-in verifier of whether a user objective succeeded. `loom_insights` reports bounded project/Action ledger metadata; `loom_objective` links complete work trajectories; `loom_trends` compares explicit objective populations; `loom_tweak` keeps proposed instruction content and reported trials. Neither modifies live skills or agents, schedules an experiment, selects a model, or produces an approval verdict.
 
 **Storage and recovery:** Loom keeps provisional candidates/trials in a separate project-local `learning.sqlite` next to its existing `ledger.sqlite`. Failed learning initialization degrades only `loom_insights`, `loom_objective`, `loom_trends` and `loom_tweak`, with an explicit `LOOM_LEARNING_UNAVAILABLE` error and `loom_agents` status; core Action history, capture, and native routing remain intact. Inspect and repair learning state separately while keeping the failed file for recovery. This prevents changes to the Action Store's frozen SQLite schema. The legacy offline Action Store copy procedure remains **ledger-only**. For complete learning-history preservation and isolated recovery, use the [manifest-bound stopped-writers backup-set companion](manual-backup-restore.md): it binds both databases and applicable sidecars with project/revision identity and SHA-256 checksums and verifies disposable SQLite copies. Never treat an unmarked absent `learning.sqlite` as a complete backup. Recovery is qualified only on isolated real SQLite fixtures and public Loom readers, not on production/native Session continuity.
