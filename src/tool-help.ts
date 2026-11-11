@@ -10,6 +10,14 @@ export const TOOL_EXAMPLES = {
     { operation: "action", action_id: "ACTION_ID", limit: 50 },
     { operation: "window", limit: 50, since_at: "2026-11-01T00:00:00.000Z" },
   ],
+  objective: [
+    { operation: "create", source_type: "native-message", source_id: "msg_request", label: "One requested behavior", unit_key: "goal-1" },
+    { operation: "link", objective_id: "OBJECTIVE_ID", phase: "dispatch", source_type: "native-call", source_id: "call_1", source_message_id: "msg_dispatch", related_sequence: 1, note: "Verified first dispatch for this goal" },
+    { operation: "link", objective_id: "OBJECTIVE_ID", phase: "verification", source_type: "ledger-record", source_id: "RECORD_ID", assessment: "fail", note: "Runtime test rejected the claimed implementation" },
+    { operation: "read", objective_id: "OBJECTIVE_ID", limit: 20 },
+    { operation: "find", source_type: "native-message", source_id: "msg_request", source_session_id: "SESSION_ID" },
+    { operation: "list", offset: 0 },
+  ],
   tweak: [
     { operation: "propose", target_kind: "skill", target_id: "software-engineering", base_sha256: "0000000000000000000000000000000000000000000000000000000000000000", candidate_content: "FULL_CANDIDATE_SKILL_TEXT", hypothesis: "A recurring observed problem and one bounded improvement", evidence_refs: ["SOURCE_RECORD_ID"] },
     { operation: "list", offset: 0 },
@@ -73,6 +81,12 @@ const entries: Record<LoomToolName, { summary: string; usage: string; returns: s
     usage: "operation=action with action_id or current selection, or operation=window for project-local ledger. Both accept before/limit=1-200 (default 100); follow next_before as before to page older metadata. Optional since_at/until_at are ISO time filters on each bounded page, not a complete indexed history scan. Counts come from Loom records only, not original OpenCode Session history.",
     returns: "Pages give totals by observed tool starts, finishes, errors and native skill-load results, plus reported results/completions/concerns/reviews, source record IDs, timestamps and fingerprints. Reports explicit coverage, missing history and earlier-page availability.",
     caution: "One Action, Session, tool invocation or DONE handback is not necessarily one independent user objective. The ledger omits unselected work, native child histories and compaction gaps. Missing events are unknown, not successful. A page is not a time-window trend or causal result. Compare complete objectives with original Session/outcome evidence before proposing general guidance changes.",
+  },
+  objective: {
+    summary: "Reconstruct a work objective across exact original sources, corrective attempts and checks.",
+    usage: "create: label, source_type/source_id anchor and optional unit_key (distinct goals in one message need distinct keys). Repeating the same anchor/key is idempotent. link: objective_id, phase, source_type/source_id and optional related_sequence, assessment, confidence, gap_reason, note. Native calls require source_message_id; source_session_id defaults to caller. Other Sessions require authorized export_path, not direct native reads. ledger-record resolves an original Action record; external-ref is a declared HTTPS URL; unavailable requires coverage-gap plus gap_reason. Phases: request, coordination, dispatch, handback, verification, corrective-dispatch, continuation, planned-increment, requirement-change, environment-failure, outcome, coverage-gap, link-correction. Continuation, corrective-dispatch and link-correction require an earlier same-objective related_sequence. Handback reports reported-done/reported-failed/inconclusive, verification/outcome pass/fail/inconclusive; corrections confirm/reject. read: objective_id, cursor, limit 1-50; list/find: offset, find by exact source identity.",
+    returns: "create: durable objective_id/existing flag. link: source, phase, author, interpretation, source verification and sequence. read: bounded chronological entries, correction-derived current_relationship, coverage and snapshot-bound next_cursor. list/find: 20-item pages, next_offset; find can return several objectives per source.",
+    caution: "Authored reconstruction, not native transcript storage, objective merging, an acceptance verdict or statistical evaluation. Shared Session, parentage, Action, agent or title do not establish a goal. Post-compaction native context and authorized exports may omit or misstate history; mark missing children, opaque calls, denied access and uncertainty explicitly. Never include secrets in labels or notes. Capture opt-out remains intact. A reported DONE is not verified; a later correction cannot erase an earlier claim. No automatic routing, scheduling, instruction mutation or proof of correctness.",
   },
   tweak: {
     summary: "Store and revisit provisional fingerprinted instruction tweaks and agent-reported trials; never activate them.",

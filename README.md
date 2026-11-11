@@ -20,8 +20,9 @@ configuration example, documentation and migration helper.
   relational `full_thread` history with explicit part/cursor continuation.
 - Usage documentation returned directly by tool search.
 - A bundled native `loom` skill, discoverable and loaded on demand.
-- Ten tools including `loom_insights`, `loom_tweak`, `loom_agents`, `loom_action`, `loom_plan`, `loom_context`, `loom_record`,
-  `loom_assessment`, and `loom_qa`.
+- Eleven tools including `loom_objective` for optional source-linked whole-work reconstruction,
+  `loom_insights`, `loom_tweak`, `loom_trace`, `loom_agents`, `loom_action`, `loom_plan`,
+  `loom_context`, `loom_record`, `loom_assessment`, and `loom_qa`.
 - Read-only, paginated OpenCode 2.2.0 native Session discovery via `loom_action sessions`,
   optionally filtered by Action; includes native archive status, without changing Sessions.
 
@@ -113,8 +114,10 @@ installation**; hot-upgrading cannot recover uncertainty discarded by the old
 implementation. See [Evidence pairing](docs/evidence-reliability.md).
 The CI jobs install Loom dependencies from the committed lockfile with frozen
 installation and a lock-stability check. The separately installed host's dependency
-graph remains a separate concern. The manual state procedure has isolated
-meaningful-record restore evidence, not native Session continuity proof.
+graph remains a separate concern. The historical manual ledger-only procedure retains its isolated
+meaningful-record restore evidence. Its companion manifest-bound two-database
+procedure verifies learning candidates and trial history with real SQLite and
+public readers, without qualifying native Session continuity or live disaster recovery.
 
 In a separate plugin checkout, run `bun install --frozen-lockfile`. Add that checkout
 to your existing OpenCode configuration, without replacing your other entries:

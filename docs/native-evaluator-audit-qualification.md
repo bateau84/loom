@@ -8,7 +8,7 @@ timestamp: 2026-11-10T00:00:00Z
 
 # Native Evaluator audit qualification
 
-**Current verdict (2026-11-10): UNPROVEN for native model-driven execution, persistence/recovery and instruction effectiveness.** This is a reproducible qualification protocol and an evidence inventory, **not** a completed native audit. The preparation environment had GitHub access but no OpenCode or Bun executable, original native Session store, installed Evaluator registration or authorized provider credential. No inference, native delegation, source export, public Loom write, host restart or treatment trial was performed for this document. Do not convert this blocker into PASS.
+**Current verdict (2026-11-11): PASS for scripted installed persistence/recovery mechanics; UNPROVEN for a real original-work Evaluator audit and instruction effectiveness.** E7 exercised public Loom writes and reads across an actual OpenCode 2.2.6 host restart with a local scripted provider. That check did not run a genuine Evaluator, inspect authorized original work or establish model judgment. The real-audit procedure below still requires original native Session evidence, installed Evaluator and skill identities, and an authorized provider/account. No real-work audit or treatment trial is claimed.
 
 ## Source identity and proof boundary
 
@@ -133,17 +133,17 @@ Await the returned write, retain its real ID and read full content with `loom_re
 
 A `loom_tweak` candidate is **not required**. Only create and trial a fixed candidate when independent evidence, eligible real work, explicit host/Session isolation, actual delivered content, assignment receipt, stable criteria and correctness/human-intervention safeguards justify it. A stored proposal is not a delivered treatment; an unexercised variant is not effectiveness evidence. Do not force `not-exercised` reports to create artificial results.
 
-## Redacted evidence inventory, 2026-11-10
+## Redacted evidence inventory, 2026-11-11
 
 | Claim | Public evidence / observation | Verdict |
 | --- | --- | --- |
 | A real Code Mode discovery test failed | [CI 42715887637](https://github.com/bateau84/loom/actions/runs/42715887637), head `8994cdbe9b143560dcef8882906e5673672f8ab6`: test expected 0 remaining after a page of 8 but received 2 | OBSERVED CI failure, not an agent outcome |
 | Later changed source passed that pipeline | [CI 42835238699](https://github.com/bateau84/loom/actions/runs/42835238699), head `f7e6be672695128a668e33fb6755003b629339fc` | OBSERVED CI pass, not verified whole-objective satisfaction |
 | Qualification workspace assembled source and pinned tools | [CI 42837587690](https://github.com/bateau84/loom/actions/runs/42837587690), head `34fd746c152c7d6a78a454d43ede88c200dff3d4` | Packaging only |
-| Native public Loom record, insights and full_thread survived host restart | [Installed questions CI 42893709670](https://github.com/bateau84/loom/actions/runs/42893709670), PR head `2a14f4c7a4ebff9cfeb5fd90ce1b8e1c987ae5ae`; E7 PASS with a fresh reader Session | **PASS for installed persistence/recovery mechanics only.** Scripted external model, no native Evaluator judgment or original work |
+| Native public Loom record, insights and full_thread survived host restart | [Installed questions CI 42919207181](https://github.com/bateau84/loom/actions/runs/42919207181), PR head `ad799b6736788960a8b33d4c71539ebe17724722`; E7 PASS with a fresh reader Session | **PASS for installed persistence/recovery mechanics only.** Scripted external model, no native Evaluator judgment or original work |
 | Actual installed Evaluator/skill, hashes, model/limits, provider authorization | Not accessible in this preparation environment | UNPROVEN |
-| Native General → Evaluator child, skill load and original Session/child inspection | No native host, originals or delivery receipts | UNPROVEN |
-| Public Loom persistence and full-record read after native restart | No native calls or restart | UNPROVEN |
+| Native General → Evaluator child, skill load and original Session/child inspection | No original-work dispatch, skill-delivery or source-inspection receipts | UNPROVEN |
+| Persistence and recovery of a real original-work Evaluator-authored audit | No authorized original-work Evaluator audit has been executed | UNPROVEN |
 | Instruction treatment delivery and measured improvement | No justified candidate, assignment, exposure or comparison | NOT EXERCISED |
 
 **Bounded finding:** the implementation's real-interface test caught a stale eight-tool expectation. A later revision passed. Preserving installed-interface verification is a favorable practice; the original agent trajectory, number of dispatches, model usage, human effort and eventual objective outcome remain unknown. One observed correction is not a longitudinal trend or basis for a universal skill change.

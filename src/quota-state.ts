@@ -232,34 +232,46 @@ export async function openSharedQuotaState(options: { path?: string; now?: () =>
     db.exec("PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;")
     const check = db.prepare("PRAGMA quick_check").get() as { quick_check?: string } | null
     if (check?.quick_check !== "ok") throw new Error("Shared quota database is corrupt")
-    db.exec("BEGIN IMMEDIATE")
-    try {
-      const row = db.prepare("PRAGMA user_version").get() as { user_version: number }
-      if (![0, 1, 2].includes(row.user_version)) throw new Error("Unsupported shared quota schema version")
-      if (row.user_version === 0 && !created) throw new Error("Existing shared quota database was never initialized")
-      if (row.user_version >= 1 && !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='quota'").get()) {
-        throw new Error("Existing shared quota database is missing the quota table")
-      }
-      db.exec(`CREATE TABLE IF NOT EXISTS quota (
-        id TEXT PRIMARY KEY NOT NULL CHECK(length(id)=64),
-        state TEXT NOT NULL CHECK(state IN ('available','unknown','exhausted','throttled','overloaded','authentication')),
-        evidence TEXT NOT NULL CHECK(evidence IN ('provider','observed','unknown')),
-        revision INTEGER NOT NULL CHECK(revision>=0),
-        until_ms INTEGER, lease_until_ms INTEGER, lease_token TEXT,
-        remaining INTEGER, failures INTEGER NOT NULL CHECK(failures>=0),
-        updated_ms INTEGER NOT NULL, last_success_ms INTEGER,
-        release_revision INTEGER NOT NULL DEFAULT 0 CHECK(release_revision>=0)
-      );`)
-      if (row.user_version === 1) {
-        const columns = db.prepare("PRAGMA table_info(quota)").all() as Array<{ name: string }>
-        if (!columns.some(column => column.name === "release_revision")) {
-          db.exec("ALTER TABLE quota ADD COLUMN release_revision INTEGER NOT NULL DEFAULT 0 CHECK(release_revision>=0)")
+    // The creator's SQLite header can become visible before its versioned
+    // schema transaction begins. Another process may get BEGIN IMMEDIATE first
+    // and see version 0. Release that lock and wait for the original creator;
+    // never initialize an existing, possibly abandoned database ourselves.
+    for (let attempt = 0; attempt < 30; attempt++) {
+      db.exec("BEGIN IMMEDIATE")
+      let waitingForCreator = false
+      try {
+        const row = db.prepare("PRAGMA user_version").get() as { user_version: number }
+        if (![0, 1, 2].includes(row.user_version)) throw new Error("Unsupported shared quota schema version")
+        if (row.user_version === 0 && !created) {
+          waitingForCreator = true
+        } else {
+          if (row.user_version >= 1 && !db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='quota'").get()) {
+            throw new Error("Existing shared quota database is missing the quota table")
+          }
+          db.exec(`CREATE TABLE IF NOT EXISTS quota (
+            id TEXT PRIMARY KEY NOT NULL CHECK(length(id)=64),
+            state TEXT NOT NULL CHECK(state IN ('available','unknown','exhausted','throttled','overloaded','authentication')),
+            evidence TEXT NOT NULL CHECK(evidence IN ('provider','observed','unknown')),
+            revision INTEGER NOT NULL CHECK(revision>=0),
+            until_ms INTEGER, lease_until_ms INTEGER, lease_token TEXT,
+            remaining INTEGER, failures INTEGER NOT NULL CHECK(failures>=0),
+            updated_ms INTEGER NOT NULL, last_success_ms INTEGER,
+            release_revision INTEGER NOT NULL DEFAULT 0 CHECK(release_revision>=0)
+          );`)
+          if (row.user_version === 1) {
+            const columns = db.prepare("PRAGMA table_info(quota)").all() as Array<{ name: string }>
+            if (!columns.some(column => column.name === "release_revision")) {
+              db.exec("ALTER TABLE quota ADD COLUMN release_revision INTEGER NOT NULL DEFAULT 0 CHECK(release_revision>=0)")
+            }
+          }
+          db.exec("PRAGMA user_version=2")
         }
-      }
-      db.exec("PRAGMA user_version=2")
-      db.exec("COMMIT")
-    } catch (e) { db.exec("ROLLBACK"); throw e }
-    return new SharedQuotaState(db, options.now ?? Date.now)
+        db.exec(waitingForCreator ? "ROLLBACK" : "COMMIT")
+      } catch (e) { db.exec("ROLLBACK"); throw e }
+      if (!waitingForCreator) return new SharedQuotaState(db, options.now ?? Date.now)
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    throw new Error("Existing shared quota database was never initialized")
   } catch (e) { db.close(); throw e }
 }
 

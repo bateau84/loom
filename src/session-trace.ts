@@ -250,6 +250,33 @@ function projectEvent(message: Obj, partIndex: number, includeText: boolean): Ev
   return { ...base, kind: type === "system" ? "system_instruction" : "other", type: small(type, 48) }
 }
 
+/** Resolve one original projected source identity through the same privacy projection as loom_trace.
+ * Callers must authorize exports and validate Session ownership before storing the returned metadata.
+ * Do not return raw arguments, output, reasoning, prompt bodies or full transcript text. */
+export function findTraceSource(input: unknown, options: { sessionID: string; messageID: string; callID?: string }) {
+  sourceId(options.sessionID, "session")
+  sourceId(options.messageID, "source message")
+  if (options.callID !== undefined) sourceId(options.callID, "tool call")
+  if (!Array.isArray(input) || input.length > MAX_MESSAGES) throw new Error("Source messages exceed trace limits")
+  const matches = input.filter(raw => obj(raw).id === options.messageID)
+  if (matches.length !== 1) throw new Error("Original native source message missing or ambiguous")
+  const msg = obj(matches[0])
+  if (options.callID === undefined) {
+    if (msg.type === "assistant" && Array.isArray(msg.content) && msg.content.length > MAX_EVENTS)
+      throw new Error("Native source message contains too many parts")
+    return projectEvent(msg, 0, false)
+  }
+  if (msg.type !== "assistant" || !Array.isArray(msg.content) || msg.content.length > MAX_EVENTS)
+    throw new Error("Native call does not belong to an assistant message")
+  const matching: number[] = []
+  for (let i = 0; i < msg.content.length; i++) {
+    const part = obj(msg.content[i])
+    if (part.type === "tool" && part.id === options.callID) matching.push(i + 1)
+  }
+  if (matching.length !== 1) throw new Error("Original native tool call missing or ambiguous")
+  return projectEvent(msg, matching[0]!, false)
+}
+
 export function traceTimeline(input: unknown, options: TimelineOptions) {
   if (!Array.isArray(input)) throw new Error("Native Session history must be an array")
   if (input.length > MAX_MESSAGES) throw new Error("Session message processing budget exceeded")

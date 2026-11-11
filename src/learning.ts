@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 import type { Actor } from "./model.js"
 import type { SQL, Store } from "./store.js"
+import { ObjectiveIndex } from "./objectives.js"
 
 // Learning proposals live in a separate project-local SQLite database.
 // Ledger evidence is queried read-only from the authoritative Action database.
@@ -51,6 +52,7 @@ type CandidateRow = {
 
 /** Bounded observational statistics. A Session/Action/dispatch is not necessarily one objective. */
 export class Learning {
+  readonly objectives: ObjectiveIndex
   constructor(private db: SQL, private store: Store, private actionDB: SQL) {
     db.exec("PRAGMA busy_timeout=2000; PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
     db.exec("CREATE TABLE IF NOT EXISTS learning_candidates (id TEXT PRIMARY KEY, created_at TEXT NOT NULL, author_session TEXT NOT NULL, author_agent TEXT NOT NULL, target_kind TEXT NOT NULL, target_id TEXT NOT NULL, base_sha256 TEXT NOT NULL, candidate_sha256 TEXT NOT NULL, content TEXT NOT NULL, hypothesis TEXT NOT NULL, evidence_refs TEXT NOT NULL, status TEXT NOT NULL, revised_from TEXT);")
@@ -60,6 +62,7 @@ export class Learning {
     // SQLite secondary indexes include the rowid; support insertion-order
     // keyset continuation without sorting every older report for a candidate.
     db.exec("CREATE INDEX IF NOT EXISTS learning_trials_order ON learning_trials(candidate_id);")
+    this.objectives = new ObjectiveIndex(db, actionDB)
   }
 
   private transaction<T>(run: () => T): T {

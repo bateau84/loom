@@ -17,11 +17,12 @@ import { renderFullHistory } from "./history-renderer.js"
 import { fullThreadMarkdown } from "./response-format.js"
 import { Store } from "./store.js"
 import { Learning } from "./learning.js"
+import type { ObjectiveSource, ObjectivePhase } from "./objectives.js"
 import { QUESTION_DISPATCH, questionRecipient } from "./collaboration.js"
 import { questionRoute, sendQuestion, type NativeModel, type QuestionRoute } from "./question-routing.js"
 import { resumeAnswer } from "./answer-resume.js"
 import { TOOL_HELP, LOOM_NAMESPACE_HELP } from "./tool-help.js"
-import { readSessionExport, traceTimeline } from "./session-trace.js"
+import { findTraceSource, readSessionExport, traceTimeline } from "./session-trace.js"
 
 function payload(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected an object")
@@ -83,6 +84,22 @@ const specs = [
       include_text: { type: "boolean" }, limit: { type: "integer", minimum: 1, maximum: 50 },
       cursor: { type: "string", minLength: 1, maxLength: 4096 } }, ["operation"]) },
   { name: "insights", description: TOOL_HELP.insights, input: obj({ operation: choice("action", "window"), action_id: str, before: { type: "integer", minimum: 1 }, limit: { type: "integer", minimum: 1, maximum: 200 }, since_at: str, until_at: str }, ["operation"]) },
+  { name: "objective", description: TOOL_HELP.objective, input: obj({
+      operation: choice("create", "link", "read", "list", "find"),
+      objective_id: str, label: { type: "string", maxLength: 200 }, unit_key: str,
+      phase: choice("request", "coordination", "dispatch", "handback", "verification", "corrective-dispatch",
+        "continuation", "planned-increment", "requirement-change", "environment-failure", "outcome", "coverage-gap", "link-correction"),
+      source_type: choice("native-message", "native-call", "ledger-record", "external-ref", "unavailable"),
+      source_id: str, source_session_id: str, source_message_id: str,
+      export_path: { type: "string", minLength: 1, maxLength: 4096 },
+      confidence: choice("supported", "uncertain"),
+      assessment: choice("reported-done", "reported-failed", "pass", "fail", "inconclusive", "confirm", "reject"),
+      related_sequence: { type: "integer", minimum: 1 },
+      gap_reason: choice("missing-child", "compacted", "denied-access", "opaque-tool", "missing-source", "unknown"),
+      note: { type: "string", maxLength: 800 },
+      cursor: { type: "string", minLength: 1, maxLength: 512 },
+      limit: { type: "integer", minimum: 1, maximum: 50 }, offset: num,
+    }, ["operation"]) },
   { name: "tweak", description: TOOL_HELP.tweak, input: obj({ operation: choice("propose", "list", "read", "retire", "trial"), id: str, target_kind: choice("skill", "assessment", "qa", "agent"), target_id: str, base_sha256: str, candidate_content: str, hypothesis: str, evidence_refs: { type: "array", items: str, maxItems: 20 }, revised_from: str, trial_before: { type: "integer", minimum: 1 }, observed_sha256: str, observed_effect: choice("promising", "harmful", "neutral", "inconclusive", "not-exercised"), statement: str, offset: { type: "integer", minimum: 0 } }, ["operation"]) },
   { name: "action", description: TOOL_HELP.action, input: obj({ operation: choice("list", "create", "update", "sessions"), action_id: str, title: str, goal: str, state: choice("active", "paused", "completed", "cancelled"), expected_revision: num, offset: num, archived: { type: "boolean" }, cursor: { type: "string", minLength: 1, maxLength: 4096 }, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
   { name: "plan", description: TOOL_HELP.plan, input: obj({ operation: choice("read", "save"), action_id: str, revision: num, expected_revision: num, nodes: { type: "array", maxItems: 300, items: obj({ id: str, kind: choice("phase", "wave", "task", "subtask"), title: str, parent: str, depends_on: list, outcome: str, context: str, criteria: list, skills: list, roles: list, agent: str }, ["id", "kind", "title"]) } }, ["operation", "action_id"]) },
@@ -169,7 +186,8 @@ export default Plugin.define({
       learning = new Learning(learningDB, store, db)
     } catch (error) {
       learningFailure = learningStage
-      console.warn(`Loom optional learning unavailable (${learningStage}): ${error instanceof Error ? error.message : String(error)}`)
+      try { console.warn(`Loom optional learning unavailable (${learningStage}): ${error instanceof Error ? error.message : String(error)}`) }
+      catch { /* Diagnostic sink failure cannot disable core startup or its native deny guard. */ }
       try { learningDB?.close() } catch { /* Keep the original learning failure. */ }
       learningDB = undefined
       learning = undefined
@@ -189,8 +207,10 @@ export default Plugin.define({
     const disposers: Array<{ dispose(): Promise<void> }> = []
     let lastWarning = ""
     const warn = (error: unknown) => {
-      const message = `Loom: ${error instanceof Error ? error.message : String(error)}`
-      if (message !== lastWarning) { console.warn(message); lastWarning = message }
+      try {
+        const message = `Loom: ${error instanceof Error ? error.message : String(error)}`
+        if (message !== lastWarning) { lastWarning = message; console.warn(message) }
+      } catch { /* A failed diagnostic sink never controls native safety or source recording. */ }
     }
     // A plugin instance's location is not necessarily the location of all server events.
     const sessionIsLocal = async (session: Record<string, unknown>) => {
@@ -351,6 +371,90 @@ export default Plugin.define({
                     since_at: input.since_at as string | undefined, until_at: input.until_at as string | undefined })
                 } else throw new Error("Unknown insights operation")
                 break
+              case "objective": {
+                const index = requiredLearning().objectives
+                if (input.operation === "list") result = index.list(input.offset as number | undefined)
+                else if (input.operation === "read") result = index.read(input.objective_id as string,
+                  input.cursor as string | undefined, input.limit as number | undefined)
+                else if (input.operation === "find") {
+                  if (input.source_type === undefined || input.source_id === undefined)
+                    throw new Error("Objective find requires an exact source type and source ID")
+                  result = index.find({
+                    type: input.source_type as ObjectiveSource["type"], id: input.source_id as string,
+                    session_id: input.source_session_id as string | undefined,
+                    message_id: input.source_message_id as string | undefined,
+                  }, input.offset as number | undefined)
+                } else if (input.operation === "create" || input.operation === "link") {
+                  if (input.source_type === undefined || input.source_id === undefined)
+                    throw new Error("Objective links require an original source type and ID")
+                  const sourceType = input.source_type as ObjectiveSource["type"]
+                  let source: ObjectiveSource
+                  if (sourceType === "ledger-record") {
+                    if (input.export_path !== undefined || input.source_session_id !== undefined || input.source_message_id !== undefined)
+                      throw new Error("Ledger record references use only their original record ID")
+                    source = index.ledgerSource(input.source_id as string)
+                  } else if (sourceType === "native-message" || sourceType === "native-call") {
+                    const target = input.source_session_id === undefined ? actor.session_id : input.source_session_id as string
+                    const native = await checkedSession(target)
+                    if (target !== actor.session_id && input.export_path === undefined)
+                      throw new Error("Other native Session evidence requires an authorized original export")
+                    if (sourceType === "native-call" && input.source_message_id === undefined)
+                      throw new Error("Native calls require their original message ID")
+                    if (sourceType === "native-message" && input.source_message_id !== undefined)
+                      throw new Error("Native messages use their own message ID")
+                    const inspected = input.export_path === undefined
+                      ? { messages: unwrapped(await ctx.session.context({ sessionID: target })),
+                          locationVerified: true }
+                      : await readSessionExport(directory, input.export_path as string, target,
+                          ctx.location.project.id, async canonicalPath => {
+                            await ctx.permission.assert({
+                              action: "read", resources: [canonicalPath], sessionID: actor.session_id, agent: actor.agent,
+                              source: { type: "tool", messageID: toolContext.messageID, id: toolContext.id },
+                            })
+                            if (!await owns(target)) throw new Error("Native source moved during export permission approval")
+                            toolContext.signal.throwIfAborted()
+                          }, toolContext.signal)
+                    const projected = findTraceSource(inspected.messages, {
+                      sessionID: target,
+                      messageID: sourceType === "native-message" ? input.source_id as string : input.source_message_id as string,
+                      ...(sourceType === "native-call" ? { callID: input.source_id as string } : {}),
+                    })
+                    toolContext.signal.throwIfAborted()
+                    if (!await owns(target)) throw new Error("Native source moved during objective read")
+                    let parent: string | undefined
+                    if (typeof native.parentID === "string") {
+                      try { await checkedSession(native.parentID); parent = native.parentID }
+                      catch { /* No verified native parent; never guess one. */ }
+                    }
+                    const occurred = typeof projected.created_at === "number" ? projected.created_at
+                      : typeof projected.created_at === "string" ? Date.parse(projected.created_at) : NaN
+                    source = {
+                      type: sourceType, id: input.source_id as string, session_id: target,
+                      ...(sourceType === "native-call" ? { message_id: input.source_message_id as string } : {}),
+                      ...(parent ? { parent_session_id: parent } : {}),
+                      event_kind: projected.kind,
+                      ...(Number.isSafeInteger(occurred) && occurred >= 0 ? { occurred_at_ms: occurred } : {}),
+                      verification: input.export_path === undefined ? "native-context" : "provided-export-unverified",
+                    }
+                  } else if (sourceType === "external-ref" || sourceType === "unavailable") {
+                    if (input.export_path !== undefined || input.source_session_id !== undefined || input.source_message_id !== undefined)
+                      throw new Error("External and unavailable sources have no native Session fields")
+                    source = { type: sourceType, id: input.source_id as string,
+                      verification: sourceType === "external-ref" ? "declared-external" : "reported-gap" }
+                  } else throw new Error("Invalid objective source type")
+                  if (input.operation === "create") result = index.create(actor, source,
+                    input.label as string, input.unit_key as string | undefined)
+                  else result = index.link(actor, {
+                    objective_id: input.objective_id as string, phase: input.phase as ObjectivePhase,
+                    source, confidence: input.confidence as "supported" | "uncertain" | undefined,
+                    assessment: input.assessment as "reported-done" | "reported-failed" | "pass" | "fail" | "inconclusive" | "confirm" | "reject" | undefined,
+                    related_sequence: input.related_sequence as number | undefined,
+                    gap_reason: input.gap_reason as "missing-child" | "compacted" | "denied-access" | "opaque-tool" | "missing-source" | "unknown" | undefined,
+                    note: input.note as string | undefined,
+                  })
+                } else throw new Error("Unknown objective operation")
+                break
+              }
               case "tweak":
                 if (input.operation === "propose") result = requiredLearning().propose(actor, {
                   target_kind: input.target_kind as string, target_id: input.target_id as string,
@@ -768,7 +872,8 @@ export default Plugin.define({
         await disposeStartupGuard()
         throw error
       }
-      console.error("Loom startup failed; keeping native model dispatch denied:", error instanceof Error ? error.message : String(error))
+      try { console.error("Loom startup failed; keeping native model dispatch denied:", error instanceof Error ? error.message : String(error)) }
+      catch { /* Keep the installed deny hook even when logging fails. */ }
       // Resolving setup retains the installed deny hook. Throwing would let
       // OpenCode unload that hook and continue with an unguarded global model.
       return async () => { startupDispatch = "deny"; await disposeStartupGuard() }
