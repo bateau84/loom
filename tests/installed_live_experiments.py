@@ -263,19 +263,18 @@ def run(args):
                 # A failed native Code Mode script surfaces a generic wrapper
                 # error. Verify the underlying exact failed execute state,
                 # rather than treating any exception as evidence of denial.
-                try:
-                    rejected=s.invoke(treatment,"tweak",request_start)
-                except Exception:
-                    rejected=None
-                require(rejected is None, "FAIL_OPEN: native live-start returned success")
-                messages=request(host,"GET",f"/api/session/{treatment}/message?order=desc&limit=100")
-                calls=[part for message in messages if message.get("type")=="assistant"
-                       for part in (message.get("content") or [])
-                       if isinstance(part,dict) and part.get("type")=="tool"
-                       and part.get("name")=="execute"]
-                require(calls and "LOOM_LIVE_HUMAN_PROVENANCE_UNQUALIFIED" in
-                        json.dumps(calls[-1].get("state",{})),
-                        "Native live-start did not expose the exact human-provenance denial")
+                # Recover the rejection text inside the native Code Mode call:
+                # uncaught tool errors are otherwise hidden by an outer wrapper.
+                # A successful inner call returns UNSAFE_ACCEPTED and fails.
+                code=("try{await tools.loom.tweak("+json.dumps(request_start)+");"
+                      "return 'UNSAFE_ACCEPTED'}catch(error){return String(error)}")
+                observed=s.command(treatment,code)
+                executions=[e["data"] for e in observed if e["type"]=="tool-after"
+                            and e["data"].get("tool")=="execute"]
+                require(len(executions)==1 and
+                        "LOOM_LIVE_HUMAN_PROVENANCE_UNQUALIFIED" in
+                        json.dumps(executions[0].get("result",{})),
+                        "Native trial call did not return the exact provenance refusal")
                 require(native_entries(host,treatment)==[] and native_entries(host,control)==[],
                         "FAIL_OPEN: native instruction entry installed without trusted human")
                 import sqlite3
