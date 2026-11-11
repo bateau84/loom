@@ -140,9 +140,18 @@ test("source drift, native denial and inherited/unknown objective never write in
       projectID: "tool-help", location: { directory: host.directory } })
     // A second, independent native user approval is still not a source-linked
     // objective. No implicit child inheritance of authorization or treatment.
+    // A syntactically complete, exact approval cannot substitute for an
+    // independently linked originating objective in the child Session.
+    const approvalDB = new Database(join(host.directory, "state", "loom", "actions-v1",
+      digest({ project:"tool-help", canonical:host.directory }), "learning.sqlite"))
+    let childApprovalLine: string
+    try {
+      childApprovalLine = new SessionExperiments(approvalDB).approvalBinding(
+        { session_id: control, agent: "author" }, startInput(obj.id, proposal.id)).approval_line
+    } finally { approvalDB.close() }
     host.nativeContexts.set(control,{data:[{
       id:"human-request-id-1",type:"user",
-      text:`LOOM-TRIAL-APPROVE candidate=${proposal.id} objective=${obj.id} budget=2`,
+      text:childApprovalLine,
       time:{created:Date.now()},
     }]})
     await expect(call(host,"start",startInput(obj.id,proposal.id),control)).rejects.toThrow("OBJECTIVE_UNBOUND")
