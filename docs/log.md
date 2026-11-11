@@ -4,6 +4,17 @@ type: Log
 
 # Update Log
 
+## 2026-11-10
+
+**Exact-host Session instruction variant qualification:** Added a disposable
+OpenCode 2.2.6 provider-input harness for the experimental native per-Session
+instruction-entry API, with explicit assignment, concurrent same-location
+controls, child exclusion, interruption, native compaction, restart and
+withdrawal observations. This is an **additive** Session context channel, not
+live skill replacement, provider-effectiveness proof or production activation.
+The installed fixture has a bounded mechanics PASS; unsupported routes still
+require manual isolation. See [the qualification contract](session-instruction-qualification.md).
+
 ## 2026-11-06
 
 **Dispatcher question routing:** Corrected parent notices and General guidance so
