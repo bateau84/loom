@@ -154,13 +154,16 @@ test("second opener tolerates a creator between SQLite header and schema commit"
     try {
       creator.exec("PRAGMA journal_mode=WAL; CREATE TABLE staging (id TEXT)")
       await chmod(path, 0o600)
+      let openerSettled = false
       const opening = openSharedQuotaState({ path }).then(
-        state => ({ state, error: null as unknown }),
-        error => ({ state: null, error }),
+        state => { openerSettled = true; return { state, error: null as unknown } },
+        error => { openerSettled = true; return { state: null, error } },
       )
-      // Give the reader a real opportunity to observe the still-uninitialized
-      // header; this forces the interleaving that random process races miss.
+      // The second connection must stay pending while the original creator
+      // has exposed a valid SQLite header but not committed a schema version.
+      // The old implementation rejects immediately once it reads version 0.
       await Bun.sleep(250)
+      expect(openerSettled).toBe(false)
       creator.exec(`BEGIN IMMEDIATE;
         DROP TABLE staging;
         CREATE TABLE quota (
