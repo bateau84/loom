@@ -504,12 +504,12 @@ export default Plugin.define({
                 else if (input.operation === "live-start") {
                   // The native user's exact affirmative message is required.
                   // Agent-supplied flags or arbitrary evidence URLs alone grant nothing.
+                  const approvalBinding = e.approvalBinding(actor, input as unknown as StartExperiment)
                   const verifyApproval = async () => {
                     const messages = unwrapped(await ctx.session.context({
                       sessionID: actor.session_id as Parameters<typeof ctx.session.context>[0]["sessionID"],
                     }))
-                    const approvalBinding = e.approvalBinding(actor, input as unknown as StartExperiment)
-                     const approvedLine = approvalBinding.approval_line
+                    const approvedLine = approvalBinding.approval_line
                     const found = Array.isArray(messages) ? messages.filter(message =>
                       message && typeof message === "object" && !Array.isArray(message) &&
                       (message as {id?:unknown}).id === input.authorization_ref &&
