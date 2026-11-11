@@ -66,7 +66,7 @@ for mixed positive/negative cohorts and instruction chronology, and a bounded
 latency design that keeps ordinary outcome writes independent of analysis.
 The authoritative follow-up and owners are in [#227](https://github.com/bateau84/loom/issues/227).
 
-Before switching from a manually installed #225 or #228 experiment build, follow the [native treatment withdrawal prerequisite](migration.md#leaving-an-experimental-live-session-build). Native Session entries are outside the Loom backup set.
+Before switching from a manually installed #225 or #228 experiment build, follow the [native treatment withdrawal prerequisite](migration.md). Native Session entries are outside the Loom backup set.
 
 ## Whole-objective evidence
 
