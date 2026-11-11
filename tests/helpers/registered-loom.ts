@@ -4,7 +4,7 @@ import { join } from "node:path"
 import plugin from "../../server.js"
 
 /** Actual public plugin setup/storage with a simulated registration host, not a live CLI. */
-export async function registeredLoom(initialSkills: any[] = [], options: { beforeSetup?: (directory: string) => Promise<void>; versionedHost?: boolean; directory?: string } = {}) {
+export async function registeredLoom(initialSkills: any[] = [], options: { beforeSetup?: (directory: string) => Promise<void>; versionedHost?: boolean; directory?: string; approvalProof?: "synthetic" | "missing" | "denied" } = {}) {
   const directory = options.directory ?? await mkdtemp(join(tmpdir(), "loom-tool-help-"))
   const previous = { state: process.env.XDG_STATE_HOME, config: process.env.OPENCODE_CONFIG_DIR }
   process.env.XDG_STATE_HOME = join(directory, "state")
@@ -99,6 +99,12 @@ export async function registeredLoom(initialSkills: any[] = [], options: { befor
       }],
     },
     session: {
+      // Synthetic *unit-only* attestation allows exercising downstream
+      // controller mechanics. This is not an OpenCode 2.2.6 capability or a
+      // claim of direct human provenance.
+      ...(options.approvalProof === "synthetic" || options.approvalProof === "denied" ? {
+        humanApproval: { verify: async (_binding: unknown) => options.approvalProof === "synthetic" },
+      } : {}),
       instructions: {
         entry: {
           list: async ({sessionID}: {sessionID:string}) => {
