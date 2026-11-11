@@ -313,5 +313,7 @@ test("one oversized linked history is disclosed and excluded without losing anot
     expect(compared.population.coverage.over_budget_histories_excluded_from_denominator).toBe(1)
     expect(compared.items.map(x=>x.objective_id)).toEqual([small.id])
     expect(compared.metrics.reported_pass).toBe(1)
+    expect(compared.mix.outcome_source_verifications["loom-ledger"]).toBe(1)
+    expect(compared.mix.outcome_source_verifications["not-observed"]).toBeUndefined()
   } finally {learningDB.close();actionDB.close()}
 })
