@@ -248,7 +248,7 @@ test("grouping uses explicitly linked historical skill-result receipts, not toda
       digest({ project: "tool-help", canonical: host.directory }))
     const db = new Database(join(root, "ledger.sqlite"))
     const fingerprint = createHash("sha256").update("historic exact tool result").digest("hex")
-    let recordID = ""
+    let recordID = "", outcomeID = ""
     try {
       const store = new Store(db)
       const written = store.observe({ session_id: "parent", agent: "author" }, undefined,
@@ -257,9 +257,16 @@ test("grouping uses explicitly linked historical skill-result receipts, not toda
           registry_content_sha256: createHash("sha256").update("different registry snapshot").digest("hex"),
         })
       recordID = written.id
+      await Bun.sleep(4) // Real event chronology, not an invented source timestamp.
+      outcomeID = store.record({ session_id: "parent", agent: "author" }, undefined,
+        { kind: "result", statement: "Reported outcome after historical observation" }).id
     } finally { db.close() }
     await host.invoke("objective", { operation: "link", objective_id: one.id,
       phase: "coordination", source_type: "ledger-record", source_id: recordID,
+    }, "parent")
+    await host.invoke("objective", { operation: "link", objective_id: one.id,
+      phase: "outcome", source_type: "ledger-record", source_id: outcomeID,
+      assessment: "pass",
     }, "parent")
     const result = (await host.invoke("trends", { operation: "compare", population: "selected",
       objective_ids: [one.id, two.id], since_at: new Date(start - hour).toISOString(),
