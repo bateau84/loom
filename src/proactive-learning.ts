@@ -64,6 +64,12 @@ export class ProactiveLearning {
       group.key !== "not-observed" && group.key !== "multiple-observations" &&
       group.metrics.reported_pass_without_correction >= 3 &&
       group.metrics.unknown_or_incomplete === 0 &&
+      group.metrics.reported_fail === 0 &&
+      group.metrics.verification_failures === 0 &&
+      group.metrics.verification_inconclusive === 0 &&
+      group.metrics.contested === 0 &&
+      group.metrics.coverage_gaps === 0 &&
+      group.metrics.unresolved_uncertain_links === 0 &&
       group.metrics.with_documented_correction === 0)
     if (correction < 3 && possiblePositive.length === 0) return []
 
