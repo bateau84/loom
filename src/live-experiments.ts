@@ -20,6 +20,19 @@ const utc = () => new Date().toISOString()
 const unwrapped = (raw: unknown): unknown =>
   raw && typeof raw === "object" && !Array.isArray(raw) && "data" in raw ? (raw as { data: unknown }).data : raw
 
+export type HumanApprovalBinding = {
+  authorization_ref: string
+  candidate_id: string
+  candidate_sha256: string
+  objective_id: string
+  session_id: string
+  agent: string
+  scope: string
+  budget_requests: number
+  approval_sha256: string
+  approval_line: string
+}
+
 export type ExperimentHost = {
   version: string
   agent: string
@@ -29,6 +42,10 @@ export type ExperimentHost = {
   list: () => Promise<unknown>
   put: (value: string) => Promise<void>
   remove: () => Promise<void>
+  // Not present in OpenCode SDK/CLI 2.2.6. A future trusted native
+  // author/approval attestation must bind exactly these bytes and scope.
+  // User-role messages and permission.assert success alone are not this proof.
+  verifyHumanApproval?: (binding: HumanApprovalBinding) => Promise<boolean>
 }
 export type StartExperiment = {
   objective_id: string
@@ -118,6 +135,27 @@ export class SessionExperiments {
     if (result.status !== "proposed") throw new Error("LOOM_LIVE_CANDIDATE_RETIRED: candidate is unavailable")
     return result
   }
+  approvalBinding(actor: Actor, input: StartExperiment): HumanApprovalBinding {
+    const candidate = this.candidate(input.candidate_id)
+    const scope = "agent:" + candidate.target_id
+    const content = {
+      candidate_id: candidate.id, candidate_sha256: candidate.candidate_sha256,
+      base_sha256: candidate.base_sha256, objective_id: input.objective_id,
+      session_id: actor.session_id, agent: actor.agent, scope,
+      budget_requests: input.budget_requests, expires_at: input.expires_at,
+      eligibility: input.eligibility, evaluation_criteria: input.evaluation_criteria,
+      preserved_guarantees: input.preserved_guarantees,
+      authorization_ref: input.authorization_ref,
+    }
+    const approval_sha256 = sha(JSON.stringify(content))
+    return {
+      authorization_ref: input.authorization_ref,
+      candidate_id: candidate.id, candidate_sha256: candidate.candidate_sha256,
+      objective_id: input.objective_id, session_id: actor.session_id, agent: actor.agent,
+      scope, budget_requests: input.budget_requests, approval_sha256,
+      approval_line: `LOOM-TRIAL-APPROVE v=2 candidate=${candidate.id} sha256=${candidate.candidate_sha256} objective=${input.objective_id} session=${actor.session_id} agent=${actor.agent} budget=${input.budget_requests} approval_sha256=${approval_sha256}`,
+    }
+  }
   private assertHost(host: ExperimentHost, row?: TrialRow) {
     if (host.version !== HOST_VERSION) throw new Error("LOOM_LIVE_HOST_UNQUALIFIED: exact OpenCode 2.2.6 required")
     if (!host.sessionID || (row && (row.session_id !== host.sessionID || row.agent !== host.agent)))
@@ -179,6 +217,13 @@ export class SessionExperiments {
       throw new Error("LOOM_LIVE_SOURCE_DRIFT: native agent system does not match proposed baseline")
     if (await this.ownValue(host) !== undefined)
       throw new Error("LOOM_LIVE_ENTRY_OCCUPIED: never overwrite a pre-existing instruction entry")
+    const approval = this.approvalBinding(actor, input)
+    // Permission rules may auto-allow; the native user-role message may be
+    // orchestrator-authored. The exact installed 2.2.6 host exposes no trusted
+    // direct-human provenance. Keep live-start blocked until an attestation
+    // exists; do not impose root-only scope (valid child trials remain possible).
+    if (!host.verifyHumanApproval || await host.verifyHumanApproval(approval) !== true)
+      throw new Error("LOOM_LIVE_HUMAN_PROVENANCE_UNQUALIFIED: exact candidate, objective, Session, agent and budget lack a trusted direct-human approval receipt")
     // Native permission is required in addition to caller-supplied opt-in. It
     // must run before any durable reservation or instruction mutation.
     await permission()
@@ -188,6 +233,11 @@ export class SessionExperiments {
     if (sha(await host.source()) !== candidate.base_sha256)
       throw new Error("LOOM_LIVE_SOURCE_DRIFT: source changed during native permission approval")
     if (await this.ownValue(host) !== undefined) throw new Error("LOOM_LIVE_ENTRY_OCCUPIED")
+    const refreshedApproval = this.approvalBinding(actor, input)
+    if (refreshedApproval.approval_sha256 !== approval.approval_sha256)
+      throw new Error("LOOM_LIVE_AUTHORIZATION_DRIFT: approved candidate content or scope changed")
+    if (!host.verifyHumanApproval || await host.verifyHumanApproval(refreshedApproval) !== true)
+      throw new Error("LOOM_LIVE_HUMAN_PROVENANCE_UNQUALIFIED: trusted approval expired or changed")
     const trialID = randomUUID(), now = utc()
     this.transaction(() => {
       if (this.row(host.sessionID)) throw new Error("LOOM_LIVE_SESSION_USED")
