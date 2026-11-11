@@ -357,3 +357,56 @@ test("orchestrator-authored task message in native child user role cannot enroll
     expect((await call(h,"read",{},"child","author")).result.status).toBe("inactive")
   } finally {await h.close()}
 })
+
+test("stop during asynchronous native install never claims clean withdrawal; later reconciliation removes entry", async () => {
+  const h=await registeredLoom([], {versionedHost:true,approvalProof:"synthetic"})
+  let release!:()=>void, entered!:()=>void
+  const blocked=new Promise<void>(resolve=>release=resolve)
+  const started=new Promise<void>(resolve=>entered=resolve)
+  try {
+    const {obj,proposal}=await prepare(h)
+    h.instructionControl.beforePut=async()=>{entered();await blocked}
+    const pending=call(h,"start",startInput(obj.id,proposal.id))
+    await started
+    await expect(call(h,"stop")).rejects.toThrow("LOOM_LIVE_INFLIGHT_ASSIGNMENT")
+    expect((await call(h,"read")).result.status).toBe("stop-uncertain")
+    await expect(h.hooks.get("model.request")({
+      sessionID:"parent",agent:"author",kind:"primary",
+      model:{providerID:"fixture",id:"scripted"},
+    })).rejects.toThrow("LOOM_LIVE_RECOVERY_REQUIRED")
+    release()
+    await expect(pending).rejects.toThrow("LOOM_LIVE_ASSIGNMENT_RACE")
+    expect((await call(h,"read")).result.status).toBe("recovery-required")
+    expect(h.instructionEntries.get("parent")?.get(LIVE_ENTRY_KEY)).toBe(candidateText)
+    const stopped=(await call(h,"stop")).result
+    expect(stopped.status).toBe("stopped")
+    expect(stopped.control_eligible).toBe(false)
+    expect(h.instructionEntries.get("parent")?.has(LIVE_ENTRY_KEY)).not.toBe(true)
+  } finally {release?.();await h.close()}
+})
+
+test("two concurrent starts for one Session reserve at most one trial and one native entry", async () => {
+  const h=await registeredLoom([], {versionedHost:true,approvalProof:"synthetic"})
+  try {
+    const {obj,proposal}=await prepare(h)
+    let waiting=0, release!:()=>void, both!:()=>void
+    const barrier=new Promise<void>(resolve=>release=resolve)
+    const reached=new Promise<void>(resolve=>both=resolve)
+    h.permission.beforeReturn=async()=>{
+      waiting++
+      if(waiting===2)both()
+      await barrier
+    }
+    const first=call(h,"start",startInput(obj.id,proposal.id))
+    const second=call(h,"start",startInput(obj.id,proposal.id))
+    await reached
+    release()
+    const settled=await Promise.allSettled([first,second])
+    expect(settled.filter(x=>x.status==="fulfilled")).toHaveLength(1)
+    expect(settled.filter(x=>x.status==="rejected")).toHaveLength(1)
+    expect(String((settled.find(x=>x.status==="rejected") as PromiseRejectedResult).reason))
+      .toContain("LOOM_LIVE_SESSION_USED")
+    expect(h.nativeInstructionWrites).toHaveLength(1)
+    await call(h,"stop")
+  } finally {await h.close()}
+})
