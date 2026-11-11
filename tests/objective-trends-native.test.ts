@@ -1,0 +1,348 @@
+import { test, expect } from "bun:test"
+import { registeredLoom } from "./helpers/registered-loom.js"
+import { Database } from "bun:sqlite"
+import { createHash } from "node:crypto"
+import { join } from "node:path"
+import { digest } from "../src/model.js"
+import { Store } from "../src/store.js"
+
+const hour = 60 * 60 * 1000
+const message = (id: string, at: number) => ({
+  id, type: "user", text: "Fixture request; no private transcript retention",
+  time: { created: at },
+})
+
+test("trend windows count whole objectives, not attempts or ledger pages, and freeze population and observations", async () => {
+  const host = await registeredLoom()
+  try {
+    const start = Date.now() - 72 * hour
+    const messages: any[] = []
+    host.nativeContexts.set("parent", { data: messages })
+    const objectiveIDs: string[] = []
+    for (let n = 0; n < 26; n++) {
+      messages.push(message("request-" + n, start + n * 1000))
+      const created = (await host.invoke("objective", {
+        operation: "create", source_type: "native-message", source_id: "request-" + n,
+        label: "Independent goal " + n, unit_key: n % 2 ? "feature" : "repair",
+      }, "parent")).result
+      objectiveIDs.push(created.id)
+    }
+    const action = (await host.invoke("action", {
+      operation: "create", title: "Runtime verification", goal: "Check real requested outcomes",
+    }, "parent")).result
+    const qa = async (verdict: "pass" | "fail", label: string) =>
+      (await host.invoke("record", {
+        operation: "add", kind: "qa", action_id: action.id, verdict, statement: label,
+      }, "parent")).result
+    const link = async (objective_id: string, phase: string, record: any, assessment: string, related_sequence?: number) =>
+      (await host.invoke("objective", { operation: "link", objective_id, phase,
+        source_type: "ledger-record", source_id: record.id, assessment,
+        ...(related_sequence ? { related_sequence } : {}),
+      }, "parent")).result
+
+    const fail = await qa("fail", "First delivered runtime check failed")
+    const failed = await link(objectiveIDs[0]!, "verification", fail, "fail")
+    const corrective = await host.invoke("objective", { operation: "link", objective_id: objectiveIDs[0],
+      phase: "corrective-dispatch", source_type: "external-ref",
+      source_id: "https://github.com/bateau84/loom/pull/217", related_sequence: failed.sequence,
+      note: "Explicit correction after runtime check; not an inferred tool error",
+    }, "parent")
+    expect(corrective.result.phase).toBe("corrective-dispatch")
+    const passed = await qa("pass", "Eventual runtime scenario passed")
+    await link(objectiveIDs[0]!, "verification", passed, "pass")
+    await link(objectiveIDs[0]!, "outcome", passed, "pass")
+    await link(objectiveIDs[1]!, "verification", fail, "fail") // shared incident evidence, not two independent incidents
+    await link(objectiveIDs[1]!, "outcome", fail, "fail")
+    await link(objectiveIDs[2]!, "outcome", passed, "pass")
+    const latePageFail = await qa("fail", "A failing runtime verification belongs to the last selected objective")
+    await link(objectiveIDs[25]!, "verification", latePageFail, "fail")
+    const continuation = await host.invoke("objective", { operation: "link",
+      objective_id: objectiveIDs[0], phase: "continuation", source_type: "external-ref",
+      source_id: "https://github.com/bateau84/loom/issues/1", related_sequence: 1,
+    }, "parent")
+    const duplicate = await host.invoke("objective", { operation: "link",
+      objective_id: objectiveIDs[0], phase: "continuation", source_type: "external-ref",
+      source_id: "https://github.com/bateau84/loom/issues/1", related_sequence: 1,
+    }, "parent")
+    expect(duplicate.result.sequence).toBe(continuation.result.sequence)
+
+    const query = { operation: "compare", population: "all-linked", since_at: new Date(start - hour).toISOString(),
+      until_at: new Date(start + hour).toISOString(), as_of_at: new Date(Date.now() + hour).toISOString(),
+      group_by: "unit-key", limit: 7 }
+    const first = (await host.invoke("trends", query)).result
+    expect(first.population.eligible_objectives).toBe(26)
+    expect(first.metrics.reported_pass).toBe(2)
+    expect(first.metrics.reported_fail).toBe(1)
+    expect(first.metrics.unknown_or_incomplete).toBe(23)
+    expect(first.metrics.with_documented_correction).toBe(1)
+    expect(first.metrics.reported_recovery).toBe(1)
+    expect(first.metrics.verification_failures).toBe(3)
+    expect(first.correlation.shared_failure_sources).toBe(1)
+    expect(first.correlation.affected_objectives).toBe(2)
+    expect(first.groups.map((g: any) => [g.key, g.metrics.eligible_objectives]))
+      .toEqual([["feature", 13], ["repair", 13]])
+    expect(first.next_cursor).toBeTruthy()
+    expect(first.items).toHaveLength(7)
+
+    // New rows inside the original source-time window and a newly filed failed check
+    // must not change this selected population or its earlier observation cutoff.
+    messages.push(message("request-later", start + 27000))
+    await host.invoke("objective", { operation: "create", source_type: "native-message",
+      source_id: "request-later", label: "Later indexed objective" }, "parent")
+    const later = await qa("fail", "Appended after comparison snapshot")
+    await link(objectiveIDs[0]!, "verification", later, "fail")
+
+    const allItems: any[] = [...first.items]
+    const seen: string[] = first.items.map((x: any) => x.objective_id)
+    let cursor = first.next_cursor
+    while (cursor) {
+      const page = (await host.invoke("trends", { ...query, cursor })).result
+      expect(page.population.eligible_objectives).toBe(26)
+      expect(page.metrics.verification_failures).toBe(3)
+      seen.push(...page.items.map((x: any) => x.objective_id))
+      allItems.push(...page.items)
+      cursor = page.next_cursor
+    }
+    expect(seen).toHaveLength(26)
+    expect(new Set(seen).size).toBe(26)
+    expect(new Set(seen)).toEqual(new Set(objectiveIDs))
+    expect(allItems.find((x: any) => x.objective_id === objectiveIDs[25])
+      .evidence.verification_fails.sources[0].id).toBe(latePageFail.id)
+    const updated = (await host.invoke("trends", query)).result
+    expect(updated.population.eligible_objectives).toBe(27)
+    expect(updated.metrics.verification_failures).toBe(4)
+    expect(first.items.find((x: any) => x.objective_id === objectiveIDs[0])
+      .evidence.verification_fails.total).toBe(1)
+    expect(updated.items.find((x: any) => x.objective_id === objectiveIDs[0])
+      .evidence.verification_fails.total).toBe(2)
+  } finally { await host.close() }
+})
+
+test("known and unknown evidence, reporting cutoff, absent dimensions and selected population stay explicit", async () => {
+  const host = await registeredLoom()
+  try {
+    const start = Date.now() - 24 * hour
+    const messages: any[] = [message("root-a", start), message("root-b", start + 1000)]
+    host.nativeContexts.set("parent", { data: messages })
+    const a = (await host.invoke("objective", {
+      operation: "create", source_type: "native-message", source_id: "root-a", label: "A",
+    }, "parent")).result
+    const b = (await host.invoke("objective", {
+      operation: "create", source_type: "native-message", source_id: "root-b", label: "B",
+    }, "parent")).result
+    await host.invoke("objective", { operation: "create",
+      source_type: "external-ref", source_id: "https://github.com/bateau84/loom/pull/222",
+      label: "Cannot locate start from declared source",
+    }, "parent")
+    const action = (await host.invoke("action", {
+      operation: "create", title: "Checks", goal: "Capture explicit outcomes",
+    }, "parent")).result
+    const record = (await host.invoke("record", { operation: "add", kind: "qa",
+      action_id: action.id, statement: "Author reported a failed check", verdict: "fail",
+    }, "parent")).result
+    await host.invoke("objective", { operation: "link", objective_id: a.id,
+      phase: "verification", source_type: "ledger-record", source_id: record.id, assessment: "fail",
+    }, "parent")
+    const scope = { operation: "compare", population: "selected", objective_ids: [a.id, b.id],
+      since_at: new Date(start - hour).toISOString(), until_at: new Date(start + hour).toISOString(),
+      as_of_at: new Date(Date.now() + hour).toISOString(), group_by: "model" }
+    const data = (await host.invoke("trends", scope)).result
+    expect(data.population.eligible_objectives).toBe(2)
+    expect(data.metrics.unknown_or_incomplete).toBe(2)
+    expect(data.metrics.verification_failures).toBe(1)
+    expect(data.metrics.reported_fail).toBe(0) // verification is not final outcome
+    expect(data.groups).toHaveLength(1)
+    expect(data.groups[0].key).toBe("unavailable")
+    expect(data.unavailable_dimensions.model).toBeTruthy()
+    expect(data.unavailable_dimensions.provider).toBeTruthy()
+    expect(data.unavailable_dimensions.work_type).toBeTruthy()
+    expect(data.unavailable_dimensions.actual_instruction_exposure).toBeTruthy()
+    expect(data.items.find((x: any) => x.objective_id === a.id).evidence.verification_fails.total).toBe(1)
+    expect(data.items.find((x: any) => x.objective_id === a.id).outcome).toBe("unknown")
+    expect(data.items.every((x: any) => x.original_sources_readable_via === "loom_objective read")).toBe(true)
+    await expect(host.invoke("trends", { ...scope, until_at: scope.since_at }))
+      .rejects.toThrow()
+    await expect(host.invoke("trends", { ...scope, cursor: "not-a-cursor" })).rejects.toThrow()
+    const tooOld = { ...scope, as_of_at: new Date(start + 2 * hour).toISOString() }
+    expect((await host.invoke("trends", tooOld)).result.population.eligible_objectives).toBe(0)
+  } finally { await host.close() }
+})
+
+test("late counterevidence and rejected uncertain links cannot disappear behind an earlier pass", async () => {
+  const host = await registeredLoom()
+  try {
+    const start = Date.now() - 24 * hour
+    host.nativeContexts.set("parent", { data: [message("runtime-target", start)] })
+    const objective = (await host.invoke("objective", {
+      operation: "create", source_type: "native-message", source_id: "runtime-target",
+      label: "Safe guarded runtime feature",
+    }, "parent")).result
+    const action = (await host.invoke("action", { operation: "create",
+      title: "Verifications", goal: "Real boundary checks" }, "parent")).result
+    const mkQa = async (verdict: "pass" | "fail", statement: string) =>
+      (await host.invoke("record", { operation: "add", action_id: action.id, kind: "qa",
+        verdict, statement }, "parent")).result
+    const good = await mkQa("pass", "Previous known acceptance")
+    await host.invoke("objective", { operation: "link", objective_id: objective.id,
+      phase: "outcome", source_type: "ledger-record", source_id: good.id,
+      assessment: "pass",
+    }, "parent")
+    const risk = (await host.invoke("record", {
+      operation: "add", action_id: action.id, kind: "concern",
+      statement: "Protective operator decision; effect still unverified",
+    }, "parent")).result
+    await host.invoke("objective", { operation: "link", objective_id: objective.id,
+      phase: "coordination", source_type: "ledger-record", source_id: risk.id,
+    }, "parent")
+    await host.invoke("objective", { operation: "link", objective_id: objective.id,
+      phase: "coverage-gap", source_type: "unavailable", source_id: "unknown-child",
+      gap_reason: "missing-child",
+    }, "parent")
+    const doubtful = await mkQa("fail", "Uncertain and later rejected evidence")
+    const attempted = (await host.invoke("objective", { operation: "link", objective_id: objective.id,
+      phase: "verification", source_type: "ledger-record", source_id: doubtful.id,
+      confidence: "uncertain", assessment: "fail", note: "May belong to another goal",
+    }, "parent")).result
+    await host.invoke("objective", { operation: "link", objective_id: objective.id,
+      phase: "link-correction", source_type: "ledger-record", source_id: doubtful.id,
+      assessment: "reject", related_sequence: attempted.sequence,
+    }, "parent")
+    const query = { operation: "compare", since_at: new Date(start - hour).toISOString(),
+      until_at: new Date(start + hour).toISOString(), as_of_at: new Date(Date.now() + hour).toISOString(),
+      population: "all-linked" }
+    const before = (await host.invoke("trends", query)).result
+    expect(before.metrics.reported_pass).toBe(1)
+    expect(before.metrics.verification_failures).toBe(0)
+    expect(before.metrics.rejected_links).toBe(1)
+    expect(before.metrics.coverage_gaps).toBe(1)
+    expect(before.metrics.concern_source_links).toBe(1)
+    expect(before.items[0].evidence.rejected.sources[0].id).toBe(doubtful.id)
+    const realFail = await mkQa("fail", "Later failing runtime scenario disproved original pass")
+    await host.invoke("objective", { operation: "link", objective_id: objective.id,
+      phase: "verification", source_type: "ledger-record", source_id: realFail.id,
+      assessment: "fail",
+    }, "parent")
+    const after = (await host.invoke("trends", query)).result
+    expect(after.metrics.reported_pass).toBe(0)
+    expect(after.metrics.contested).toBe(1)
+    expect(after.metrics.unknown_or_incomplete).toBe(1)
+    expect(after.metrics.verification_failures).toBe(1)
+    expect(after.items[0].evidence.verification_fails.sources[0].id).toBe(realFail.id)
+    expect(after.items[0].evidence.coverage_gaps.total).toBe(1)
+  } finally { await host.close() }
+})
+
+test("grouping uses explicitly linked historical skill-result receipts, not today's content or assignment", async () => {
+  const host = await registeredLoom()
+  try {
+    const start = Date.now() - 24 * hour
+    host.nativeContexts.set("parent", { data: [
+      message("fingerprint-root-one", start), message("fingerprint-root-two", start + 1000),
+    ] })
+    const create = async (id: string) => (await host.invoke("objective", {
+      operation: "create", source_type: "native-message", source_id: id, label: id,
+    }, "parent")).result
+    const one = await create("fingerprint-root-one")
+    const two = await create("fingerprint-root-two")
+    const root = join(host.directory, "state", "loom", "actions-v1",
+      digest({ project: "tool-help", canonical: host.directory }))
+    const db = new Database(join(root, "ledger.sqlite"))
+    const fingerprint = createHash("sha256").update("historic exact tool result").digest("hex")
+    let recordID = "", outcomeID = ""
+    try {
+      const store = new Store(db)
+      const written = store.observe({ session_id: "parent", agent: "author" }, undefined,
+        { phase: "skill-load-result", skill_id: "software-engineering",
+          rendered_sha256: fingerprint,
+          registry_content_sha256: createHash("sha256").update("different registry snapshot").digest("hex"),
+        })
+      recordID = written.id
+      await Bun.sleep(4) // Real event chronology, not an invented source timestamp.
+      outcomeID = store.record({ session_id: "parent", agent: "author" }, undefined,
+        { kind: "result", statement: "Reported outcome after historical observation" }).id
+    } finally { db.close() }
+    await host.invoke("objective", { operation: "link", objective_id: one.id,
+      phase: "coordination", source_type: "ledger-record", source_id: recordID,
+    }, "parent")
+    await host.invoke("objective", { operation: "link", objective_id: one.id,
+      phase: "outcome", source_type: "ledger-record", source_id: outcomeID,
+      assessment: "pass",
+    }, "parent")
+    const result = (await host.invoke("trends", { operation: "compare", population: "selected",
+      objective_ids: [one.id, two.id], since_at: new Date(start - hour).toISOString(),
+      until_at: new Date(start + hour).toISOString(), as_of_at: new Date(Date.now() + hour).toISOString(),
+      group_by: "instruction-fingerprint",
+    })).result
+    expect(result.metrics.eligible_objectives).toBe(2)
+    expect(result.groups.map((g: any) => g.key)).toEqual(["not-observed",
+      "skill-load-result:software-engineering:" + fingerprint])
+    expect(result.items.find((p: any) => p.objective_id === one.id)
+      .instruction_observations.observations[0].source_id).toBe(recordID)
+    expect(result.items.find((p: any) => p.objective_id === two.id)
+      .instruction_observations.group_key).toBe("not-observed")
+    expect(result.unavailable_dimensions.actual_instruction_exposure).toContain("do not prove")
+  } finally { await host.close() }
+})
+
+test("one oversized linked history is disclosed and excluded without losing another goal's comparable outcome", async () => {
+  const actionDB=new Database(":memory:")
+  const learningDB=new Database(":memory:")
+  try {
+    const store=new Store(actionDB)
+    const { Learning }=await import("../src/learning.js")
+    const learning=new Learning(learningDB,store,actionDB)
+    const actor={session_id:"history-over-budget",agent:"author"}
+    const origin=store.record(actor,undefined,{kind:"result",statement:"Oversized goal"})
+    const big=learning.objectives.create(actor,learning.objectives.ledgerSource(origin.id),"Oversized goal")
+    for(let i=0;i<501;i++) {
+      const record=store.record(actor,undefined,{kind:"result",statement:"Different evidence "+i})
+      learning.objectives.link(actor,{objective_id:big.id,phase:"coordination",
+        source:learning.objectives.ledgerSource(record.id)})
+    }
+    const other=store.record(actor,undefined,{kind:"result",statement:"Independent second goal"})
+    const small=learning.objectives.create(actor,learning.objectives.ledgerSource(other.id),"Second goal")
+    const result=store.record(actor,undefined,{kind:"result",statement:"Second reported successful outcome"})
+    learning.objectives.link(actor,{objective_id:small.id,phase:"outcome",
+      source:learning.objectives.ledgerSource(result.id),assessment:"pass"})
+    const at=new Date(Date.now()+1000).toISOString()
+    const compared=learning.trends.compare({operation:"compare",population:"all-linked",
+      since_at:new Date(Date.now()-86400000).toISOString(),until_at:at,as_of_at:at,limit:20})
+    expect(compared.population.excluded.over_budget_histories).toBe(1)
+    expect(compared.population.excluded.over_budget_objective_ids_sample).toEqual([big.id])
+    expect(compared.population.eligible_objectives).toBe(1)
+    expect(compared.population.coverage.over_budget_histories_excluded_from_denominator).toBe(1)
+    expect(compared.items.map(x=>x.objective_id)).toEqual([small.id])
+    expect(compared.metrics.reported_pass).toBe(1)
+    expect(compared.mix.outcome_source_verifications["loom-ledger"]).toBe(1)
+    expect(compared.mix.outcome_source_verifications["not-observed"]).toBeUndefined()
+  } finally {learningDB.close();actionDB.close()}
+})
+
+test("caller goal keys matching Object members retain numeric full-population mix counts", async () => {
+  const host = await registeredLoom()
+  try {
+    const start = Date.now() - hour
+    const keys = ["constructor", "constructor", "toString", "feature"]
+    host.nativeContexts.set("parent", { data: keys.map((_, i) => message("prototype-key-" + i, start + i)) })
+    for (const [i, unit_key] of keys.entries()) {
+      await host.invoke("objective", { operation: "create", source_type: "native-message",
+        source_id: "prototype-key-" + i, label: "Goal " + i, unit_key }, "parent")
+    }
+    await expect(host.invoke("objective", { operation: "create", source_type: "native-message",
+      source_id: "prototype-key-0", label: "Invalid goal key", unit_key: "__proto__" }, "parent"))
+      .rejects.toThrow("unit_key")
+    const query = { operation: "compare", population: "all-linked", group_by: "unit-key", limit: 1,
+      since_at: new Date(start - hour).toISOString(), until_at: new Date(start + hour).toISOString(),
+      as_of_at: new Date(Date.now() + hour).toISOString() }
+    const first = (await host.invoke("trends", query, "parent")).result
+    expect(first.population.eligible_objectives).toBe(4)
+    expect(first.mix.unit_keys.constructor).toBe(2)
+    expect(first.mix.unit_keys.toString).toBe(1)
+    expect(first.mix.unit_keys).toEqual({ constructor: 2, toString: 1, feature: 1 })
+    expect(first.groups.map((group: any) => [group.key, group.metrics.eligible_objectives]))
+      .toEqual([["constructor", 2], ["feature", 1], ["toString", 1]])
+    const next = (await host.invoke("trends", { ...query, cursor: first.next_cursor }, "parent")).result
+    expect(next.mix.unit_keys).toEqual(first.mix.unit_keys)
+    expect(Object.values(next.mix.unit_keys).reduce((sum: number, n: any) => sum + n, 0)).toBe(4)
+  } finally { await host.close() }
+})

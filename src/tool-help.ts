@@ -18,6 +18,11 @@ export const TOOL_EXAMPLES = {
     { operation: "find", source_type: "native-message", source_id: "msg_request", source_session_id: "SESSION_ID" },
     { operation: "list", offset: 0 },
   ],
+  trends: [
+    { operation: "compare", population: "all-linked", since_at: "2026-10-01T00:00:00Z",
+      until_at: "2026-11-01T00:00:00Z", as_of_at: "2026-11-10T00:00:00Z",
+      group_by: "start-month", limit: 20 },
+  ],
   tweak: [
     { operation: "propose", target_kind: "skill", target_id: "software-engineering", base_sha256: "0000000000000000000000000000000000000000000000000000000000000000", candidate_content: "FULL_CANDIDATE_SKILL_TEXT", hypothesis: "A recurring observed problem and one bounded improvement", evidence_refs: ["SOURCE_RECORD_ID"] },
     { operation: "list", offset: 0 },
@@ -87,6 +92,12 @@ const entries: Record<LoomToolName, { summary: string; usage: string; returns: s
     usage: "create: label, source_type/source_id anchor and optional unit_key (distinct goals in one message need distinct keys). Repeating the same anchor/key is idempotent. link: objective_id, phase, source_type/source_id and optional related_sequence, assessment, confidence, gap_reason, note. Native calls require source_message_id; source_session_id defaults to caller. Other Sessions require authorized export_path, not direct native reads. ledger-record resolves an original Action record; external-ref is a declared HTTPS URL; unavailable requires coverage-gap plus gap_reason. Phases: request, coordination, dispatch, handback, verification, corrective-dispatch, continuation, planned-increment, requirement-change, environment-failure, outcome, coverage-gap, link-correction. Continuation, corrective-dispatch and link-correction require an earlier same-objective related_sequence. Handback reports reported-done/reported-failed/inconclusive, verification/outcome pass/fail/inconclusive; corrections confirm/reject. read: objective_id, cursor, limit 1-50; list/find: offset, find by exact source identity.",
     returns: "create: durable objective_id/existing flag. link: source, phase, author, interpretation, source verification and sequence. read: bounded chronological entries, correction-derived current_relationship, coverage and snapshot-bound next_cursor. list/find: 20-item pages, next_offset; find can return several objectives per source.",
     caution: "Authored reconstruction, not native transcript storage, objective merging, an acceptance verdict or statistical evaluation. Shared Session, parentage, Action, agent or title do not establish a goal. Post-compaction native context and authorized exports may omit or misstate history; mark missing children, opaque calls, denied access and uncertainty explicitly. Never include secrets in labels or notes. Capture opt-out remains intact. A reported DONE is not verified; a later correction cannot erase an earlier claim. No automatic routing, scheduling, instruction mutation or proof of correctness.",
+  },
+  trends: {
+    summary: "Compare bounded, source-started whole objectives across time without treating ledger pages as samples.",
+    usage: "operation=compare requires since_at (inclusive), until_at (exclusive), as_of_at (at or after until_at), and population=all-linked or selected (selected requires objective_ids, maximum 50). Use ISO timestamps with timezone. Optional source_type, unit_key and group_by=start-month|unit-key|source-type|origin-verification|outcome-author-agent|instruction-fingerprint|model|provider|host-revision|tool-revision|work-type|rubric|actual-instruction-exposure. Page with limit=1-20 and next_cursor, repeating identical population/window/group filters. A 366-day/500-objective/500-links-per-objective limit fails closed, never silently truncates aggregates.",
+    returns: "Full frozen-population metrics/groups on every page, plus up to 20 objective IDs, original source references, authored outcome, corrective redispatch, recovery and contrary verification; eligible/unknown/excluded counts, collection coverage, shared evidence/origin warning and unavailable dimension reasons. Page cursors freeze objective and link insertion bounds; later appends require a fresh comparison.",
+    caution: "Only explicitly linked objectives with known original request source time are eligible; original histories may be missing. Outcome/verification labels are authored judgments, NOT host-certified correctness. Shared source does not prove independent incidents. Linked fingerprint receipts do not establish final model exposure. No invented work type/model/provider/rubric, universal score, causal effect, automatic experiment, scheduling or promotion. Read original authorized sources via loom_objective and loom_trace before proposing a change.",
   },
   tweak: {
     summary: "Store and revisit provisional fingerprinted instruction tweaks and agent-reported trials; never activate them.",
