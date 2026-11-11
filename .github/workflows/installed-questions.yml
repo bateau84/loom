@@ -32,6 +32,15 @@ jobs:
         run: npm install --prefix "$RUNNER_TEMP/loom-question-host" --no-audit --no-fund @opencode/cli@2.2.6
       # T1 prepares the real candidate path. T2 owns executing and reviewing this
       # packed-candidate E2E; this workflow definition alone proves no scenario.
+      - name: Qualify original native objective sources and corrective runtime attempts
+        run: >-
+          python3 tests/installed_objectives.py
+          --opencode "$RUNNER_TEMP/loom-question-host/node_modules/.bin/opencode"
+          --plugin "$RUNNER_TEMP/loom-question-install/node_modules/loom-plugin"
+          --artifact "$(find "$RUNNER_TEMP/loom-question-artifact" -maxdepth 1 -name 'loom-plugin-*.tgz' -print -quit)"
+          --repository "$GITHUB_WORKSPACE"
+          --expect-plugin-version "$(node -p 'require("./package.json").version')"
+          --report-directory "$RUNNER_TEMP/loom-objective-report"
       - name: Real production questions, resume, full_thread and native duplicate countercheck
         run: >-
           python3 tests/installed_questions.py
@@ -104,5 +113,12 @@ jobs:
         with:
           name: installed-question-qualification-${{ github.sha }}
           path: ${{ runner.temp }}/loom-question-report/
+          if-no-files-found: warn
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installed-objective-qualification-${{ github.sha }}
+          path: ${{ runner.temp }}/loom-objective-report/
           if-no-files-found: warn
           retention-days: 7
