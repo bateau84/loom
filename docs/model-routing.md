@@ -13,9 +13,13 @@ timestamp: 2026-10-24T00:00:00Z
 > **2.1.4 and SDK 2.1.1**. It can select exact native models in isolated
 > candidate tests, but cannot switch providers during a failed stream.
 >
-> The repository now pins **SDK and CLI 2.2.0**. No exact host/SDK pair
-> is currently qualified for positive managed-subscription requests and
-> native account affinity. The production adapter therefore returns
+> The repository now pins **SDK and CLI 2.2.6**. The 2.1.4 and 2.2.0
+> passages below describe historical candidate behavior only. The current
+> installed negative controls verify fail-closed startup and unqualified
+> billing/account routing on the exact 2.2.6 host. No exact host/SDK pair
+> is qualified for positive managed-subscription requests or native
+> account affinity. See [current #206 qualification](initial-routing-qualification-206.md)
+> and its remaining upstream requirements. The production adapter therefore returns
 > `not-connected` for enabled routing on **CLI 2.1.4, 2.2.0, and other
 > unqualified native hosts**. The early native guard rejects those
 > requests before transport. A valid explicitly disabled routing policy
@@ -40,7 +44,19 @@ provider for positive included-only routing.
 See also the [OpenCode safe fallback proposal](opencode-v2-safe-live-fallback.md)
 for the separate native retry/account-lease blocker.
 
-## Current SDK 2.2.0 host-qualification boundary
+
+## Current 2.2.6 status and historical notes
+
+As of 2026-11-11, positive managed model selection remains disabled while
+account-bound included-only billing and native request/connection identity
+lack provider- and host-verified guarantees. The production denial guard
+is installed before optional learning initialization; even throwing warning
+and error diagnostic sinks cannot unload it. The disabled-routing native path
+continues normally. References below to SDK 2.2.0 are retained for
+historical architecture context, not as the installed version or new
+qualification evidence.
+
+## Historical SDK 2.2.0 host-qualification boundary
 
 The normal plugin SDK/CLI moved to 2.2.0 in merged PR #199.
 The **production** `registerModelRouting()` never enables the historical

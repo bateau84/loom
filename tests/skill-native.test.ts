@@ -68,7 +68,7 @@ test("existing same-ID user skill is preserved including its visibility setting"
   expect([...f.skills.values()]).toEqual([existing, other])
 })
 
-test("core setup failure disposes the already registered skill and preserves the original error", async () => {
+test("core setup failure never registers optional skills and preserves the original error", async () => {
   const directory = await mkdtemp(join(tmpdir(), "loom-skill-failure-"))
   const skills = new Map<string, any>()
   let disposed = 0
@@ -81,7 +81,8 @@ test("core setup failure disposes the already registered skill and preserves the
       } },
     }
     await expect((plugin as any).setup(ctx)).rejects.toThrow("ENOENT")
-    expect(disposed).toBe(1)
+    // Core startup must precede all optional skill transforms.
+    expect(disposed).toBe(0)
     expect(skills.size).toBe(0)
   } finally { await rm(directory, { recursive: true, force: true }) }
 })
