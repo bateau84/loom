@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import server from "../server.js"
+import { digest } from "../src/model.js"
 
 test("public entrypoint arms the native deny hook before optional registration failures", async () => {
   const root = await mkdtemp(join(tmpdir(), "loom-206-server-"))
@@ -83,11 +84,15 @@ test("missing native hook-registration capability is not misreported as guarded"
  * A registry rebuild invokes the SAME callbacks that server.setup registered.
  * The installed 2.2.6 host test separately exercises native State.group.
  */
-async function liveCoreFixture() {
+async function liveCoreFixture(options: { corruptLearning?: boolean } = {}) {
   const root = await mkdtemp(join(tmpdir(), "loom-206-replay-"))
   const previous = { state: process.env.XDG_STATE_HOME, config: process.env.OPENCODE_CONFIG_DIR }
   process.env.XDG_STATE_HOME = join(root, "private-state")
   process.env.OPENCODE_CONFIG_DIR = join(root, "private-config")
+  if (options.corruptLearning) {
+    const projectScope = digest({ project: "replay-206", canonical: root })
+    await mkdir(join(root, "private-state", "loom", "actions-v1", projectScope, "learning.sqlite"), { recursive: true })
+  }
   await writeFile(join(root, ".loom.yaml"), JSON.stringify({
     "model-routing": { enabled: true, "default-class": "strong", "paid-fallback": false },
     "model-classes": { strong: { models: ["example"] } },
@@ -265,5 +270,63 @@ test("replay diagnostics that cannot be stringified or logged do not disable cor
   } finally {
     logger.mockRestore()
     await f.shutdown()
+  }
+})
+
+test("throwing optional learning warning preserves healthy Action tools and installed routing denial", async () => {
+  const logger = spyOn(console, "warn").mockImplementation(() => {
+    throw new Error("FAULT_INJECTED_WARNING_SINK")
+  })
+  let f: Awaited<ReturnType<typeof liveCoreFixture>> | undefined
+  try {
+    f = await liveCoreFixture({ corruptLearning: true })
+    expect(f.tools.has("action")).toBe(true)
+    expect(f.tools.has("insights")).toBe(true)
+    expect(f.hooks.has("model.request")).toBe(true)
+    expect(() => f!.hooks.get("model.request")!()).toThrow(/LOOM_MODEL_ROUTING_HOST_UNQUALIFIED/)
+  } finally {
+    logger.mockRestore()
+    await f?.shutdown()
+  }
+})
+
+test("throwing startup error sink cannot unload an installed native deny guard", async () => {
+  const root = await mkdtemp(join(tmpdir(), "loom-206-diagnostic-"))
+  const previous = process.env.XDG_STATE_HOME
+  const logger = spyOn(console, "error").mockImplementation(() => {
+    throw new Error("FAULT_INJECTED_ERROR_SINK")
+  })
+  const hooks = new Set<() => void>()
+  try {
+    process.env.XDG_STATE_HOME = join(root, "state")
+    await mkdir(join(root, "state", "loom"), { recursive: true })
+    await writeFile(join(root, "state", "loom", "actions-v1"), "not-a-directory")
+    await writeFile(join(root, ".loom.yaml"), JSON.stringify({
+      "model-routing": { enabled: true, "default-class": "strong", "paid-fallback": false },
+      "model-classes": { strong: { models: ["example"] } },
+      agents: { architect: { roles: ["architecture"] } },
+      roles: { architecture: { "model-class": "strong", reasoning: "medium" } },
+    }))
+    const ctx: any = {
+      app: { version: "2.2.6" },
+      location: { directory: root, project: { id: "diagnostic-206", canonical: root, directory: root } },
+      session: { hook: async (_name: string, fn: () => void) => {
+        hooks.add(fn)
+        return { dispose: async () => { hooks.delete(fn) } }
+      } },
+      skill: { transform: async () => { throw new Error("optional skill unavailable") } },
+      tool: { transform: async () => { throw new Error("optional tools unavailable") } },
+    }
+    const cleanup = await (server as any).setup(ctx) as () => Promise<void>
+    expect(logger).toHaveBeenCalled()
+    expect(hooks.size).toBe(1)
+    expect(() => [...hooks][0]!()).toThrow(/LOOM_MODEL_ROUTING_STARTUP_FAILED/)
+    await cleanup()
+    expect(hooks.size).toBe(0)
+  } finally {
+    logger.mockRestore()
+    if (previous === undefined) delete process.env.XDG_STATE_HOME
+    else process.env.XDG_STATE_HOME = previous
+    await rm(root, { recursive: true, force: true })
   }
 })
