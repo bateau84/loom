@@ -378,6 +378,18 @@ export class SessionExperiments {
         throw new Error("LOOM_LIVE_WITHDRAWAL_UNCERTAIN: a native entry reappeared after verified stop")
       return this.read(actor.session_id)
     }
+    if (row.status === "installing") {
+      // A native PUT is asynchronous. An empty read here does not prove a
+      // concurrent installation cannot commit *after* this withdrawal. Persist
+      // uncertainty first; the start writer will fail its state CAS and keep
+      // the Session denied until a later explicit reconciliation.
+      this.transaction(() => {
+        this.db.prepare("UPDATE learning_live_experiments SET status='stop-uncertain' WHERE id=? AND status='installing'").run(row.id)
+        this.event(row.id,"withdrawal-during-install",
+          "Native entry write may still commit; do not certify a clean stop or reuse as control")
+      })
+      throw new Error("LOOM_LIVE_INFLIGHT_ASSIGNMENT: cannot verify withdrawal while native entry write is pending; repeat stop after writer settles")
+    }
     // Reserve withdrawal before touching native storage: in-flight new request
     // preflights now reject "stopping". A prior admitted provider call cannot
     // be recalled, so its possible exposure remains in the durable history.
