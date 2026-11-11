@@ -169,7 +169,8 @@ export default Plugin.define({
       learning = new Learning(learningDB, store, db)
     } catch (error) {
       learningFailure = learningStage
-      console.warn(`Loom optional learning unavailable (${learningStage}): ${error instanceof Error ? error.message : String(error)}`)
+      try { console.warn(`Loom optional learning unavailable (${learningStage}): ${error instanceof Error ? error.message : String(error)}`) }
+      catch { /* Diagnostic sink failure cannot disable core startup or its native deny guard. */ }
       try { learningDB?.close() } catch { /* Keep the original learning failure. */ }
       learningDB = undefined
       learning = undefined
@@ -189,8 +190,10 @@ export default Plugin.define({
     const disposers: Array<{ dispose(): Promise<void> }> = []
     let lastWarning = ""
     const warn = (error: unknown) => {
-      const message = `Loom: ${error instanceof Error ? error.message : String(error)}`
-      if (message !== lastWarning) { console.warn(message); lastWarning = message }
+      try {
+        const message = `Loom: ${error instanceof Error ? error.message : String(error)}`
+        if (message !== lastWarning) { lastWarning = message; console.warn(message) }
+      } catch { /* A failed diagnostic sink never controls native safety or source recording. */ }
     }
     // A plugin instance's location is not necessarily the location of all server events.
     const sessionIsLocal = async (session: Record<string, unknown>) => {
@@ -768,7 +771,8 @@ export default Plugin.define({
         await disposeStartupGuard()
         throw error
       }
-      console.error("Loom startup failed; keeping native model dispatch denied:", error instanceof Error ? error.message : String(error))
+      try { console.error("Loom startup failed; keeping native model dispatch denied:", error instanceof Error ? error.message : String(error)) }
+      catch { /* Keep the installed deny hook even when logging fails. */ }
       // Resolving setup retains the installed deny hook. Throwing would let
       // OpenCode unload that hook and continue with an unguarded global model.
       return async () => { startupDispatch = "deny"; await disposeStartupGuard() }
