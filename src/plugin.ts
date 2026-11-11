@@ -238,10 +238,11 @@ export default Plugin.define({
     }
     const experimentHost = (sessionID: string, agent: string): ExperimentHost => ({
       version: ctx.app?.version ?? "", agent, sessionID,
-      // OpenCode SDK/CLI 2.2.6 lacks this native attestation.
-      verifyHumanApproval: (ctx.session as unknown as {
-        humanApproval?: {verify?: ExperimentHost["verifyHumanApproval"]}
-      }).humanApproval?.verify,
+      // No certified direct-human authorization receipt in the exact
+      // OpenCode 2.2.6 API. Do not discover an unverified runtime property or
+      // accept an agent-installed shim as an authority. A future qualified
+      // host integration must explicitly implement the approved contract.
+      verifyHumanApproval: undefined,
       source: async () => {
         const native = unwrapped(await ctx.agent.list())
         if (!Array.isArray(native)) throw new Error("LOOM_LIVE_AGENT_UNAVAILABLE: no native registry")
