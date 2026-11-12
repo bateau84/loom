@@ -16,7 +16,8 @@ timestamp: 2026-11-12T00:00:00Z
 **Guarantees:**
 - `Pending`, `blocked`, `partially processed`, `stale` and `complete through boundary` have distinct observable meanings. No Session is permanently evaluated because one callback, individual report or local Task finished.
 - Batch membership and its source boundary remain stable for that publication; work outside the boundary belongs to future processing, while missing eligible members prevent a complete batch claim.
-- A complete report is visible only when its own content, source/dependency identities, required protected material, authorization qualifications and processed boundary are consistently durable and retrievable.
+- Evaluation-processing completeness means the frozen source boundary was processed and the report, dependencies and required evidence are durably retrievable within their **authorized processing scope**, with missing or denied evidence disclosed as coverage limits. This does not mean every later reader may access protected sources.
+- Reader disclosure is a separate authorization state: an eligible consumer may see an expressly authorized redacted/declassified report projection, including truthful processing-completion status and coverage qualifications, without obtaining protected source bytes or implying unrestricted evidence access. The projection must be valid for that reader and cannot expose unpermitted content.
 - Re-running a previously admitted logical evaluation may reuse legitimate completed work but cannot publish multiple distinct successes for the same source/method boundary. Ambiguous model-provider execution is not claimed exactly once.
 - Later contrary evidence or changed method can produce a new interpretation linked to the old one, without deleting the old record or duplicating the underlying originating objective.
 - Missing source authorization or provider budget leaves a truthful pending/blocked obligation without disabling healthy ordinary execution.
@@ -25,9 +26,9 @@ timestamp: 2026-11-12T00:00:00Z
 
 **Failure semantics:** A crash or cancellation before consistent publication cannot advance successful coverage. A reader encountering lost referenced content must not receive an unqualified completed result. Restart reconciles incomplete work and exposed gaps.
 
-**Invariant:** A consumer never sees a `complete` evaluation whose required referenced report/source boundary is not available and authorized for that consumer.
+**Invariant:** Processing-completion status cannot precede durable availability of its required original report/dependency/source boundary to the authorized evaluation process. A reader may see that truthful status only through an independently authorized disclosure view; it never implies that protected original evidence is fully accessible to that reader or that excerpts exhaust the review basis.
 
-**Verification semantics:** Interrupt at source processing, report content staging, publication and checkpoint boundaries, then recover across actual stores. Compare the public reader's report, membership and checkpoint identities; after a late review or access change, verify current conclusions and access remain correct.
+**Verification semantics:** Interrupt at source processing, report content staging, publication and checkpoint boundaries, then recover across actual stores. Compare the authorized processing reader's report, membership and checkpoint identities. Give another reader an authorized redacted/declassified view: it must show truthful processing status and disclosed gaps without granting access to protected sources or portraying excerpts as complete evidence. Revoke underlying access and verify restrictions persist; after a late review verify current conclusions.
 
 ## Derived from
 - [BR-006 — Evaluate accumulated work automatically](br-006-run-evaluation-automatically.md)

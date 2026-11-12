@@ -48,19 +48,19 @@ These map to the [approved concept's E1–E14 proposals](../../learning-evidence
 | E1 | BR-001, OC-001, QS-001 | Correct concurrent/nested and reused-dispatch attribution |
 | E2 | BR-002, QS-001 | A late result preserves original work scope |
 | E3 | BR-005, OC-003 | Retrieval and explicit gaps under distinct capture authorization |
-| E4 | BR-003, OC-002, QS-003 | Frozen authorized review membership across 1/10/100 tasks |
+| E4 | BR-003, OC-002, QS-003 | Frozen authorized membership and original assessment question, criteria, mode and exclusions across 1/10/100 tasks |
 | E5 | BR-002, BR-004 | R1's A contract and R2's partial B contract remain separate |
-| E6 | BR-004, OC-002 | Review author, subjects and access receipts are distinct |
+| E6 | BR-004, OC-002 | Review mandate and recipient transfer authority are distinct from review author, subjects and actual source-access receipts |
 | E7 | BR-008, OC-004 | Later contradictory review revises interpretation, not source |
 | E8 | BR-007 | One linked objective with failed corrections, not three successes |
 | E9 | BR-008, OC-004, QS-002, QS-003 | Frozen over-limit batch resumes without missing/duplicate members |
 | E10 | BR-006, QS-002 | Failure/interruptions without idle still enter backlog |
 | **E11** | **BR-001–BR-009; OC-001–OC-004; QS-001–QS-005** | **Real assembled 100-task → native R1 → corrected B → partial R2 → automatic multi-Session evaluation → restart/authorized public read** |
-| E12 | BR-007, BR-009 | Overall analysis challenges misleading local positives |
+| E12 | BR-007, BR-009 | Overall analysis challenges misleading local positives, including post-outcome and unknown-order skill observations |
 | E13 | BR-006, QS-005 | Disabled/denied/quota-limited automation cannot disable ordinary work |
-| E14 | BR-005, BR-008, OC-003, OC-004, QS-002, QS-004 | Restored sources, checkpoints and report readership retain their qualification |
+| E14 | BR-005, BR-008, OC-003, OC-004, QS-002, QS-004 | Restored sources, checkpoints, processing-completion status and authorized disclosure views retain distinct qualifications |
 
-**E11 false-confidence control:** The same admitted R1 invocation must be associated with (1) the frozen requested manifest and artifact revision, (2) the actual source material supplied, and (3) the authorized sources actually accessed. A prompt containing only a manifest reference plus synthetic citations **cannot** prove retrieval. The reconstructed report distinguishes requested, supplied, retrieved, cited and claimed-inspected states; an unauthorized otherwise-valid Session must not access an unrestricted derived report.
+**E11 false-confidence control:** The same admitted R1 invocation must be associated with (1) the frozen requested manifest **and original review mandate** (question, quality/acceptance dimensions, criteria, mode and exclusions) for the exact artifact revision, (2) material actually supplied **after authorizing its transfer to the receiving Reviewer, not merely the requester**, and (3) sources that Reviewer actually accessed. A requester permitted to read protected Session B cannot supply B to an unauthorized Reviewer C simply because B is in the manifest. A security-only PASS cannot be promoted to general acceptance. A manifest pointer plus synthetic citations **cannot** prove retrieval. Public reconstruction distinguishes requested, supplied, retrieved, cited and claimed-inspected evidence. A reader without source rights cannot receive unrestricted derived reports; an authorized declassified reader may receive truthful processing status but not undisclosed source data.
 
 ## Product authority, compatibility and unresolved decisions
 
