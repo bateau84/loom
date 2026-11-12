@@ -16,6 +16,23 @@ This stage delivers an executable probe and an [exact implementation contract](l
 
 The [recorded evidence](native-review-qualification-evidence.json) identifies the tested checkout, actual CLI binary, installed candidate, fixture/harness/helper hashes, native receipt IDs, checks and limitations. It is an output record, never an input that makes the harness pass. CI generates a fresh report and raw synthetic receipts for each candidate in the `installed-native-review-<sha>` artifact.
 
+## Executed candidate record
+
+The final local run exercised clean implementation commit
+[`5b201a58c3cf4a344989a800b6c8ea5f407f9b14`](https://github.com/bateau84/loom/commit/5b201a58c3cf4a344989a800b6c8ea5f407f9b14)
+with a package built from that commit. All **eight expected mechanical checks** completed;
+Q4 and Q5 retain their whole-capability `UNQUALIFIED` status, and the actual native
+incoming-transfer counterexample retains `FAIL`. No real-model reasoning was tested.
+The recorded input/runtime hashes allow later documentation-only evidence changes to be
+checked against those same tested bytes. The file watcher stayed enabled.
+
+Core tests passed **376/376**, Python tests **198/198**, repository/fixture TypeScript checks
+passed, and the existing installed question and Evaluator observer probes passed. The
+intermediate native aggregate had 320 passes and two documentation-link/index failures;
+those assembly issues were corrected and the targeted 10-test documentation/fixture rerun
+passed. Exact-head CI remains independently observable on the PR and must not be inferred
+from an earlier run.
+
 ## Status meanings
 
 The report deliberately has two result fields:

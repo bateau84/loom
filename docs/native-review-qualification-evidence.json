@@ -1,5 +1,525 @@
 {
+  "format": "loom-native-review-qualification/v1",
   "status": "UNQUALIFIED",
-  "record_state": "pending-exact-commit-run",
-  "note": "Development probes completed; the final run will replace this output record before handback. This file is never a harness input."
+  "execution_status": "PASS",
+  "fixture": "loom.question.fixture/native-review-script-v1",
+  "expected_host": "2.2.6",
+  "inspected_upstream_revision": "dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06",
+  "host_revision_provenance": "release source inspected; CLI bytes separately hashed, no embedded Git attestation",
+  "checks": [
+    {
+      "name": "Q1-native-dispatch-and-child-read",
+      "status": "PASS",
+      "dispatch": {
+        "parent": [
+          "ses_e2df919e9ffeuFBNFT5FqBsfAJ",
+          "msg_1d206e64d0016RcTaMykEcZJUw",
+          "26072267-ce8a-4d82-8d30-4c21cad45198"
+        ],
+        "binding": "observed",
+        "child_session_id": "ses_e2df9195cffeGPgqFuWw9BwurL",
+        "reason": null,
+        "admission_binding": "UNQUALIFIED",
+        "before_receipt": 16,
+        "after_receipts": [
+          45
+        ],
+        "progress_receipts": [
+          19
+        ],
+        "terminal_event_id": "evt_1d206e74900131P7A4KSDa6mSf",
+        "return_status": "completed"
+      },
+      "basis": {
+        "supplied": [
+          38
+        ],
+        "retrieved": [
+          {
+            "receipt": 33,
+            "call": [
+              "ses_e2df9195cffeGPgqFuWw9BwurL",
+              "msg_1d206e6c5001lNUBdfuZyhEByv",
+              "e2f06d33-2b8d-4a58-bdfc-658374e49dd2"
+            ]
+          }
+        ],
+        "same_review_invocation": "UNQUALIFIED"
+      }
+    },
+    {
+      "name": "Q2-concurrent-reverse-return-and-reuse",
+      "status": "PASS",
+      "concurrent": [
+        {
+          "parent": [
+            "ses_e2df919e9ffeuFBNFT5FqBsfAJ",
+            "msg_1d206e7f70010FvTdZDbcYgjkE",
+            "574f05e1-03e0-42df-96a8-766e4abd1549"
+          ],
+          "binding": "observed",
+          "child_session_id": "ses_e2df917d9ffeA16EctO7TGABnu",
+          "reason": null,
+          "admission_binding": "UNQUALIFIED",
+          "before_receipt": 73,
+          "after_receipts": [
+            135
+          ],
+          "progress_receipts": [
+            77
+          ]
+        },
+        {
+          "parent": [
+            "ses_e2df919e9ffeuFBNFT5FqBsfAJ",
+            "msg_1d206e7f70010FvTdZDbcYgjkE",
+            "2e2c27a4-cac7-4fb0-b1c0-d5db0b40087a"
+          ],
+          "binding": "observed",
+          "child_session_id": "ses_e2df917d6ffeg4UpgDRqMQzJhJ",
+          "reason": null,
+          "admission_binding": "UNQUALIFIED",
+          "before_receipt": 74,
+          "after_receipts": [
+            128
+          ],
+          "progress_receipts": [
+            83
+          ]
+        }
+      ],
+      "reused": [
+        {
+          "parent": [
+            "ses_e2df919e9ffeuFBNFT5FqBsfAJ",
+            "msg_1d206e64d0016RcTaMykEcZJUw",
+            "26072267-ce8a-4d82-8d30-4c21cad45198"
+          ],
+          "binding": "observed",
+          "child_session_id": "ses_e2df9195cffeGPgqFuWw9BwurL",
+          "reason": null,
+          "admission_binding": "UNQUALIFIED",
+          "before_receipt": 16,
+          "after_receipts": [
+            45
+          ],
+          "progress_receipts": [
+            19
+          ],
+          "terminal_event_id": "evt_1d206e74900131P7A4KSDa6mSf",
+          "return_status": "completed"
+        },
+        {
+          "parent": [
+            "ses_e2df919e9ffeuFBNFT5FqBsfAJ",
+            "msg_1d206ea33001Xa7zOgDlTMaOau",
+            "83dd7281-be8f-48ac-812f-ec38d7404c0f"
+          ],
+          "binding": "observed",
+          "child_session_id": "ses_e2df9195cffeGPgqFuWw9BwurL",
+          "reason": null,
+          "admission_binding": "UNQUALIFIED",
+          "before_receipt": 160,
+          "after_receipts": [
+            175
+          ],
+          "progress_receipts": [
+            162
+          ],
+          "terminal_event_id": "evt_1d206ea8b0019Zmj3N48GvTBeK",
+          "return_status": "completed"
+        }
+      ],
+      "running_reuse": [
+        {
+          "parent": [
+            "ses_e2df919e9ffeuFBNFT5FqBsfAJ",
+            "msg_1d206eafb001gSnC0DftpzBX6Y",
+            "d47f7b00-871e-4177-9488-f5389bc008f4"
+          ],
+          "binding": "observed",
+          "child_session_id": "ses_e2df9195cffeGPgqFuWw9BwurL",
+          "reason": null,
+          "admission_binding": "UNQUALIFIED",
+          "before_receipt": 200,
+          "after_receipts": [
+            206
+          ],
+          "progress_receipts": [
+            202
+          ],
+          "terminal_event_id": "evt_1d206eb330019l40nkqmYJYgUf",
+          "return_status": "running"
+        },
+        {
+          "parent": [
+            "ses_e2df919e9ffeuFBNFT5FqBsfAJ",
+            "msg_1d206ec27001LkIHXTce9GtN81",
+            "b63fbf42-4822-4954-a3f4-8e4524f0aa8d"
+          ],
+          "binding": "observed",
+          "child_session_id": "ses_e2df9195cffeGPgqFuWw9BwurL",
+          "reason": null,
+          "admission_binding": "UNQUALIFIED",
+          "before_receipt": 249,
+          "after_receipts": [
+            253
+          ],
+          "progress_receipts": [
+            251
+          ],
+          "terminal_event_id": "evt_1d206ec61001mYWfrt6aKMI2d0",
+          "return_status": "running"
+        }
+      ],
+      "shared_completion_attribution": "UNQUALIFIED"
+    },
+    {
+      "name": "Q3-native-original-mandates-and-idempotent-admission",
+      "status": "PASS",
+      "admissions": [
+        {
+          "session_id": "ses_e2df9104bffeQ2HdSzmE02wiDI",
+          "input_id": "msg_1d206efd50010Pm5pMhpwThP1z",
+          "event_id": "evt_1d206efea001Vo1imtFwZY3rud",
+          "manifest_sha256": "0e593711ff1d4b454fd9c7ddb15a0e15cd14ba76a9b4476bbd43692db5fc3ffd",
+          "dispatch_binding": "UNQUALIFIED"
+        },
+        {
+          "session_id": "ses_e2df90ec0ffes5NAdmdpyraZch",
+          "input_id": "msg_1d206f1440028DnGkV6bAtvvoB",
+          "event_id": "evt_1d206f1450019UHLwjYIJRE8WM",
+          "manifest_sha256": "ecae86a379867380ae561c8c0f2614b1d4bae57b055e5e6bc4a2e2f001a958bb",
+          "dispatch_binding": "UNQUALIFIED"
+        }
+      ],
+      "limitation": "Fixture requests preserved by native inbox; production immutable review admission not implemented"
+    },
+    {
+      "name": "Q4-supplied-retrieved-and-citation-only",
+      "status": "PASS",
+      "retrieved": {
+        "supplied": [
+          495
+        ],
+        "retrieved": [
+          {
+            "receipt": 490,
+            "call": [
+              "ses_e2df90d7fffeD7auoDnFTlbQOB",
+              "msg_1d206f290001JRjNDE37trcATH",
+              "bc8218ee-b16e-4fcb-a61e-35f7d511a9b1"
+            ]
+          }
+        ],
+        "same_review_invocation": "UNQUALIFIED"
+      },
+      "inline": {
+        "supplied": [
+          536
+        ],
+        "retrieved": [],
+        "same_review_invocation": "UNQUALIFIED"
+      },
+      "pointer_only": {
+        "supplied": [],
+        "retrieved": [],
+        "same_review_invocation": "UNQUALIFIED"
+      },
+      "positive_admission_id": "msg_1d206f285001F2dZDv6ASRB0bi",
+      "cited_and_claimed_inspected": "observed reviewer-authored return, not access proof"
+    },
+    {
+      "name": "Q5-native-read-denial-and-unfenced-inline-transfer",
+      "status": "PASS",
+      "requester": {
+        "supplied": [
+          615
+        ],
+        "retrieved": [
+          {
+            "receipt": 610,
+            "call": [
+              "ses_e2df919e9ffeuFBNFT5FqBsfAJ",
+              "msg_1d206f620001cmu2crzSu7C5k1",
+              "b2da6b65-a821-4f38-9f18-8522d05a3555"
+            ]
+          }
+        ],
+        "same_review_invocation": "UNQUALIFIED"
+      },
+      "denied": {
+        "supplied": [],
+        "retrieved": [],
+        "same_review_invocation": "UNQUALIFIED"
+      },
+      "denied_call": [
+        "ses_e2df908c9ffe4TxvJk7AmzTbwr",
+        "msg_1d206f749001UKMJfmZM7DIvoP",
+        "891b05b9-3eb1-4097-9507-31f4f607f881"
+      ],
+      "inline_counterexample": {
+        "supplied": [
+          697,
+          710
+        ],
+        "retrieved": [],
+        "same_review_invocation": "UNQUALIFIED"
+      },
+      "native_read_denial": "PASS",
+      "native_recipient_transfer_property": "FAIL",
+      "limitation": "Read policy does not fence parent inline disclosure. Loom delivery enforcement remains unimplemented."
+    },
+    {
+      "name": "Q6-real-inner-call-collision-and-incomplete-observation-control",
+      "status": "PASS",
+      "shared_native_call": [
+        "ses_e2df905c9ffe1fF66HtHhgZJIk",
+        "msg_1d206fa890019e00L4Pc7K51uf",
+        "5a553c28-2fb9-40bb-883c-386784206454"
+      ],
+      "outer_record_id": "41519d60-dc79-442f-8bec-0b23dfc4e57a",
+      "missing_source_call": [
+        "ses_e2df905c9ffe1fF66HtHhgZJIk",
+        "msg_1d206fcb4001ggDon9meDvEfRE",
+        "176b7375-b1e2-4423-91f8-c766bc06eecc"
+      ],
+      "inner_provenance": "UNQUALIFIED: native inner ID absent; Loom meta-tool capture excluded",
+      "missing_provider_control": "PASS for deliberately reduced trace oracle only, not an injected native outage"
+    },
+    {
+      "name": "Q7-native-scope-change-and-original-work-ref",
+      "status": "PASS",
+      "native_call": [
+        "ses_e2df902bfffeVKP3XICpG5XitG",
+        "msg_1d206fe62001FCB8LsDbkbZQt3",
+        "439ce0d4-8bb6-4fcb-8357-c1dd4c2c4437"
+      ],
+      "work_ref": {
+        "action_id": "1118fb72-34d7-4d2c-bd4a-06ac06f0df76",
+        "node_id": "task-a",
+        "action_revision": 1,
+        "plan_revision": 1,
+        "hash": "b07356628f0ee2d49507cf9a6fac629a14c10dec72798baf6287c8db919294e1"
+      },
+      "start_record": "9fb20c4d-f236-4a35-92de-ab3a6d0ec61a",
+      "finish_record": "1028134f-d4e6-4961-a59a-236b1649d974",
+      "completion_record": "047ee057-9d13-43e2-a0e1-ed985de5ad52"
+    },
+    {
+      "name": "R1-interrupt-compact-reopen-and-public-history",
+      "status": "PASS",
+      "interruption_event_id": "evt_1d207048d001E8ZlLr0IE3YiKt",
+      "compaction_event_id": "evt_1d2070578001zRE3iCGssb61Sf",
+      "processes": [
+        20,
+        363
+      ],
+      "completion_record": "047ee057-9d13-43e2-a0e1-ed985de5ad52",
+      "postcompaction_source_marker_seen": false,
+      "limitation": "Normal process reopen after interruption; crash during dispatch and per-dispatch recovery lineage remain unqualified"
+    }
+  ],
+  "scenarios": {
+    "Q1": {
+      "name": "parent-child identity",
+      "status": "PASS",
+      "scope": "direct parent tool tuple and actual child Session; admission causality unqualified"
+    },
+    "Q2": {
+      "name": "concurrent and reused children",
+      "status": "PASS",
+      "scope": "overlapping distinct children, sequential and running child reuse; shared output per dispatch unqualified"
+    },
+    "Q3": {
+      "name": "original mandate",
+      "status": "PASS",
+      "scope": "native preservation of distinct authored input mandates, not production Loom admission"
+    },
+    "Q4": {
+      "name": "effective evidence basis",
+      "status": "UNQUALIFIED",
+      "scope": "Session-bound supply and exact native read PASS; binding both to one admitted review invocation unsupported"
+    },
+    "Q5": {
+      "name": "recipient authorization",
+      "status": "UNQUALIFIED",
+      "scope": "native transfer enforcement unsupported; actual inline bypass observed with synthetic bytes"
+    },
+    "Q6": {
+      "name": "ambiguous observations",
+      "status": "PASS",
+      "scope": "actual Code Mode collision and production capture gap exposed; no absent provider receipt inferred"
+    },
+    "Q7": {
+      "name": "historical scope",
+      "status": "PASS",
+      "scope": "actual outer-call start scope and historical WorkRef; general child-dispatch binding remains unavailable"
+    },
+    "R1": {
+      "name": "interruption restart and compaction",
+      "status": "PASS",
+      "scope": "native interruption/compaction and durable completed history after process restart; in-flight recovery lineage unqualified"
+    }
+  },
+  "capabilities": {
+    "parent_dispatch": {
+      "classification": "Verified",
+      "evidence_scenarios": [
+        "Q1",
+        "Q2"
+      ],
+      "mechanism": "tool.hook execute.before/after; durable session.tool.success",
+      "limitations": "Direct native tools only; opaque inner calls are not independent native invocations."
+    },
+    "dispatch_child": {
+      "classification": "Verified",
+      "evidence_scenarios": [
+        "Q1",
+        "Q2"
+      ],
+      "mechanism": "subagent progress/result child Session plus session.get parentID",
+      "limitations": "Child binding does not establish the child input ID or unique ownership of its history."
+    },
+    "reused_child": {
+      "classification": "Partial",
+      "evidence_scenarios": [
+        "Q2"
+      ],
+      "mechanism": "native subagent sessionID; distinct parent tuples; running results",
+      "limitations": "Sequential/running reuse observed. Shared child output is not attributable separately to each input."
+    },
+    "prompt_admission": {
+      "classification": "Verified",
+      "evidence_scenarios": [
+        "Q3",
+        "R1"
+      ],
+      "mechanism": "native inbox enqueue event/input ID and idempotent API readback",
+      "limitations": "Prompt hook alone is not admission; these input IDs have no native parent-dispatch edge."
+    },
+    "mandate_admission": {
+      "classification": "Partial",
+      "evidence_scenarios": [
+        "Q3",
+        "Q4"
+      ],
+      "mechanism": "full original mandate in native admitted payload; immutable duplicate-ID response",
+      "limitations": "Test-authored mandate preservation only. Production freeze/issue admission and dispatch cause not implemented."
+    },
+    "supplied_material": {
+      "classification": "Partial",
+      "evidence_scenarios": [
+        "Q4"
+      ],
+      "mechanism": "actual local AI SDK doStream prompt with native Session header",
+      "limitations": "Session-bound synthetic source bytes, not a general transport receipt or exact admitted execution."
+    },
+    "subsequent_retrieval": {
+      "classification": "Partial",
+      "evidence_scenarios": [
+        "Q4",
+        "Q6"
+      ],
+      "mechanism": "direct native read return keyed by child Session/assistant message/tool call",
+      "limitations": "No host input-to-step edge; Code Mode inner keys can collide and Loom meta-tool capture is excluded."
+    },
+    "recipient_authorization": {
+      "classification": "Unsupported",
+      "evidence_scenarios": [
+        "Q5"
+      ],
+      "mechanism": "native recipient read denied; same actual recipient accepts parent-inlined bytes while read stays denied",
+      "limitations": "Native incoming-source transfer enforcement is absent. Read denial is not permission to disclose or an incoming transfer fence."
+    },
+    "lifecycle": {
+      "classification": "Partial",
+      "evidence_scenarios": [
+        "Q7",
+        "R1"
+      ],
+      "mechanism": "start-bound outer call; historical WorkRef; native interrupt/compact; fresh-process public read",
+      "limitations": "Ordinary observations store focus/fingerprint, not full WorkRef. In-flight crash and per-input late/background return attribution are unqualified."
+    }
+  },
+  "limitations": [
+    "Scripted provider proves mechanical behavior only, never model reasoning or comprehension.",
+    "No trusted parent-dispatch to child-admission or input-to-model-step receipt exists in this host profile.",
+    "Fixture-authored mandates are test inputs; production Loom review admission remains unimplemented.",
+    "No protected source retention policy, background learning, or canonical change is activated."
+  ],
+  "source_head": "5b201a58c3cf4a344989a800b6c8ea5f407f9b14",
+  "source_dirty": false,
+  "input_sha256": {
+    "tests/installed_native_review.py": "f00649cb9942831a722ba94e62acf0686f9ab4c5cb1194deeabc20448537a1d0",
+    "tests/native_review_oracle.py": "a966286d426f471f68a1ef944a98a568ddee5f395771d9a06b74b179fb817eab",
+    "tests/question-host/server.ts": "33c5d27f82c3e9bf6dd26f9de05d18761ddca6a7be6266ae67468f91b2bdfb93",
+    "tests/question-host/review-script.ts": "b3bc6bd7bba799b08b006a83e6e8dfec6259de4aab9beae8e7260ecb7ef25977",
+    "tests/question-host/provider.mjs": "8e98dfa238f709d6b89df590a23c7d708e5283f44fc6f3a4b5193c05a81d66b0",
+    "tests/installed_host_smoke.py": "dc3ebaba211f5338f8e12f298c7b53b1dbd9585be9e9eaa69c02e5fba4ee5fb6",
+    "tests/installed_instruction_variants.py": "295d62f3ffd7d30bf87a62e6be05003abf3927b40097635d2c5d073e5d27b258",
+    "tests/installed_questions.py": "7826b0dd7ae27b3b9d2b1783249735b74485f1ca6374a0c22c7e53e22eed6dc7",
+    ".bun-version": "b99b4c7cdf236f59bc9f65d963deaecae3b16a7dad87939cacb9057f7664daee",
+    "bun.lock": "6b239350c433d4e18982499d7a9849db7f380466ccab030d431aa454eb46aa8c",
+    "package.json": "0b62be84895944c8fd859e4819903db640cb4d778f8d4e016dcf63e312639d21"
+  },
+  "candidate": {
+    "name": "loom-plugin",
+    "version": "2.0.0-alpha.1",
+    "sdk_version": "2.2.6",
+    "artifact_sha256": "ee136fb2aed87dcf47fd49489f22f5a1f7ede651ad6a15a6e3797fe817742988",
+    "artifact_filename": "loom-plugin-2.0.0-alpha.1.tgz"
+  },
+  "runtime_sha256": {
+    "server.ts": "f295040f1a22281835d43d04006e1c1cefbadfb82216b5bc7a4d4e6c610c5434",
+    "src/agents.ts": "002adffbdf081ff5934686a53ce2ad829602d57b5213c47bf53b4f758a9b9842",
+    "src/answer-resume.ts": "8953bf5abbe3833632c78eb66e4c55d95519828a655463e083bd00368233732d",
+    "src/collaboration.ts": "d27314b7479a01b513702e41fd2bcf4b078e59a815c2653c3f89b4f3d5cfdce2",
+    "src/config-admission.ts": "7d3754b3dcae9bc08d90d22acf71cdd2bbded564b889c8e80976358fb314b9f1",
+    "src/config-parser.ts": "9b1502e18720eded50244470304022b1a986edf08bcc0ed4a8cc9f04ef5f1d7f",
+    "src/config.ts": "4b5a723537eac7ac755e45c6261c7a0db83dfc626049b2b1ff77f487f8e50e16",
+    "src/context.ts": "31d159dccec85b0e9613aad4f0d45a842467b40ace3cd9387a1f6b54e306f515",
+    "src/history-renderer.ts": "f32bb730ad37b64a7d4763380196a01222779a6f9407d0ffb943ed1b54e333d9",
+    "src/history.ts": "0b99b3a28df06d5ec215a2392428c569827c04488f62290cefa7dedd505e1404",
+    "src/learning-findings.ts": "6f19cfb6244e9272f320e9c6fce093b403a1f8670b6c1a386cc295524571fee7",
+    "src/learning.ts": "f21fbb84f340db4e6af3603ad04349440cf4add9b3dd6049b7f4606a0b523d76",
+    "src/model-routing-adapter.ts": "293381d5ac14aca4e6ec922185e0c7b89e85ba4eccf58edaf5866c9a8636a37e",
+    "src/model-routing-runtime.ts": "56b119d6383d2dc9cbecc02bc624ecf9dbb5cbc32eaa2e4bcd163ca07572a417",
+    "src/model-routing-shared-quota.ts": "4afe41f705d8c3b776ebe9af3607f98e283044efd1b10abaa0376c347cb822b3",
+    "src/model-routing.ts": "3faa266971835600e42f923684b144c181ebd01b9e70e40a71d323561471ecf8",
+    "src/model.ts": "73da3eafb970fd8588ed1ce6a5c6b1a0147834250b2db72105b22eb5908edc9f",
+    "src/objective-trends.ts": "9eeb7a88c163f532e35e8efbc3ddb9db0210531cd35c966e19ce729993e0c7d4",
+    "src/objectives.ts": "33c5d53ea90c1435a3d30ec2a4e3e7c40ff6d73df146231b559c1786003b5efa",
+    "src/plugin.ts": "0592d0c4f61454ce27f3744ab99db29e7d992a7f9ac2854d18fc2b2269dd209c",
+    "src/question-routing.ts": "5b63cf58492cc292fcd106e8646232daab1fa99bdeb549328378fdc34417eefd",
+    "src/quota-state.ts": "c5fc68d871d66ce46750262ddf1e383f770d49cc73fc8cf22aedde2d45bf3782",
+    "src/response-format.ts": "6d9c4ec6cc00e58890f4d141692d9be856c677c266e320ba5058d3f2ada72815",
+    "src/review-companions.ts": "6a06147d970a26bd09adcb9b8e0ab2777fb68132520f79eb529c94cfa35ff6bf",
+    "src/session-trace.ts": "8a10fe65534532ee54c858988d2c78c56f5ac34a825e4a7ea4b960f1d6f17b6b",
+    "src/skill.ts": "b6009d65da0bc936f24b9221a099ccf911d2eb4e68e72a16e480333c232ae9bf",
+    "src/skills/loom/SKILL.md": "ea91c74207dc8ec0a39fabce7a9a6de9ace88fe0b58100ad4d6e599ecf83edd9",
+    "src/store.ts": "4b058e2fb14d52165eee61e691e41864ac3175b2aa83ade77cc271cd363f7a89",
+    "src/tool-help.ts": "81724bd552de97b92e5841d8ea3a0b71832f342ce932c623685160f8419c811e",
+    "src/work-context.ts": "3cb3d6435f36e9e955ee91135033ac4b910172ac7ebd902c50562500eb075ce4"
+  },
+  "cli_sha256": "50503d24577fa4117a7c95ee85b2cd679606a87eacf20ca54ed5db5c9e1cf895",
+  "observed_host": "opencode v2.2.6",
+  "synthetic_sources": {
+    "evidence-a.txt": "e3b7d4386a999123cb2019d2ef2820fbfa384a6aa121160ce3e024149c85d150",
+    "evidence-b.txt": "881e33a6b0ead5a9de97f3b0e21d042b191948ff3d8001b659b0a28f338f6155",
+    "protected-b.txt": "ad9735e3cd56757d33115635c0ed38368db26f56a8076be2dedef8fb602c781f"
+  },
+  "host_runtime_versions": {
+    "bun": "1.4.4",
+    "node": "26.3.0"
+  },
+  "audit_sha256": "3422331cae0c7a82d2dec0085037a6f4f66af07ecee5c445cdedf400bc1172a3",
+  "record_state": "executed-exact-clean-commit",
+  "record_purpose": "Durable output evidence only; never consumed as an expected answer by the harness.",
+  "observed_at_utc": {
+    "first": "2026-11-12T23:10:29.709000+00:00",
+    "last": "2026-11-12T23:10:40.621000+00:00"
+  },
+  "audit_receipts": 1144,
+  "diagnostic_retention": "Raw synthetic audit kept by each run and the installed-native-review CI artifact; committed record omits transcripts and machine paths."
 }
