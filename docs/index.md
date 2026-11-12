@@ -24,6 +24,7 @@ scan root so the profile is discovered; it declares no mandatory link counts.
 
 - [Deep retrospective session tracing](retrospective-trace.md) — Original Session evidence sources, access checks and coverage limits
 - [Learning evidence and provisional experiments](learning-experiments.md) — Bounded insight statistics, content fingerprints and manual tweak trials
+- [Review-scoped evidence and whole-work retrospectives (draft)](learning-evidence-and-review-scope.md) — Proposed dispatch attribution, exact review subjects and automatic multi-Session evaluation; not current runtime behavior
 - [Native Evaluator audit qualification](native-evaluator-audit-qualification.md) — Source preflight and installed scripted recovery; real original-work audit pending
 - [Trusted learning host contracts](learning-host-trust-contract.md) — Native provenance/permission counterexamples and the host-owned guarantees still required
 - [Experimental treatment recovery](experiment-recovery.md) — Read-only stopped-host inspection of native entries, removed-entry history and archived assignment state
