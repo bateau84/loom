@@ -1,0 +1,5 @@
+{
+  "status": "UNQUALIFIED",
+  "record_state": "pending-exact-commit-run",
+  "note": "Development probes completed; the final run will replace this output record before handback. This file is never a harness input."
+}

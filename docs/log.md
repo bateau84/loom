@@ -6,6 +6,14 @@ type: Log
 
 ## 2026-11-12
 
+**First learning engineering stage:** Added the [native review qualification](native-review-qualification.md)
+and [implementation-facing specification](learning-native-evidence-spec.md) in the existing draft PR #233.
+The isolated installed-host probe reuses the scripted provider and exercises actual native dispatch,
+admission, reads, read denial, child reuse, opaque inner calls, historical scope, interruption,
+compaction and process reopen. Exact input-to-execution causality and incoming protected-content
+transfer enforcement remain unqualified/unsupported. Native read denial is not a transfer fence.
+No production runtime code, capture policy, routing protection or automatic learning engine changed.
+
 **Learning architecture requirements (proposal):** The user accepted the independently reviewed
 [review-scoped evidence architecture](learning-evidence-and-review-scope.md) (PR #233), and the
 [automatic learning requirements](requirements/learning-retrospectives/br-001-preserve-execution-attribution.md)
