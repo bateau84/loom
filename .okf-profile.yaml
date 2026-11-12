@@ -13,6 +13,7 @@ concept_types:
   - name: Playbook
   - name: "API Reference"
   - name: "Behavioral Requirement"
+  - name: "Quality Scenario"
   - name: "Obligation Contract"
   - name: Log
 

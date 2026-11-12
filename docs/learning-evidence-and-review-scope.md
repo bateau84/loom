@@ -8,7 +8,7 @@ timestamp: 2026-11-12T00:00:00Z
 
 # Review-scoped evidence and whole-work retrospectives
 
-**Status: draft concept; not implemented or a new runtime guarantee.** This proposal records the user's intended outcome and a suggested architectural direction. It changes no runtime code, configuration, capture policy, permissions or model dispatch. It extends the accepted learning work in [issue #227](https://github.com/bateau84/loom/issues/227); it does not close that issue or reactivate the deferred reporter/controller.
+**Status: architecture accepted by the user after independent GO at PR #233; not implemented or a new runtime guarantee.** This proposal records the user's intended outcome and a suggested architectural direction. It changes no runtime code, configuration, capture policy, permissions or model dispatch. It extends the accepted learning work in [issue #227](https://github.com/bateau84/loom/issues/227); it does not close that issue or reactivate the deferred reporter/controller.
 
 ## Purpose and governing outcome
 
@@ -211,6 +211,14 @@ Use actual shipped product-owned paths for capture, native delegation, persisten
 - What automatic analysis budget policy is suitable, and how will users inspect backlog, gaps, last overall report and reasons for deferral?
 
 These questions refine mechanism, not the accepted goals of automation, exact attribution and overall evaluation. Do not turn them into a new batch of unrelated implementation PRs. Keep one owner for the integrated contract and verify reuse of the current foundation before adding state.
+
+## Requirements alignment
+
+The accepted concept is elaborated by the proposed [execution attribution requirement](requirements/learning-retrospectives/br-001-preserve-execution-attribution.md),
+[whole-work learning requirement](requirements/learning-retrospectives/br-007-prioritize-whole-work-learning.md),
+[actual review-admission contract](requirements/learning-retrospectives/oc-002-review-admission-and-evidence-basis.md),
+and [derived-report authorization contract](requirements/learning-retrospectives/oc-003-protected-source-and-derived-report-access.md).
+The requirements remain a draft pending independent assessment; acceptance of this architecture does not establish runtime support or grant operator authorization.
 
 ## References
 

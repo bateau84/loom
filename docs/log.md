@@ -4,6 +4,17 @@ type: Log
 
 # Update Log
 
+## 2026-11-12
+
+**Learning architecture requirements (proposal):** The user accepted the independently reviewed
+[review-scoped evidence architecture](learning-evidence-and-review-scope.md) (PR #233), and the
+[automatic learning requirements](requirements/learning-retrospectives/br-001-preserve-execution-attribution.md)
+were added under the same draft PR. The new indexed bundle defines 9 Behavioral Requirements,
+5 Quality Scenarios and 4 Obligation Contracts for attribution, actual review evidence,
+automatic multi-Session evaluation, interruption recovery and protected derived reports.
+Documentation profile adds Quality Scenario to the supported corpus vocabulary. Requirements
+remain pending independent assessment, and there are no runtime/reporting activations.
+
 ## 2026-11-11
 
 **Learning Phase 2 qualification and recovery:** Added actual-host provenance
