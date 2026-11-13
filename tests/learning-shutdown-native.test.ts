@@ -50,14 +50,16 @@ test("production shutdown finalizes retained statements before stopped-state has
   const statements: Statement[] = []
   const readers = new Map<Database, Statement>()
   const original = Database.prototype.prepare
-  const prepare = spyOn(Database.prototype, "prepare").mockImplementation(function(this: Database, ...args: Parameters<Database["prepare"]>) {
+  // The forwarding spy preserves the generic return type of the real driver.
+  const intercept = function(this: Database, ...args: Parameters<Database["prepare"]>) {
     const statement = original.apply(this, args)
     statements.push(statement)
     // Strong references make cleanup deterministic instead of relying on GC timing.
     // Both private production connections prepare SELECTs during startup.
     if (typeof args[0] === "string" && /^SELECT\b/i.test(args[0])) readers.set(this, statement)
     return statement
-  })
+  } as Database["prepare"]
+  const prepare = spyOn(Database.prototype, "prepare").mockImplementation(intercept)
   let host: Awaited<ReturnType<typeof registeredLoom>> | undefined
   try {
     host = await registeredLoom([], { directory, versionedHost: true })
