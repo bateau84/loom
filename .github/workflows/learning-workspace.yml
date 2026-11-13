@@ -1,3 +1,4 @@
+# Refresh the isolated workspace for PR #234 cold-review remediation.
 name: Learning qualification workspace
 on:
   pull_request:
