@@ -129,7 +129,9 @@ test("published question-routing guidance distinguishes dispatcher, user and for
 })
 
 test("bundled JSON examples execute with real returned identities against registered callbacks", async () => {
-  const f = await registeredLoom()
+  const f = await registeredLoom([], { beforeSetup: async directory => {
+    await writeFile(join(directory, ".loom.yaml"), "agents: {investigator: {roles: [research]}}\ninstructions: {enabled: false}\nledger: {capture: off}\n")
+  } })
   try {
     const skill = f.skills.get(LOOM_SKILL_ID)
     const inputs = [...skill.content.matchAll(/```json\n([\s\S]*?)\n```/g)].map(match => JSON.parse(match[1]))
@@ -144,10 +146,12 @@ test("bundled JSON examples execute with real returned identities against regist
     expect((await f.invoke("record", query)).result.items[0].id).toBe(result.id)
     const question = (await f.invoke("record", inputs[4], "unselected-asker")).result
     expect(question.action_id).toBeUndefined()
-    expect(question.dispatch).toEqual({ status: "not-attempted", reason: "policy-capability-unavailable" })
-    const answer = (await f.invoke("record", { ...inputs[5], question_id: question.id }, "answerer")).result
+    expect(question.dispatch.status).toBe("admission-observed")
+    expect(question.dispatch.target_agent).toBe("investigator")
+    const child = question.dispatch.target_session_id
+    const answer = (await f.invoke("record", { ...inputs[5], question_id: question.id }, child, "investigator")).result
     expect(answer.data.context_attachments).toEqual(inputs[5].context_attachments)
-    expect(answer.session_id).toBe("answerer")
+    expect(answer.session_id).toBe(child)
     const history = (await f.invoke("record", replace(inputs[6]))).result
     expect(history.format).toBe("loom-full-thread/v1")
     expect(history.markdown).toContain("Full stored thread")

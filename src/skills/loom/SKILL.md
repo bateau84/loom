@@ -2,9 +2,8 @@
 
 ## Keep Loom optional
 
-A conversation needs no Action. An Action needs no Plan. OpenCode owns
-Sessions, execution, delegation, skills, models and permissions. Loom records
-intent and history; it is not a scheduler. Role checks restrict companion loaders.
+A conversation needs no Action. An Action needs no Plan. OpenCode owns Sessions, execution, delegation, skills, models and permissions.
+Loom retains intent/history, not a scheduler. Roles restrict companion loaders.
 
 ## Find the right tool
 
@@ -29,8 +28,7 @@ Parse only JSON. Await writes; sequence dependencies; inspect Promise.allSettled
 
 ## Start or resume work
 
-Use an Action when work needs cross-agent/Session continuity; ordinary chat
-needs none. Use a Plan for meaningful dependencies, distinct tasks or resumption needs,
+Use an Action for cross-agent/Session continuity, not ordinary chat. Use a Plan for meaningful dependencies, distinct tasks or resumption needs,
 not merely because work takes several steps.
 
 Use `loom_agents {}`: match `agents[].roles` to `role_descriptions`.
@@ -42,7 +40,7 @@ Reuse handed-off Action IDs or find via `loom_action` list. To create an Action:
 {"operation":"create","title":"Explain a setting","goal":"Produce a source-backed explanation with its limitations."}
 ```
 
-Use `result.id` as Action ID. `loom_action sessions` finds local Sessions, optionally by Action, with paging; it does not prove execution.
+Use `result.id` as Action ID. Page `loom_action sessions` for local Sessions, not execution proof.
 
 Read the Plan before edits:
 
@@ -85,9 +83,8 @@ Follow ledger `next_after` as `after` until null; Action lists use `next_offset`
 Read exact records for full statements. `contract_match:null` means unknown;
 matching work definitions do not prove code correctness.
 
-Use `add`: `result` describes useful findings or work for a later agent/Session;
-`claim` records a supported conclusion with its limits. Preserve sources,
-qualifications, unresolved points and next steps. Keep checks, not activity logs.
+Use `add`: `result` preserves useful work; `claim` states supported conclusions.
+Retain sources, qualifications, unknowns and next steps, not activity logs.
 `evidence_ids` must cite same-Action host observations for Action records,
 or unscoped observations from the same Session for Session-only records.
 `artifact_refs` are pointers, not proof. Missing evidence stays missing.
@@ -126,43 +123,43 @@ Update Action state separately; paused/cancelled labels do not stop execution.
 
 ## Questions: route material unknowns
 
-Investigate facts within your responsibility. Before an unauthorized choice
-changes the goal, scope, promised behavior or accepted risk, ask its owner; do not treat a recorded assumption as authorization. Route scope to dispatcher,
-specialist judgment to role/agent, intent/approval to user. Include alternatives;
-continue safe independent work. `blocking:true` only when safe progress needs an answer.
+Investigate facts within your responsibility. For input owned elsewhere,
+use `loom_record ask`, not a concern/handoff. Before a choice
+changes the goal, scope, promised behavior or accepted risk, ask its owner;
+do not treat a recorded assumption as authorization. Route scope to dispatcher,
+specialist judgment to role/agent, intent/approval to user. Do not manufacture OQs.
 
-`loom_record ask` requires `question`, Boolean `blocking`, and exactly one
-of `recipient:{kind:"agent"|"role"|"dispatcher"|"user",id?:string}` or legacy
-`to_agent`. Agent/role needs `id` from `loom_agents`. Optional context,
-context_attachments and reference. Selection/asking Session supplies scope;
-invalid references fail.
-
-```json
-{"operation":"ask","question":"Which limit applies?","to_agent":"research","blocking":false,"context_attachments":["SOURCE_REFERENCE"]}
-```
-
-Legacy recipient is NOT contacted (`policy-capability-unavailable`).
-Direct typed: native child binds before prompt; blocking uses
-foreground result, nonblocking background completion. No duplicate Loom
-answer notice. Native depth/permissions apply; admission is not an answer or
-permission. An answer is not necessarily approval or resolution.
-
-Child OQs reach dispatcher. For dispatcher targets, answer directly even
-after specialist consultation; don't bind that specialist. For forwarded
-agent/role OQs, natively delegate and bind the verified child via
-`loom_record bind-respondent`; only it may answer. For user targets, ask the
-user and cite their actual decision.
+Ask needs `question`, `blocking`, and `recipient` or legacy `to_agent`.
+Recipient kinds: agent/role (needs `id` from `loom_agents`), dispatcher/user (no id).
+No Action/Plan needed; context/context_attachments/reference optional.
+Dispatcher examples need a child Session; primary Sessions use agent/role/user.
+Block dependent work only; continue safe work.
 
 ```json
-{"operation":"answer","question_id":"QUESTION_ID","answer":"Read the source and its limitations.","context_attachments":["SOURCE_REFERENCE"]}
+{"operation":"ask","question":"Which limit applies?","recipient":{"kind":"role","id":"research"},"blocking":false,"context_attachments":["SOURCE_REFERENCE"]}
 ```
 
-Only FIRST committed blocking legacy/forwarded answers attempt one
-best-effort exact-asker resume. No retries/replay. 5000ms limits waiting,
-not native I/O; check is not an atomic lease.
-Do not repeat an answer to try delivery. Answered is not resolution.
-Use `view:thread`.
-Historical records remain readable; assignment/delivery views retired.
+Legacy recipient is NOT contacted (`policy-capability-unavailable`). Typed asks
+use native depth/permissions and foreground/background continuation.
+No duplicate notice; admission is not execution.
+For dispatcher targets, answer directly even after consultation, without binding.
+For forwarded agent/role OQs, natively delegate and bind the verified child.
+For user targets, ask the user and cite their actual decision.
+
+```json
+{"operation":"answer","question_id":"QUESTION_ID","answer":"Source-backed response.","context_attachments":["SOURCE_REFERENCE"]}
+```
+
+`answer_type` defaults to `text`. `multi-choice` requires typed `recipient` (not
+`to_agent`) and 2-20 immutable `choices`
+with `id` and `answer`; reply with ONE `choice_id` and optional `reason`,
+not `answer`. Or use `status:"cannot-select"` with a reason; never guess.
+Read `view:thread`; format grants no authority or routing.
+An answer is not necessarily approval or resolution. Conflicting replies remain.
+Only FIRST committed blocking legacy/forwarded answers (including cannot-select)
+attempt exact-asker resume. No retries/replay. 5000ms bounds waiting, not I/O;
+the check is not an atomic lease. Do not repeat an
+answer to try delivery. Historical records are readable; assignment/delivery views retired.
 
 ## Deep retrospective evidence
 

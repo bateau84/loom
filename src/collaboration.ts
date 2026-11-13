@@ -44,6 +44,61 @@ function references(input: unknown, label = "artifact_refs"): string[] {
   return input
 }
 
+export const QUESTION_CHOICE_LIMITS = { count: 20, id: 64, answer: 4000, reason: 8000 } as const
+/** New choice fields follow JSON Schema character counts, not UTF-16 units.
+ * Iterate without allocating an array; retain the existing aggregate record budget. */
+function choiceText(value: unknown, label: string, max: number): string {
+  const invalid = () => new Error(`${label} must be nonblank and at most ${max} Unicode code points`)
+  if (typeof value !== "string" || !/\S/u.test(value)) throw invalid()
+  let count = 0
+  for (const _point of value) if (++count > max) throw invalid()
+  return value.trim()
+}
+const choiceID = (value: unknown): string => {
+  if (typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/.test(value))
+    throw new Error("choice_id must be 1-64 characters: letters, digits, _, ., :, or -; start with a letter or digit")
+  return value
+}
+type Choice = { id: string; answer: string }
+function questionFormat(input: Record<string, unknown>): { answer_type?: "text" | "multi-choice"; choices?: Choice[] } {
+  if (input.answer_type === undefined || input.answer_type === "text") {
+    if (input.choices !== undefined) throw new Error("choices requires answer_type=multi-choice")
+    return input.answer_type === undefined ? {} : { answer_type: "text" }
+  }
+  if (input.answer_type !== "multi-choice") throw new Error("answer_type must be text or multi-choice")
+  if (!Array.isArray(input.choices) || input.choices.length < 2 || input.choices.length > QUESTION_CHOICE_LIMITS.count)
+    throw new Error("multi-choice requires 2-20 choices")
+  const ids = new Set<string>()
+  const choices = input.choices.map(value => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Each choice must be an object")
+    fields(value, ["id", "answer"])
+    const id = choiceID(value.id)
+    if (ids.has(id)) throw new Error(`Duplicate choice ID: ${id}`)
+    ids.add(id)
+    choiceText(value.answer, "choice.answer", QUESTION_CHOICE_LIMITS.answer)
+    return { id, answer: value.answer as string }
+  })
+  return { answer_type: "multi-choice", choices }
+}
+function answerContent(question: Record<string, unknown>, input: Record<string, unknown>): Record<string, unknown> {
+  if (question.answer_type === undefined || question.answer_type === "text") {
+    if (input.choice_id !== undefined || input.reason !== undefined || input.status !== undefined) throw new Error("Text questions require answer, not a choice or reason")
+    return { answer: text(input.answer, "answer") }
+  }
+  const format = questionFormat(question)
+  if (input.status !== undefined) {
+    if (input.status !== "cannot-select" || input.choice_id !== undefined || input.answer !== undefined)
+      throw new Error("status must be cannot-select, without choice_id or answer")
+    const reason = choiceText(input.reason, "reason", QUESTION_CHOICE_LIMITS.reason)
+    return { status: "cannot-select", reason, answer: `Cannot select: ${reason}` }
+  }
+  if (input.answer !== undefined) throw new Error("multi-choice answers use choice_id, not answer text")
+  const id = choiceID(input.choice_id), selected = format.choices!.find(option => option.id === id)
+  if (!selected) throw new Error(`Unknown choice_id: ${id}`)
+  return { choice_id: id, answer: selected.answer,
+    ...(input.reason === undefined ? {} : { reason: choiceText(input.reason, "reason", QUESTION_CHOICE_LIMITS.reason) }) }
+}
+
 // Creation and verification admit the same normalized definition. Read callers
 // pass one shared budget through all comparisons; do not reset it per reference.
 const workReferenceBudget = () => new ProcessingBudget(PROCESSING_LIMITS.contextHashChars, PROCESSING_LIMITS.contextHashValues)
@@ -171,12 +226,14 @@ export class Collaboration {
   }
   ask(actor: Actor, focus: Focus | undefined, input: Record<string, unknown>, target: QuestionTarget = {}): LedgerRecord {
     canonical(input, new ProcessingBudget(PROCESSING_LIMITS.recordChars))
-    fields(input, ["question", "to_agent", "recipient", "blocking", "context", "context_attachments", "reference"])
-    const question = text(input.question, "question")
+    fields(input, ["question", "to_agent", "recipient", "blocking", "context", "context_attachments", "reference", "answer_type", "choices"])
+    const question = text(input.question, "question"), format = questionFormat(input)
     if ((input.to_agent === undefined) === (input.recipient === undefined))
       throw new Error("Supply exactly one of to_agent (legacy manual) or recipient")
     const to_agent = input.to_agent === undefined ? undefined : text(input.to_agent, "to_agent", 100)
     const recipient = input.recipient === undefined ? undefined : questionRecipient(input.recipient)
+    if (format.answer_type === "multi-choice" && !recipient)
+      throw new Error("multi-choice requires a typed recipient; to_agent supports text questions only")
     if (typeof input.blocking !== "boolean") throw new Error("blocking must be an explicit Boolean")
     const blocking = input.blocking, context = input.context === undefined ? undefined : text(input.context, "context", 8000)
     const context_attachments = references(input.context_attachments, "context_attachments")
@@ -207,7 +264,7 @@ export class Collaboration {
         revisions = { action_revision: action.revision, plan_revision: plan.revision }
       }
       return this.store.append({ ...actor, ...association, kind: "question", data: { format: recipient ? "loom-question/v2" : "loom-question/v1",
-        question, ...(recipient ? { recipient, ...target } : { to_agent }), blocking,
+        question, ...format, ...(recipient ? { recipient, ...target } : { to_agent }), blocking,
         context, context_attachments, reference, ...revisions } })
     })
   }
@@ -234,10 +291,14 @@ export class Collaboration {
   }
   answer(actor: Actor, input: Record<string, unknown>, verifiedParentSession?: string): AnswerCommit {
     canonical(input, new ProcessingBudget(PROCESSING_LIMITS.recordChars))
-    fields(input, ["question_id", "answer", "context_attachments"])
-    const answer = text(input.answer, "answer"), context_attachments = references(input.context_attachments, "context_attachments")
+    fields(input, ["question_id", "answer", "context_attachments", "choice_id", "reason", "status"])
+    const context_attachments = references(input.context_attachments, "context_attachments")
     const committed = this.atomic(true, () => {
       const question = this.record(input.question_id as string, "question")
+      // Earlier draft writers allowed unverified v1 selections. Keep that history
+      // readable, but require a new typed question rather than inheriting its authority gap.
+      if (question.data.answer_type === "multi-choice" && question.data.format !== "loom-question/v2")
+        throw new Error("Legacy multi-choice question is read-only; ask a new question with a typed recipient")
       if (question.data.format === "loom-question/v2") {
         const expectedAgent = question.data.expected_agent
         let expectedSession = question.data.expected_session
@@ -260,11 +321,12 @@ export class Collaboration {
         if (expectedSession && actor.session_id !== expectedSession)
           throw new Error("Answering Session does not match the intended respondent")
       }
+      const answer = answerContent(question.data, input)
       const prior = this.db.prepare("SELECT 1 FROM ledger WHERE kind='answer' AND json_extract(data,'$.data.question_id')=? LIMIT 1").get(question.id)
       // No selection, current node, Plan or host availability is required to preserve an answer.
       const record = this.store.append({ ...actor, action_id: question.action_id, node_id: question.node_id, kind: "answer",
         data: { format: question.data.format === "loom-question/v2" ? "loom-answer/v2" : "loom-answer/v1",
-          question_id: question.id, answer, context_attachments,
+          question_id: question.id, ...answer, context_attachments,
           verification: question.data.format === "loom-question/v2"
             ? "Intended respondent identity checked; response only, not resolution, approval, user provenance or execution permission"
             : "Response only; not resolution, approval or execution permission" } })
@@ -352,11 +414,17 @@ export class Collaboration {
   private briefQuestion(question: LedgerRecord, allowance: ReadAllowance, preview = 240) {
     const answers = this.answerRows(question, 0, 1, true)
     const latest = this.load(answers.slice(0, 1), allowance)[0]
+    const answerText = latest ? String(latest.data.answer ?? latest.data.statement)
+      + (typeof latest.data.reason === "string" && latest.data.status !== "cannot-select" ? `\nReason: ${latest.data.reason}` : "") : ""
     return { question_id: question.id, node_id: question.node_id, asked_by: question.agent, asking_session_id: question.session_id,
       respondent: question.data.to_agent ?? question.data.respondent ?? question.data.expected_agent ?? (question.data.recipient as QuestionRecipient | undefined)?.kind,
       ...(question.data.recipient ? { recipient: question.data.recipient } : {}),
+      ...(question.data.answer_type ? { answer_type: question.data.answer_type } : {}),
+      ...(Array.isArray(question.data.choices) ? { choice_count: question.data.choices.length } : {}),
       state: answers.length ? "answered" : "open", asked_plan_revision: question.data.plan_revision, question: String(question.data.question ?? question.data.statement).slice(0, preview),
-      ...(latest ? { answer: { record_id: latest.id, author: latest.agent, session_id: latest.session_id, statement: String(latest.data.answer ?? latest.data.statement).slice(0, preview) } } : {}),
+      ...(latest ? { answer: { record_id: latest.id, author: latest.agent, session_id: latest.session_id, statement: answerText.slice(0, preview),
+        ...(typeof latest.data.choice_id === "string" ? { choice_id: latest.data.choice_id } : {}),
+        ...(latest.data.status === "cannot-select" ? { status: "cannot-select" } : {}) } } : {}),
       answers_have_more: answers.length > 1, excerpted: true }
   }
   questions(query: QuestionQuery) {
@@ -386,8 +454,8 @@ export class Collaboration {
     const allowed: Record<string, string[]> = {
       complete: ["operation", "work_ref", "statement", "artifact_refs", "action_id", "node_id"],
       reopen: ["operation", "action_id", "node_id", "statement"],
-      ask: ["operation", "question", "to_agent", "recipient", "blocking", "context", "context_attachments", "reference"],
-      answer: ["operation", "question_id", "answer", "context_attachments"],
+      ask: ["operation", "question", "to_agent", "recipient", "blocking", "context", "context_attachments", "reference", "answer_type", "choices"],
+      answer: ["operation", "question_id", "answer", "context_attachments", "choice_id", "reason", "status"],
       "query:progress": ["operation", "view", "action_id", "node_id", "offset", "limit"],
       "query:questions": ["operation", "view", "action_id", "node_id", "respondent", "question_state", "after", "limit"],
       "query:thread": ["operation", "view", "question_id", "action_id", "after", "limit"],
@@ -399,10 +467,10 @@ export class Collaboration {
       if ((input.action_id !== undefined && input.action_id !== ref.action_id) || (input.node_id !== undefined && input.node_id !== ref.node_id)) throw new Error("Explicit scope disagrees with work_ref")
       return this.complete(actor, { work_ref: ref, statement: input.statement as string, artifact_refs: input.artifact_refs as string[] | undefined })
     }
-    if (operation === "answer") return this.answer(actor, { question_id: input.question_id, answer: input.answer, context_attachments: input.context_attachments }).record
+    const { operation: _operation, ...content } = input
+    if (operation === "answer") return this.answer(actor, content).record
     if (view === "thread") return this.thread(input.question_id as string, input.after as number | undefined, input.limit as number | undefined, input.action_id as string | undefined)
-    if (operation === "ask") return this.ask(actor, focus, { question: input.question, to_agent: input.to_agent, recipient: input.recipient, blocking: input.blocking,
-      context: input.context, context_attachments: input.context_attachments, reference: input.reference })
+    if (operation === "ask") return this.ask(actor, focus, content)
     if (!focus) throw new Error("Provide action_id or select an Action for this operation")
     if (operation === "reopen") return this.reopen(actor, focus, input.statement as string)
     if (view === "progress") return this.progress(focus.action_id, focus.node_id, input.offset as number | undefined, input.limit as number | undefined)
