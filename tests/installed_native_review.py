@@ -21,7 +21,7 @@ from pathlib import Path
 
 from installed_host_smoke import PrivateHost, installed_plugin_inventory, isolated_environment, require
 from installed_instruction_variants import verify_host_version
-from installed_questions import Scenario, events, idle, request
+from installed_questions import Scenario, events, final_events, idle, request
 from native_review_oracle import call_key, dispatch_receipts, source_basis
 
 HOST = "2.2.6"
@@ -520,6 +520,10 @@ def run(args) -> dict:
                     shutil.copyfile(audit, output / "audit.ndjson")
                     (output / "audit.ndjson").chmod(0o600)
                     report["audit_sha256"] = sha(output / "audit.ndjson")
+                    # A live snapshot can end during append. Once the writer
+                    # stops, all bytes must parse and the observer must be healthy.
+                    finalized = final_events(root)
+                    report["audit_receipts"] = len(finalized)
     except Exception as error:
         report["status"] = report["execution_status"] = "FAIL"
         report["error"] = str(error)

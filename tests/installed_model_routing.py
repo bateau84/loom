@@ -88,6 +88,7 @@ def run(cli: Path, repo: Path, plugin: Path, artifact: Path, output: Path, versi
                         'provider_requests': len(produced)})
                 finally:
                     host.close()
+                events(root, final=True)
         report['status'] = 'PASS'
     except Exception as error:
         report['status'] = 'FAIL'

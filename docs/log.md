@@ -11,6 +11,10 @@ now arbitrates initial issue and authorized retry intents before creating or cla
 (NRQ-001). The [qualification oracle](native-review-qualification.md) rejects reversed causal
 receipts, replayed hooks and cross-observer joins while preserving valid delayed native progress
 (NRQ-002). Original native evidence remains distinguishable from offline adversarial controls.
+Fresh qualification failed during live audit parsing; a partial-append control reproduced
+the failure mechanism. Incomplete trailing fragments are deferred during execution, and
+strict final reads still fail on corruption after teardown.
+The native-review and question runners recheck observer failures against the finalized audit.
 Production admission and automatic learning remain unimplemented; the native attribution and
 recipient-transfer gaps retain their unqualified/unsupported classifications.
 

@@ -141,7 +141,7 @@ certify the proposed protected-human receipt interface before it exists.
 |---|---|
 | tests/test_export.py | Export losslessness/destination/symlink guards using synthetic Git repositories/commits, not old project objects. |
 | tests/test_installed_host_smoke.py | Harness noGit inventory/readiness/location/agent/env/redirect/read-only DB/failure report checks; not installed qualification. |
-| tests/test_installed_questions.py | Harness applicability/request/admission/no-contact/running-session/frozen-corruption oracles; package native-glob completeness and retired-file absence, not live qualification. |
+| tests/test_installed_questions.py | Harness applicability/request/admission/no-contact/running-session/frozen-corruption oracles; partial live audit reads, strict final integrity and observer-failure checks; package native-glob completeness and retired-file absence, not live qualification. |
 | tests/test_native_evaluator_preflight.py | Provider-free original Session-export shape/parentage/project/privacy checks; 12 synthetic-failure/structural tests, no native evaluation. |
 
 ## Helpers and installed harness support

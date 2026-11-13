@@ -150,6 +150,7 @@ return result.id;
             scenario = Scenario(host, root)
             require(scenario.invoke(reader, 'record', query)['items'] == initial, 'Recovered public record changed exact content, sequence or attribution')
             host.close(); host = None
+            events(root, final=True)
             logs = sorted(receipts.glob('*.ndjson'))
             require(len(logs) == 2, 'Expected one audit and one recovery observer instance')
             # File identities are deliberately fixture identities; their hashes

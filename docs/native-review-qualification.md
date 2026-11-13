@@ -25,7 +25,7 @@ incoming-transfer counterexample retains `FAIL`. No real-model reasoning was tes
 The recorded input/runtime hashes allow later documentation-only evidence changes to be
 checked against those same tested bytes. The file watcher stayed enabled.
 
-Remediation checks passed **209 Python tests**, including **19 oracle tests**, the repository
+Remediation checks passed **216 Python tests**, including **19 oracle tests**, the repository
 TypeScript check, and **10 documentation/fixture tests**. The original installed question
 and Evaluator observer probes passed in the first stage. Exact-head CI remains independently
 observable on the PR; earlier suite results must not be attributed to changed source bytes.
@@ -46,6 +46,17 @@ starts, continuity loss and recovery, and legitimate progress-only/delayed-progr
 Replaying the original 1,144-receipt CI artifact preserves all 14 dispatch bindings, including
 the six distinct Q1/Q2 invocations. Reordered/reduced copies are offline oracle controls;
 they are not newly observed native outages or restarts.
+
+The first fresh remediation run at `54d5f7b` failed during Q5 while parsing a live audit
+snapshot. Its finalized 728-row audit is valid; a controlled partial append reproduces the
+same JSON failure mechanism, although the exact original scheduling is unavailable. The
+shared live reader now defers an unparseable final fragment without a line delimiter, while
+completed malformed rows remain fatal. Every affected installed consumer performs a strict
+final read after its writers stop. Native-review diagnostics are copied before that check;
+final corruption remains `FAIL`. The native-review and question runners also reject observer
+failures that finish writing during shutdown. Seven supporting reader/finalization tests cover
+JSON and UTF-8 fragments, completed corruption, late observer failure, byte preservation,
+report retention and existing no-final-newline fixtures.
 
 ## Status meanings
 

@@ -81,9 +81,34 @@ def request(host, method, path, body=None):
     return value.get('data', value) if isinstance(value, dict) else value
 
 
-def events(root):
+def events(root, *, final=False):
+    """Read receipts, deferring an incomplete live tail until a later read.
+
+    Call with final=True after writers stop to reject any remaining invalid
+    bytes. A complete last JSON value needs no newline, preserving old fixtures.
+    """
     path = root / 'audit.ndjson'
-    return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+    if not path.exists():
+        return []
+    lines = path.read_bytes().split(b'\n')
+    observed = [json.loads(line.decode('utf-8')) for line in lines[:-1]]
+    if lines[-1]:
+        try:
+            observed.append(json.loads(lines[-1].decode('utf-8')))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            # A live append may end inside JSON or a UTF-8 character. Complete
+            # rows above remain strict, and the next read retries this tail.
+            if final:
+                raise
+    return observed
+
+
+def final_events(root):
+    """Validate the complete audit after every writer has stopped."""
+    observed = events(root, final=True)
+    require(not any(event['type'] == 'observer-failure' for event in observed),
+            'Passive native observer failed; coverage incomplete')
+    return observed
 
 
 def idle(host, sessions, timeout=30):
@@ -1094,7 +1119,13 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
                 identity['process_dead'] = owned.proc.poll() is not None
             if (root / 'audit.ndjson').exists():
                 shutil.copy2(root / 'audit.ndjson', output / 'audit.ndjson')
-            report['activity'] = {kind: sum(e['type'] == kind for e in events(root)) for kind in ['model-request', 'provider-request', 'tool-before', 'tool-after', 'prompt']}
+            try:
+                observed = final_events(root)
+                report['activity'] = {kind: sum(e['type'] == kind for e in observed) for kind in ['model-request', 'provider-request', 'tool-before', 'tool-after', 'prompt']}
+            except (json.JSONDecodeError, UnicodeDecodeError, RuntimeError) as error:
+                report['status'] = 'FAIL'
+                report['audit_error'] = f'{type(error).__name__}: {error}'
+                report.setdefault('error', report['audit_error'])
     report['private_root_removed'] = not Path(report['private_root']).exists()
     (output / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
     return report

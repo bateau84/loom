@@ -306,12 +306,13 @@ def run(args):
             finally:
                 restarted.close()
             require(restarted.proc.poll() is not None, "Restart host did not stop")
-            require(not any(event["type"] == "observer-failure" for event in events(root)),
+            observed = events(root, final=True)
+            require(not any(event["type"] == "observer-failure" for event in observed),
                     "Passive host observation failed; native evidence invalid")
-            report["native_model_requests"] = sum(e["type"] == "model-request" for e in events(root))
+            report["native_model_requests"] = sum(e["type"] == "model-request" for e in observed)
             require(report["native_model_requests"] > 0, "Installed host made no actual model request")
             require(all(e["data"].get("model", {}).get("providerID") == "question-fixture"
-                        for e in events(root) if e["type"] == "model-request"),
+                        for e in observed if e["type"] == "model-request"),
                     "A non-scripted paid or unqualified model was requested")
             report["status"] = "PASS"
     except Exception as error:
