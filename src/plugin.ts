@@ -1,5 +1,6 @@
 import { Plugin } from "@opencode/plugin"
 import { Database } from "bun:sqlite"
+import { sqliteConnection } from "./sqlite-connection.js"
 import { createHash, randomUUID } from "node:crypto"
 import { decodeConfigYaml } from "./config-parser.js"
 import { mkdir, open, realpath } from "node:fs/promises"
@@ -15,7 +16,7 @@ import { resolveContextSelection, workContext } from "./work-context.js"
 import { digest, PROCESSING_LIMITS, type Actor, type Focus } from "./model.js"
 import { renderFullHistory } from "./history-renderer.js"
 import { fullThreadMarkdown } from "./response-format.js"
-import { Store } from "./store.js"
+import { Store, type SQL } from "./store.js"
 import { Learning } from "./learning.js"
 import { EVALUATION_READS, registerAutomaticLearning, type AutomaticLearningRuntime } from "./learning-runtime.js"
 import type { ObjectiveSource, ObjectivePhase } from "./objectives.js"
@@ -210,6 +211,7 @@ export default Plugin.define({
     let filename = join(state, "ledger.sqlite")
     let stage = "state-directory"
     let db: Database | undefined, learningDB: Database | undefined
+    let actionSQL: SQL
     let store: Store, observer: Observer, learning: Learning | undefined
     try {
       await mkdir(state, { recursive: true, mode: 0o700 })
@@ -219,8 +221,9 @@ export default Plugin.define({
       filename = await realpath(filename)
       stage = "database-open"
       db = new Database(filename)
+      actionSQL = sqliteConnection(db)
       stage = "store-initialization"
-      store = new Store(db, projectScope)
+      store = new Store(actionSQL, projectScope)
       stage = "observer-initialization"
       observer = new Observer(store)
     } catch (error) {
@@ -241,7 +244,7 @@ export default Plugin.define({
       learningFilename = await realpath(learningPath)
       learningDB = new Database(learningFilename)
       learningStage = "learning-initialization"
-      learning = new Learning(learningDB, store, db)
+      learning = new Learning(sqliteConnection(learningDB), store, actionSQL)
     } catch (error) {
       learningFailure = learningStage
       try { console.warn(`Loom optional learning unavailable (${learningStage}): ${error instanceof Error ? error.message : String(error)}`) }
@@ -277,7 +280,7 @@ export default Plugin.define({
       try { return await realpath(location.directory) === directory } catch { return false }
     }
     const owns = async (sessionID: Parameters<typeof ctx.session.get>[0]["sessionID"]) =>
-      sessionIsLocal(payload(unwrapped(await ctx.session.get({ sessionID }))))
+      sessionIsLocal(payload(unwrapped(await ctx.session.get({ sessionID: sessionID }))))
     const checkedSession = async (sessionID: string) => {
       const session = payload(unwrapped(await ctx.session.get({ sessionID })))
       if (session.id !== sessionID || !await sessionIsLocal(session))
