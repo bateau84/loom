@@ -1,6 +1,19 @@
 /** Registered discovery help. No guide-file read or extra tool call is required. */
 export const TOOL_EXAMPLES = {
   agents: [{}],
+  review: [
+    { operation: "freeze", request: { format: "loom-review-request/v1", request_id: "REVIEW_REQUEST_ID",
+      mandate: { question: "Assess correctness of the exact cited artifact.", dimensions: ["correctness"],
+        criteria: [{ text: "Preserve the accepted behavior", source_ref: null }], mode: "independent", inclusions: [], exclusions: [] },
+      intended_recipient: { agent: "reviewer", session_id: null },
+      members: [{ member_id: "artifact", work_ref: null, producing_attempt_refs: [],
+        artifact_refs: [{ locator: "ARTIFACT_PATH", version: { kind: "sha256", value: "0000000000000000000000000000000000000000000000000000000000000000" }, content_ref: null }],
+        prior_review_request_id: null, membership_source_refs: [], gaps: [{ reason: "source-missing", source_ref: null }] }], rechecks: [] } },
+    { operation: "read", request_id: "REVIEW_REQUEST_ID", limit: 20 },
+    { operation: "issue", request_id: "REVIEW_REQUEST_ID", limit: 20 },
+    { operation: "work", request_id: "REVIEW_REQUEST_ID", member_id: "MEMBER_ID" },
+    { operation: "relate", request_id: "REVIEW_REQUEST_ID", relationship: "finding", source_record_id: "RECORD_ID", member_ids: ["MEMBER_ID"] },
+  ],
   trace: [
     { operation: "timeline", limit: 25 },
     { operation: "timeline", session_id: "SESSION_ID", export_path: "private-retro/session.json", include_text: true, limit: 25 },
@@ -70,6 +83,12 @@ export const TOOL_EXAMPLES = {
 export type LoomToolName = keyof typeof TOOL_EXAMPLES
 
 const entries: Record<LoomToolName, { summary: string; usage: string; returns: string; caution: string }> = {
+  review: {
+    summary: "Preserve an original review mandate and frozen subjects; reconstruct qualified private evidence.",
+    usage: "freeze takes a stable request_id, complete original mandate, intended_recipient, exact members and rechecks in loom-review-request/v1. Set mandate.currentness=current-at-issue-claim only for an original freshness condition; otherwise historical scope is frozen. read takes request_id and limit (1-50); follow next_after, next_relationship_after and next_issue_after as after, relationship_after and issue_after. work returns a member's historical Action/Plan. issue reads initial intent/outcomes; optional authorization_ref selects a canonical retry. Follow next_outcome_sequence as after. relate links own-Session source_record_id to member_ids. Recheck finding_ids name prior finding/correction relationship IDs. prepare creates or finds the initial intent; it never dispatches. Typed loom_record ask accepts review with the same question and intended agent.",
+    returns: "Original mandate, frozen subjects and group constituents, artifact availability gaps, original source records and qualified relationships. Authored links are the link author's unverified interpretation, separate from source_producer. Issue reads preserve original decision/predecessor and outcome receipts. A structured review ask persists and prepares automatically, then withholds protected delivery.",
+    caution: "Each operation/page requires native ledger read permission and the requesting Session. Intended recipient or project membership grants no disclosure. Same-ID changes conflict. Artifact references do not collect bytes or prove access. No raw prompt/result collection, issue permit, retry approval, native model dispatch, protected transfer, exact-execution proof or automatic learning. A consumed intent stays consumed. Replace the example digest.",
+  },
   agents: {
     summary: "Discover native agents and Loom roles; inspect configuration, capture and load-queue diagnostics.",
     usage: "Use {} to find the actual roster before native delegation. Choose by available=true, enabled=true and relevant roles; configured=true alone does not establish availability. Match agents[].roles with role_descriptions by role ID. Agent and role descriptions are coordination hints, not permissions or automatic matching. Agents and skills are defined outside Loom.",
@@ -139,6 +158,7 @@ export const TOOL_HELP = Object.fromEntries(Object.entries(entries).map(([name, 
   `Returns: ${help.returns}`,
   `Caution: ${help.caution}`,
   ...(name === "record" ? ["Concerns: kind=concern needs a statement, no Action or verdict. Every agent records its own task-related concerns, not only handoffs. State suspected versus confirmed with support or unknowns. Documented, outside-task or handed-off is not resolved. General routes blockers natively; critic cites original Action or Session and concern record IDs. Read Action sources using action_id+record_id (no node_id), Session sources using full_thread session_id. Concern IDs are not observation evidence_ids. Append follow-ups; no automatic escalation, gate or lifecycle."] : []),
+  ...(name === "record" ? ["Structured reviews: ask with a typed agent/role recipient may include review:loom-review-request/v1. Preserve the exact question and intended agent in that immutable request. Put all scope/context in its mandate/members; do not mix context/reference fields. Loom freezes the request and prepares the canonical initial intent automatically. Protected delivery remains withheld on this host; no ordinary question body, native child, model call or issue permit is created. Read the private request through loom_review in the original requesting Session with native ledger-read permission."] : []),
   'Examples (JSON inputs, not shell commands; replace ACTION_ID/RECORD_ID/QUESTION_ID; copy work_ref from worked-against context):',
   ...TOOL_EXAMPLES[name as LoomToolName].map(input => JSON.stringify(input)),
   name === "record"

@@ -43,7 +43,10 @@ schema compatibility.
   needed. Do not use this procedure against untrusted files or concurrent actors.
 - Record the installed Loom commit/package version, Bun version, native host
   version, project identity/canonical path and source path alongside the backup.
-  This procedure targets the current `PRAGMA user_version=1` Store. That number
+  This procedure accepts historical `PRAGMA user_version=1` and current
+  `user_version=2` Stores. Version 2 adds immutable review requests, source-store
+  identity, qualified relationships and consumed issue claims in the same Store.
+  The version number
   alone is not complete version provenance: use the same Loom revision for
   application verification. Do not point a newer build at the originals.
 - This backs up Loom state only: not native OpenCode Sessions, configuration,
@@ -160,15 +163,21 @@ require(paths[0] != paths[1], "Inspection copies must be separate")
 with ExitStack() as stack:
     databases = [stack.enter_context(closing(sqlite3.connect(path.as_uri() + "?mode=rw", uri=True)))
                  for path in paths]
+    versions = []
     for db in databases:
         db.execute("PRAGMA query_only=ON")
-        require(db.execute("PRAGMA user_version").fetchone() == (1,), "Unsupported Store version")
+        version = db.execute("PRAGMA user_version").fetchone()[0]
+        require(version in (1, 2), "Unsupported Store version")
+        versions.append(version)
         require(db.execute("PRAGMA integrity_check").fetchall() == [("ok",)], "Integrity check failed")
         require(not db.execute("PRAGMA foreign_key_check").fetchall(), "Foreign key check failed")
+    require(versions[0] == versions[1], "Store versions differ")
     schema = "SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name"
     require(databases[0].execute(schema).fetchall() == databases[1].execute(schema).fetchall(), "Schema differs")
     tables = [row[0] for row in databases[0].execute("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name")]
     require({"actions", "plans", "ledger", "focus", "action_versions", "primary_deliveries"}.issubset(tables), "Missing Store tables")
+    if versions[0] == 2:
+        require({"review_store_identity", "review_requests", "review_relationships", "review_issue_intents", "review_issue_outcomes"}.issubset(tables), "Missing review state tables")
     for table in tables:
         # Quote identifiers discovered from sqlite_schema, never interpolate raw input.
         quoted = '"' + table.replace('"', '""') + '"'
@@ -305,7 +314,10 @@ python3 tools/learning-state-backup.py restore \
 `backup` reserves a **new** private directory and copies the stopped file set
 without opening originals with SQLite. It checks source and copied bytes, then
 opens *disposable copies* for `integrity_check`, `foreign_key_check`, required
-tables/columns, Store `user_version=1` and learning `user_version=0`.
+tables/columns, Store `user_version=1` or `2` and learning `user_version=0`.
+Version 2 must include the review source identity, frozen requests,
+relationships, canonical issue intents and outcomes. A missing v2 review table
+or required column rejects the set; recovery does not create replacement claims.
 The learning database currently has no explicit migration version: its full
 SQLite schema SHA-256 is also recorded. The manifest is written last, with a
 unique set ID, project identity/scope, exact operator-supplied Loom revision and
@@ -341,6 +353,7 @@ From a separate checkout with the pinned Bun and dependencies:
 
 ```sh
 bun test tests/learning-backup-restore-native.test.ts
+bun test tests/review-recovery-native.test.ts
 bun test tests/manual-backup-restore.test.ts
 ```
 
@@ -354,6 +367,17 @@ the registered **public** `loom_tweak`, `loom_insights`, `loom_action` and
 partial/mixed/corrupt/incompatible copies. This is isolated recovery evidence,
 **not** qualification of power-loss durability, multi-host backup, online copy,
 native Session history or production disaster recovery.
+
+Review recovery additionally preserves each frozen mandate/member, source-store
+identity, relationship qualification and consumed initial issue intent. Replaying
+a consumed canonical intent after restore does not issue another permit. The
+registered review reader rechecks the source-file permission and the original
+requester Session on every read; restore does not grant another Session access.
+Opening a v1 Store with current Loom adds empty review tables transactionally and
+preserves existing records without inventing historical review mandates or native
+execution receipts. These tests qualify local reconstruction only. They cannot
+recover native Session history or establish missing host admission, execution or
+recipient-transfer authority.
 
 Restore does not open the destination with the plugin, dispatch a model,
 resume a Session, retry an uncertain delivery, change permissions or routing

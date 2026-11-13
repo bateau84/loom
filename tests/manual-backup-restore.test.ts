@@ -176,7 +176,14 @@ for (const mode of ["closed", "residual-WAL"] as const) test(`manual restore pre
       copyFileSync(join(backup, "ledger.sqlite"), join(incomplete, "ledger.sqlite"))
       const result = python(verifyScript, [join(reference, "ledger.sqlite"), join(incomplete, "ledger.sqlite")])
       expect(result.exitCode).not.toBe(0)
-      expect(result.stderr.toString()).toContain("SQL content differs")
+      // The current writer also committed the v1 -> v2 migration in that WAL.
+      // Omitting it loses both the format transition and the committed Action.
+      expect(result.stderr.toString()).toContain("Store versions differ")
+      const missingWAL = new Database(join(incomplete, "ledger.sqlite"))
+      try {
+        expect(missingWAL.query("PRAGMA user_version").get()).toEqual({ user_version: 1 })
+        expect(missingWAL.query("SELECT id FROM actions WHERE id=?").get(walActionID)).toBeNull()
+      } finally { missingWAL.close() }
     }
     expect(files(source)).toEqual(original)
     expect(files(backup)).toEqual(original)

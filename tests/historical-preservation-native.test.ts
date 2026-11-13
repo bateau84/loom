@@ -10,6 +10,7 @@ import { Collaboration } from "../src/collaboration.js"
 import { savedRows } from "./helpers/legacy-delivery.js"
 import { digest } from "../src/model.js"
 import { hydrate, snapshot, type Snapshot, type populate } from "./fixtures/baseline-c9ffcfa/oracle.js"
+import { assertReviewMigration } from "./helpers/review-migration.js"
 
 test("frozen 3f08da9 history still reopens byte-exactly without creating consent or delivery machinery", async () => {
   const provenance = JSON.parse(await readFile(new URL("./fixtures/historical-3f08da9/provenance.json", import.meta.url), "utf8"))
@@ -31,11 +32,13 @@ test("frozen 3f08da9 history still reopens byte-exactly without creating consent
     const answer = old.collaboration.answer({ session_id: "research", agent: "research" }, { question_id: question.id, statement: "Legacy answer" })
     const before = snapshot(db)
     expect(before.tables.primary_deliveries).toBeUndefined()
+    let storeID: string | undefined
     for (let restart = 0; restart < 2; restart++) {
       const store = new Store(db)
       expect(store.collaboration.thread(question.id).answers[0].id).toBe(answer.id)
       expect(() => store.collaboration.execute(primary, { operation: "authorize-continuation", assignment_id: "assignment", continuation: "primary-native/v1" })).toThrow()
-      expect(snapshot(db).tables).toEqual(before.tables)
+      storeID = assertReviewMigration(db, before, storeID)
+      expect(store.reviews.storeID).toBe(storeID)
       expect(store).not.toHaveProperty("delivery")
     }
   } finally { db.close() }
@@ -81,9 +84,10 @@ test("populated startup, reads, rejected retired calls and legacy answers never 
     const filename = join(state, "ledger.sqlite")
     db = new Database(filename); hydrate(db, saved)
     const rawBefore = savedRows(db)
+    let storeID: string | undefined
     for (let restart = 0; restart < 2; restart++) {
       dispose = await (plugin as any).setup(ctx)
-      expect(snapshot(db)).toEqual(saved)
+      storeID = assertReviewMigration(db, saved, storeID)
       expect(savedRows(db)).toEqual(rawBefore)
       // Raw ledger is the historical interface, without live status reinterpretation.
       for (const row of db.query("SELECT id FROM ledger WHERE action_id IS NOT NULL ORDER BY seq").all() as { id: string }[]) {
@@ -96,7 +100,7 @@ test("populated startup, reads, rejected retired calls and legacy answers never 
         await expect(invoke({ operation, assignment_id: "synthetic-pending-assignment", delivery_id: ids.activePending.delivery.intent_id })).rejects.toThrow("retired")
       for (const view of ["assignments", "deliveries"])
         await expect(invoke({ operation: "query", view })).rejects.toThrow("retired")
-      expect(snapshot(db)).toEqual(saved)
+      assertReviewMigration(db, saved, storeID)
       expect(savedRows(db)).toEqual(rawBefore)
       await dispose?.(); dispose = undefined
       expect(native).toEqual([])

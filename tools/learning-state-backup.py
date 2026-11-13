@@ -42,6 +42,19 @@ REQUIRED_COLUMNS = {
         "observed_sha256", "observed_effect", "statement", "evidence_refs",
     },
 }
+REVIEW_COLUMNS = {
+    "review_store_identity": {"singleton", "store_id"},
+    "review_requests": {"request_id", "requester_session", "data", "membership_data", "created_at"},
+    "review_relationships": {"sequence", "id", "request_id", "data"},
+    "review_issue_intents": {
+        "sequence", "intent_key", "request_id", "attempt_id", "intent_data",
+        "decision_ref", "decision_data", "state", "claimant_id",
+        "rejection_reason", "native_outcome", "created_at", "claimed_at", "updated_at",
+    },
+    "review_issue_outcomes": {
+        "sequence", "attempt_id", "status", "source_ref", "reason", "recorded_at",
+    },
+}
 
 
 def require(condition, message):
@@ -115,9 +128,9 @@ def inspect_sql(directory, file_names):
             with closing(sqlite3.connect(uri, uri=True)) as db:
                 db.execute("PRAGMA query_only=ON")
                 version = db.execute("PRAGMA user_version").fetchone()[0]
-                expected_version = 1 if name == "ledger.sqlite" else 0
-                require(version == expected_version,
-                        f"Unsupported {name} user_version={version}; expected {expected_version}")
+                supported_versions = (1, 2) if name == "ledger.sqlite" else (0,)
+                require(version in supported_versions,
+                        f"Unsupported {name} user_version={version}; expected one of {supported_versions}")
                 require(db.execute("PRAGMA integrity_check").fetchall() == [("ok",)],
                         "Integrity check failed: " + name)
                 require(not db.execute("PRAGMA foreign_key_check").fetchall(),
@@ -127,17 +140,28 @@ def inspect_sql(directory, file_names):
                     "ORDER BY type,name,tbl_name"
                 ).fetchall()
                 tables = {row[1] for row in schema if row[0] == "table"}
-                require(REQUIRED_TABLES[name] <= tables,
+                required_columns = REQUIRED_COLUMNS if name == "learning.sqlite" else (
+                    REVIEW_COLUMNS if version == 2 else {}
+                )
+                required_tables = REQUIRED_TABLES[name] | set(required_columns)
+                require(required_tables <= tables,
                         "Missing required " + name + " tables: " +
-                        ", ".join(sorted(REQUIRED_TABLES[name] - tables)))
-                if name == "learning.sqlite":
-                    for table, required in REQUIRED_COLUMNS.items():
-                        columns = {row[1] for row in db.execute(
-                            'PRAGMA table_info("' + table + '")'
-                        )}
-                        require(required <= columns,
-                                "Incompatible " + table + " columns: " +
-                                ", ".join(sorted(required - columns)))
+                        ", ".join(sorted(required_tables - tables)))
+                for table, required in required_columns.items():
+                    columns = {row[1] for row in db.execute(
+                        'PRAGMA table_info("' + table + '")'
+                    )}
+                    require(required <= columns,
+                            "Incompatible " + table + " columns: " +
+                            ", ".join(sorted(required - columns)))
+                if name == "ledger.sqlite" and version == 2:
+                    identity = db.execute(
+                        "SELECT singleton,store_id FROM review_store_identity"
+                    ).fetchall()
+                    require(len(identity) == 1 and identity[0][0] == 1
+                            and isinstance(identity[0][1], str)
+                            and re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}", identity[0][1]),
+                            "Missing or invalid review source-store identity; no replacement identity is authorized")
                 schema_hash = hashlib.sha256(json.dumps(
                     schema, ensure_ascii=False, separators=(",", ":"),
                 ).encode("utf-8")).hexdigest()

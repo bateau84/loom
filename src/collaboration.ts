@@ -151,6 +151,14 @@ export class Collaboration {
       throw new Error("work_ref does not match the recorded definition; no record saved")
     return original
   }
+  /** Exact historical definition. The caller owns the read/write snapshot. */
+  resolveWork(input: WorkRef) {
+    const ref = checkedRef(input), action = this.verifyReference(ref)
+    const plan = this.store.plan(ref.action_id, ref.plan_revision)
+    const node = plan.nodes.find(node => node.id === ref.node_id)
+    if (!node) throw new Error("Historical work definition is unavailable")
+    return { action, plan, node }
+  }
   complete(actor: Actor, input: { work_ref: WorkRef; statement: string; artifact_refs?: string[] }): LedgerRecord {
     canonical(input, new ProcessingBudget(PROCESSING_LIMITS.recordChars))
     const ref = checkedRef(input.work_ref), statement = text(input.statement, "statement"), artifact_refs = references(input.artifact_refs)

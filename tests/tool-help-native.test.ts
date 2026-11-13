@@ -7,7 +7,7 @@ import { registeredLoom } from "./helpers/registered-loom.js"
 for (const name of Object.keys(TOOL_HELP) as LoomToolName[]) test(`registered ${name} tool carries complete search help without role injection`, async () => {
   const fixture = await registeredLoom()
   try {
-    expect([...fixture.tools.keys()].sort()).toEqual(["action", "agents", "assessment", "context", "insights", "objective", "plan", "qa", "record", "trace", "trends", "tweak"])
+    expect([...fixture.tools.keys()].sort()).toEqual(["action", "agents", "assessment", "context", "insights", "objective", "plan", "qa", "record", "review", "trace", "trends", "tweak"])
     expect(fixture.namespaces.get("loom").description).toBe(LOOM_NAMESPACE_HELP)
     const tool = fixture.tools.get(name)
     expect(tool.description).toBe(TOOL_HELP[name])
@@ -83,7 +83,7 @@ test("canonical collaboration help matches conditional schemas and rejects alias
   try {
     const tool = f.tools.get("record")
     for (const [operation, required, allowed] of [
-      ["ask", ["operation", "question", "blocking"], ["operation", "question", "to_agent", "recipient", "blocking", "context", "context_attachments", "reference"]],
+      ["ask", ["operation", "question", "blocking"], ["operation", "question", "to_agent", "recipient", "blocking", "context", "context_attachments", "reference", "review"]],
       ["answer", ["operation", "question_id", "answer"], ["operation", "question_id", "answer", "context_attachments"]],
     ] as const) {
       const schema = tool.input.allOf.find((s: any) => s.if.properties.operation?.const === operation).then
@@ -209,7 +209,7 @@ test("Plan rejects missing required and invented lifecycle fields without writin
 test("search-visible help explains awaited writes and independent-call failure handling", async () => {
   const f = await registeredLoom()
   try {
-    expect(f.tools.size).toBe(12)
+    expect(f.tools.size).toBe(13)
     for (const tool of f.tools.values()) {
       expect(tool.description).toContain("Await writes before using IDs or ending Code Mode")
       expect(tool.description).toContain("Promise.allSettled and inspect every outcome")

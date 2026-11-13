@@ -1,0 +1,273 @@
+{
+  "format": "loom-stage2-review-foundation-evidence/v1",
+  "recorded_at": "2026-11-13T16:00:41.740350+00:00",
+  "repository": "bateau84/loom",
+  "pull_request": 233,
+  "adjudicated_stage1_revision": "3a7b74f69ea98236c11dcee9e03c8000139453b4",
+  "scope": "Bounded Stage 2 request persistence, issue arbitration, historical scope and qualified public reconstruction.",
+  "mechanical_status": "PASS",
+  "whole_objective_learning_qualification": "UNQUALIFIED",
+  "candidate_provenance": {
+    "source_head": "3a7b74f69ea98236c11dcee9e03c8000139453b4",
+    "source_dirty": true,
+    "identification": "This local run used the uncommitted Stage 2 candidate over the adjudicated Stage 1 head. The runtime and input digests below identify the tested bytes. It is not evidence of a clean-head run. Later documentation and compatibility-test updates did not change the recorded runtime or harness inputs.",
+    "runtime_sha256": {
+      "server.ts": "f295040f1a22281835d43d04006e1c1cefbadfb82216b5bc7a4d4e6c610c5434",
+      "src/agents.ts": "002adffbdf081ff5934686a53ce2ad829602d57b5213c47bf53b4f758a9b9842",
+      "src/answer-resume.ts": "8953bf5abbe3833632c78eb66e4c55d95519828a655463e083bd00368233732d",
+      "src/collaboration.ts": "202b5a03e091f60183749e2dcaab7d7d1811b680e2ed6eff97b9bd1182a402f6",
+      "src/config-admission.ts": "7d3754b3dcae9bc08d90d22acf71cdd2bbded564b889c8e80976358fb314b9f1",
+      "src/config-parser.ts": "9b1502e18720eded50244470304022b1a986edf08bcc0ed4a8cc9f04ef5f1d7f",
+      "src/config.ts": "4b5a723537eac7ac755e45c6261c7a0db83dfc626049b2b1ff77f487f8e50e16",
+      "src/context.ts": "31d159dccec85b0e9613aad4f0d45a842467b40ace3cd9387a1f6b54e306f515",
+      "src/history-renderer.ts": "f32bb730ad37b64a7d4763380196a01222779a6f9407d0ffb943ed1b54e333d9",
+      "src/history.ts": "0b99b3a28df06d5ec215a2392428c569827c04488f62290cefa7dedd505e1404",
+      "src/learning-findings.ts": "6f19cfb6244e9272f320e9c6fce093b403a1f8670b6c1a386cc295524571fee7",
+      "src/learning.ts": "f21fbb84f340db4e6af3603ad04349440cf4add9b3dd6049b7f4606a0b523d76",
+      "src/model-routing-adapter.ts": "293381d5ac14aca4e6ec922185e0c7b89e85ba4eccf58edaf5866c9a8636a37e",
+      "src/model-routing-runtime.ts": "56b119d6383d2dc9cbecc02bc624ecf9dbb5cbc32eaa2e4bcd163ca07572a417",
+      "src/model-routing-shared-quota.ts": "4afe41f705d8c3b776ebe9af3607f98e283044efd1b10abaa0376c347cb822b3",
+      "src/model-routing.ts": "3faa266971835600e42f923684b144c181ebd01b9e70e40a71d323561471ecf8",
+      "src/model.ts": "73da3eafb970fd8588ed1ce6a5c6b1a0147834250b2db72105b22eb5908edc9f",
+      "src/objective-trends.ts": "9eeb7a88c163f532e35e8efbc3ddb9db0210531cd35c966e19ce729993e0c7d4",
+      "src/objectives.ts": "33c5d53ea90c1435a3d30ec2a4e3e7c40ff6d73df146231b559c1786003b5efa",
+      "src/plugin.ts": "349385a379319b7fc5497517d392d78366df03730264525e473810252a3a0ce2",
+      "src/question-routing.ts": "5b63cf58492cc292fcd106e8646232daab1fa99bdeb549328378fdc34417eefd",
+      "src/quota-state.ts": "c5fc68d871d66ce46750262ddf1e383f770d49cc73fc8cf22aedde2d45bf3782",
+      "src/response-format.ts": "6d9c4ec6cc00e58890f4d141692d9be856c677c266e320ba5058d3f2ada72815",
+      "src/review-companions.ts": "6a06147d970a26bd09adcb9b8e0ab2777fb68132520f79eb529c94cfa35ff6bf",
+      "src/review-issues.ts": "f4cb99197d45cad0db7c2b018c4db60df2aad481a3ee77caf235d96fe8ba3043",
+      "src/review-requests.ts": "be5f1c08065be3a6af0454d97d0c720723a31113e0cf02f64ca2e241d9c81f00",
+      "src/session-trace.ts": "8a10fe65534532ee54c858988d2c78c56f5ac34a825e4a7ea4b960f1d6f17b6b",
+      "src/skill.ts": "b6009d65da0bc936f24b9221a099ccf911d2eb4e68e72a16e480333c232ae9bf",
+      "src/skills/loom/SKILL.md": "ea91c74207dc8ec0a39fabce7a9a6de9ace88fe0b58100ad4d6e599ecf83edd9",
+      "src/store.ts": "b9a7b712b1a7a1dbef544b5e493ed2518eac9256c44f1ac97cbcaeb523dae295",
+      "src/tool-help.ts": "79bfca667b5c5e97ba7b737262d24d00b3575599dede4d5b49d8ababb4bfa156",
+      "src/work-context.ts": "3cb3d6435f36e9e955ee91135033ac4b910172ac7ebd902c50562500eb075ce4"
+    },
+    "input_sha256": {
+      "tests/installed_review_persistence.py": "54d10bd7525484678ae333fb9910d2a6fca86131596cfb51b753e39989bb40de",
+      "tests/installed_questions.py": "e2972315d9f18c63b9b2bbd2e7f85a362b1cb8ebf9b4ac862396308afef77bea",
+      "tests/installed_host_smoke.py": "21c83b745ba82153e7b1e41c78d8120493bbd044383c67f806dfb3f9a70c6c4c",
+      "tests/installed_instruction_variants.py": "295d62f3ffd7d30bf87a62e6be05003abf3927b40097635d2c5d073e5d27b258",
+      "tests/question-host/server.ts": "33c5d27f82c3e9bf6dd26f9de05d18761ddca6a7be6266ae67468f91b2bdfb93",
+      "tests/question-host/review-script.ts": "b3bc6bd7bba799b08b006a83e6e8dfec6259de4aab9beae8e7260ecb7ef25977",
+      "tests/question-host/provider.mjs": "8e98dfa238f709d6b89df590a23c7d708e5283f44fc6f3a4b5193c05a81d66b0",
+      ".bun-version": "b99b4c7cdf236f59bc9f65d963deaecae3b16a7dad87939cacb9057f7664daee",
+      "bun.lock": "6b239350c433d4e18982499d7a9849db7f380466ccab030d431aa454eb46aa8c",
+      "package.json": "0b62be84895944c8fd859e4819903db640cb4d778f8d4e016dcf63e312639d21"
+    },
+    "verification_file_sha256": {
+      "tests/review-requests-native.test.ts": "251023e87af44d48698053657860476c7ca661f84718ba33d0ffb0a530156c93",
+      "tests/review-issues-native.test.ts": "9820b70af2e58b7f3e7244369c286ac326ed95d1a01b518a8f431f305c277a26",
+      "tests/review-request-integration-native.test.ts": "1deedf067591f6986254bf7e8752d2fb81be38549916c128d518285f50a2cc8e",
+      "tests/review-recovery-native.test.ts": "6c430c93ba821b51f4da8ce639884a23f0d027bc34267514aa3630dacb2a2fc1",
+      "tests/observer-historical-work.test.mjs": "e27dcfa641f693ca36d10780ad8aac51c7056321f109a413277ee58445db189d",
+      "tests/helpers/review-recovery-reader.ts": "1151c218289774fe87f134784f518ceccbf543dba6be5e586d5785fb0a044910",
+      "tests/helpers/review-migration.ts": "8ec12d57daf52831820ba2bad3e8b638753ca532e780f21d44c99d64c227defb",
+      "tests/installed_review_persistence.py": "54d10bd7525484678ae333fb9910d2a6fca86131596cfb51b753e39989bb40de",
+      "tests/test_installed_review_persistence.py": "06d5c199d01de0dec8e876de35cd5e40eacc0143a76bfa700c37c1e4905fa02a",
+      "tools/learning-state-backup.py": "cd4cdeeb06a8cf7097ae608fd825e38bda2d37ddc8043236081299de02f0d5b5",
+      ".github/workflows/installed-questions.yml": "d4f5b53a0ef25286f6e3be83124cf49fdd72f839d9de7530b793cfb573efff65"
+    },
+    "verified_source_installed_archive_runtime_files": 32,
+    "verified_input_files": 10
+  },
+  "executed_checks": [
+    {
+      "command": "bun run typecheck",
+      "status": "PASS"
+    },
+    {
+      "command": "tsc --noEmit --ignoreConfig --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck --types bun,node tests/question-host/server.ts tests/question-host/get-rejection.test.ts tests/retrospective-host/audit.ts tests/host-trust/server.ts",
+      "status": "PASS"
+    },
+    {
+      "command": "bun run test:core",
+      "status": "PASS",
+      "passed": 387,
+      "failed": 0
+    },
+    {
+      "command": "bun run test:native",
+      "status": "PASS",
+      "passed": 370,
+      "failed": 0,
+      "assertions": 6733,
+      "test_files": 45
+    },
+    {
+      "command": "bun run test:python",
+      "status": "PASS",
+      "tests": 241
+    },
+    {
+      "command": "bun build server.ts --target=bun --external @opencode/plugin --outfile /temporary/path/loom-server.js",
+      "status": "PASS"
+    },
+    {
+      "command": "python3 tools/check-review-regressions.py --report-directory /temporary/new-directory",
+      "status": "PASS",
+      "targeted_mutants_caught": 3,
+      "reverse_fix_controls_caught": 2,
+      "limits": "Targeted reconstructed counterchecks, not an exhaustive mutation score."
+    },
+    {
+      "command": "git diff --check",
+      "status": "PASS"
+    }
+  ],
+  "required_regressions": {
+    "concurrent_preparation": "Independent processes resolve equivalent initial intents and canonical retry aliases to one attempt; concurrent claims yield one permit.",
+    "lost_acknowledgement": "Injected post-COMMIT failures preserve publication and claim identity across reopen; replay never returns a second permit.",
+    "proven_non_admission": "Trusted outcome can refine a prior issued observation, but the consumed intent is never reopened.",
+    "unknown_execution": "Missing acknowledgement remains unknown; fake decisions and decisions lacking unresolved-prior authorization cannot redispatch.",
+    "canonical_authorized_retry": "A fixture-owned durable decision binds original request and predecessor; canonical aliases share one additional permit.",
+    "same_retry_decision_replay": "The same canonical decision and every alias return the existing attempt, including after reopen.",
+    "historical_revision": "A remains readable and claimable after B; original mandate.currentness alone activates stale-work rejection.",
+    "recovery": "Real v1 migration preserves original bytes/schema; failed migration rolls back. Closed and killed-writer residual-WAL backup/restore preserve namespace, consumed intent and authorized public readback.",
+    "readback_authority": "Native permission is checked on each production operation; ownership is rechecked; unrelated Sessions and same-requester native read revocation deny private results."
+  },
+  "retry_authority": {
+    "production_owner": "none qualified or connected",
+    "default": "retry-authority-unavailable",
+    "inspected_existing_boundaries": [
+      "src/question-routing.ts",
+      "src/plugin.ts",
+      "src/collaboration.ts",
+      "@opencode/plugin@2.2.6 permission.assert"
+    ],
+    "findings": [
+      "Existing question dispatch has no durable canonical retry decision.",
+      "OQ answers do not grant permission.",
+      "Native permission.assert does not return a durable request-and-predecessor-bound retry authorization."
+    ],
+    "test_authority": "Fixture-owned durable SQLite authorization decisions; proves arbitration mechanics only.",
+    "product_decision": "May an existing admission/dispatch owner issue a durable, uniquely identified retry decision under the original authorization after trusted non-admission, and which accepted policy or host evidence authorizes that act?",
+    "unknown_prior": "A separate established decision must explicitly account for the unresolved predecessor; no automatic retry.",
+    "human_reapproval_policy_added": false
+  },
+  "revision_policy": {
+    "default_from_original_mandate": "frozen-historical",
+    "only_currentness_condition": "mandate.currentness == current-at-issue-claim",
+    "conflicting_top_level_policy": "rejected",
+    "latest_plan_infers_mandate": false
+  },
+  "installed_host": {
+    "command": "python3 tests/installed_review_persistence.py --opencode /absolute/path/opencode --plugin /absolute/path/installed/loom-plugin --artifact /absolute/path/loom-plugin.tgz --repository /absolute/path/loom --report-directory /absolute/path/new-report-directory",
+    "report_sha256": "d84f4692e8802bde974344281042dd865be84ed1d6b7d7d26b028fe7bc6c70df",
+    "expected_host": "2.2.6",
+    "observed_host": "opencode v2.2.6",
+    "cli_sha256": "50503d24577fa4117a7c95ee85b2cd679606a87eacf20ca54ed5db5c9e1cf895",
+    "candidate": {
+      "name": "loom-plugin",
+      "version": "2.0.0-alpha.1",
+      "sdk_version": "2.2.6",
+      "artifact_sha256": "321d1a1b317f4c06c6b8d3f7b1caad9f53de62455aae99eb447bada2b06294d4",
+      "artifact_filename": "loom-plugin-2.0.0-alpha.1.tgz"
+    },
+    "execution_status": "PASS",
+    "learning_qualification": "UNQUALIFIED",
+    "checks": [
+      {
+        "name": "S2-automatic-review-request-and-canonical-preparation",
+        "status": "PASS",
+        "request_id": "installed-review-990a7f0ced409863",
+        "creation_statuses": [
+          "created",
+          "existing"
+        ],
+        "protected_delivery": "withheld"
+      },
+      {
+        "name": "S2-complete-public-membership",
+        "status": "PASS",
+        "member_count": 100,
+        "page_sizes": [
+          50,
+          50
+        ],
+        "initial_attempt": "c0022fc1-bad7-4ccc-898f-856d44a080cc"
+      },
+      {
+        "name": "S2-original-historical-work-and-qualified-finding",
+        "status": "PASS",
+        "work_ref": {
+          "action_id": "8de6fd64-a055-41ab-86e7-f694944b0b5d",
+          "node_id": "task",
+          "action_revision": 1,
+          "plan_revision": 1,
+          "hash": "e88d0c0460e21a2f443cf97d8034a384cc501f6eb7c7c07da8d8c973ecc449fa"
+        },
+        "review_binding": {
+          "status": "unknown",
+          "reason": "unsupported-host-boundary"
+        }
+      },
+      {
+        "name": "S2-unrelated-session-denied-without-ledger-disclosure",
+        "status": "PASS",
+        "private_mandate_in_ordinary_history": false
+      },
+      {
+        "name": "S2-process-reopen-and-canonical-replay",
+        "status": "PASS",
+        "process_ids": [
+          21,
+          140
+        ],
+        "request_id": "installed-review-990a7f0ced409863"
+      },
+      {
+        "name": "S2-native-permission-revocation",
+        "status": "PASS",
+        "same_requester_session": "ses_e2a64e459ffe1AcesG0mBRwVQS",
+        "effective_agent": "restricted",
+        "failed_tool": "loom_review",
+        "protected_result_returned": false
+      }
+    ],
+    "audit_sha256": "5bcf56d21b0fb3885faf988d7e567da9117f94144ae79e4bbe94bc3f572cce63",
+    "audit_bytes": 9126440,
+    "audit_receipts": 418,
+    "observer_failures": 0,
+    "watcher_enabled": true,
+    "provider": "Existing isolated local scripted provider; no paid inference.",
+    "limits": [
+      "Scripted external provider; no real-model reasoning or review verdict quality qualified.",
+      "Structured review delivery remains withheld; no protected transfer or native review execution claimed.",
+      "Native admitted-input to execution binding remains unsupported; authored evidence links remain unknown.",
+      "Normal completed-state process reopen is exercised; crash recovery and retry authority have separate transaction tests.",
+      "Read revocation prevents fresh private readback; it does not erase previously authorized native conversation content.",
+      "All source material and mandate text are disposable synthetic qualification inputs."
+    ],
+    "ci_reproduction": ".github/workflows/installed-questions.yml archives installed-review-persistence-<checkout-sha> separately from Stage 1 artifacts; retention remains seven days.",
+    "raw_evidence": "Raw synthetic audit and exact report retained in the local run directory; this committed record contains digests and measured results. Fresh CI artifacts are identified separately in the PR when available."
+  },
+  "independent_source_review": {
+    "verdict": "GO for the bounded Stage 2 foundation",
+    "focused_tests_passed": 47,
+    "focused_assertions": 386,
+    "typecheck": "PASS",
+    "resolved_findings": [
+      "Persisted request key/body identity mismatch.",
+      "Unexpanded group membership.",
+      "Authored assertion attributed to source producer.",
+      "Unchecked prior finding identities.",
+      "Missing public original intent/outcome reader.",
+      "Missing per-artifact availability.",
+      "Missing shared UTF-8 read budget."
+    ],
+    "limits": "Independent source review did not certify the installed-host run or E11. The primary agent separately rehashed source, installed package, archive, inputs and final audit."
+  },
+  "preserved_limits": [
+    "No exact native admitted-review execution binding; locally generated IDs and digests are not native attestation.",
+    "Recipient-specific protected transfer is unqualified, so structured review delivery remains withheld.",
+    "No new raw-content collection, retention/disclosure policy, paid dispatch, or skill/agent mutation.",
+    "No automatic retry after uncertainty and no new mandatory human approval policy.",
+    "Read revocation prevents fresh readback; it does not erase content previously returned under authorization.",
+    "Restore tests do not establish power-loss durability or make stale backups authoritative over later external executions.",
+    "Installed scripted mechanics and 100-member reconstruction do not qualify real Evaluator reasoning or the full E11 scenario."
+  ],
+  "handback": "learning-review-stage2.md"
+}
