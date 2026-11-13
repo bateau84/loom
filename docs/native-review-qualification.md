@@ -29,7 +29,7 @@ The latest remediation run exercised clean commit `6b4a0a3` and finalized **1,14
 receipts**. All eleven recorded input hashes and thirty production/runtime file hashes match
 that checkout. Its matrix remains three Verified, five Partial and one Unsupported capability.
 
-Remediation checks passed **216 Python tests**, including **19 oracle tests**, the repository
+Remediation checks passed **239 Python tests**, including **19 oracle tests**, the repository
 TypeScript check, and **10 documentation/fixture tests**. The original installed question
 and Evaluator observer probes passed in the first stage. Exact-head CI remains independently
 observable on the PR; earlier suite results must not be attributed to changed source bytes.
@@ -61,6 +61,20 @@ final corruption remains `FAIL`. The native-review and question runners also rej
 failures that finish writing during shutdown. Seven supporting reader/finalization tests cover
 JSON and UTF-8 fragments, completed corruption, late observer failure, byte preservation,
 report retention and existing no-final-newline fixtures.
+
+**NRQ-003:** The reader now owns an append-only audit checkpoint for each qualification
+run, shared by every live read and preserved across host restarts. Finalization requires
+the audit to exist, contain receipts, preserve every previously observed byte and pass
+complete parsing and observer-health checks. Deletion, valid-prefix truncation and changed
+earlier receipts invalidate qualification even when the remaining JSON parses. Known
+integrity failures remain fatal if the file is later restored. Routing evaluates its
+per-mode provider counts against the finalized records, including late arrivals.
+
+The final report's receipt count, byte count and SHA-256 come from the same captured
+snapshot retained for review. Available malformed or incomplete bytes are preserved as
+failure diagnostics; a missing source is reported as missing rather than replaced with
+a fabricated empty audit. This is a local observation-continuity guarantee, not native
+history authentication or detection of changes occurring entirely between observations.
 
 ## Status meanings
 
@@ -165,6 +179,26 @@ bun run typecheck
 ```
 
 The existing `test:python`/`test:native` discovery collects the new oracle/parser tests. The existing installed-questions workflow packages the exact candidate, runs this probe and uploads its report even on failure; no parallel framework or replacement host is introduced.
+
+### Final audit-loss controls
+
+The same workflow also runs `tests/installed_native_review_audit_loss_control.py` with
+`--fault missing` and `--fault prefix`. Use the native probe's CLI, plugin, artifact and
+version arguments above, plus `--repository /ABS/REPO`, `--expect-head REVIEWED_SHA` and
+a fresh `--report-directory` for each control. The checkout must be clean at that exact SHA.
+
+Each control executes the real native CLI and all eight mechanical checks. Only after the
+actual reopened host stops does it delete the audit or truncate it to one valid JSON row.
+Control `PASS` and exit 0 require the specific audit-integrity error, native
+`execution_status: FAIL` and native CLI exit 1. An unrelated runtime failure does not pass
+the control. The pre-fault audit is retained separately for diagnosis and cannot substitute
+for the missing or truncated final audit. CI retains both controls in the
+`installed-native-review-audit-loss-<sha>` artifact.
+
+Both controls reproduced the defect on reviewed head `19919bad`: all eight native checks
+passed, then the missing audit or one-row valid prefix still produced native execution
+`PASS` and CLI exit 0. The controls correctly rejected those results. These were deliberate
+post-shutdown faults; the previously inspected successful CI archive was complete.
 
 ## Required upstream guarantees and next stage
 

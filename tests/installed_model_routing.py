@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 from installed_host_smoke import PrivateHost, installed_plugin_inventory, isolated_environment, require
-from installed_questions import request, idle, events
+from installed_questions import audit_session, request, idle, events, final_events
 
 
 def run(cli: Path, repo: Path, plugin: Path, artifact: Path, output: Path, version: str) -> dict:
@@ -27,52 +27,62 @@ def run(cli: Path, repo: Path, plugin: Path, artifact: Path, output: Path, versi
               ]}
     try:
         report['candidate'] = installed_plugin_inventory(artifact, plugin, version, '2.2.6')
-        with tempfile.TemporaryDirectory(prefix='loom-model-route-v220-') as temp:
-            root = Path(temp).resolve()
-            project = root / 'project'
-            project.mkdir()
-            env = isolated_environment(root)
-            env['LOOM_QUESTION_FIXTURE'] = str(root)
-            subprocess.run(['git', 'init', '-q', str(project)], env=env, check=True)
-            observed = subprocess.check_output([str(cli), '--version'], env=env, text=True, timeout=20).strip()
-            require(observed in ('2.2.6', 'opencode v2.2.6'), f'Wrong host version: {observed}')
-            config = {'plugins': ['*', str(plugin), str(repo / 'tests/question-host')],
-                      'agents': {'question-reader': {
-                          'description': 'Native model routing fixture', 'mode': 'primary',
-                          'system': 'Return HARNESS_IDLE.'}},
-                      'model': 'question-fixture/reader', 'update': 'disable', 'share': 'disabled'}
-            (Path(env['OPENCODE_CONFIG_DIR']) / 'opencode.json').write_text(json.dumps(config))
-            (root / 'jobs.json').write_text('{}')
-            for name, enabled in [('routing-enabled', True), ('routing-disabled', False)]:
-                (project / '.loom.yaml').write_text(json.dumps({
-                    'model-routing': {'enabled': enabled, 'default-class': 'strong',
-                                      'default-reasoning': 'medium', 'paid-fallback': False},
-                    'model-classes': {'strong': {'models': ['reader']}},
-                    'agents': {'question-reader': {'roles': ['implementation']}},
-                    'roles': {'implementation': {'model-class': 'strong', 'reasoning': 'medium'}},
-                }))
-                start = len(events(root))
-                host = PrivateHost(str(cli), project, env, output, name)
-                try:
-                    require(json.loads(host.get('/api/info', 'info'))['version'] == '2.2.6',
-                            'Private native host not 2.2.6')
-                    host.wait_roster('/api/plugin', 'plugins',
-                        lambda plugins: all(any(p['id'] == x and p.get('state', {}).get('status') == 'active'
-                            for p in plugins) for x in ('loom', 'loom.question.fixture')))
-                    session = request(host, 'POST', '/api/session', {
-                        'agent': 'question-reader', 'title': name,
-                        'location': {'directory': str(project)},
-                    })['id']
-                    request(host, 'POST', f'/api/session/{session}/prompt', {'text': 'Native routing qualification'})
-                    deadline = time.monotonic() + 30
-                    result = None
-                    while time.monotonic() < deadline:
-                        result = request(host, 'GET', f'/api/session/{session}')
-                        if result.get('outcome') in ('succeeded', 'failed', 'interrupted'):
-                            break
-                        time.sleep(.1)
-                    idle(host, [session])
-                    produced = [e for e in events(root)[start:] if e['type'] == 'provider-request'
+        with (tempfile.TemporaryDirectory(prefix='loom-model-route-v220-') as temp,
+              audit_session(Path(temp).resolve()) as audit):
+            try:
+                root = Path(temp).resolve()
+                project = root / 'project'
+                project.mkdir()
+                env = isolated_environment(root)
+                env['LOOM_QUESTION_FIXTURE'] = str(root)
+                subprocess.run(['git', 'init', '-q', str(project)], env=env, check=True)
+                observed = subprocess.check_output([str(cli), '--version'], env=env, text=True, timeout=20).strip()
+                require(observed in ('2.2.6', 'opencode v2.2.6'), f'Wrong host version: {observed}')
+                config = {'plugins': ['*', str(plugin), str(repo / 'tests/question-host')],
+                          'agents': {'question-reader': {
+                              'description': 'Native model routing fixture', 'mode': 'primary',
+                              'system': 'Return HARNESS_IDLE.'}},
+                          'model': 'question-fixture/reader', 'update': 'disable', 'share': 'disabled'}
+                (Path(env['OPENCODE_CONFIG_DIR']) / 'opencode.json').write_text(json.dumps(config))
+                (root / 'jobs.json').write_text('{}')
+                for name, enabled in [('routing-enabled', True), ('routing-disabled', False)]:
+                    (project / '.loom.yaml').write_text(json.dumps({
+                        'model-routing': {'enabled': enabled, 'default-class': 'strong',
+                                          'default-reasoning': 'medium', 'paid-fallback': False},
+                        'model-classes': {'strong': {'models': ['reader']}},
+                        'agents': {'question-reader': {'roles': ['implementation']}},
+                        'roles': {'implementation': {'model-class': 'strong', 'reasoning': 'medium'}},
+                    }))
+                    start = len(events(root))
+                    host = PrivateHost(str(cli), project, env, output, name)
+                    try:
+                        require(json.loads(host.get('/api/info', 'info'))['version'] == '2.2.6',
+                                'Private native host not 2.2.6')
+                        host.wait_roster('/api/plugin', 'plugins',
+                            lambda plugins: all(any(p['id'] == x and p.get('state', {}).get('status') == 'active'
+                                for p in plugins) for x in ('loom', 'loom.question.fixture')))
+                        session = request(host, 'POST', '/api/session', {
+                            'agent': 'question-reader', 'title': name,
+                            'location': {'directory': str(project)},
+                        })['id']
+                        request(host, 'POST', f'/api/session/{session}/prompt', {'text': 'Native routing qualification'})
+                        deadline = time.monotonic() + 30
+                        result = None
+                        while time.monotonic() < deadline:
+                            result = request(host, 'GET', f'/api/session/{session}')
+                            if result.get('outcome') in ('succeeded', 'failed', 'interrupted'):
+                                break
+                            time.sleep(.1)
+                        idle(host, [session])
+                        # Checkpoint live bytes before shutdown; assertions use the
+                        # stopped writer's complete suffix, including late receipts.
+                        events(root)
+                    finally:
+                        host.close()
+                    observed = final_events(root)[start:]
+                    require(any(e['type'] == 'ready' for e in observed),
+                            'Current routing mode has no observer ready receipt')
+                    produced = [e for e in observed if e['type'] == 'provider-request'
                                 and e['data']['role'] == 'reader']
                     if enabled:
                         require(not produced, 'Unknown-billing request reached the provider')
@@ -86,9 +96,21 @@ def run(cli: Path, repo: Path, plugin: Path, artifact: Path, output: Path, versi
                     report['checks'].append({'name': name, 'status': 'PASS',
                         'outcome': result.get('outcome') if result else None,
                         'provider_requests': len(produced)})
-                finally:
-                    host.close()
-                events(root, final=True)
+            except Exception as error:
+                report['error'] = f'{type(error).__name__}: {error}'
+                raise
+            finally:
+                try:
+                    finalized = audit.finalize(output / 'audit.ndjson')
+                except Exception as error:
+                    report['status'] = 'FAIL'
+                    report['audit_error'] = f'{type(error).__name__}: {error}'
+                    if 'error' not in report:
+                        raise
+                else:
+                    report['audit_sha256'] = finalized.sha256
+                    report['audit_receipts'] = len(finalized.events)
+                    report['audit_bytes'] = finalized.byte_count
         report['status'] = 'PASS'
     except Exception as error:
         report['status'] = 'FAIL'

@@ -21,7 +21,7 @@ from pathlib import Path
 
 from installed_host_smoke import PrivateHost, installed_plugin_inventory, isolated_environment, require
 from installed_instruction_variants import verify_host_version
-from installed_questions import Scenario, events, final_events, idle, request
+from installed_questions import Scenario, audit_session, events, final_events, idle, request
 from native_review_oracle import call_key, dispatch_receipts, source_basis
 
 HOST = "2.2.6"
@@ -156,7 +156,8 @@ def run(args) -> dict:
                 "Installed candidate runtime bytes differ from the tested checkout")
         report["runtime_sha256"] = {name: sha(repo / name) for name in runtime_paths}
         report["cli_sha256"] = sha(args.opencode.resolve())
-        with tempfile.TemporaryDirectory(prefix="loom-native-review-") as temporary:
+        with tempfile.TemporaryDirectory(prefix="loom-native-review-") as temporary, \
+                audit_session(Path(temporary).resolve()) as audit_log:
             root = Path(temporary).resolve()
             project = root / "project"
             project.mkdir()
@@ -483,6 +484,7 @@ def run(args) -> dict:
                 old_pid = host.proc.pid
                 host.close()
                 host = None
+                final_events(root)
                 host = start("reopened")
                 require(host.proc.pid != old_pid, "Recovery did not use a new host process")
                 scenario = ReviewScenario(host, root)
@@ -515,15 +517,15 @@ def run(args) -> dict:
                 if host is not None:
                     host.close()
                     host = None
-                audit = root / "audit.ndjson"
-                if audit.exists():
-                    shutil.copyfile(audit, output / "audit.ndjson")
-                    (output / "audit.ndjson").chmod(0o600)
-                    report["audit_sha256"] = sha(output / "audit.ndjson")
-                    # A live snapshot can end during append. Once the writer
-                    # stops, all bytes must parse and the observer must be healthy.
-                    finalized = final_events(root)
-                    report["audit_receipts"] = len(finalized)
+                try:
+                    finalized = audit_log.finalize(output / "audit.ndjson")
+                    report["audit_sha256"] = finalized.sha256
+                    report["audit_bytes"] = finalized.byte_count
+                    report["audit_receipts"] = len(finalized.events)
+                except Exception as error:  # Retain a failed report even if final evidence is unavailable.
+                    report["status"] = report["execution_status"] = "FAIL"
+                    report["audit_error"] = f"{type(error).__name__}: {error}"
+                    report.setdefault("error", report["audit_error"])
     except Exception as error:
         report["status"] = report["execution_status"] = "FAIL"
         report["error"] = str(error)

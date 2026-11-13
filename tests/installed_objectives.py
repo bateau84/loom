@@ -19,7 +19,7 @@ from contextlib import closing
 from pathlib import Path
 
 from installed_host_smoke import PrivateHost, installed_plugin_inventory, isolated_environment, require
-from installed_questions import Scenario, events, idle, request
+from installed_questions import Scenario, audit_session, events, final_events, idle, request
 
 
 def original_user(host, session):
@@ -246,75 +246,91 @@ def run(args):
                                           text=True, timeout=15).strip()
         require(version in ("2.2.6", "opencode v2.2.6"), "Unexpected exact OpenCode host: " + version)
         report["host_version"] = version
-        with tempfile.TemporaryDirectory(prefix="loom-objectives-") as private:
-            root = Path(private).resolve()
-            project = root / "project"
-            project.mkdir()
-            env = isolated_environment(root)
-            env["LOOM_QUESTION_FIXTURE"] = str(root)
-            subprocess.run(["git", "init", "-q", str(project)], env=env, check=True)
-            config = {"plugins": ["*", str(args.plugin.resolve()),
-                                 str(args.repository / "tests/question-host")],
-                      "agents": {"question-reader": {"description": "Scripted native objective fixture",
-                                  "mode": "primary", "model": "question-fixture/reader",
-                                  "permissions": [{"action": "edit", "resource": "*", "effect": "allow"}],
-                                  "system": "Follow only the local scripted provider's task."}},
-                      "model": "question-fixture/reader", "update": "disable", "share": "disabled"}
-            (Path(env["OPENCODE_CONFIG_DIR"]) / "opencode.json").write_text(json.dumps(config))
-            (project / ".loom.yaml").write_text(
-                "agents: {}\ninstructions: {enabled: false}\nledger: {capture: off}\n")
-            (root / "jobs.json").write_text("{}")
-            report["config_sha256"] = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
+        with (tempfile.TemporaryDirectory(prefix="loom-objectives-") as private,
+              audit_session(Path(private).resolve()) as audit):
+            try:
+                root = Path(private).resolve()
+                project = root / "project"
+                project.mkdir()
+                env = isolated_environment(root)
+                env["LOOM_QUESTION_FIXTURE"] = str(root)
+                subprocess.run(["git", "init", "-q", str(project)], env=env, check=True)
+                config = {"plugins": ["*", str(args.plugin.resolve()),
+                                     str(args.repository / "tests/question-host")],
+                          "agents": {"question-reader": {"description": "Scripted native objective fixture",
+                                      "mode": "primary", "model": "question-fixture/reader",
+                                      "permissions": [{"action": "edit", "resource": "*", "effect": "allow"}],
+                                      "system": "Follow only the local scripted provider's task."}},
+                          "model": "question-fixture/reader", "update": "disable", "share": "disabled"}
+                (Path(env["OPENCODE_CONFIG_DIR"]) / "opencode.json").write_text(json.dumps(config))
+                (project / ".loom.yaml").write_text(
+                    "agents: {}\ninstructions: {enabled: false}\nledger: {capture: off}\n")
+                (root / "jobs.json").write_text("{}")
+                report["config_sha256"] = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()
 
-            def start(label):
-                host = PrivateHost(str(args.opencode.resolve()), project, env, output, label)
+                def start(label):
+                    host = PrivateHost(str(args.opencode.resolve()), project, env, output, label)
+                    try:
+                        require(json.loads(host.get("/api/info", "info"))["version"] == "2.2.6",
+                                "Wrong installed host version")
+                        host.wait_roster("/api/plugin", "plugins", lambda xs:
+                            all(any(p["id"] == name and p.get("state", {}).get("status") == "active"
+                                    for p in xs) for name in ("loom", "loom.question.fixture")))
+                        return host
+                    except Exception:
+                        host.close()
+                        raise
+
+                host = start("objective-first")
                 try:
-                    require(json.loads(host.get("/api/info", "info"))["version"] == "2.2.6",
-                            "Wrong installed host version")
-                    host.wait_roster("/api/plugin", "plugins", lambda xs:
-                        all(any(p["id"] == name and p.get("state", {}).get("status") == "active"
-                                for p in xs) for name in ("loom", "loom.question.fixture")))
-                    return host
-                except Exception:
+                    scenario = Scenario(host, root)
+                    result = exercise(host, scenario, root, project)
+                    report["checks"] = result
+                finally:
                     host.close()
-                    raise
-
-            host = start("objective-first")
-            try:
-                scenario = Scenario(host, root)
-                result = exercise(host, scenario, root, project)
-                report["checks"] = result
+                require(host.proc.poll() is not None, "First host was not stopped before restart")
+                final_events(root)
+                restarted = start("objective-restarted")
+                try:
+                    again = Scenario(restarted, root)
+                    read = again.invoke(result["parent"], "objective", {
+                        "operation": "read", "objective_id": result["objective_id"], "limit": 50})
+                    require(read["snapshot_max_sequence"] == result["gap_sequence"],
+                            "Restart lost earlier or later objective links")
+                    require(len(read["entries"]) == result["source_events"] + 1,
+                            "Restart did not recover the exact prior trajectory")
+                    require(sum(e["phase"] == "handback" for e in read["entries"]) == 3
+                            and sum(e["phase"] == "verification" for e in read["entries"]) == 3,
+                            "Restart duplicated or lost original Coder/QA history")
+                    resumed = again.invoke(result["parent"], "objective", {"operation": "list"})
+                    require(len(resumed["items"]) == 2, "Restart invented duplicate objective identities")
+                    report["restart"] = {"recovered": True, "objectives": len(resumed["items"]),
+                                         "source_links": len(read["entries"])}
+                finally:
+                    restarted.close()
+                require(restarted.proc.poll() is not None, "Restart host did not stop")
+                observed = final_events(root)
+                report["native_model_requests"] = sum(e["type"] == "model-request" for e in observed)
+                require(report["native_model_requests"] > 0, "Installed host made no actual model request")
+                require(all(e["data"].get("model", {}).get("providerID") == "question-fixture"
+                            for e in observed if e["type"] == "model-request"),
+                        "A non-scripted paid or unqualified model was requested")
+                report["status"] = "PASS"
+            except Exception as error:
+                report['error'] = f'{type(error).__name__}: {error}'
+                raise
             finally:
-                host.close()
-            require(host.proc.poll() is not None, "First host was not stopped before restart")
-            restarted = start("objective-restarted")
-            try:
-                again = Scenario(restarted, root)
-                read = again.invoke(result["parent"], "objective", {
-                    "operation": "read", "objective_id": result["objective_id"], "limit": 50})
-                require(read["snapshot_max_sequence"] == result["gap_sequence"],
-                        "Restart lost earlier or later objective links")
-                require(len(read["entries"]) == result["source_events"] + 1,
-                        "Restart did not recover the exact prior trajectory")
-                require(sum(e["phase"] == "handback" for e in read["entries"]) == 3
-                        and sum(e["phase"] == "verification" for e in read["entries"]) == 3,
-                        "Restart duplicated or lost original Coder/QA history")
-                resumed = again.invoke(result["parent"], "objective", {"operation": "list"})
-                require(len(resumed["items"]) == 2, "Restart invented duplicate objective identities")
-                report["restart"] = {"recovered": True, "objectives": len(resumed["items"]),
-                                     "source_links": len(read["entries"])}
-            finally:
-                restarted.close()
-            require(restarted.proc.poll() is not None, "Restart host did not stop")
-            observed = events(root, final=True)
-            require(not any(event["type"] == "observer-failure" for event in observed),
-                    "Passive host observation failed; native evidence invalid")
-            report["native_model_requests"] = sum(e["type"] == "model-request" for e in observed)
-            require(report["native_model_requests"] > 0, "Installed host made no actual model request")
-            require(all(e["data"].get("model", {}).get("providerID") == "question-fixture"
-                        for e in observed if e["type"] == "model-request"),
-                    "A non-scripted paid or unqualified model was requested")
-            report["status"] = "PASS"
+                try:
+                    finalized = audit.finalize(output / 'audit.ndjson')
+                except Exception as error:
+                    report['status'] = 'FAIL'
+                    report['audit_error'] = f'{type(error).__name__}: {error}'
+                    if 'error' not in report:
+                        raise
+                else:
+                    report['audit_sha256'] = finalized.sha256
+                    report['audit_receipts'] = len(finalized.events)
+                    report['audit_bytes'] = finalized.byte_count
     except Exception as error:
         report["status"] = "FAIL"
         report["error"] = f"{type(error).__name__}: {error}"

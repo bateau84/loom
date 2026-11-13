@@ -39,6 +39,20 @@ jobs:
           --repository "$GITHUB_WORKSPACE"
           --expect-plugin-version "$(node -p 'require("./package.json").version')"
           --report-directory "$RUNNER_TEMP/loom-native-review-report"
+      - name: Final audit deletion and valid-prefix loss must fail native qualification
+        run: |
+          set -eu
+          for fault in missing prefix; do
+            python3 tests/installed_native_review_audit_loss_control.py \
+              --fault "$fault" \
+              --expect-head "$GITHUB_SHA" \
+              --opencode "$RUNNER_TEMP/loom-question-host/node_modules/.bin/opencode" \
+              --plugin "$RUNNER_TEMP/loom-question-install/node_modules/loom-plugin" \
+              --artifact "$(find "$RUNNER_TEMP/loom-question-artifact" -maxdepth 1 -name 'loom-plugin-*.tgz' -print -quit)" \
+              --repository "$GITHUB_WORKSPACE" \
+              --expect-plugin-version "$(node -p 'require("./package.json").version')" \
+              --report-directory "$RUNNER_TEMP/loom-native-review-audit-loss/$fault"
+          done
       - name: Scoped Evaluator observer and exact public recovery receipts (scripted provider only)
         run: >-
           python3 tests/installed_evaluator_observer.py
@@ -131,6 +145,13 @@ jobs:
         with:
           name: installed-native-review-${{ github.sha }}
           path: ${{ runner.temp }}/loom-native-review-report/
+          if-no-files-found: warn
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installed-native-review-audit-loss-${{ github.sha }}
+          path: ${{ runner.temp }}/loom-native-review-audit-loss/
           if-no-files-found: warn
           retention-days: 7
       - uses: actions/upload-artifact@v4

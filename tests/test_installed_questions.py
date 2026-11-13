@@ -1,5 +1,6 @@
 """Harness-oracle tests, NOT installed production/native qualification."""
 import glob
+import hashlib
 import json
 import shlex
 import sqlite3
@@ -13,6 +14,7 @@ from installed_questions import (
     READ_DENIAL_APPLICABILITY,
     REQUIRED_INSTALLED_CHECKS,
     Scenario,
+    audit_session,
     events,
     final_events,
     fixture_snapshot,
@@ -26,6 +28,254 @@ from installed_questions import (
     verify_provider_inputs,
     verify_single_admission,
 )
+
+
+class AuditSessionTest(unittest.TestCase):
+    def test_finalize_retains_parses_and_hashes_one_captured_snapshot(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = root / 'audit.ndjson'
+            destination = root / 'retained.ndjson'
+            raw = b'{"type":"ready"}\n{"type":"tool-after"}'
+            later = b'{"type":"different"}\n'
+            path.write_bytes(raw)
+            read_bytes = Path.read_bytes
+            source_reads = []
+
+            def changing_source(file):
+                captured = read_bytes(file)
+                if file == path:
+                    source_reads.append(captured)
+                    path.write_bytes(later)
+                return captured
+
+            with audit_session(root) as owner, patch.object(Path, 'read_bytes', changing_source):
+                result = owner.finalize(destination)
+
+            self.assertEqual(source_reads, [raw])
+            self.assertEqual(destination.read_bytes(), raw)
+            self.assertEqual(result.events, [{'type': 'ready'}, {'type': 'tool-after'}])
+            self.assertEqual(result.sha256, hashlib.sha256(raw).hexdigest())
+            self.assertEqual(result.byte_count, len(raw))
+            self.assertEqual(path.read_bytes(), later)
+
+    def test_managed_reader_rejects_loss_of_a_valid_observed_prefix(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = root / 'audit.ndjson'
+            prefix = b'{"type":"ready"}\n'
+            path.write_bytes(prefix + b'{"type":"tool-before"}\n')
+            with audit_session(root) as owner:
+                self.assertEqual(len(events(root)), 2)
+                self.assertEqual(len(final_events(root)), 2)
+                path.write_bytes(prefix)
+                with self.assertRaisesRegex(RuntimeError, 'prefix'):
+                    owner.finalize(root / 'retained.ndjson')
+                self.assertEqual((root / 'retained.ndjson').read_bytes(), prefix)
+
+    def test_missing_is_allowed_only_until_a_file_has_been_observed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = root / 'audit.ndjson'
+            with audit_session(root):
+                self.assertEqual(events(root), [])
+                path.write_bytes(b'')
+                self.assertEqual(events(root), [])
+                path.unlink()
+                with self.assertRaisesRegex(RuntimeError, 'missing'):
+                    events(root)
+
+    def test_caught_integrity_failure_remains_failed_after_exact_restoration(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = root / 'audit.ndjson'
+            destination = root / 'retained.ndjson'
+            raw = b'{"type":"ready"}\n'
+            path.write_bytes(raw)
+            with audit_session(root) as owner:
+                events(root)
+                path.write_bytes(b'{"type":"other"}\n')
+                with self.assertRaisesRegex(RuntimeError, 'prefix'):
+                    events(root)
+                path.write_bytes(raw)
+
+                with self.assertRaisesRegex(RuntimeError, 'prefix'):
+                    events(root)
+                with self.assertRaisesRegex(RuntimeError, 'prefix'):
+                    final_events(root)
+                with self.assertRaisesRegex(RuntimeError, 'prefix'):
+                    owner.finalize(destination)
+                self.assertEqual(destination.read_bytes(), raw)
+
+    def test_final_validation_requires_an_active_scope(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'audit.ndjson').write_bytes(b'{"type":"ready"}\n')
+            with self.assertRaisesRegex(RuntimeError, 'active.*scope'):
+                final_events(root)
+            with audit_session(root) as owner:
+                self.assertEqual(final_events(root), [{'type': 'ready'}])
+            destination = root / 'retained.ndjson'
+            with self.assertRaisesRegex(RuntimeError, 'active.*scope'):
+                owner.finalize(destination)
+            self.assertFalse(destination.exists())
+
+    def test_final_validation_rejects_missing_or_empty_without_a_prior_read(self):
+        for raw, diagnostic in [(None, 'Final audit file is missing'), (b'', 'Final audit is empty')]:
+            for method in ('read', 'retain'):
+                with self.subTest(raw=raw, method=method), tempfile.TemporaryDirectory() as temp:
+                    root = Path(temp)
+                    path = root / 'audit.ndjson'
+                    destination = root / 'retained.ndjson'
+                    if raw is not None:
+                        path.write_bytes(raw)
+                    with audit_session(root) as owner:
+                        if method == 'retain':
+                            destination.write_bytes(b'stale artifact')
+                        with self.assertRaisesRegex(RuntimeError, diagnostic):
+                            if method == 'read':
+                                final_events(root)
+                            else:
+                                owner.finalize(destination)
+                    if method == 'retain' and raw is not None:
+                        self.assertEqual(destination.read_bytes(), raw)
+                    else:
+                        self.assertFalse(destination.exists())
+
+    def test_active_scope_rejects_a_different_root_even_with_identical_bytes(self):
+        for reader in (events, final_events):
+            with self.subTest(reader=reader.__name__), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                other = root / 'other'
+                other.mkdir()
+                for directory in (root, other):
+                    (directory / 'audit.ndjson').write_bytes(b'{"type":"ready"}\n')
+                with audit_session(root):
+                    events(root)
+                    with self.assertRaisesRegex(RuntimeError, 'audit root'):
+                        reader(other)
+
+    def test_nested_scope_cannot_replace_the_active_owner(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            with audit_session(root):
+                with self.assertRaisesRegex(RuntimeError, 'Nested audit'):
+                    with audit_session(root):
+                        self.fail('Nested scope was entered')
+
+    def test_closed_scope_cannot_be_reentered(self):
+        with tempfile.TemporaryDirectory() as temp:
+            scope = audit_session(Path(temp))
+            with scope:
+                pass
+            with self.assertRaisesRegex(RuntimeError, 're-entered'):
+                with scope:
+                    self.fail('Closed scope was entered again')
+
+    def test_finalize_io_failure_stays_latched_after_io_recovers(self):
+        for operation in ('read_bytes', 'write_bytes', 'chmod'):
+            with self.subTest(operation=operation), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                destination = root / 'retained.ndjson'
+                raw = b'{"type":"ready"}\n'
+                (root / 'audit.ndjson').write_bytes(raw)
+                with audit_session(root) as owner:
+                    with patch.object(Path, operation, side_effect=PermissionError('audit IO denied')):
+                        with self.assertRaisesRegex(PermissionError, 'audit IO denied'):
+                            owner.finalize(destination)
+                    with self.assertRaisesRegex(PermissionError, 'audit IO denied'):
+                        owner.finalize(destination)
+                    self.assertEqual(destination.read_bytes(), raw)
+
+    def test_same_count_and_longer_mutated_prefixes_are_rejected(self):
+        raw = b'{"type":"ready"}\n'
+        replacements = [b'{"type":"other"}\n', b'{"type":"changed-label"}\n',
+                        b'{"type":"other"}\n{"type":"tool-before"}\n']
+        for replacement in replacements:
+            with self.subTest(replacement=replacement), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                path = root / 'audit.ndjson'
+                path.write_bytes(raw)
+                with audit_session(root):
+                    events(root)
+                    path.write_bytes(replacement)
+                    with self.assertRaisesRegex(RuntimeError, 'prefix'):
+                        events(root)
+
+    def test_deferred_json_and_utf8_tails_are_part_of_the_observed_prefix(self):
+        for tail in (b'{"type":"provider-request","data":"unfinished', b'{"type":"text","data":"\xc3'):
+            with self.subTest(tail=tail), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                path = root / 'audit.ndjson'
+                prefix = b'{"type":"ready"}\n'
+                path.write_bytes(prefix + tail)
+                with audit_session(root):
+                    self.assertEqual(events(root), [{'type': 'ready'}])
+                    path.write_bytes(prefix)
+                    with self.assertRaisesRegex(RuntimeError, 'prefix'):
+                        events(root)
+
+    def test_appends_and_identical_replacement_preserve_one_scope_across_restart_markers(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = root / 'audit.ndjson'
+            destination = root / 'retained.ndjson'
+            first = b'{"type":"ready","data":{"process":1}}\n'
+            appended = b'{"type":"tool-after"}\n{"type":"ready","data":{"process":2}}\n{"type":"text"}'
+            with audit_session(root) as owner:
+                self.assertEqual(events(root), [])
+                path.write_bytes(first)
+                self.assertEqual(len(events(root)), 1)
+                replacement = root / 'replacement.ndjson'
+                replacement.write_bytes(first)
+                replacement.replace(path)
+                self.assertEqual(len(events(root)), 1)
+                with path.open('ab') as stream:
+                    stream.write(appended)
+                self.assertEqual(len(final_events(root)), 4)
+                result = owner.finalize(destination)
+            self.assertEqual(len(result.events), 4)
+            self.assertEqual(destination.read_bytes(), first + appended)
+            self.assertEqual(result.sha256, hashlib.sha256(first + appended).hexdigest())
+            self.assertEqual(result.byte_count, len(first + appended))
+
+    def test_finalize_retains_invalid_bytes_and_latches_validation_failure(self):
+        cases = [(b'{"type":}\n', json.JSONDecodeError),
+                 (b'{"type":"unfinished', json.JSONDecodeError),
+                 (b'{"type":"\xc3', UnicodeDecodeError),
+                 (b'{"type":"observer-failure"}\n', RuntimeError)]
+        restored = b'{"type":"ready"}\n'
+        for raw, error in cases:
+            with self.subTest(raw=raw), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                path = root / 'audit.ndjson'
+                destination = root / 'retained.ndjson'
+                path.write_bytes(raw)
+                with audit_session(root) as owner:
+                    with self.assertRaises(error) as first_failure:
+                        owner.finalize(destination)
+                    self.assertEqual(destination.read_bytes(), raw)
+                    path.write_bytes(restored)
+                    with self.assertRaises(error) as after_restoration:
+                        owner.finalize(destination)
+                    self.assertIs(after_restoration.exception, first_failure.exception)
+                    self.assertEqual(destination.read_bytes(), restored)
+
+    def test_scope_exit_releases_ownership_without_implicit_finalization(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = root / 'audit.ndjson'
+            with self.assertRaisesRegex(ValueError, 'scenario failed'):
+                with audit_session(root):
+                    self.assertEqual(events(root), [])
+                    raise ValueError('scenario failed')
+            self.assertEqual(events(root), [])
+            path.write_bytes(b'{"type":"ready"}\n')
+            self.assertEqual(events(root), [{'type': 'ready'}])
+            path.write_bytes(b'{"type":"other"}\n')
+            self.assertEqual(events(root), [{'type': 'other'}])
+            with audit_session(root):
+                self.assertEqual(final_events(root), [{'type': 'other'}])
 
 
 class QuestionHarnessTest(unittest.TestCase):
@@ -99,7 +349,8 @@ class QuestionHarnessTest(unittest.TestCase):
             (root / 'audit.ndjson').write_text('\n'.join(json.dumps(e) for e in expected))
             self.assertEqual(events(root), expected)
             self.assertEqual(events(root, final=True), expected)
-            self.assertEqual(final_events(root), expected)
+            with audit_session(root):
+                self.assertEqual(final_events(root), expected)
 
     def test_final_audit_rejects_observer_failure_completed_after_live_check(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -110,12 +361,12 @@ class QuestionHarnessTest(unittest.TestCase):
             prefix = json.dumps(ready).encode() + b'\n'
             pending = json.dumps(failure).encode() + b'\n'
             path.write_bytes(prefix + pending[:-3])
-            self.assertEqual(events(root), [ready])
-
-            with path.open('ab') as stream:
-                stream.write(pending[-3:])
-            with self.assertRaisesRegex(RuntimeError, 'Passive native observer failed'):
-                final_events(root)
+            with audit_session(root):
+                self.assertEqual(events(root), [ready])
+                with path.open('ab') as stream:
+                    stream.write(pending[-3:])
+                with self.assertRaisesRegex(RuntimeError, 'Passive native observer failed'):
+                    final_events(root)
             self.assertEqual(events(root, final=True), [ready, failure])
             self.assertEqual(path.read_bytes(), prefix + pending)
 

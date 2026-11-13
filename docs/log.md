@@ -6,6 +6,13 @@ type: Log
 
 ## 2026-11-13
 
+**Native audit completeness (NRQ-003):** Qualification now preserves the complete observed
+audit prefix across live reads and host restarts. Missing, empty, truncated or rewritten
+final evidence fails qualification; finalized observer failures are rejected consistently.
+Retained diagnostic bytes and successful report hashes/counts share one captured snapshot.
+Routing's per-mode request counts use the finalized audit. Native capability classifications
+remain separate from these evidence-integrity checks.
+
 **Native review cold-review corrections:** The [evidence contract](learning-native-evidence-spec.md)
 now arbitrates initial issue and authorized retry intents before creating or claiming an attempt
 (NRQ-001). The [qualification oracle](native-review-qualification.md) rejects reversed causal
