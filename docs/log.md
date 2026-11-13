@@ -6,6 +6,15 @@ type: Log
 
 ## 2026-11-13
 
+**PR #234 cold-review remediation (F-01–F-04):** Updated native schema/help
+assertions, required typed recipients for new multiple-choice questions, and kept
+pre-fix manual structured history readable but closed to new replies. Labelled
+primary/child examples are exercised through their real registered callbacks.
+New labels/reasons use Unicode code-point and nonblank bounds consistently;
+legacy text and aggregate budgets are unchanged. Pinned Code Mode tests prove
+runtime rejection, not JSON Schema validation by Code Mode. Real-model question
+usage and joint composition with PR #233 remain separate, unproven claims.
+
 **Structured Open Questions:** Added optional single-choice questions, validated
 choice IDs and explicit cannot-select responses in the existing ask/answer flow.
 Preserved text compatibility, respondent identity and first-response continuation.

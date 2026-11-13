@@ -75,12 +75,12 @@ const contextAttachments = { type: "array", items: { type: "string", maxLength: 
 const recipientInput = obj({ kind: choice("agent", "role", "dispatcher", "user"), id: str }, ["kind"])
 const choiceIDInput = { type: "string", minLength: 1, maxLength: QUESTION_CHOICE_LIMITS.id, pattern: "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$" }
 const choicesInput = { type: "array", minItems: 2, maxItems: QUESTION_CHOICE_LIMITS.count,
-  items: obj({ id: choiceIDInput, answer: { type: "string", minLength: 1, maxLength: QUESTION_CHOICE_LIMITS.answer } }, ["id", "answer"]) }
+  items: obj({ id: choiceIDInput, answer: { type: "string", minLength: 1, maxLength: QUESTION_CHOICE_LIMITS.answer, pattern: "\\S" } }, ["id", "answer"]) }
 const askInput = { question: str, to_agent: str, recipient: recipientInput, blocking: { type: "boolean" }, context: str, context_attachments: contextAttachments,
   answer_type: choice("text", "multi-choice"), choices: choicesInput,
   reference: obj({ action_id: str, kind: choice("action", "phase", "wave", "task", "subtask"), id: str }, ["action_id", "kind", "id"]) }
 const answerInput = { question_id: str, answer: str, choice_id: choiceIDInput,
-  status: choice("cannot-select"), reason: { type: "string", minLength: 1, maxLength: QUESTION_CHOICE_LIMITS.reason }, context_attachments: contextAttachments }
+  status: choice("cannot-select"), reason: { type: "string", minLength: 1, maxLength: QUESTION_CHOICE_LIMITS.reason, pattern: "\\S" }, context_attachments: contextAttachments }
 const bindInput = { question_id: str, respondent_session_id: str }
 const specs = [
   { name: "agents", description: TOOL_HELP.agents, input: obj({}) },
@@ -128,7 +128,7 @@ const specs = [
           ...obj({ operation: { const: "ask" }, ...askInput }, ["operation", "question", "blocking"]),
           oneOf: [{ required: ["to_agent"], not: { required: ["recipient"] } }, { required: ["recipient"], not: { required: ["to_agent"] } }],
           allOf: [{ if: { properties: { answer_type: { const: "multi-choice" } }, required: ["answer_type"] },
-            then: { required: ["choices"] }, else: { not: { required: ["choices"] } } }],
+            then: { required: ["choices", "recipient"] }, else: { not: { required: ["choices"] } } }],
         } },
       { if: { properties: { operation: { const: "answer" } } }, then: {
           ...obj({ operation: { const: "answer" }, ...answerInput }, ["operation", "question_id"]),
@@ -248,7 +248,7 @@ export default Plugin.define({
     const owns = async (sessionID: Parameters<typeof ctx.session.get>[0]["sessionID"]) =>
       sessionIsLocal(payload(unwrapped(await ctx.session.get({ sessionID }))))
     const checkedSession = async (sessionID: string) => {
-      const session = payload(unwrapped(await ctx.session.get({ sessionID })))
+      const session = payload(unwrapped(await ctx.session.get({ sessionID: sessionID })))
       if (session.id !== sessionID || !await sessionIsLocal(session))
         throw new Error("Session is not in this Loom project/workspace/location")
       return session

@@ -95,7 +95,11 @@ def run(args):
         invalid = [{'operation': 'answer', 'question_id': q['id'], 'choice_id': 'A'},
             {'operation': 'answer', 'question_id': q['id'], 'choice_id': 'B', 'answer': 'forged'},
             {'operation': 'ask', 'question': 'Invalid', 'answer_type': 'multi-choice',
-             'choices': [choices[0], choices[0]], 'recipient': {'kind': 'role', 'id': 'research'}, 'blocking': True}]
+             'choices': [choices[0], choices[0]], 'recipient': {'kind': 'role', 'id': 'research'}, 'blocking': True},
+            {'operation': 'ask', 'question': 'Legacy must reject new choices', 'answer_type': 'multi-choice',
+             'choices': choices, 'to_agent': 'question-specialist', 'blocking': True},
+            {'operation': 'ask', 'question': 'Blank choice', 'answer_type': 'multi-choice',
+             'choices': [{'id': 'A', 'answer': '\u00a0\ufeff'}, choices[1]], 'recipient': {'kind': 'user'}, 'blocking': False}]
         s.command(reader, 'const results=await Promise.allSettled(' + json.dumps(invalid) +
             '.map(input=>tools.loom.record(input))); if(results.some(r=>r.status!=="rejected")) throw new Error("Invalid operation accepted"); return results.map(r=>r.status)')
         unchanged = s.invoke(reader, 'record', {'operation': 'query', 'view': 'thread', 'question_id': q['id']})
@@ -111,6 +115,25 @@ def run(args):
         require([a['id'] for a in replies['answers']] == [abstain['id'], selected['id'], conflict['id']], 'Replies overwritten')
         require(replies['answers'][0]['data']['status'] == 'cannot-select', 'Abstention lost')
         report['checks'].append({'name': 'native-abstention-and-conflicts', 'status': 'PASS', 'question': manual['id']})
+        s.command(asker, '''
+          const label="😀".repeat(4000), reason="😀".repeat(8000);
+          const input={operation:"ask",question:"Unicode boundary?",recipient:{kind:"user"},blocking:false,
+            answer_type:"multi-choice",choices:[{id:"A",answer:label},{id:"B",answer:"Other"}]};
+          const q=JSON.parse(await tools.loom.record(input)).result;
+          const a=JSON.parse(await tools.loom.record({operation:"answer",question_id:q.id,choice_id:"A",reason})).result;
+          const b=JSON.parse(await tools.loom.record({operation:"answer",question_id:q.id,status:"cannot-select",reason})).result;
+          const invalid=await Promise.allSettled([
+            tools.loom.record({...input,choices:[{id:"A",answer:label+"x"},{id:"B",answer:"Other"}]}),
+            tools.loom.record({operation:"answer",question_id:q.id,choice_id:"A",reason:reason+"x"}),
+            tools.loom.record({operation:"answer",question_id:q.id,status:"cannot-select",reason:" \\n "})
+          ]);
+          const t=JSON.parse(await tools.loom.record({operation:"query",view:"thread",question_id:q.id})).result;
+          if(a.data.answer!==label || a.data.reason!==reason || b.data.reason!==reason ||
+            t.question.data.choices[0].answer!==label || t.answers.length!==2 ||
+            invalid.some(r=>r.status!=="rejected")) throw new Error("Unicode contract mismatch");
+          return {unicode:true};
+        ''')
+        report['checks'].append({'name': 'native-unicode-boundaries', 'status': 'PASS'})
         host.close()
         host = start('reopened')
         reopened = Scenario(host, root).invoke(reader, 'record', {'operation': 'query', 'view': 'thread', 'question_id': manual['id']})

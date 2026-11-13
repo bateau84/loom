@@ -45,6 +45,15 @@ function references(input: unknown, label = "artifact_refs"): string[] {
 }
 
 export const QUESTION_CHOICE_LIMITS = { count: 20, id: 64, answer: 4000, reason: 8000 } as const
+/** New choice fields follow JSON Schema character counts, not UTF-16 units.
+ * Iterate without allocating an array; retain the existing aggregate record budget. */
+function choiceText(value: unknown, label: string, max: number): string {
+  const invalid = () => new Error(`${label} must be nonblank and at most ${max} Unicode code points`)
+  if (typeof value !== "string" || !/\S/u.test(value)) throw invalid()
+  let count = 0
+  for (const _point of value) if (++count > max) throw invalid()
+  return value.trim()
+}
 const choiceID = (value: unknown): string => {
   if (typeof value !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/.test(value))
     throw new Error("choice_id must be 1-64 characters: letters, digits, _, ., :, or -; start with a letter or digit")
@@ -66,7 +75,7 @@ function questionFormat(input: Record<string, unknown>): { answer_type?: "text" 
     const id = choiceID(value.id)
     if (ids.has(id)) throw new Error(`Duplicate choice ID: ${id}`)
     ids.add(id)
-    text(value.answer, "choice.answer", QUESTION_CHOICE_LIMITS.answer)
+    choiceText(value.answer, "choice.answer", QUESTION_CHOICE_LIMITS.answer)
     return { id, answer: value.answer as string }
   })
   return { answer_type: "multi-choice", choices }
@@ -80,14 +89,14 @@ function answerContent(question: Record<string, unknown>, input: Record<string, 
   if (input.status !== undefined) {
     if (input.status !== "cannot-select" || input.choice_id !== undefined || input.answer !== undefined)
       throw new Error("status must be cannot-select, without choice_id or answer")
-    const reason = text(input.reason, "reason", QUESTION_CHOICE_LIMITS.reason)
+    const reason = choiceText(input.reason, "reason", QUESTION_CHOICE_LIMITS.reason)
     return { status: "cannot-select", reason, answer: `Cannot select: ${reason}` }
   }
   if (input.answer !== undefined) throw new Error("multi-choice answers use choice_id, not answer text")
   const id = choiceID(input.choice_id), selected = format.choices!.find(option => option.id === id)
   if (!selected) throw new Error(`Unknown choice_id: ${id}`)
   return { choice_id: id, answer: selected.answer,
-    ...(input.reason === undefined ? {} : { reason: text(input.reason, "reason", QUESTION_CHOICE_LIMITS.reason) }) }
+    ...(input.reason === undefined ? {} : { reason: choiceText(input.reason, "reason", QUESTION_CHOICE_LIMITS.reason) }) }
 }
 
 // Creation and verification admit the same normalized definition. Read callers
@@ -223,6 +232,8 @@ export class Collaboration {
       throw new Error("Supply exactly one of to_agent (legacy manual) or recipient")
     const to_agent = input.to_agent === undefined ? undefined : text(input.to_agent, "to_agent", 100)
     const recipient = input.recipient === undefined ? undefined : questionRecipient(input.recipient)
+    if (format.answer_type === "multi-choice" && !recipient)
+      throw new Error("multi-choice requires a typed recipient; to_agent supports text questions only")
     if (typeof input.blocking !== "boolean") throw new Error("blocking must be an explicit Boolean")
     const blocking = input.blocking, context = input.context === undefined ? undefined : text(input.context, "context", 8000)
     const context_attachments = references(input.context_attachments, "context_attachments")
@@ -284,6 +295,10 @@ export class Collaboration {
     const context_attachments = references(input.context_attachments, "context_attachments")
     const committed = this.atomic(true, () => {
       const question = this.record(input.question_id as string, "question")
+      // Earlier draft writers allowed unverified v1 selections. Keep that history
+      // readable, but require a new typed question rather than inheriting its authority gap.
+      if (question.data.answer_type === "multi-choice" && question.data.format !== "loom-question/v2")
+        throw new Error("Legacy multi-choice question is read-only; ask a new question with a typed recipient")
       if (question.data.format === "loom-question/v2") {
         const expectedAgent = question.data.expected_agent
         let expectedSession = question.data.expected_session

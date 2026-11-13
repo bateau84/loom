@@ -106,7 +106,10 @@ Pinned sources:
 ## Open Question usage
 
 The namespace and record summary name Open Questions explicitly. Routed examples
-use `recipient`; legacy `to_agent` is manual-only, not the recommended default.
+use `recipient`; legacy `to_agent` is manual-only for text, not new choices.
+Each registered ask example labels its primary or child Session context. The
+multiple-choice example uses a primary-capable role; dispatcher examples are
+child-only. Regression tests execute every ask and its attributed answer.
 Configured role guidance names `loom_record operation=ask`, required fields and
 when another owner's input is needed. It preserves opt-outs and does not require
 an OQ for every uncertainty. See [structured questions](structured-questions.md)

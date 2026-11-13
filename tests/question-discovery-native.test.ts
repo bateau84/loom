@@ -45,3 +45,47 @@ test("configured context teaches routed questions without changing opt-outs or n
     expect(absent.system.some((part: any) => part.text?.startsWith("<!-- loom:runtime:v2 -->"))).toBe(false)
   } finally { await f.close() }
 })
+
+test("every advertised ask executes in its labelled Session context and accepts the intended respondent", async () => {
+  const f = await registeredLoom([], { beforeSetup: async directory => {
+    await writeFile(join(directory, ".loom.yaml"), "agents: {investigator: {roles: [research]}}\ninstructions: {enabled: false}\nledger: {capture: off}\n")
+  } })
+  try {
+    const action = (await f.invoke("action", { operation: "create", title: "Example inputs", goal: "Execute advertised questions" }, "setup")).result
+    await f.invoke("plan", { operation: "save", action_id: action.id, expected_revision: 0,
+      nodes: [{ id: "explain", kind: "task", title: "Explain" }] }, "setup")
+    const lines = f.tools.get("record").description.split("\n") as string[]
+    let count = 0, primaryChoices = 0, childDispatchers = 0
+    for (const [index, line] of lines.entries()) {
+      if (!line.startsWith("{")) continue
+      const example = JSON.parse(line)
+      if (example.operation !== "ask") continue
+      const context = lines[index - 1]
+      expect(["Ask example context: primary Session.",
+        "Ask example context: child Session only."]).toContain(context)
+      const child = context.includes("child Session only")
+      const session = `example-${count++}`
+      const parent = `${session}-parent`
+      f.sessions.set(session, { id: session, agent: "author", ...(child ? { parentID: parent } : {}),
+        projectID: "tool-help", location: { directory: f.directory } })
+      const input = JSON.parse(line.replaceAll("ACTION_ID", action.id))
+      const q = (await f.invoke("record", input, session)).result
+      expect(q.dispatch.status).toBe("admission-observed")
+      const respondent = child ? parent : q.dispatch.target_session_id
+      const agent = child ? "author" : "investigator"
+      const response = q.data.answer_type === "multi-choice"
+        ? { choice_id: q.data.choices[0].id, reason: "Fixture evidence, not real evaluation." }
+        : { answer: "Fixture answer with its limitations." }
+      const answer = (await f.invoke("record", { operation: "answer", question_id: q.id, ...response }, respondent, agent)).result
+      const thread = (await f.invoke("record", { operation: "query", view: "thread", question_id: q.id }, session)).result
+      expect(thread.answers.map((a: any) => a.id)).toEqual([answer.id])
+      expect(answer.session_id).toBe(respondent)
+      expect(answer.agent).toBe(agent)
+      if (!child && q.data.answer_type === "multi-choice") primaryChoices++
+      if (child && q.data.recipient.kind === "dispatcher") childDispatchers++
+    }
+    expect(count).toBe(TOOL_EXAMPLES.record.filter(e => e.operation === "ask").length)
+    expect(primaryChoices).toBeGreaterThan(0)
+    expect(childDispatchers).toBeGreaterThan(0)
+  } finally { await f.close() }
+})

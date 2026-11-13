@@ -1,4 +1,5 @@
 import { test, expect } from "bun:test"
+import { Schema, SchemaRepresentation } from "effect"
 import { registeredLoom } from "./helpers/registered-loom.js"
 
 const request = () => ({ operation: "ask", question: "Which local store?", blocking: true,
@@ -72,5 +73,73 @@ test("invalid structured asks fail before ledger append or native contact", asyn
     expect(f.sessionCreates).toHaveLength(0)
     expect(f.nativeInputs).toHaveLength(0)
     expect((await f.invoke("record", { operation: "query", session_only: true }, "asker")).result.items).toHaveLength(0)
+  } finally { await f.close() }
+})
+
+test("legacy structured creation fails before native contact while typed replies keep exact authorization", async () => {
+  const f = await registeredLoom()
+  try {
+    const { recipient: _recipient, ...legacy } = request()
+    await expect(f.invoke("record", { ...legacy, to_agent: "investigator" }, "asker"))
+      .rejects.toThrow("multi-choice requires a typed recipient")
+    expect(f.sessionCreates).toHaveLength(0)
+    expect(f.nativeInputs).toHaveLength(0)
+    expect(f.permissionRequests).toHaveLength(0)
+    expect((await f.invoke("record", { operation: "query", session_only: true }, "asker")).result.items).toHaveLength(0)
+    const q = (await f.invoke("record", request(), "asker")).result
+    for (const reply of [{ choice_id: "B" }, { status: "cannot-select", reason: "Unknown" }]) {
+      await expect(f.invoke("record", { operation: "answer", question_id: q.id, ...reply }, "other", "investigator"))
+        .rejects.toThrow("Session does not match")
+      await expect(f.invoke("record", { operation: "answer", question_id: q.id, ...reply }, q.dispatch.target_session_id, "other"))
+        .rejects.toThrow("agent does not match")
+    }
+    expect((await f.invoke("record", { operation: "query", view: "thread", question_id: q.id })).result.answers).toHaveLength(0)
+    expect(f.nativeInputs).toHaveLength(0)
+    const answer = (await f.invoke("record", { operation: "answer", question_id: q.id, choice_id: "B" }, q.dispatch.target_session_id, "investigator")).result
+    expect(answer.data).toMatchObject({ choice_id: "B", answer: "SQLite" })
+    expect(answer.continuation.owner).toBe("native-subagent-execution")
+  } finally { await f.close() }
+})
+
+test("registered string schemas and actual callbacks agree on Unicode and nonblank boundaries", async () => {
+  const f = await registeredLoom()
+  try {
+    const properties = f.tools.get("record").input.properties
+    // Independent external JSON Schema fragment decoder; no product validation fake.
+    // Full if/then/oneOf shapes are checked separately, not translated by this subset importer.
+    const accepts = (schema: any) => Schema.is(SchemaRepresentation.fromJsonSchemaDocument({
+      dialect: "draft-2020-12", schema, definitions: {},
+    }, { patterns: "apply" }))
+    const labelSchema = accepts(properties.choices.items.properties.answer)
+    const reasonSchema = accepts(properties.reason)
+    for (const [value, valid] of [
+      ["😀".repeat(2001), true], ["😀".repeat(4000), true], ["😀".repeat(4001), false],
+      ["e\u0301".repeat(2000), true], ["e\u0301".repeat(2000) + "x", false],
+      ["", false], [" \n\t", false], ["\u00a0\u2003\u2028\u2029\ufeff", false], ["\u00a0 x \ufeff", true],
+    ] as const) {
+      expect(labelSchema(value)).toBe(valid)
+      const input = { ...request(), recipient: { kind: "user" }, blocking: false,
+        choices: [{ id: "A", answer: value }, { id: "B", answer: "Other" }] }
+      if (!valid) { await expect(f.invoke("record", input)).rejects.toThrow(); continue }
+      const q = (await f.invoke("record", input)).result
+      const a = (await f.invoke("record", { operation: "answer", question_id: q.id, choice_id: "A" })).result
+      expect(a.data.answer).toBe(value) // Neither normalization nor label trimming.
+    }
+    const q = (await f.invoke("record", { ...request(), recipient: { kind: "user" }, blocking: false })).result
+    let saved = 0
+    for (const [reason, valid] of [
+      ["😀".repeat(8000), true], ["😀".repeat(8001), false], ["e\u0301".repeat(4000), true],
+      ["", false], [" \n\t", false], ["\u00a0\u2003\u2028\ufeff", false], ["\u00a0 why \ufeff", true],
+    ] as const) for (const reply of [{ choice_id: "A" }, { status: "cannot-select" }]) {
+      expect(reasonSchema(reason)).toBe(valid)
+      const payload = { operation: "answer", question_id: q.id, ...reply, reason }
+      if (valid) {
+        expect((await f.invoke("record", payload)).result.data.reason).toBe(reason.trim())
+        saved++
+      } else await expect(f.invoke("record", payload)).rejects.toThrow()
+      expect((await f.invoke("record", { operation: "query", view: "thread", question_id: q.id })).result.answers).toHaveLength(saved)
+    }
+    expect(f.nativeInputs).toHaveLength(0)
+    expect(f.sessionCreates).toHaveLength(0)
   } finally { await f.close() }
 })

@@ -197,3 +197,51 @@ test("Open Question discovery and actual Code Mode accept typed choices and reje
     expect(f.sessionCreates).toHaveLength(0)
   } finally { await f.close() }
 })
+
+test("real Code Mode carries Unicode boundaries and runtime rejects invalid choices/reasons", async () => {
+  const f = await registeredLoom()
+  let callbacks = 0
+  try {
+    const tools = Object.fromEntries([...f.tools].map(([name, tool]) => [name, Tool.make({
+      description: tool.description, input: tool.input, output: { type: "string" },
+      execute: (input: unknown) => Effect.tryPromise({
+        try: async () => { callbacks++; return JSON.stringify(await f.invoke(name, input)) },
+        catch: (error: unknown) => toolError(error instanceof Error ? error.message : String(error)),
+      }),
+    })]))
+    const runtime = CodeMode.make({ tools: { loom: Namespace.make({ description: f.namespaces.get("loom").description, tools }) } })
+    const valid = await Effect.runPromise(runtime.execute(`
+      const label="😀".repeat(4000), reason="😀".repeat(8000);
+      const q=JSON.parse(await tools.loom.record({operation:"ask",question:"Unicode boundary?",recipient:{kind:"user"},
+        blocking:false,answer_type:"multi-choice",choices:[{id:"A",answer:label},{id:"B",answer:"Other"}]})).result;
+      const a=JSON.parse(await tools.loom.record({operation:"answer",question_id:q.id,choice_id:"A",reason})).result;
+      const b=JSON.parse(await tools.loom.record({operation:"answer",question_id:q.id,status:"cannot-select",reason})).result;
+      const t=JSON.parse(await tools.loom.record({operation:"query",view:"thread",question_id:q.id})).result;
+      return {id:q.id,label:a.data.answer===label,reason:a.data.reason===reason,abstain:b.data.reason===reason,
+        stored:t.question.data.choices[0].answer===label && t.answers[0].data.reason===reason && t.answers[1].data.reason===reason};
+    `))
+    expect(valid.ok).toBe(true)
+    expect(valid.value).toMatchObject({ label: true, reason: true, abstain: true, stored: true })
+    const before = callbacks
+    const rejected = await Effect.runPromise(runtime.execute(`
+      const ask={operation:"ask",question:"Boundary?",recipient:{kind:"user"},blocking:true,
+        answer_type:"multi-choice",choices:[{id:"A",answer:"One"},{id:"B",answer:"Two"}]};
+      const {recipient,...legacy}=ask;
+      const invalids=[{...legacy,to_agent:"manual"},
+        ...["😀".repeat(4001)," ","\\u00a0\\u2003\\u2028\\u2029\\ufeff"].map(answer=>({...ask,choices:[{id:"A",answer},{id:"B",answer:"Two"}]})),
+        ...["😀".repeat(8001)," ","\\u00a0\\u2003\\u2028\\ufeff"].flatMap(reason=>[
+          {operation:"answer",question_id:${JSON.stringify(valid.value.id)},choice_id:"A",reason},
+          {operation:"answer",question_id:${JSON.stringify(valid.value.id)},status:"cannot-select",reason}])];
+      return (await Promise.allSettled(invalids.map(input=>tools.loom.record(input)))).map(result=>result.status);
+    `))
+    expect(rejected.ok).toBe(true)
+    expect(rejected.value).toEqual(Array(10).fill("rejected"))
+    // Pinned Code Mode uses JSON Schema for signatures, not input validation.
+    // These calls reach real callbacks; runtime must enforce the same boundary.
+    expect(callbacks).toBe(before + 10)
+    const thread = (await f.invoke("record", { operation: "query", view: "thread", question_id: valid.value.id })).result
+    expect(thread.answers).toHaveLength(2)
+    expect(f.nativeInputs).toHaveLength(0)
+    expect(f.sessionCreates).toHaveLength(0)
+  } finally { await f.close() }
+})

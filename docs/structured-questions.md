@@ -17,11 +17,12 @@ Architect's decision authority or replace a genuine user decision.
 ## Public contract
 
 ```json
-{"operation":"ask","question":"Which approach fits the agreed constraints?","answer_type":"multi-choice","choices":[{"id":"A","answer":"Keep the current approach"},{"id":"B","answer":"Use the proposed approach"}],"recipient":{"kind":"dispatcher"},"blocking":true}
+{"operation":"ask","question":"Which approach fits the agreed constraints?","answer_type":"multi-choice","choices":[{"id":"A","answer":"Keep the current approach"},{"id":"B","answer":"Use the proposed approach"}],"recipient":{"kind":"role","id":"research"},"blocking":true}
 ```
 
-This dispatcher example is for a child Session. A primary Session can instead
-address an actual agent/role discovered through `loom_agents`, or a user. User
+This primary-Session example requires a single eligible `research` role discovered
+through `loom_agents`. In a child Session, `recipient:{kind:"dispatcher"}` can
+instead address its native parent. A primary Session has no dispatcher. User
 questions still need native user interaction; Loom does not fabricate a reply.
 Neither an Action nor a Plan is required.
 
@@ -49,10 +50,21 @@ Omitted `answer_type`, or explicit `text`, keeps existing text questions and
 questions reject free-text `answer` submissions and mixtures of answer forms.
 `context_attachments` remains available on all response forms.
 
+New multiple-choice questions require a typed `recipient`; `to_agent` remains
+manual-only for text questions. This keeps every new selection on the existing
+respondent-identity checks without adding authority to legacy addressing. Earlier
+draft v1 multiple-choice records and their answers remain readable and unchanged,
+but reject new replies: recreate the question with a typed recipient and a new ID.
+Historical manual responses are not retroactively verified. Typed identity still
+does not certify that a relayed user decision actually came from the user.
+
 Multiple-choice means **one selection**, not multi-select. Bounds are 2–20
 choices; unique, case-sensitive IDs of 1–64 ASCII letters, digits, `_`, `.`, `:`
 or `-`, beginning with a letter or digit; nonblank labels of at most 4,000
-characters; and nonblank reasons of at most 8,000 characters. Existing combined
+Unicode code points; and nonblank reasons of at most 8,000 Unicode code points.
+Counts apply before trimming; labels retain their exact original bytes/string.
+The schema and runtime both reject whitespace-only new fields. Legacy text limits
+are unchanged; combining marks count separately, not as display graphemes. Existing combined
 record/read budgets also apply. Duplicate IDs, unknown IDs, unknown fields,
 malformed choices and invalid combinations fail before appending an answer or
 contacting a recipient. The public schema checks shapes; the Store checks the
@@ -123,12 +135,18 @@ free-text compatibility, limits, failure atomicity, first-answer behavior and
 bounded preview/readback. `question-choices-native.test.ts` exercises real plugin
 callbacks with a simulated host, including bound-child and forwarded-sibling
 checks. `question-discovery-native.test.ts` executes the advertised example and
-checks delivered guidance/opt-outs. `tool-search-codemode.test.ts` uses the real
-pinned Code Mode runtime for discovery, schema rejection and execution.
+checks delivered guidance/opt-outs and executes every advertised ask in its
+labelled primary/child Session context. The native string-schema test compares
+the actual registered fragments using Effect's JSON Schema importer with the
+real callbacks. `tool-search-codemode.test.ts` uses the real pinned Code Mode
+runtime for discovery and execution. JSON Schema in Code Mode is signature
+metadata, not an input validator; those negative calls prove runtime rejection,
+not schema enforcement by Code Mode.
 
 `installed_question_choices.py` installs the exact package into an isolated
 OpenCode 2.2.6 host and uses the existing local scripted provider. It checks native
 child selection, rejection, abstention/conflicts and process-restart readback.
+It also rejects new legacy choices and exercises Unicode label/reason boundaries.
 Its provider deterministically selects the second option: that is not Evaluator
 reasoning, human consent, independent review or evidence of restored spontaneous
 question use. Fixture presence is not a passing run; consult the PR's execution

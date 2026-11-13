@@ -270,7 +270,7 @@ direct delegation, not an approval gate.
 
 Text answers require `question_id`, `answer`; optional `context_attachments`.
 For a structured `answer_type:"multi-choice"` ask, supply immutable
-`choices:[{id,answer},...]`. Reply with `question_id` and `choice_id`, plus an
+`choices:[{id,answer},...]` and a typed `recipient`, never legacy `to_agent`. Reply with `question_id` and `choice_id`, plus an
 optional `reason`; or `status:"cannot-select"` and a required `reason` instead.
 Do not also submit `answer`. Omitted answer type remains text. See the
 [structured contract](structured-questions.md) for validation, bounds, examples

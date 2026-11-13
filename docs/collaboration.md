@@ -154,7 +154,8 @@ Blocking is collaboration intent, never a forced wait or execution gate.
 ## Structured answer formats
 
 Omitted `answer_type` or `text` preserves free-text answers. `multi-choice` stores
-2–20 immutable `{id,answer}` choices and accepts one `choice_id`, optionally with
+2–20 immutable `{id,answer}` choices, requires typed `recipient` (not `to_agent`),
+and accepts one `choice_id`, optionally with
 `reason`, or `status:"cannot-select"` with a required reason. The original label
 is resolved by Loom, not supplied by the respondent. Text and choice forms cannot
 be mixed. See [the complete contract](structured-questions.md) for limits and

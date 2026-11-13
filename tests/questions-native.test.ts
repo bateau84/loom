@@ -77,7 +77,12 @@ test("registered schema and callbacks require canonical fields and reject aliase
     expect(ask.required).toEqual(["operation", "question", "blocking"])
     expect(ask.oneOf).toEqual([{ required: ["to_agent"], not: { required: ["recipient"] } },
       { required: ["recipient"], not: { required: ["to_agent"] } }])
-    expect(answer.required).toEqual(["operation", "question_id", "answer"])
+    expect(answer.required).toEqual(["operation", "question_id"])
+    expect(answer.oneOf).toEqual([
+      { required: ["answer"], not: { anyOf: [{ required: ["choice_id"] }, { required: ["status"] }, { required: ["reason"] }] } },
+      { required: ["choice_id"], not: { anyOf: [{ required: ["answer"] }, { required: ["status"] }] } },
+      { required: ["status", "reason"], not: { anyOf: [{ required: ["answer"] }, { required: ["choice_id"] }] } },
+    ])
     expect(ask.properties.blocking).toEqual({ type: "boolean" })
     for (const operation of [ask, answer]) {
       expect(operation.additionalProperties).toBe(false)

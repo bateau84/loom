@@ -47,14 +47,16 @@ test('cannot-select is an attributed response, not a fabricated option or a seco
   assert.match(c.thread(q.id).note, /not resolution, approval or permission/)
 })
 
-test('legacy execute entry point preserves structured fields rather than silently dropping them', t => {
-  const { c } = fixture(t)
+test('legacy manual creation rejects structured questions without changing legacy text', t => {
+  const { db, c } = fixture(t)
   const { recipient: _recipient, ...request } = input()
-  const q = c.execute(asker, { operation: 'ask', ...request, to_agent: 'general' })
-  assert.deepEqual(c.thread(q.id).question.data.choices, choices())
-  const answer = c.execute(respondent, { operation: 'answer', question_id: q.id, choice_id: 'A' })
-  assert.equal(answer.data.answer, 'JSON files')
-  assert.equal(answer.data.choice_id, 'A')
+  assert.throws(() => c.execute(asker, { operation: 'ask', ...request, to_agent: 'general' }), /multi-choice requires.*recipient/)
+  assert.equal(db.prepare('SELECT count(*) AS n FROM ledger').get().n, 0)
+  const q = c.execute(asker, { operation: 'ask', question: 'Explain?', to_agent: 'general', blocking: true })
+  const answer = c.answer({ session_id: 'unrelated', agent: 'other' }, { question_id: q.id, answer: 'Manual response' })
+  assert.equal(answer.record.data.answer, 'Manual response')
+  assert.equal(answer.record.agent, 'other')
+  assert.ok(answer.resume) // Existing manual/unverified text compatibility, not a new authorization grant.
 })
 
 for (const [label, patch] of [
@@ -165,3 +167,61 @@ test('question lists and compact context expose the answer kind and selected ide
   assert.equal(current.answer.choice_id, undefined)
   assert.equal(current.answers_have_more, true)
 })
+
+for (const answered of [false, true]) test(`pre-fix legacy structured row (answered=${answered}) is read-only with no new wake eligibility`, t => {
+  const { db, store, c } = fixture(t)
+  // Historical input from the earlier draft, not a substitute for current ask-path proof.
+  const q = store.append({ ...asker, kind: 'question', data: {
+    format: 'loom-question/v1', question: 'Historical choice?', to_agent: 'general',
+    answer_type: 'multi-choice', choices: choices(), blocking: true,
+  } })
+  const historical = answered ? store.append({ session_id: 'old-respondent', agent: 'other', kind: 'answer', data: {
+    format: 'loom-answer/v1', question_id: q.id, choice_id: 'A', answer: 'JSON files',
+    verification: 'Response only; not resolution, approval or execution permission',
+  } }) : undefined
+  const snapshot = db.prepare('SELECT data FROM ledger ORDER BY seq').all()
+  for (const actor of [respondent, { session_id: 'unrelated', agent: 'other' }])
+    for (const response of [{ choice_id: 'B' }, { status: 'cannot-select', reason: 'Unknown' }, { answer: 'Text workaround' }])
+      assert.throws(() => c.answer(actor, { question_id: q.id, ...response }), /Legacy multi-choice.*new.*recipient/)
+  assert.deepEqual(db.prepare('SELECT data FROM ledger ORDER BY seq').all(), snapshot)
+  const reopened = new Store(db).collaboration.thread(q.id)
+  assert.deepEqual(reopened.question.data.choices, choices())
+  assert.deepEqual(reopened.answers.map(a => a.id), historical ? [historical.id] : [])
+})
+
+for (const [label, value, valid] of [
+  ['non-BMP counterexample', '😀'.repeat(2001), true],
+  ['non-BMP exact limit', '😀'.repeat(4000), true],
+  ['non-BMP overflow', '😀'.repeat(4001), false],
+  ['combining exact limit', 'e\u0301'.repeat(2000), true],
+  ['combining overflow', 'e\u0301'.repeat(2000) + 'x', false],
+  ['Unicode whitespace', '\u00a0\u2003\u2028\u2029\ufeff', false],
+]) test(`choice labels use Unicode code points without normalization: ${label}`, t => {
+  const { db, c } = fixture(t)
+  const request = { ...input(), choices: [{ id: 'A', answer: value }, { id: 'B', answer: 'Other' }] }
+  if (!valid) {
+    assert.throws(() => c.ask(asker, undefined, request, { expected_session: 'parent' }))
+    assert.equal(db.prepare('SELECT count(*) AS n FROM ledger').get().n, 0)
+    return
+  }
+  const q = c.ask(asker, undefined, request, { expected_session: 'parent' })
+  const answer = c.answer(respondent, { question_id: q.id, choice_id: 'A' })
+  assert.equal(answer.record.data.answer, value)
+  assert.equal(c.thread(q.id).question.data.choices[0].answer, value)
+})
+
+for (const response of [{ choice_id: 'A' }, { status: 'cannot-select' }])
+  test(`structured reasons count code points (${response.choice_id ?? response.status}) without changing legacy text limits`, t => {
+    const { c } = fixture(t), q = c.ask(asker, undefined, input(), { expected_session: 'parent' })
+    for (const reason of ['😀'.repeat(8001), '\u00a0\u2003\u2028\ufeff', '', '  ']) {
+      assert.throws(() => c.answer(respondent, { question_id: q.id, ...response, reason }))
+      assert.equal(c.thread(q.id).answers.length, 0)
+    }
+    const reason = '😀'.repeat(8000)
+    const answer = c.answer(respondent, { question_id: q.id, ...response, reason })
+    assert.equal(answer.record.data.reason, reason)
+    assert.ok(answer.resume)
+    const legacy = c.ask(asker, undefined, { question: 'Legacy', to_agent: 'general', blocking: false })
+    assert.throws(() => c.answer(respondent, { question_id: legacy.id, answer: '😀'.repeat(8001) }), /1-16000 characters/)
+    assert.equal(c.answer(respondent, { question_id: legacy.id, answer: '😀'.repeat(8000) }).record.data.answer, '😀'.repeat(8000))
+  })
