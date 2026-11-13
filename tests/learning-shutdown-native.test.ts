@@ -49,7 +49,8 @@ test("production shutdown finalizes retained statements before stopped-state has
   const directory = mkdtempSync(join(tmpdir(), "loom-shutdown-"))
   const statements: Statement[] = []
   const readers = new Map<Database, Statement>()
-  const original = Database.prototype.prepare
+  const closes = new Map<Database, Array<boolean | undefined>>()
+  const original = Database.prototype.prepare, originalClose = Database.prototype.close
   // The forwarding spy preserves the generic return type of the real driver.
   const intercept = function(this: Database, ...args: Parameters<Database["prepare"]>) {
     const statement = original.apply(this, args)
@@ -60,12 +61,19 @@ test("production shutdown finalizes retained statements before stopped-state has
     return statement
   } as Database["prepare"]
   const prepare = spyOn(Database.prototype, "prepare").mockImplementation(intercept)
+  const close = spyOn(Database.prototype, "close").mockImplementation(function(this: Database, strict?: boolean) {
+    const calls = closes.get(this) ?? []
+    calls.push(strict); closes.set(this, calls)
+    return originalClose.call(this, strict)
+  })
   let host: Awaited<ReturnType<typeof registeredLoom>> | undefined
   try {
     host = await registeredLoom([], { directory, versionedHost: true })
     expect(readers.size).toBe(2)
     await host.close()
     host = undefined
+    console.log("Production close ownership", [...readers.keys()].map(db => ({ filename: db.filename, close_arguments: closes.get(db) ?? [] })))
+    for (const db of readers.keys()) expect(closes.get(db)).toEqual([true])
     const root = join(directory, "state", "loom", "actions-v1")
     const scopes = readdirSync(root)
     expect(scopes).toHaveLength(1)
@@ -76,7 +84,7 @@ test("production shutdown finalizes retained statements before stopped-state has
     expect(hashes(state)).toEqual(beforeFinalization)
     console.log("PASS: production shutdown closed both databases; later statement finalization changed no source bytes")
   } finally {
-    prepare.mockRestore()
+    prepare.mockRestore(); close.mockRestore()
     for (const statement of statements) { try { statement.finalize() } catch {} }
     await host?.close()
     rmSync(directory, { recursive: true, force: true })
