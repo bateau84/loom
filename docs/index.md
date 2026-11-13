@@ -25,7 +25,8 @@ scan root so the profile is discovered; it declares no mandatory link counts.
 - [Deep retrospective session tracing](retrospective-trace.md) — Original Session evidence sources, access checks and coverage limits
 - [Learning evidence and provisional experiments](learning-experiments.md) — Bounded insight statistics, content fingerprints and manual tweak trials
 - [Review-scoped evidence and whole-work retrospectives (approved concept)](learning-evidence-and-review-scope.md) — Accepted architecture and requirements direction for attribution and automatic multi-Session evaluation; not current runtime behavior
-- [Native execution and review evidence specification](learning-native-evidence-spec.md) — Exact identity, original mandate, evidence-basis, failure and recipient-transfer contracts for subsequent implementation
+- [Native execution and review evidence specification](learning-native-evidence-spec.md) — Exact identity, original mandate, evidence-basis, failure and recipient-transfer contracts; bounded Stage 2 persistence is implemented
+- [Stage 2 review persistence and reconstruction](learning-review-stage2.md) — Implemented original mandates, historical membership, canonical issue arbitration, authorized public readers, recovery evidence and remaining host/product blockers
 - [Native review qualification](native-review-qualification.md) — Installed 2.2.6 Q1–Q7 observations, negative controls, capability matrix and unsupported host guarantees
 - [Native Evaluator audit qualification](native-evaluator-audit-qualification.md) — Source preflight and installed scripted recovery; real original-work audit pending
 - [Trusted learning host contracts](learning-host-trust-contract.md) — Native provenance/permission counterexamples and the host-owned guarantees still required

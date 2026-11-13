@@ -93,8 +93,9 @@
       "status": "PASS",
       "passed": 370,
       "failed": 0,
-      "assertions": 6733,
-      "test_files": 45
+      "assertions": 6761,
+      "test_files": 45,
+      "scope": "Final runtime, tests and corrected complete documentation corpus."
     },
     {
       "command": "bun run test:python",
@@ -115,6 +116,13 @@
     {
       "command": "git diff --check",
       "status": "PASS"
+    },
+    {
+      "command": "bun test tests/okf-native.test.ts tests/skill-native.test.ts",
+      "status": "PASS",
+      "passed": 14,
+      "failed": 0,
+      "assertions": 1239
     }
   ],
   "required_regressions": {
@@ -269,5 +277,21 @@
     "Restore tests do not establish power-loss durability or make stale backups authoritative over later external executions.",
     "Installed scripted mechanics and 100-member reconstruction do not qualify real Evaluator reasoning or the full E11 scenario."
   ],
-  "handback": "learning-review-stage2.md"
+  "handback": "learning-review-stage2.md",
+  "publication_followup": {
+    "implementation_commit": "1e5ea79dc89c79fe677783411346dc679206a035",
+    "first_ci_documentation_failures": [
+      "New Stage 2 page absent from docs/index.md.",
+      "Implementation Record type absent from the existing OKF profile."
+    ],
+    "correction": "Index the handback page and use the existing Playbook type. No runtime, harness or test-assertion changes.",
+    "local_recheck": "14 documentation/skill tests and the complete 370-test native suite pass with the corrected corpus.",
+    "first_installed_ci": {
+      "run_id": 43459063376,
+      "url": "https://github.com/bateau84/loom/actions/runs/43459063376",
+      "status": "success",
+      "stage2_step": "PASS"
+    },
+    "fresh_followup_ci": "See the PR for the final commit-specific workflow and artifact results; this record does not anticipate their success."
+  }
 }

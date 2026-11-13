@@ -1,5 +1,5 @@
 ---
-type: Implementation Record
+type: Playbook
 title: "Stage 2: persistent review requests and qualified reconstruction"
 description: "Adjudication carry-forward, production integration, retry authority, historical membership, recovery evidence and remaining host limits for PR #233."
 tags: [loom, learning, review, evidence, persistence]
