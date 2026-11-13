@@ -1,3 +1,4 @@
+# Refresh the isolated, credential-free workspace for structured Open Question validation.
 name: Learning qualification workspace
 on:
   pull_request:
