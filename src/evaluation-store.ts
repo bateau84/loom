@@ -274,8 +274,8 @@ export class EvaluationStore {
       if (members.some(member => member.report_id === null)) throw new Error("Evaluation population is incomplete")
       const dependencies: EvaluationSourceRef[] = []
       for (const member of members) {
-        const report = this.reportByID(member.report_id!, batch)
-        if (report.member_key !== member.key || report.availability !== "available") throw new Error("Evaluation member report is unavailable")
+        const report = this.reportByID(member.report_id!, batch, member.key)
+        if (report.availability !== "available") throw new Error("Evaluation member report is unavailable")
         dependencies.push(...JSON.parse(member.source_refs), ...report.source_refs)
       }
       const id = this.writeReport(batch, null, input, dependencies)
@@ -300,8 +300,11 @@ export class EvaluationStore {
     let state: EvaluationBatch["state"] = batch.state
     if (state === "complete") {
       try {
-        this.verifyMembership(batch)
-        if (count.total !== count.done || !batch.report_id || this.reportByID(batch.report_id, batch).availability !== "available") state = "incomplete"
+        const members = this.verifyMembership(batch)
+        for (const member of members) {
+          if (!member.report_id || this.reportByID(member.report_id, batch, member.key).availability !== "available") throw new Error("Evaluation member report is unavailable")
+        }
+        if (count.total !== count.done || !batch.report_id || this.reportByID(batch.report_id, batch, null).availability !== "available") state = "incomplete"
         else if (invalidations.length) state = "stale"
       } catch { state = "incomplete" }
     }
@@ -326,17 +329,26 @@ export class EvaluationStore {
   }
   reports(batchID: string, owner: string, input: { after?: number; limit?: number } = {}) {
     const batch = this.row(batchID, owner), page = this.members(batchID, owner, input)
-    return { items: page.items.map(member => ({ ...member, report: member.report_id ? this.reportByID(member.report_id, batch) : null })), next_after: page.next_after }
+    this.verifyMembership(batch)
+    return { items: page.items.map(member => ({ ...member, report: member.report_id ? this.reportByID(member.report_id, batch, member.key) : null })), next_after: page.next_after }
   }
   report(batchID: string, owner: string, memberKey?: string): EvaluationReport | null {
-    const batch = this.row(batchID, owner)
-    this.verifyMembership(batch)
-    const id = memberKey === undefined ? batch.report_id : (this.db.prepare("SELECT report_id FROM learning_evaluation_members WHERE batch_id=? AND key=?").get(batchID, memberKey) as { report_id: string | null } | undefined)?.report_id
-    return id ? this.reportByID(id, batch) : null
+    const batch = this.row(batchID, owner), members = this.verifyMembership(batch)
+    if (memberKey === undefined && batch.report_id !== null) {
+      // An overall report is not usable when any retained member receipt is missing or misattributed.
+      // Source unavailability is represented separately by the overall report's dependency validation.
+      for (const member of members) {
+        if (!member.report_id) throw new Error("Evaluation member report unavailable")
+        this.reportByID(member.report_id, batch, member.key)
+      }
+    }
+    const id = memberKey === undefined ? batch.report_id : members.find(member => member.key === memberKey)?.report_id
+    return id ? this.reportByID(id, batch, memberKey ?? null) : null
   }
-  private reportByID(id: string, batch: BatchRow): EvaluationReport {
+  private reportByID(id: string, batch: BatchRow, expectedMemberKey: string | null): EvaluationReport {
     const row = this.db.prepare("SELECT * FROM learning_evaluation_reports WHERE id=? AND batch_id=?").get(id, batch.id) as ReportRow | undefined
-    if (!row) throw new Error("Evaluation report unavailable")
+    const expectedSlot = expectedMemberKey === null ? "overall" : "member:" + expectedMemberKey
+    if (!row || row.member_key !== expectedMemberKey || row.slot !== expectedSlot) throw new Error("Evaluation report unavailable or misattributed")
     const dependencies = this.db.prepare("SELECT source_ref FROM learning_evaluation_dependencies WHERE report_id=?").all(id) as Array<{ source_ref: string }>
     const sourceRefs = refs(dependencies.map(ref => JSON.parse(ref.source_ref))), body = JSON.parse(row.body_json), qualifications = JSON.parse(row.qualifications_json) as string[]
     if (fingerprint({ batch_id: batch.id, member_key: row.member_key, body, qualifications, source_refs: sourceRefs }) !== row.sha256) throw new Error("Evaluation report integrity mismatch")
