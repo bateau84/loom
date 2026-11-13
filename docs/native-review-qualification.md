@@ -25,6 +25,10 @@ incoming-transfer counterexample retains `FAIL`. No real-model reasoning was tes
 The recorded input/runtime hashes allow later documentation-only evidence changes to be
 checked against those same tested bytes. The file watcher stayed enabled.
 
+The latest remediation run exercised clean commit `6b4a0a3` and finalized **1,144 audit
+receipts**. All eleven recorded input hashes and thirty production/runtime file hashes match
+that checkout. Its matrix remains three Verified, five Partial and one Unsupported capability.
+
 Remediation checks passed **216 Python tests**, including **19 oracle tests**, the repository
 TypeScript check, and **10 documentation/fixture tests**. The original installed question
 and Evaluator observer probes passed in the first stage. Exact-head CI remains independently

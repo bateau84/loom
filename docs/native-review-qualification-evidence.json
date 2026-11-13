@@ -12,14 +12,15 @@
       "status": "PASS",
       "dispatch": {
         "parent": [
-          "ses_e2df919e9ffeuFBNFT5FqBsfAJ",
-          "msg_1d206e64d0016RcTaMykEcZJUw",
-          "26072267-ce8a-4d82-8d30-4c21cad45198"
+          "ses_e2be70673ffezlo31kCBsa4hzU",
+          "msg_1d418f9b0001zRMGmMD35PQzzL",
+          "ac10c4e2-b11d-4ade-977e-485cf3ab8f7b"
         ],
         "binding": "observed",
-        "child_session_id": "ses_e2df9195cffeGPgqFuWw9BwurL",
+        "child_session_id": "ses_e2be705f3ffepo8oZveC4ijm7D",
         "reason": null,
         "admission_binding": "UNQUALIFIED",
+        "observer_ready_receipt": 1,
         "before_receipt": 16,
         "after_receipts": [
           45
@@ -27,7 +28,7 @@
         "progress_receipts": [
           19
         ],
-        "terminal_event_id": "evt_1d206e74900131P7A4KSDa6mSf",
+        "terminal_event_id": "evt_1d418fa6b00160bzgsWGO7PgGv",
         "return_status": "completed"
       },
       "basis": {
@@ -38,9 +39,9 @@
           {
             "receipt": 33,
             "call": [
-              "ses_e2df9195cffeGPgqFuWw9BwurL",
-              "msg_1d206e6c5001lNUBdfuZyhEByv",
-              "e2f06d33-2b8d-4a58-bdfc-658374e49dd2"
+              "ses_e2be705f3ffepo8oZveC4ijm7D",
+              "msg_1d418fa1d0012hcpniqVwI9QAQ",
+              "6c6f199d-d6a6-403d-8db5-949132eff483"
             ]
           }
         ],
@@ -53,14 +54,15 @@
       "concurrent": [
         {
           "parent": [
-            "ses_e2df919e9ffeuFBNFT5FqBsfAJ",
-            "msg_1d206e7f70010FvTdZDbcYgjkE",
-            "574f05e1-03e0-42df-96a8-766e4abd1549"
+            "ses_e2be70673ffezlo31kCBsa4hzU",
+            "msg_1d418faac0010zpEhuZyr5lRdB",
+            "c4773332-5e81-402f-bbb9-da8fd38aa3d8"
           ],
           "binding": "observed",
-          "child_session_id": "ses_e2df917d9ffeA16EctO7TGABnu",
+          "child_session_id": "ses_e2be70537ffe151qgk4pIQOLeq",
           "reason": null,
           "admission_binding": "UNQUALIFIED",
+          "observer_ready_receipt": 1,
           "before_receipt": 73,
           "after_receipts": [
             135
@@ -71,14 +73,15 @@
         },
         {
           "parent": [
-            "ses_e2df919e9ffeuFBNFT5FqBsfAJ",
-            "msg_1d206e7f70010FvTdZDbcYgjkE",
-            "2e2c27a4-cac7-4fb0-b1c0-d5db0b40087a"
+            "ses_e2be70673ffezlo31kCBsa4hzU",
+            "msg_1d418faac0010zpEhuZyr5lRdB",
+            "6cd956a4-a28b-4782-9802-39dc61333fc7"
           ],
           "binding": "observed",
-          "child_session_id": "ses_e2df917d6ffeg4UpgDRqMQzJhJ",
+          "child_session_id": "ses_e2be70534ffemtZnDgUUmDKDUO",
           "reason": null,
           "admission_binding": "UNQUALIFIED",
+          "observer_ready_receipt": 1,
           "before_receipt": 74,
           "after_receipts": [
             128
@@ -91,14 +94,15 @@
       "reused": [
         {
           "parent": [
-            "ses_e2df919e9ffeuFBNFT5FqBsfAJ",
-            "msg_1d206e64d0016RcTaMykEcZJUw",
-            "26072267-ce8a-4d82-8d30-4c21cad45198"
+            "ses_e2be70673ffezlo31kCBsa4hzU",
+            "msg_1d418f9b0001zRMGmMD35PQzzL",
+            "ac10c4e2-b11d-4ade-977e-485cf3ab8f7b"
           ],
           "binding": "observed",
-          "child_session_id": "ses_e2df9195cffeGPgqFuWw9BwurL",
+          "child_session_id": "ses_e2be705f3ffepo8oZveC4ijm7D",
           "reason": null,
           "admission_binding": "UNQUALIFIED",
+          "observer_ready_receipt": 1,
           "before_receipt": 16,
           "after_receipts": [
             45
@@ -106,19 +110,20 @@
           "progress_receipts": [
             19
           ],
-          "terminal_event_id": "evt_1d206e74900131P7A4KSDa6mSf",
+          "terminal_event_id": "evt_1d418fa6b00160bzgsWGO7PgGv",
           "return_status": "completed"
         },
         {
           "parent": [
-            "ses_e2df919e9ffeuFBNFT5FqBsfAJ",
-            "msg_1d206ea33001Xa7zOgDlTMaOau",
-            "83dd7281-be8f-48ac-812f-ec38d7404c0f"
+            "ses_e2be70673ffezlo31kCBsa4hzU",
+            "msg_1d418fc2e001n5JfTWZGZmZnr4",
+            "e6acfde8-151a-4bc9-abaa-0f7b44ee21c2"
           ],
           "binding": "observed",
-          "child_session_id": "ses_e2df9195cffeGPgqFuWw9BwurL",
+          "child_session_id": "ses_e2be705f3ffepo8oZveC4ijm7D",
           "reason": null,
           "admission_binding": "UNQUALIFIED",
+          "observer_ready_receipt": 1,
           "before_receipt": 160,
           "after_receipts": [
             175
@@ -126,21 +131,22 @@
           "progress_receipts": [
             162
           ],
-          "terminal_event_id": "evt_1d206ea8b0019Zmj3N48GvTBeK",
+          "terminal_event_id": "evt_1d418fc5f001Q5jHFHk1Nu9ewF",
           "return_status": "completed"
         }
       ],
       "running_reuse": [
         {
           "parent": [
-            "ses_e2df919e9ffeuFBNFT5FqBsfAJ",
-            "msg_1d206eafb001gSnC0DftpzBX6Y",
-            "d47f7b00-871e-4177-9488-f5389bc008f4"
+            "ses_e2be70673ffezlo31kCBsa4hzU",
+            "msg_1d418fca8001W8RCLG0FubjpMa",
+            "126ef8c7-845a-4fc5-b43d-a0e382f8299b"
           ],
           "binding": "observed",
-          "child_session_id": "ses_e2df9195cffeGPgqFuWw9BwurL",
+          "child_session_id": "ses_e2be705f3ffepo8oZveC4ijm7D",
           "reason": null,
           "admission_binding": "UNQUALIFIED",
+          "observer_ready_receipt": 1,
           "before_receipt": 200,
           "after_receipts": [
             206
@@ -148,19 +154,20 @@
           "progress_receipts": [
             202
           ],
-          "terminal_event_id": "evt_1d206eb330019l40nkqmYJYgUf",
+          "terminal_event_id": "evt_1d418fcc5001GAcq2BkVPKEXi1",
           "return_status": "running"
         },
         {
           "parent": [
-            "ses_e2df919e9ffeuFBNFT5FqBsfAJ",
-            "msg_1d206ec27001LkIHXTce9GtN81",
-            "b63fbf42-4822-4954-a3f4-8e4524f0aa8d"
+            "ses_e2be70673ffezlo31kCBsa4hzU",
+            "msg_1d418fd37001jFEHg9snxegItB",
+            "b3cdbeda-18a3-480f-a83d-f61c5e817b09"
           ],
           "binding": "observed",
-          "child_session_id": "ses_e2df9195cffeGPgqFuWw9BwurL",
+          "child_session_id": "ses_e2be705f3ffepo8oZveC4ijm7D",
           "reason": null,
           "admission_binding": "UNQUALIFIED",
+          "observer_ready_receipt": 1,
           "before_receipt": 249,
           "after_receipts": [
             253
@@ -168,7 +175,7 @@
           "progress_receipts": [
             251
           ],
-          "terminal_event_id": "evt_1d206ec61001mYWfrt6aKMI2d0",
+          "terminal_event_id": "evt_1d418fd4d001uBejkEFQNJbrqA",
           "return_status": "running"
         }
       ],
@@ -179,17 +186,17 @@
       "status": "PASS",
       "admissions": [
         {
-          "session_id": "ses_e2df9104bffeQ2HdSzmE02wiDI",
-          "input_id": "msg_1d206efd50010Pm5pMhpwThP1z",
-          "event_id": "evt_1d206efea001Vo1imtFwZY3rud",
-          "manifest_sha256": "0e593711ff1d4b454fd9c7ddb15a0e15cd14ba76a9b4476bbd43692db5fc3ffd",
+          "session_id": "ses_e2be70067ffeWDMmWTewRyskLo",
+          "input_id": "msg_1d418ff9b001G1t04Fmkh3KlEe",
+          "event_id": "evt_1d418ff9b002uADgXogkKLvm60",
+          "manifest_sha256": "f576219f8e52c7c82a5dc0d06e3e36bb310970353757341e45b30b52dce218b6",
           "dispatch_binding": "UNQUALIFIED"
         },
         {
-          "session_id": "ses_e2df90ec0ffes5NAdmdpyraZch",
-          "input_id": "msg_1d206f1440028DnGkV6bAtvvoB",
-          "event_id": "evt_1d206f1450019UHLwjYIJRE8WM",
-          "manifest_sha256": "ecae86a379867380ae561c8c0f2614b1d4bae57b055e5e6bc4a2e2f001a958bb",
+          "session_id": "ses_e2be6ffb3ffeNrWMBoE4ppx8mT",
+          "input_id": "msg_1d419004f002qlc6Hn7Rm75GIx",
+          "event_id": "evt_1d419004f0034SNsJ1paxiDMFU",
+          "manifest_sha256": "b72ecd0cf78be8c1e6a70b7453fd2e712b0ba25b6bceb1f703539ae478e367fc",
           "dispatch_binding": "UNQUALIFIED"
         }
       ],
@@ -206,9 +213,9 @@
           {
             "receipt": 490,
             "call": [
-              "ses_e2df90d7fffeD7auoDnFTlbQOB",
-              "msg_1d206f290001JRjNDE37trcATH",
-              "bc8218ee-b16e-4fcb-a61e-35f7d511a9b1"
+              "ses_e2be6fee4ffetKRkzqoI5qefEO",
+              "msg_1d4190128001Fy45KqH0dHe72g",
+              "49c9d87f-9cad-4f40-8c83-9d1f4f201202"
             ]
           }
         ],
@@ -226,7 +233,7 @@
         "retrieved": [],
         "same_review_invocation": "UNQUALIFIED"
       },
-      "positive_admission_id": "msg_1d206f285001F2dZDv6ASRB0bi",
+      "positive_admission_id": "msg_1d419011e002I6HWqxER5GSuvK",
       "cited_and_claimed_inspected": "observed reviewer-authored return, not access proof"
     },
     {
@@ -240,9 +247,9 @@
           {
             "receipt": 610,
             "call": [
-              "ses_e2df919e9ffeuFBNFT5FqBsfAJ",
-              "msg_1d206f620001cmu2crzSu7C5k1",
-              "b2da6b65-a821-4f38-9f18-8522d05a3555"
+              "ses_e2be70673ffezlo31kCBsa4hzU",
+              "msg_1d419036c001Ooyk3JVWGuwLTw",
+              "b99a96b5-e75f-455a-9697-b1fd42bb93da"
             ]
           }
         ],
@@ -254,9 +261,9 @@
         "same_review_invocation": "UNQUALIFIED"
       },
       "denied_call": [
-        "ses_e2df908c9ffe4TxvJk7AmzTbwr",
-        "msg_1d206f749001UKMJfmZM7DIvoP",
-        "891b05b9-3eb1-4097-9507-31f4f607f881"
+        "ses_e2be6fc14ffex4eIP95pLXiVg4",
+        "msg_1d41903f500197WwRH55jW0pYY",
+        "f6427c23-6016-4d52-81bd-6820873d9fe2"
       ],
       "inline_counterexample": {
         "supplied": [
@@ -274,15 +281,15 @@
       "name": "Q6-real-inner-call-collision-and-incomplete-observation-control",
       "status": "PASS",
       "shared_native_call": [
-        "ses_e2df905c9ffe1fF66HtHhgZJIk",
-        "msg_1d206fa890019e00L4Pc7K51uf",
-        "5a553c28-2fb9-40bb-883c-386784206454"
+        "ses_e2be6fa19ffeGxt4X09tJ936TR",
+        "msg_1d419061b001OoQqziAajOAlAA",
+        "b50ff7de-dc7b-4a75-8588-e6e986c3cbec"
       ],
-      "outer_record_id": "41519d60-dc79-442f-8bec-0b23dfc4e57a",
+      "outer_record_id": "d724db87-53bd-4c27-809c-d8d1f714fb0f",
       "missing_source_call": [
-        "ses_e2df905c9ffe1fF66HtHhgZJIk",
-        "msg_1d206fcb4001ggDon9meDvEfRE",
-        "176b7375-b1e2-4423-91f8-c766bc06eecc"
+        "ses_e2be6fa19ffeGxt4X09tJ936TR",
+        "msg_1d4190762001OVRRyLHNypubcb",
+        "760c2343-9dd0-4e02-97ad-2fd01514f4db"
       ],
       "inner_provenance": "UNQUALIFIED: native inner ID absent; Loom meta-tool capture excluded",
       "missing_provider_control": "PASS for deliberately reduced trace oracle only, not an injected native outage"
@@ -291,31 +298,31 @@
       "name": "Q7-native-scope-change-and-original-work-ref",
       "status": "PASS",
       "native_call": [
-        "ses_e2df902bfffeVKP3XICpG5XitG",
-        "msg_1d206fe62001FCB8LsDbkbZQt3",
-        "439ce0d4-8bb6-4fcb-8357-c1dd4c2c4437"
+        "ses_e2be6f84effe2bXv2czUI732K7",
+        "msg_1d4190882001xZW1TvYVqx6Qez",
+        "8cfd4c1f-a3f9-481b-b144-497973f572a1"
       ],
       "work_ref": {
-        "action_id": "1118fb72-34d7-4d2c-bd4a-06ac06f0df76",
+        "action_id": "16debad8-8be7-4b5e-96e0-501017ca6fc1",
         "node_id": "task-a",
         "action_revision": 1,
         "plan_revision": 1,
-        "hash": "b07356628f0ee2d49507cf9a6fac629a14c10dec72798baf6287c8db919294e1"
+        "hash": "74543506a5e97229e8f68aaef4a6abb29357d02cac5dbddc2f262ea7689b84db"
       },
-      "start_record": "9fb20c4d-f236-4a35-92de-ab3a6d0ec61a",
-      "finish_record": "1028134f-d4e6-4961-a59a-236b1649d974",
-      "completion_record": "047ee057-9d13-43e2-a0e1-ed985de5ad52"
+      "start_record": "8283eb33-0fa9-4931-b651-c040d5039e6c",
+      "finish_record": "1ac130f6-644d-469e-a1a4-fcfc78dc3c9d",
+      "completion_record": "311f1787-6f01-4bcc-9869-6d8ad4239ffb"
     },
     {
       "name": "R1-interrupt-compact-reopen-and-public-history",
       "status": "PASS",
-      "interruption_event_id": "evt_1d207048d001E8ZlLr0IE3YiKt",
-      "compaction_event_id": "evt_1d2070578001zRE3iCGssb61Sf",
+      "interruption_event_id": "evt_1d4190c75001HASPeqbBFc0aul",
+      "compaction_event_id": "evt_1d4190d050025uwAWHDOrnQ4lx",
       "processes": [
-        20,
-        363
+        17,
+        361
       ],
-      "completion_record": "047ee057-9d13-43e2-a0e1-ed985de5ad52",
+      "completion_record": "311f1787-6f01-4bcc-9869-6d8ad4239ffb",
       "postcompaction_source_marker_seen": false,
       "limitation": "Normal process reopen after interruption; crash during dispatch and per-dispatch recovery lineage remain unqualified"
     }
@@ -448,17 +455,17 @@
     "Fixture-authored mandates are test inputs; production Loom review admission remains unimplemented.",
     "No protected source retention policy, background learning, or canonical change is activated."
   ],
-  "source_head": "5b201a58c3cf4a344989a800b6c8ea5f407f9b14",
+  "source_head": "6b4a0a330adcad8ba64b8c313f4a74d92586330b",
   "source_dirty": false,
   "input_sha256": {
-    "tests/installed_native_review.py": "f00649cb9942831a722ba94e62acf0686f9ab4c5cb1194deeabc20448537a1d0",
-    "tests/native_review_oracle.py": "a966286d426f471f68a1ef944a98a568ddee5f395771d9a06b74b179fb817eab",
+    "tests/installed_native_review.py": "41f7d58477eb70f586c4ce0c6d1ae53a6ce29d060ffc51d1067c770ad3dbed35",
+    "tests/native_review_oracle.py": "2358bc61618910a7ab7825cf4b560e81f4ef2853114a5d47dcad226e3ae74834",
     "tests/question-host/server.ts": "33c5d27f82c3e9bf6dd26f9de05d18761ddca6a7be6266ae67468f91b2bdfb93",
     "tests/question-host/review-script.ts": "b3bc6bd7bba799b08b006a83e6e8dfec6259de4aab9beae8e7260ecb7ef25977",
     "tests/question-host/provider.mjs": "8e98dfa238f709d6b89df590a23c7d708e5283f44fc6f3a4b5193c05a81d66b0",
     "tests/installed_host_smoke.py": "dc3ebaba211f5338f8e12f298c7b53b1dbd9585be9e9eaa69c02e5fba4ee5fb6",
     "tests/installed_instruction_variants.py": "295d62f3ffd7d30bf87a62e6be05003abf3927b40097635d2c5d073e5d27b258",
-    "tests/installed_questions.py": "7826b0dd7ae27b3b9d2b1783249735b74485f1ca6374a0c22c7e53e22eed6dc7",
+    "tests/installed_questions.py": "928026182bd36f62e4d9284bd7be3cab5d59d426d68f3c993f75723593f1cd76",
     ".bun-version": "b99b4c7cdf236f59bc9f65d963deaecae3b16a7dad87939cacb9057f7664daee",
     "bun.lock": "6b239350c433d4e18982499d7a9849db7f380466ccab030d431aa454eb46aa8c",
     "package.json": "0b62be84895944c8fd859e4819903db640cb4d778f8d4e016dcf63e312639d21"
@@ -467,7 +474,7 @@
     "name": "loom-plugin",
     "version": "2.0.0-alpha.1",
     "sdk_version": "2.2.6",
-    "artifact_sha256": "ee136fb2aed87dcf47fd49489f22f5a1f7ede651ad6a15a6e3797fe817742988",
+    "artifact_sha256": "342882fa595cd6aedbaff43c25eb873a7be07ff9af4c39de98bd0d2f7f57e563",
     "artifact_filename": "loom-plugin-2.0.0-alpha.1.tgz"
   },
   "runtime_sha256": {
@@ -505,21 +512,21 @@
   "cli_sha256": "50503d24577fa4117a7c95ee85b2cd679606a87eacf20ca54ed5db5c9e1cf895",
   "observed_host": "opencode v2.2.6",
   "synthetic_sources": {
-    "evidence-a.txt": "e3b7d4386a999123cb2019d2ef2820fbfa384a6aa121160ce3e024149c85d150",
-    "evidence-b.txt": "881e33a6b0ead5a9de97f3b0e21d042b191948ff3d8001b659b0a28f338f6155",
-    "protected-b.txt": "ad9735e3cd56757d33115635c0ed38368db26f56a8076be2dedef8fb602c781f"
+    "evidence-a.txt": "56b414ea09883a60bdfe47cfd6ecc36ef47b0b06842fa8e5abeded3afd189097",
+    "evidence-b.txt": "b9be66a442753602fb92056d782a824dfff473478de960f3e435aeddb67e6b3c",
+    "protected-b.txt": "a2efd0922d68e625200bc8acde12d30d6bbf6f1589ce6a3c3b4c39ab30f8335f"
   },
   "host_runtime_versions": {
     "bun": "1.4.4",
     "node": "26.3.0"
   },
-  "audit_sha256": "3422331cae0c7a82d2dec0085037a6f4f66af07ecee5c445cdedf400bc1172a3",
+  "audit_sha256": "d5e62a134db57c0a0729ed28ccdc4a29bd8fbdd8367c28380687d2906caa8798",
+  "audit_receipts": 1144,
   "record_state": "executed-exact-clean-commit",
   "record_purpose": "Durable output evidence only; never consumed as an expected answer by the harness.",
   "observed_at_utc": {
-    "first": "2026-11-12T23:10:29.709000+00:00",
-    "last": "2026-11-12T23:10:40.621000+00:00"
+    "first": "2026-11-13T08:49:28.878000+00:00",
+    "last": "2026-11-13T08:49:35.563000+00:00"
   },
-  "audit_receipts": 1144,
-  "diagnostic_retention": "Raw synthetic audit kept by each run and the installed-native-review CI artifact; committed record omits transcripts and machine paths."
+  "diagnostic_retention": "Raw synthetic audit kept by each run and the installed-native-review CI artifact with seven-day CI retention; committed record omits transcripts and machine paths."
 }
