@@ -225,7 +225,7 @@ export default Plugin.define({
       observer = new Observer(store)
     } catch (error) {
       // Cleanup must not replace the initialization cause. No recovery or retry here.
-      try { db?.close() } catch { /* Preserve the primary failure. */ }
+      try { db?.close(true) } catch { /* Preserve the primary failure. */ }
       throw new Error(`Loom startup failed (stage=${stage}, database=${JSON.stringify(filename)}): ${error instanceof Error ? error.message : String(error)}`, { cause: error })
     }
     // Learning history is optional; corruption must never remove the healthy
@@ -246,7 +246,7 @@ export default Plugin.define({
       learningFailure = learningStage
       try { console.warn(`Loom optional learning unavailable (${learningStage}): ${error instanceof Error ? error.message : String(error)}`) }
       catch { /* Diagnostic sink failure cannot disable core startup or its native deny guard. */ }
-      try { learningDB?.close() } catch { /* Keep the original learning failure. */ }
+      try { learningDB?.close(true) } catch { /* Keep the original learning failure. */ }
       learningDB = undefined
       learning = undefined
     }
@@ -976,7 +976,7 @@ export default Plugin.define({
     } catch (error) {
       lifetime.abort()
       await Promise.allSettled(disposers.map(d => d.dispose()))
-      try { learningDatabase?.close() } finally { database.close() }
+      try { learningDatabase?.close(true) } finally { database.close(true) }
       throw error
     }
     try {
@@ -1018,7 +1018,9 @@ export default Plugin.define({
       startupDispatch = "deny"
       lifetime.abort()
       await Promise.allSettled(disposers.map(d => d.dispose()))
-      try { learningDatabase?.close() } finally { database.close() }
+      // Bun's default close defers cleanup to statement finalizers. This owner
+      // must finish closing both databases before stopped-state backup can begin.
+      try { learningDatabase?.close(true) } finally { database.close(true) }
       await disposeStartupGuard()
     }, { captureCompanion })
     } catch (error) {
