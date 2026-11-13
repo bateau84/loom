@@ -60,6 +60,16 @@ def call_key(data: dict) -> tuple[str, str, str] | None:
 
 def dispatch_receipts(observed: list[dict]) -> list[dict]:
     receipts = []
+    # Fixture-local continuity only: these markers are neither native epochs
+    # nor proof of restart. A markerless slice cannot establish this boundary.
+    ready_receipts = []
+    ready = None
+    for index, event in enumerate(observed):
+        if event.get("type") == "ready":
+            ready = index + 1
+        elif event.get("type") == "observer-failure":
+            ready = None
+        ready_receipts.append(ready)
     for index, event in enumerate(observed):
         data = event.get("data", {})
         if event.get("type") != "tool-before" or data.get("tool") != "subagent":
@@ -73,9 +83,12 @@ def dispatch_receipts(observed: list[dict]) -> list[dict]:
         children = set()
         progress = []
         for i, item in enumerate(observed):
+            if item.get("type") != "native-event":
+                continue
             native = item.get("data", {})
             value = native.get("data", {})
-            if item.get("type") == "native-event" and native.get("type") == "session.tool.progress" \
+            if native.get("type") == "session.tool.progress" \
+                    and ready_receipts[index] is not None and ready_receipts[i] == ready_receipts[index] \
                     and key == (value.get("sessionID"), value.get("assistantMessageID"), value.get("id")):
                 child = value.get("metadata", {}).get("sessionID")
                 if isinstance(child, str) and child:
@@ -88,8 +101,15 @@ def dispatch_receipts(observed: list[dict]) -> list[dict]:
                 child = value.get("sessionID") if isinstance(value, dict) else None
                 if isinstance(child, str) and child:
                     children.add(child)
+        # The awaited before hook precedes execution and progress publication.
+        # The separate native-event consumer may deliver progress after after;
+        # there is deliberately no progress-before-return requirement.
         reason = ("missing-native-key" if key is None else
+                  "missing-observer-continuity" if ready_receipts[index] is None
+                      or any(ready_receipts[i] != ready_receipts[index] for i, _ in ends) else
                   "reused-native-key" if len(starts) != 1 or len(ends) > 1 else
+                  "reversed-hook-order" if any(i <= index for i, _ in ends) else
+                  "reversed-progress-order" if any(i <= index + 1 for i in progress) else
                   "actor-or-input-conflict" if any(end.get("agent") != data.get("agent")
                       or end.get("input") != data.get("input") for _, end in ends) else
                   "conflicting-child" if len(children) > 1 else
@@ -98,6 +118,7 @@ def dispatch_receipts(observed: list[dict]) -> list[dict]:
         receipts.append({"parent": list(key) if key else None,
                          "binding": "observed" if reason is None else "unknown" if reason.startswith("missing") else "ambiguous",
                          "child_session_id": child, "reason": reason, "admission_binding": "UNQUALIFIED",
+                         "observer_ready_receipt": ready_receipts[index],
                          "before_receipt": index + 1,
                          "after_receipts": [i + 1 for i, _ in ends], "progress_receipts": progress})
     return receipts

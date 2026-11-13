@@ -4,6 +4,16 @@ type: Log
 
 # Update Log
 
+## 2026-11-13
+
+**Native review cold-review corrections:** The [evidence contract](learning-native-evidence-spec.md)
+now arbitrates initial issue and authorized retry intents before creating or claiming an attempt
+(NRQ-001). The [qualification oracle](native-review-qualification.md) rejects reversed causal
+receipts, replayed hooks and cross-observer joins while preserving valid delayed native progress
+(NRQ-002). Original native evidence remains distinguishable from offline adversarial controls.
+Production admission and automatic learning remain unimplemented; the native attribution and
+recipient-transfer gaps retain their unqualified/unsupported classifications.
+
 ## 2026-11-12
 
 **First learning engineering stage:** Added the [native review qualification](native-review-qualification.md)

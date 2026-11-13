@@ -193,11 +193,59 @@ If a write fails before its durable commit, the request is absent. If acknowledg
 
 ## 4. Native dispatch and review admission
 
-Keep request identity and each dispatch attempt separate. Before issuing native work, append an attempt referencing the frozen request and its intended recipient. The attempt's local ID is not a native invocation ID. Its issue projection uses `prepared`, `claimed`, `issued`, `rejected`, or `unknown`; its dispatch/admission bindings and native return are separate fields, not success implied by that status. `prepared` means durable request/attempt exist with no issue claim. In one transaction, check the request's work-revision policy and atomically change `prepared` to `claimed` with one issuing-owner ID, or to `rejected` with the failed precondition. Simultaneous callers receive the stored owner/status and do not issue another native call. Only that successful claimant may issue. Observed native issue changes it to `issued`; a proven pre-admission rejection changes it to `rejected`; a crash or lost acknowledgement with no decisive receipt changes it to `unknown`. A return is recorded independently and cannot by itself repair a missing dispatch/admission edge. A caller cannot reacquire a claim merely because a timer elapsed or the original process disappeared.
+### Stable issue intent and atomic attempt creation
+
+Keep the immutable review request, the **intent to issue it once**, and the resulting attempt separate. Per-attempt claim exclusivity is insufficient if two callers can independently append attempts A1 and B1 for the same initial issue. All issuers must instead obtain the attempt through `prepareIssue(request_id, intent)` below. There is no independent operation that appends a dispatchable prepared attempt; recording external/historical native observations under the earlier provenance rules does not grant dispatch authority.
+
+```ts
+type IssueIntentKey =
+  | { request_id: string; kind: "initial" }
+  | { request_id: string; kind: "retry"; authorization_ref: string }
+
+type IssueIntentInput =
+  | { kind: "initial" }
+  | {
+      kind: "retry"
+      after_intent: IssueIntentKey
+      authorization_ref: string
+    }
+```
+
+Keys are structured values scoped to the authoritative source store, not unescaped concatenated strings or native identities. The initial key is always `(request_id, initial)`. Whether `freeze` returned `created` or `existing`, every caller issuing that original request must use that same key. `prepareIssue` accepts no caller-selected attempt ID, issue-intent ID, sequence number or nonce; such extra fields are rejected. Retrying an operation with another random local ID cannot create another initial attempt. Allocating a new review request is a separately authorized new request, not a recovery mechanism for an unresolved issue of the original request.
+
+For a retry, the authorization reference must resolve through the existing authority owner to one **canonical, durable authorization decision** explicitly permitting one additional issue of this exact request after the named prior intent. The decision binds the request ID, prior intent and permission for that additional issue. Aliases for the same decision resolve to the same canonical reference; if that identity or authority cannot be established, return an authorization error and create nothing. A caller-authored `retry: true`, freshly generated record ID, replay of an authorization request, failed result or timeout is not a new authorization decision. Replays of the same authorizing act must resolve to the same decision; an authority mechanism unable to preserve that identity cannot enable this retry path. This specifies the required authority boundary, not a new operator approval policy or a claim of direct-human authorization.
+
+The retry key is `(request_id, retry, canonical authorization_ref)`. `after_intent` must already exist for the same request and agree with the decision. Its state is not reset or rewritten. If the prior issue can still execute or its native outcome is unknown, the decision must explicitly permit an additional issue despite that unresolved prior execution; otherwise return `unresolved-prior-issue`. Thus an unknown native outcome alone never creates a dispatchable retry. A changed mandate, membership or intended recipient still requires a new immutable review request rather than an override on the issue operation.
+
+In **one write transaction**, `prepareIssue` validates the frozen request and intent, resolves/checks the authority required for a new intent, and looks up or creates the unique intent-to-attempt relationship. Creation assigns one owner-generated attempt ID and publishes the intent and its single `prepared` attempt together. A prepared attempt cannot be visible without its intent, and an intent cannot commit without its attempt. The operation never issues native work or claims the attempt. Every lookup remains subject to permission to read the returned record.
+
+The immutable intent body consists of its canonical key and, for a retry, the exact `after_intent` and bound authorization decision. Equivalent bodies compare by these declared fields; initial intents have no retry fields. Authority revocation is a later validity fact, not permission to mutate the original decision or allocate another attempt. Effect authorization is rechecked when claiming; receiving an existing intent is never fresh permission to execute.
+
+| `prepareIssue` situation | Required observable result |
+| --- | --- |
+| No matching intent; valid input and required authority | `created`, with the canonical intent key, new attempt ID and `prepared` state. This is not an issue permit. |
+| Same canonical intent and equivalent body, including simultaneous callers | Exactly one caller may return `created`; all others return `existing` with the **same attempt ID** and its current state. No additional attempt is appended. |
+| Same canonical retry decision with conflicting request/prior-intent binding, or conflicting immutable stored intent body | `conflict`; retain the original intent/attempt and create or claim nothing. A decision cannot be rebound to a second request to obtain another issue. |
+| Unsupported fields, caller-selected attempt/intent identity, malformed or absent frozen request | Typed validation/not-found error; create or claim nothing. |
+| Missing, denied, unresolvable or insufficient retry authority | Authorization error, or `unresolved-prior-issue` when applicable; create or claim nothing. |
+| Transaction fails before commit | No intent or attempt is published. Repeating the same input can create the one pair. |
+| Creation commits but its acknowledgement is lost | Repeating the same input returns `existing` with the committed pair and current state. The caller must not create a replacement attempt. |
+
+An authorization decision is bound to at most one retry intent across the source store. The decision-to-intent binding and intent-to-attempt uniqueness are checked in the same transaction, so conflicting concurrent uses cannot each commit. A fresh, valid decision for a deliberately additional issue creates a distinct retry intent/attempt; merely changing an ID or replaying the original decision cannot. These are local admission guarantees, not native exactly-once execution.
+
+### Exclusive issue claim and uncertain native outcomes
+
+The attempt's local ID is not a native invocation ID. Its issue projection uses `prepared`, `claimed`, `issued`, `rejected`, or `unknown`; its dispatch/admission bindings and native return are separate fields, not success implied by that status. `prepared` means the request, canonical issue intent and attempt exist durably with no issue claim.
+
+`claimIssue(intent_key, claimant_id)` first resolves that intent's unique attempt. In one transaction, it rechecks the applicable issue authorization and the request's work-revision policy, then changes `prepared` to `claimed` with one issuing-owner ID, or to `rejected` with the failed precondition. Only the caller that actually commits `prepared` → `claimed` receives `claimed-now` and may start **one** native issue. A precondition failure returns `rejected` with the recorded reason. Every later contender or replay, including the same claimant ID, returns `existing-state` with the attempt's current owner/status and **no issue permit**. An absent intent returns not-found; a storage/authorization lookup failure cannot return `claimed-now`. Attempt creation, lookup and claim responses are deliberately different: neither `created` nor `existing` authorizes native dispatch.
+
+A claim committed without a received acknowledgement must not be recovered by claiming again or replaying a stored successful response as a fresh permit. Preserve `claimed`, or record `unknown` when continuity is lost, and reconcile through qualified native receipts. Process restart, owner disappearance and elapsed time never reset the attempt to `prepared`. A new claimant ID cannot steal it. Even definitive evidence that no native admission occurred cannot reopen the same consumed issue intent; another issue requires the separately authorized retry path above.
+
+Observed native issue changes the projection to `issued`; a proven pre-admission rejection changes it to `rejected`; a crash or lost native acknowledgement with no decisive receipt changes it to `unknown`. A return is recorded independently and cannot by itself repair a missing dispatch/admission edge. The winning issuer must not repeat the native call on timeout or uncertain return. Because the local claim and native side effect cannot commit atomically, this contract preserves uncertainty rather than claiming that a local `claimed` state proves either execution or non-execution.
 
 | Observation/transition | What may be recorded | What must remain unclaimed |
 | --- | --- | --- |
-| Frozen request, no native issue | Original mandate and membership; local attempt is prepared. | Child creation, native admission, evidence delivery. |
+| Frozen request and prepared issue intent, no native issue | Original mandate and membership; the intent's unique local attempt is prepared. Freezing alone does not create an attempt. | Child creation, native admission, evidence delivery. |
 | Native call issued, before completion | Parent tool key and known original work scope. | Successful child prompt admission or review completion. |
 | Native child progress/result | Child Session binding if the native event/result supplies it under a qualified unique parent key. Verify native parentage/location. | That this child belongs exclusively to this dispatch, or that its entire history is the review. |
 | Child prompt hook | Candidate `NativeAdmissionKey`, prompt observed at this named hook. | Committed admission, final effective prompt, provider receipt. |
@@ -207,7 +255,7 @@ Keep request identity and each dispatch attempt separate. Before issuing native 
 
 A review execution record contains separate `NativeBinding` values for parent dispatch, child admission and their relationship. Do not collapse these into a single `verified: true`. The original mandate remains available even if the native binding fails.
 
-After a crash between native issue and observed admission/return, record `unknown` and reconcile only through qualified native receipts. Do not dispatch again automatically. An explicitly authorized retry uses a new local attempt identity; it preserves the request and unresolved prior attempt. Definitive rejection before native admission prevents a successful admitted-review supply/retrieval claim. Preserve actual earlier named-boundary observations, including source bytes exposed at a prompt hook before later prompt preparation failed; record the rejected/unconfirmed admission and do not promote that observation into successful admitted-review supply. A timeout or missing return is not definitive rejection. Cancellation likewise does not retract already observed admission, transfer or access; record any late native return against its original proven key, leaving its completeness and unknown links unchanged.
+After a crash between native issue and observed admission/return, record `unknown` and reconcile only through qualified native receipts. Do not dispatch again automatically. An explicitly authorized additional issue must use `prepareIssue` with a distinct canonical retry decision; it preserves the original request, intent and unresolved prior attempt. Definitive rejection before native admission prevents a successful admitted-review supply/retrieval claim. Preserve actual earlier named-boundary observations, including source bytes exposed at a prompt hook before later prompt preparation failed; record the rejected/unconfirmed admission and do not promote that observation into successful admitted-review supply. A timeout or missing return is not definitive rejection. Cancellation likewise does not retract already observed admission, transfer or access; record any late native return against its original proven key, leaving its completeness and unknown links unchanged.
 
 ### OpenCode 2.2.6 binding boundary
 
@@ -269,14 +317,15 @@ Downstream persistence must retain these logical relationships without requiring
 | Observation → source | Original producer fields, actual boundary, source namespace, observer epoch/order, native fields or explicit absence, source-version/content reference and coverage. |
 | Attempt → historical work | Frozen verified WorkRef or unscoped/unknown state; original start record; separate native bindings. |
 | Review request → mandate/members | Immutable original question, dimensions, criteria, mode, exclusions, full frozen membership and artifact versions; requester and creation provenance. |
-| Review attempt → request/native work | One immutable request, local attempt identity, issue/admission/return observations and separately qualified native edges. |
+| Issue intent → review request/attempt | Canonical initial or authorized retry key; exactly one attempt; for a retry, the prior intent and canonical authorization decision bound to this one additional issue. |
+| Review attempt → intent/native work | Its unique issue intent and immutable request, local attempt identity, exclusive claim owner/state, issue/admission/return observations and separately qualified native edges. |
 | Evidence basis → source/recipient | Requested/supplied/retrieved/cited/claimed-inspected relationship, exact source revision/coverage, actual recipient binding, observations and transfer authority when applicable. |
 | Finding → producer/subjects | Reviewer's source ownership, affected subjects/attempts, actual checked coverage, mandate-relative verdict and limitations. |
 | Correction → prior record | New attributed correction and explicit superseded relationship or disputed interpretation; original facts remain readable. |
 
 Local record IDs, observer receipts and timestamps must not be accepted as host-issued authentication. Native imports preserve their declared source; editable exported JSON cannot bootstrap attestation. Missing source content invalidates current availability/completeness without rewriting a historical fact that bytes were observed at a boundary.
 
-Atomic request publication and unique attempt issue claims use the existing transactional owner. A failed write must not publish a successful receipt. Observation recording failures do not cancel unrelated healthy engineering tools or weaken routing guards; they produce visible coverage degradation under the current observer rules. This stage does not implement those new durable records, migrations, scheduling, retention or report publication.
+Atomic request publication, issue-intent/attempt creation or lookup, retry-decision binding and exclusive issue claims use the existing transactional owner. These relationships and consumed claims survive restart/restore; losing them is a coverage failure, not permission to allocate a replacement initial intent. A failed write must not publish a successful receipt. Observation recording failures do not cancel unrelated healthy engineering tools or weaken routing guards; they produce visible coverage degradation under the current observer rules. This stage does not implement those new durable records, migrations, scheduling, retention or report publication.
 
 ## 8. Failure and lifecycle contract
 
@@ -292,7 +341,9 @@ Atomic request publication and unique attempt issue claims use the existing tran
 | Compaction/deletion | Preserve permitted original references and observed facts; unavailable original content remains a gap. A summary is not substituted for complete original bytes. |
 | Scope/artifact changed | Old request retains old versions. `frozen-historical` permits the requested revisions; `current-at-issue-claim` rejects changed current work revisions atomically at the issue claim. Neither policy rewrites artifact versions or implies the branch/worktree remains unchanged. |
 | Authorization denied/revoked/unknown | Withhold protected content before transfer/readback. Keep policy-permitted membership and denial facts; do not turn a lack of visible content into an empty successful review. |
-| Retried local request/unknown native attempt | Return the existing immutable request/attempt state. Do not create new native work unless a separately authorized new attempt is recorded. |
+| Concurrent or replayed initial issue | `prepareIssue` resolves `(request_id, initial)` to the same attempt for every caller; only the actual `claimed-now` winner may issue once. Random attempt/intent/claimant IDs cannot allocate another initial attempt. |
+| Lost creation/claim acknowledgement | Recover the committed intent/attempt through the canonical key. An existing claim returns no new issue permit and cannot be reset to prepared. |
+| Retried local request/unknown native attempt | Return the original request/intent/attempt state. Unknown native outcome never permits redispatch; a deliberately additional issue requires a distinct canonical retry authorization covering the actual prior state. |
 | Storage/processing bound | Fail the affected operation explicitly, without partial manifest publication, silently omitted members, or a successful receipt. |
 
 ## 9. Versioning and historical compatibility
@@ -312,7 +363,7 @@ The [native qualification harness](../tests/installed_native_review.py) is the c
 Before production admission/persistence can claim this specification, downstream tests must also demonstrate:
 
 - Two identical-artifact reviews retain different original questions, dimensions, criteria, modes and exclusions after fresh reads; changed Reviewer assertions cannot rewrite either mandate.
-- Same request ID with identical versus conflicting concurrent bodies produces the specified `created`/`existing`/`conflict` outcomes, including lost acknowledgements; competing issue callers cannot cause duplicate native dispatch.
+- Same request ID with identical versus conflicting concurrent bodies produces the specified `created`/`existing`/`conflict` outcomes, including lost acknowledgements.
 - Frozen membership of 1, 10 and 100 subjects is fully reconstructible across pages and historical changes without substituting current WorkRefs or silently omitting protected members.
 - The same historical WorkRef remains valid under `frozen-historical`, while `current-at-issue-claim` rejects it after a saved revision changes; concurrent change/claim ordering matches the transaction's actual outcome.
 - Prompt preparation failing after a prompt-hook observation preserves that exposure fact while reporting no successful admitted-review supply; cancellation similarly retains actual earlier access.
@@ -320,6 +371,21 @@ Before production admission/persistence can claim this specification, downstream
 - Requester A's permitted read of B cannot authorize transfer to C; denying C's read and preventing incoming inline disclosure are tested as distinct boundaries.
 - Restart, late returns, opaque nested keys, cancelled admissions, missing native fields and unsupported record versions retain the specified unknown/ambiguous states through public readback.
 - Source/derived-report denial and revocation remain effective across all reader paths and restore; legacy automatic capture retains no newly authorized raw payloads.
+
+Issue-intent conformance must separately exercise the following counterexamples through the implemented transaction owner and native-issue adapter when those production components exist. Specification review alone does not execute or pass them:
+
+| Case | Required discriminator |
+| --- | --- |
+| Two callers receive `created`/`existing` for request R and both prepare its initial issue | Both obtain the same intent and attempt; the creation results are one `created` and one `existing`. Exactly one subsequent claimant receives `claimed-now`, and native issue occurs at most once. |
+| Callers supply fresh random attempt IDs, intent IDs or claimant IDs to bypass an existing initial claim | Unsupported creation fields are rejected; changing claimant identity cannot create another attempt or obtain another issue permit. |
+| Equivalent concurrent retries versus conflicting uses of one authorization decision | Equivalent requests share one retry attempt. Conflicting request/prior-intent bindings return `conflict`, including conflicts racing with creation; the one decision cannot authorize two intents. |
+| Attempt creation commits, but acknowledgement is lost | The same input retrieves the committed attempt; it does not append B1 alongside A1. |
+| Crash or lost acknowledgement after the issue claim, before or after possible native issue | Recovery retains claimed/unknown ownership; even the same claimant receives no new issue permit. No automatic redispatch occurs. |
+| Native issue times out with no decisive admission/return receipt | Preserve unknown native outcome and original observations. Initial replay, a fabricated retry decision or insufficient authority cannot cause another dispatch. |
+| One deliberate additional retry is authorized, including an expressly permitted unresolved predecessor | Create one distinct retry intent/attempt while retaining the predecessor. Replaying/aliasing that same authorizing decision returns the same retry attempt, and only its claim winner may issue once. |
+| Retry authority is revoked before claim, or its stable decision identity cannot be established | No `claimed-now` result and no native issue; do not replace the decision or attempt with a fresh random identity. |
+
+These cases close the NRQ-001 static counterexample: per-attempt exclusivity is downstream of canonical issue-intent arbitration, so separate callers cannot obtain independent prepared attempts for the same logical issuance. They do not establish a new native idempotency guarantee or an implemented production admission path.
 
 ### Minimum upstream guarantees
 

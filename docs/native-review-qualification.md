@@ -18,20 +18,34 @@ The [recorded evidence](native-review-qualification-evidence.json) identifies th
 
 ## Executed candidate record
 
-The final local run exercised clean implementation commit
-[`5b201a58c3cf4a344989a800b6c8ea5f407f9b14`](https://github.com/bateau84/loom/commit/5b201a58c3cf4a344989a800b6c8ea5f407f9b14)
-with a package built from that commit. All **eight expected mechanical checks** completed;
+The evidence record's `source_head` identifies the clean implementation commit
+exercised with its packed candidate; `source_dirty` is false. All **eight expected mechanical checks** completed;
 Q4 and Q5 retain their whole-capability `UNQUALIFIED` status, and the actual native
 incoming-transfer counterexample retains `FAIL`. No real-model reasoning was tested.
 The recorded input/runtime hashes allow later documentation-only evidence changes to be
 checked against those same tested bytes. The file watcher stayed enabled.
 
-Core tests passed **376/376**, Python tests **198/198**, repository/fixture TypeScript checks
-passed, and the existing installed question and Evaluator observer probes passed. The
-intermediate native aggregate had 320 passes and two documentation-link/index failures;
-those assembly issues were corrected and the targeted 10-test documentation/fixture rerun
-passed. Exact-head CI remains independently observable on the PR and must not be inferred
-from an earlier run.
+Remediation checks passed **209 Python tests**, including **19 oracle tests**, the repository
+TypeScript check, and **10 documentation/fixture tests**. The original installed question
+and Evaluator observer probes passed in the first stage. Exact-head CI remains independently
+observable on the PR; earlier suite results must not be attributed to changed source bytes.
+
+## Cold-review corrections — 2026-11-13
+
+**NRQ-001:** The implementation contract now requires canonical issue intents and atomic
+`prepareIssue` creation/lookup before an exclusive issue claim. Every initial caller resolves
+to the same attempt; an intentional additional issue requires a distinct, canonical authorization
+decision bound to one retry intent. Lost creation acknowledgements recover the same attempt;
+lost claim/native acknowledgements grant no new issue permit. The specification includes eight
+downstream concurrency/recovery conformance cases. This is a static contract correction, not
+an implemented or executed production admission facility.
+
+**NRQ-002:** The receipt oracle rejects reversed hook/progress ordering and joins across
+observer boundaries. Its 19 focused tests cover these controls, identical replay, missing
+starts, continuity loss and recovery, and legitimate progress-only/delayed-progress observations.
+Replaying the original 1,144-receipt CI artifact preserves all 14 dispatch bindings, including
+the six distinct Q1/Q2 invocations. Reordered/reduced copies are offline oracle controls;
+they are not newly observed native outages or restarts.
 
 ## Status meanings
 
@@ -86,7 +100,23 @@ The fixture records the actual in-process AI SDK `doStream(input)` boundary. It 
 
 The report's receipt numbers are one-based lines in its own `audit.ndjson`; they are local observation references, never native call IDs. Native event IDs and native tool tuples are retained separately. The committed evidence record omits raw synthetic transcript payloads and machine-specific paths; CI's bounded artifact retains diagnostics for independent reproduction.
 
-Oracle unit tests deliberately challenge missing/reused/mismatched native keys, foreign Session payloads, weaker context-only observations, citation-only claims, metadata-only material and unavailable runtime. These are supporting tests of the interpreter. Synthetic unit traces do not constitute installed-host evidence.
+### Observer continuity and causal ordering
+
+Dispatch interpretation consumes the complete fixture audit stream. Each fixture `ready` row
+opens a local observation segment; another `ready` starts a new segment, and `observer-failure`
+ends usable continuity until another `ready`. The receipt's `observer_ready_receipt` references
+that segment's opening row. It is local observation metadata, not a native execution identity
+or proof of a host restart. Markerless reconstructed slices remain unknown. These known fences
+do not certify absence of unreported drops or replace independent audit-integrity checks.
+
+The direct native tool path awaits the before hook before execution can publish progress.
+Consequently, a matched after hook or establishing progress receipt must follow its before
+hook and belong to the same observer segment. The native-event subscription is asynchronous:
+progress may arrive after the after hook, so the oracle imposes no progress-before-return rule.
+Progress alone can establish the narrow child binding, but never implies a return or admission.
+Identical replayed starts/returns remain ambiguous rather than being silently deduplicated.
+
+Oracle unit tests also challenge missing/reused/mismatched native keys, foreign Session payloads, weaker context-only observations, citation-only claims, metadata-only material and unavailable runtime. These are supporting tests of the interpreter. Synthetic unit traces do not constitute installed-host evidence.
 
 ## Reproduce
 
@@ -136,6 +166,7 @@ Operator decisions still open: eligible richer content collection, retention/del
 ## Implementation references
 
 - [Native subagent path](https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/core/src/tool/plugin/subagent.ts): parent permission, child progress, ordinary prompt, shared child job and return.
+- [Awaited tool execution hooks](https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/core/src/tool.ts), [hook invocation](https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/core/src/plugin/hooks.ts), and [asynchronous live event bus](https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/core/src/bus.ts): source basis for the causal ordering and observer-continuity limits above.
 - [Native prompt/admission](https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/core/src/session/session.ts), [prompt preparation](https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/core/src/session/prompt.ts), [inbox](https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/core/src/session/inbox.ts), and [event schemas](https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/schema/src/session-event.ts).
 - [Plugin tool hooks](https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/promise/tool.ts), [Session hooks](https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/plugin/src/promise/session.ts), [native model request](https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/core/src/session/model-request.ts) and [AI SDK adapter](https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/core/src/aisdk.ts).
 - [Code Mode inner context](https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/core/src/codemode/tool.ts), [native file authorization](https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/core/src/file-access.ts) and [permission selection](https://github.com/anomalyco/opencode/blob/dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06/packages/core/src/permission.ts).

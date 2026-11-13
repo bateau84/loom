@@ -13,11 +13,18 @@ def dispatch_trace():
     source = {"sessionID": "parent", "messageID": "message", "id": "call",
               "agent": "general", "tool": "subagent", "input": {"prompt": "review"}}
     return [
+        {"type": "ready", "data": {}},
         {"type": "tool-before", "data": source},
         {"type": "tool-after", "data": {**source, "status": "completed",
             "result": {"output": {"sessionID": "child", "status": "completed"},
                        "metadata": {"sessionID": "child"}}}},
     ]
+
+
+def child_progress():
+    return {"type": "native-event", "data": {"type": "session.tool.progress", "data": {
+        "sessionID": "parent", "assistantMessageID": "message", "id": "call",
+        "metadata": {"sessionID": "child"}}}}
 
 
 class NativeReviewOracleTest(unittest.TestCase):
@@ -28,14 +35,100 @@ class NativeReviewOracleTest(unittest.TestCase):
         self.assertEqual(receipt["child_session_id"], "child")
         self.assertEqual(receipt["admission_binding"], "UNQUALIFIED")
 
+    def test_completion_before_invocation_cannot_bind_a_child(self):
+        observed = dispatch_trace()
+        observed[1:] = reversed(observed[1:])
+        receipt, = dispatch_receipts(observed)
+        self.assertEqual(receipt["binding"], "ambiguous")
+        self.assertIsNone(receipt["child_session_id"])
+        self.assertEqual(receipt["reason"], "reversed-hook-order")
+
+    def test_missing_observer_start_leaves_dispatch_unqualified(self):
+        receipt, = dispatch_receipts(dispatch_trace()[1:])
+        self.assertEqual(receipt["binding"], "unknown")
+        self.assertIsNone(receipt["child_session_id"])
+        self.assertEqual(receipt["reason"], "missing-observer-continuity")
+
+    def test_observer_boundary_prevents_cross_segment_return(self):
+        for boundary in ("ready", "observer-failure"):
+            observed = dispatch_trace()
+            observed.insert(2, {"type": boundary, "data": {}})
+            with self.subTest(boundary=boundary):
+                receipt, = dispatch_receipts(observed)
+                self.assertEqual(receipt["binding"], "unknown")
+                self.assertIsNone(receipt["child_session_id"])
+                self.assertEqual(receipt["reason"], "missing-observer-continuity")
+
+    def test_progress_from_another_observer_segment_does_not_bind(self):
+        for boundary in ("ready", "observer-failure"):
+            observed = dispatch_trace()[:2] + [{"type": boundary, "data": {}}, child_progress()]
+            with self.subTest(boundary=boundary):
+                receipt, = dispatch_receipts(observed)
+                self.assertEqual(receipt["binding"], "unknown")
+                self.assertIsNone(receipt["child_session_id"])
+                self.assertEqual(receipt["progress_receipts"], [])
+
+    def test_progress_before_invocation_cannot_establish_or_rescue_a_binding(self):
+        ready, before, after = dispatch_trace()
+        for ending in ([], [after]):
+            with self.subTest(has_return=bool(ending)):
+                receipt, = dispatch_receipts([ready, child_progress(), before, *ending])
+                self.assertEqual(receipt["binding"], "ambiguous")
+                self.assertIsNone(receipt["child_session_id"])
+                self.assertEqual(receipt["reason"], "reversed-progress-order")
+
+    def test_new_ready_restores_only_a_new_local_observer_segment(self):
+        observed = [{"type": "ready", "data": {}}, {"type": "observer-failure", "data": "lost"}]
+        receipt, = dispatch_receipts(observed + dispatch_trace())
+        self.assertEqual(receipt["binding"], "observed")
+        self.assertEqual(receipt["observer_ready_receipt"], 3)
+        self.assertEqual(receipt["admission_binding"], "UNQUALIFIED")
+
+    def test_progress_only_and_delayed_progress_preserve_narrow_child_binding(self):
+        ready, before, after = dispatch_trace()
+        for ending in ([], [after]):
+            with self.subTest(has_return=bool(ending)):
+                receipt, = dispatch_receipts([ready, before, *ending, child_progress()])
+                self.assertEqual(receipt["binding"], "observed")
+                self.assertEqual(receipt["child_session_id"], "child")
+                self.assertEqual(receipt["after_receipts"], [3] if ending else [])
+                self.assertEqual(receipt["progress_receipts"], [4] if ending else [3])
+                self.assertEqual(receipt["admission_binding"], "UNQUALIFIED")
+
+    def test_progress_does_not_rescue_a_reversed_completion(self):
+        ready, before, after = dispatch_trace()
+        receipt, = dispatch_receipts([ready, after, before, child_progress()])
+        self.assertEqual(receipt["binding"], "ambiguous")
+        self.assertEqual(receipt["reason"], "reversed-hook-order")
+
+    def test_identical_replayed_hooks_are_not_silently_deduplicated(self):
+        for index in (1, 2):
+            observed = dispatch_trace()
+            observed.append(copy.deepcopy(observed[index]))
+            with self.subTest(replayed=observed[index]["type"]):
+                receipts = dispatch_receipts(observed)
+                self.assertTrue(receipts)
+                self.assertTrue(all(row["binding"] == "ambiguous" for row in receipts))
+                self.assertTrue(all(row["reason"] == "reused-native-key" for row in receipts))
+
+    def test_missing_start_does_not_create_a_dispatch(self):
+        ready, _, after = dispatch_trace()
+        self.assertEqual(dispatch_receipts([ready, after, child_progress()]), [])
+
+    def test_observer_failure_cannot_reuse_the_previous_ready(self):
+        ready, before, after = dispatch_trace()
+        receipt, = dispatch_receipts([ready, {"type": "observer-failure", "data": "lost"}, before, after])
+        self.assertEqual(receipt["binding"], "unknown")
+        self.assertIsNone(receipt["observer_ready_receipt"])
+
     def test_missing_or_reused_keys_and_conflicting_child_cannot_be_joined(self):
         missing = dispatch_trace()
-        for event in missing:
+        for event in missing[1:]:
             del event["data"]["id"]
         duplicate = dispatch_trace()
-        duplicate.insert(1, copy.deepcopy(duplicate[0]))
+        duplicate.insert(2, copy.deepcopy(duplicate[1]))
         conflicting = dispatch_trace()
-        conflicting[1]["data"]["result"]["metadata"]["sessionID"] = "other-child"
+        conflicting[2]["data"]["result"]["metadata"]["sessionID"] = "other-child"
         for observed in (missing, duplicate, conflicting):
             with self.subTest(observed=observed):
                 self.assertTrue(all(row["binding"] != "observed" for row in dispatch_receipts(observed)))
