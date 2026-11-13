@@ -126,43 +126,41 @@ Update Action state separately; paused/cancelled labels do not stop execution.
 
 ## Questions: route material unknowns
 
-Investigate facts within your responsibility. Before an unauthorized choice
-changes the goal, scope, promised behavior or accepted risk, ask its owner; do not treat a recorded assumption as authorization. Route scope to dispatcher,
-specialist judgment to role/agent, intent/approval to user. Include alternatives;
-continue safe independent work. `blocking:true` only when safe progress needs an answer.
+Investigate facts within your responsibility. For input owned elsewhere,
+use `loom_record ask`, not a concern/handoff. Before a choice
+changes the goal, scope, promised behavior or accepted risk, ask its owner;
+do not treat a recorded assumption as authorization. Route scope to dispatcher,
+specialist judgment to role/agent, intent/approval to user. Do not manufacture OQs.
 
-`loom_record ask` requires `question`, Boolean `blocking`, and exactly one
-of `recipient:{kind:"agent"|"role"|"dispatcher"|"user",id?:string}` or legacy
-`to_agent`. Agent/role needs `id` from `loom_agents`. Optional context,
-context_attachments and reference. Selection/asking Session supplies scope;
-invalid references fail.
-
-```json
-{"operation":"ask","question":"Which limit applies?","to_agent":"research","blocking":false,"context_attachments":["SOURCE_REFERENCE"]}
-```
-
-Legacy recipient is NOT contacted (`policy-capability-unavailable`).
-Direct typed: native child binds before prompt; blocking uses
-foreground result, nonblocking background completion. No duplicate Loom
-answer notice. Native depth/permissions apply; admission is not an answer or
-permission. An answer is not necessarily approval or resolution.
-
-Child OQs reach dispatcher. For dispatcher targets, answer directly even
-after specialist consultation; don't bind that specialist. For forwarded
-agent/role OQs, natively delegate and bind the verified child via
-`loom_record bind-respondent`; only it may answer. For user targets, ask the
-user and cite their actual decision.
+Ask needs `question`, `blocking`, and `recipient` or legacy `to_agent`.
+Recipient kinds: agent/role (needs `id` from `loom_agents`), dispatcher/user (no id).
+No Action/Plan needed; context/context_attachments/reference optional.
+Block dependent work only; continue safe work.
 
 ```json
-{"operation":"answer","question_id":"QUESTION_ID","answer":"Read the source and its limitations.","context_attachments":["SOURCE_REFERENCE"]}
+{"operation":"ask","question":"Which limit applies?","recipient":{"kind":"role","id":"research"},"blocking":false,"context_attachments":["SOURCE_REFERENCE"]}
 ```
 
-Only FIRST committed blocking legacy/forwarded answers attempt one
-best-effort exact-asker resume. No retries/replay. 5000ms limits waiting,
-not native I/O; check is not an atomic lease.
-Do not repeat an answer to try delivery. Answered is not resolution.
-Use `view:thread`.
-Historical records remain readable; assignment/delivery views retired.
+Legacy recipient is NOT contacted (`policy-capability-unavailable`). Typed asks
+use native depth/permissions and foreground/background continuation.
+No duplicate notice; admission is not execution.
+For dispatcher targets, answer directly even after consultation, without binding.
+For forwarded agent/role OQs, natively delegate and bind the verified child.
+For user targets, ask the user and cite their actual decision.
+
+```json
+{"operation":"answer","question_id":"QUESTION_ID","answer":"Source-backed response.","context_attachments":["SOURCE_REFERENCE"]}
+```
+
+`answer_type` defaults to `text`. `multi-choice` needs 2-20 immutable `choices`
+with `id` and `answer`; reply with ONE `choice_id` and optional `reason`,
+not `answer`. Or use `status:"cannot-select"` with a reason; never guess.
+Read `view:thread`; format grants no authority or routing.
+An answer is not necessarily approval or resolution. Conflicting replies remain.
+Only FIRST committed blocking legacy/forwarded answers (including cannot-select)
+attempt exact-asker resume. No retries/replay. 5000ms bounds waiting, not I/O;
+the check is not an atomic lease. Do not repeat an
+answer to try delivery. Historical records are readable; assignment/delivery views retired.
 
 ## Deep retrospective evidence
 

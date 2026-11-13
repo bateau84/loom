@@ -147,3 +147,53 @@ test("actual Code Mode allSettled preserves an independent write and exposes the
     expect(saved[0].data.statement).toBe(good.statement)
   } finally { await f.close() }
 })
+
+test("Open Question discovery and actual Code Mode accept typed choices and reject mixed answer shapes", async () => {
+  const f = await registeredLoom()
+  try {
+    const tools = Object.fromEntries([...f.tools].map(([name, tool]) => [name, Tool.make({
+      description: tool.description, input: tool.input, output: { type: "string" },
+      execute: (input: unknown) => Effect.tryPromise({
+        try: async () => JSON.stringify(await f.invoke(name, input)),
+        catch: (error: unknown) => toolError(error instanceof Error ? error.message : String(error)),
+      }),
+    })]))
+    const runtime = CodeMode.make({ tools: { loom: Namespace.make({ description: f.namespaces.get("loom").description, tools }) } })
+    const search = await Effect.runPromise(runtime.execute('return await search({namespace:"loom",query:"Open Question choices",limit:5})'))
+    expect(search.ok).toBe(true)
+    const found = search.value.items.find((item: any) => item.path === "tools.loom.record")
+    expect(found.description).toContain("cannot-select")
+    for (const field of ["answer_type", "choices", "choice_id", "reason"]) expect(found.signature).toContain(field)
+    // Native user interaction stays manual in the primary session; its response is
+    // attributed, not magically certified as a genuine human decision.
+    const ask = { operation: "ask", question: "Which option?", recipient: { kind: "user" }, blocking: false,
+      answer_type: "multi-choice", choices: [{ id: "A", answer: "Keep" }, { id: "B", answer: "Replace" }] }
+    const result = await Effect.runPromise(runtime.execute(`
+      const q=JSON.parse(await tools.loom.record(${JSON.stringify(ask)})).result;
+      const invalids=[
+        {operation:"answer",question_id:q.id},
+        {operation:"answer",question_id:q.id,choice_id:"A",answer:"Keep"},
+        {operation:"answer",question_id:q.id,status:"cannot-select"},
+        {operation:"answer",question_id:q.id,status:"cannot-select",reason:"Missing evidence",choice_id:"A"},
+        {operation:"answer",question_id:q.id,choice_id:"Z"},
+        {...${JSON.stringify(ask)},answer_type:"text"},
+        {...${JSON.stringify(ask)},choices:undefined}
+      ];
+      const rejected=await Promise.allSettled(invalids.map(input=>tools.loom.record(input)));
+      const before=JSON.parse(await tools.loom.record({operation:"query",view:"thread",question_id:q.id})).result;
+      const a=JSON.parse(await tools.loom.record({operation:"answer",question_id:q.id,choice_id:"B",reason:"Existing requirement"})).result;
+      const abstain=JSON.parse(await tools.loom.record({operation:"answer",question_id:q.id,status:"cannot-select",reason:"New uncertainty"})).result;
+      const legacy=JSON.parse(await tools.loom.record({operation:"ask",question:"Text?",to_agent:"manual",blocking:false})).result;
+      const text=JSON.parse(await tools.loom.record({operation:"answer",question_id:legacy.id,answer:"Still supported"})).result;
+      return {q,a,abstain,text,before:before.answers.length,statuses:rejected.map(r=>r.status)};
+    `))
+    expect(result.ok).toBe(true)
+    expect(result.value.statuses).toEqual(Array(7).fill("rejected"))
+    expect(result.value.before).toBe(0)
+    expect(result.value.a.data).toMatchObject({ choice_id: "B", answer: "Replace", reason: "Existing requirement" })
+    expect(result.value.abstain.data.status).toBe("cannot-select")
+    expect(result.value.text.data.answer).toBe("Still supported")
+    expect(result.value.q.data.choices).toEqual(ask.choices)
+    expect(f.sessionCreates).toHaveLength(0)
+  } finally { await f.close() }
+})

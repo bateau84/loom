@@ -83,8 +83,8 @@ test("canonical collaboration help matches conditional schemas and rejects alias
   try {
     const tool = f.tools.get("record")
     for (const [operation, required, allowed] of [
-      ["ask", ["operation", "question", "blocking"], ["operation", "question", "to_agent", "recipient", "blocking", "context", "context_attachments", "reference"]],
-      ["answer", ["operation", "question_id", "answer"], ["operation", "question_id", "answer", "context_attachments"]],
+      ["ask", ["operation", "question", "blocking"], ["operation", "question", "answer_type", "choices", "to_agent", "recipient", "blocking", "context", "context_attachments", "reference"]],
+      ["answer", ["operation", "question_id"], ["operation", "question_id", "answer", "choice_id", "status", "reason", "context_attachments"]],
     ] as const) {
       const schema = tool.input.allOf.find((s: any) => s.if.properties.operation?.const === operation).then
       expect(schema.required).toEqual(required)
@@ -95,10 +95,11 @@ test("canonical collaboration help matches conditional schemas and rejects alias
     }
     const examples = TOOL_EXAMPLES.record
     const ask = examples.find(e => e.operation === "ask" && "reference" in e)!
-    const answer = examples.find(e => e.operation === "answer")!
+    const answer = examples.find(e => e.operation === "answer" && "context_attachments" in e)!
     expect(ask).toHaveProperty("context_attachments")
     expect(answer).toHaveProperty("context_attachments")
-    const { reference: _reference, ...unscoped } = ask
+    const { reference: _reference, recipient: _recipient, ...rest } = ask
+    const unscoped = { ...rest, to_agent: "research" } // explicitly qualify legacy/manual compatibility
     const question = (await f.invoke("record", unscoped, "asker")).result
     expect(question.data.context_attachments).toEqual(ask.context_attachments)
     expect(question.action_id).toBeUndefined()

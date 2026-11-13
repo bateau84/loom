@@ -242,8 +242,10 @@ function renderTaskContext(context: ReturnType<typeof readTaskContext>, maxChars
     for (const p of extra.progress.slice(0, 3)) append(summary.progress,
       { node_id: p.node_id, state: p.state, ...(p.report_id ? { report_id: p.report_id } : {}), ...(p.reason ? { reason: p.reason } : {}) }, "progress")
     for (const q of extra.questions) {
-      const item: Record<string, unknown> = { question_id: q.question_id, asked_by: q.asked_by, asking_session_id: q.asking_session_id, state: q.state, question: "", excerpted: true }
-      if (q.answer) item.answer = { record_id: q.answer.record_id, author: q.answer.author, session_id: q.answer.session_id, statement: "" }
+      const item: Record<string, unknown> = { question_id: q.question_id, asked_by: q.asked_by, asking_session_id: q.asking_session_id, state: q.state, question: "", excerpted: true,
+        ...(q.answer_type ? { answer_type: q.answer_type } : {}), ...(q.choice_count ? { choice_count: q.choice_count } : {}) }
+      if (q.answer) item.answer = { record_id: q.answer.record_id, author: q.answer.author, session_id: q.answer.session_id, statement: "",
+        ...(q.answer.choice_id ? { choice_id: q.answer.choice_id } : {}), ...(q.answer.status ? { status: q.answer.status } : {}) }
       const allowance = Math.min(maxChars - used, Math.floor(maxChars * 0.3))
       let low = 0, high = 100
       while (low < high) {

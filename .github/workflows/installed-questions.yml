@@ -61,6 +61,14 @@ jobs:
           --report-directory "$RUNNER_TEMP/loom-question-report"
           --repository "$GITHUB_WORKSPACE"
           --duplicate-input-control
+      - name: Structured Open Questions through native delegation and restart (no inference)
+        run: >-
+          python3 tests/installed_question_choices.py
+          --opencode "$RUNNER_TEMP/loom-question-host/node_modules/.bin/opencode"
+          --plugin "$RUNNER_TEMP/loom-question-install/node_modules/loom-plugin"
+          --artifact "$(find "$RUNNER_TEMP/loom-question-artifact" -maxdepth 1 -name 'loom-plugin-*.tgz' -print -quit)"
+          --repository "$GITHUB_WORKSPACE"
+          --report-directory "$RUNNER_TEMP/loom-choice-report"
       - name: Typecheck QA-B scripted source provider (provider-free)
         run: >-
           ./node_modules/.bin/tsc --noEmit --ignoreConfig --target ES2022 --module NodeNext
@@ -136,5 +144,12 @@ jobs:
         with:
           name: installed-evaluator-observer-${{ github.sha }}
           path: ${{ runner.temp }}/loom-evaluator-observer-report/
+          if-no-files-found: warn
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installed-question-choices-${{ github.sha }}
+          path: ${{ runner.temp }}/loom-choice-report/
           if-no-files-found: warn
           retention-days: 7

@@ -18,7 +18,7 @@ import { fullThreadMarkdown } from "./response-format.js"
 import { Store } from "./store.js"
 import { Learning } from "./learning.js"
 import type { ObjectiveSource, ObjectivePhase } from "./objectives.js"
-import { QUESTION_DISPATCH, questionRecipient } from "./collaboration.js"
+import { QUESTION_CHOICE_LIMITS, QUESTION_DISPATCH, questionRecipient } from "./collaboration.js"
 import { questionRoute, sendQuestion, type NativeModel, type QuestionRoute } from "./question-routing.js"
 import { resumeAnswer } from "./answer-resume.js"
 import { TOOL_HELP, LOOM_NAMESPACE_HELP } from "./tool-help.js"
@@ -73,9 +73,14 @@ const workRefInput = obj({ action_id: str, node_id: str, action_revision: { type
   ["action_id", "node_id", "action_revision", "plan_revision", "hash"])
 const contextAttachments = { type: "array", items: { type: "string", maxLength: 2000 }, maxItems: 50 }
 const recipientInput = obj({ kind: choice("agent", "role", "dispatcher", "user"), id: str }, ["kind"])
+const choiceIDInput = { type: "string", minLength: 1, maxLength: QUESTION_CHOICE_LIMITS.id, pattern: "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$" }
+const choicesInput = { type: "array", minItems: 2, maxItems: QUESTION_CHOICE_LIMITS.count,
+  items: obj({ id: choiceIDInput, answer: { type: "string", minLength: 1, maxLength: QUESTION_CHOICE_LIMITS.answer } }, ["id", "answer"]) }
 const askInput = { question: str, to_agent: str, recipient: recipientInput, blocking: { type: "boolean" }, context: str, context_attachments: contextAttachments,
+  answer_type: choice("text", "multi-choice"), choices: choicesInput,
   reference: obj({ action_id: str, kind: choice("action", "phase", "wave", "task", "subtask"), id: str }, ["action_id", "kind", "id"]) }
-const answerInput = { question_id: str, answer: str, context_attachments: contextAttachments }
+const answerInput = { question_id: str, answer: str, choice_id: choiceIDInput,
+  status: choice("cannot-select"), reason: { type: "string", minLength: 1, maxLength: QUESTION_CHOICE_LIMITS.reason }, context_attachments: contextAttachments }
 const bindInput = { question_id: str, respondent_session_id: str }
 const specs = [
   { name: "agents", description: TOOL_HELP.agents, input: obj({}) },
@@ -115,15 +120,24 @@ const specs = [
     }, ["operation", "since_at", "until_at", "as_of_at", "population"]) },
   { name: "tweak", description: TOOL_HELP.tweak, input: obj({ operation: choice("propose", "list", "read", "retire", "trial"), id: str, target_kind: choice("skill", "assessment", "qa", "agent"), target_id: str, base_sha256: str, candidate_content: str, hypothesis: str, evidence_refs: { type: "array", items: str, maxItems: 20 }, revised_from: str, trial_before: { type: "integer", minimum: 1 }, observed_sha256: str, observed_effect: choice("promising", "harmful", "neutral", "inconclusive", "not-exercised"), statement: str, offset: { type: "integer", minimum: 0 } }, ["operation"]) },
   { name: "action", description: TOOL_HELP.action, input: obj({ operation: choice("list", "create", "update", "sessions"), action_id: str, title: str, goal: str, state: choice("active", "paused", "completed", "cancelled"), expected_revision: num, offset: num, archived: { type: "boolean" }, cursor: { type: "string", minLength: 1, maxLength: 4096 }, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
-  { name: "plan", description: TOOL_HELP.plan, input: obj({ operation: choice("read", "save"), action_id: str, revision: num, expected_revision: num, nodes: { type: "array", maxItems: 300, items: obj({ id: str, kind: choice("phase", "wave", "task", "subtask"), title: str, parent: str, depends_on: list, outcome: str, context: str, criteria: list, skills: list, roles: list, agent: str }, ["id", "kind", "title"]) } }, ["operation", "action_id"]) },
+  { name: "plan", description: TOOL_HELP.plan, input: obj({ operation: choice("read", "save"), action_id: str, revision: num, expected_revision: num, nodes: { type: "array", maxItems: 300, items: obj({ id: str, kind: choice("phase", "wave", "task", "subtask"), title: str, parent: str, depends_on: list, outcome: str, context: str, criteria: list, roles: list, skills: list, agent: str }, ["id", "kind", "title"]) } }, ["operation", "action_id"]) },
   { name: "context", description: TOOL_HELP.context, input: obj({ action_id: str, node_id: str, clear: { type: "boolean" }, mode: choice("continuation", "independent"), handoff_id: { type: ["string", "null"] } }) },
   { name: "record", description: TOOL_HELP.record, input: { ...obj({ operation: choice("add", "query", "complete", "reopen", "ask", "answer", "bind-respondent"), view: choice("ledger", "progress", "questions", "thread", "full_thread"), response_format: choice("markdown", "json"), session_id: str, cursor: str, work_ref: workRefInput, ...askInput, ...answerInput, ...bindInput, respondent: str, question_state: choice("open", "answered", "all"), offset: num, action_id: str, node_id: str, kind: choice("claim", "result", "concern", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]),
     allOf: [
       { if: { properties: { operation: { const: "ask" } } }, then: {
           ...obj({ operation: { const: "ask" }, ...askInput }, ["operation", "question", "blocking"]),
           oneOf: [{ required: ["to_agent"], not: { required: ["recipient"] } }, { required: ["recipient"], not: { required: ["to_agent"] } }],
+          allOf: [{ if: { properties: { answer_type: { const: "multi-choice" } }, required: ["answer_type"] },
+            then: { required: ["choices"] }, else: { not: { required: ["choices"] } } }],
         } },
-      { if: { properties: { operation: { const: "answer" } } }, then: obj({ operation: { const: "answer" }, ...answerInput }, ["operation", "question_id", "answer"]) },
+      { if: { properties: { operation: { const: "answer" } } }, then: {
+          ...obj({ operation: { const: "answer" }, ...answerInput }, ["operation", "question_id"]),
+          oneOf: [
+            { required: ["answer"], not: { anyOf: [{ required: ["choice_id"] }, { required: ["status"] }, { required: ["reason"] }] } },
+            { required: ["choice_id"], not: { anyOf: [{ required: ["answer"] }, { required: ["status"] }] } },
+            { required: ["status", "reason"], not: { anyOf: [{ required: ["answer"] }, { required: ["choice_id"] }] } },
+          ],
+        } },
         { if: { properties: { operation: { const: "bind-respondent" } } }, then:
           obj({ operation: { const: "bind-respondent" }, ...bindInput },
             ["operation", "question_id", "respondent_session_id"]) },

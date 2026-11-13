@@ -4,6 +4,15 @@ type: Log
 
 # Update Log
 
+## 2026-11-13
+
+**Structured Open Questions:** Added optional single-choice questions, validated
+choice IDs and explicit cannot-select responses in the existing ask/answer flow.
+Preserved text compatibility, respondent identity and first-response continuation.
+Corrected advertised legacy-only examples and made conditional question guidance
+explicit. See [the contract and usage investigation](structured-questions.md);
+real-model usage improvement remains unproven.
+
 ## 2026-11-11
 
 **Learning Phase 2 qualification and recovery:** Added actual-host provenance

@@ -216,6 +216,9 @@ scope to the dispatcher, specialist judgment to a role/agent, and intent or
 approval to the user. Continue independent work where safe. An answer is not
 necessarily approval or resolution.
 
+The following example is explicitly legacy/manual and does not contact its
+recipient. For routed questions use `recipient` as described immediately below.
+
 ```json
 {"operation":"ask","question":"Does the finding cover empty input?","to_agent":"research","blocking":true,"context":"The cited source is ambiguous.","context_attachments":["SOURCE_REFERENCE"],"reference":{"action_id":"ACTION_ID","kind":"task","id":"TASK_ID"}}
 ```
@@ -265,7 +268,13 @@ direct delegation, not an approval gate.
 {"operation":"answer","question_id":"QUESTION_ID","answer":"Empty input is excluded; see the source limits.","context_attachments":["SOURCE_REFERENCE"]}
 ```
 
-Answer requires `question_id`, `answer`; optional `context_attachments`. Actual
+Text answers require `question_id`, `answer`; optional `context_attachments`.
+For a structured `answer_type:"multi-choice"` ask, supply immutable
+`choices:[{id,answer},...]`. Reply with `question_id` and `choice_id`, plus an
+optional `reason`; or `status:"cannot-select"` and a required `reason` instead.
+Do not also submit `answer`. Omitted answer type remains text. See the
+[structured contract](structured-questions.md) for validation, bounds, examples
+and unchanged authority/continuation semantics. Actual
 author/Session derive from the caller. Typed direct questions enforce the bound native child Session and agent;
 forwarded specialist questions require the dispatcher's exact binding
 and the native child relationship. Legacy questions preserve their previous behavior. An agent
@@ -297,7 +306,7 @@ to try delivery. Read [full outcome details](collaboration.md) (section **One-sh
 | `ledger` (default) | Explicit Action/node or selection, otherwise caller Session; `after`/`next_after` |
 | `progress` | Action/node or selection; `offset`/`next_offset` |
 | `questions` | Explicit/selected Action, optional explicit node/respondent, question_state open/answered/all; `after`/`next_after`; does not inherit task filter |
-| `thread` | Required question_id, optional matching action_id; full question plus paged answers, `after`/`next_after`; no selection required |
+| `thread` | Required question_id; optional matching action_id; full question plus paged answers; `after`/`next_after`; no selection required |
 | `full_thread` | Explicit Action/node OR Session; `cursor`/`next_cursor`; no selection fallback |
 
 Views other than ledger default to 20, max 50. For full stored relational history:
