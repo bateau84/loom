@@ -25,7 +25,7 @@ incoming-transfer counterexample retains `FAIL`. No real-model reasoning was tes
 The recorded input/runtime hashes allow later documentation-only evidence changes to be
 checked against those same tested bytes. The file watcher stayed enabled.
 
-The latest remediation run exercised clean commit `6b4a0a3` and finalized **1,144 audit
+The latest remediation run exercised clean commit `c62081d` and finalized **1,144 audit
 receipts**. All eleven recorded input hashes and thirty production/runtime file hashes match
 that checkout. Its matrix remains three Verified, five Partial and one Unsupported capability.
 
@@ -199,6 +199,14 @@ Both controls reproduced the defect on reviewed head `19919bad`: all eight nativ
 passed, then the missing audit or one-row valid prefix still produced native execution
 `PASS` and CLI exit 0. The controls correctly rejected those results. These were deliberate
 post-shutdown faults; the previously inspected successful CI archive was complete.
+
+Both controls passed against clean corrected commit `c62081d`, using the same installed
+OpenCode 2.2.6 host and exact packed candidate as its normal successful run. Each reached
+all eight mechanical checks before the fault, then produced the intended audit-integrity
+error, native execution `FAIL` and CLI exit 1. The missing audit stayed absent; the prefix
+control retained exactly the injected 323-byte record. Neither failed native report carries
+successful audit hash/count metadata. The evidence record preserves separate source,
+driver, candidate and receipt hashes for all four fault-control runs.
 
 ## Required upstream guarantees and next stage
 

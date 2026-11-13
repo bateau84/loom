@@ -12,12 +12,12 @@
       "status": "PASS",
       "dispatch": {
         "parent": [
-          "ses_e2be70673ffezlo31kCBsa4hzU",
-          "msg_1d418f9b0001zRMGmMD35PQzzL",
-          "ac10c4e2-b11d-4ade-977e-485cf3ab8f7b"
+          "ses_e2ae8248cffefDX0Jo7jOLjrHD",
+          "msg_1d517dbc6001JT5p0xgJF01H7t",
+          "40a0a25b-b9f6-438b-9677-84bcd4f94842"
         ],
         "binding": "observed",
-        "child_session_id": "ses_e2be705f3ffepo8oZveC4ijm7D",
+        "child_session_id": "ses_e2ae822c9ffelG6d91ry58EqT8",
         "reason": null,
         "admission_binding": "UNQUALIFIED",
         "observer_ready_receipt": 1,
@@ -28,7 +28,7 @@
         "progress_receipts": [
           19
         ],
-        "terminal_event_id": "evt_1d418fa6b00160bzgsWGO7PgGv",
+        "terminal_event_id": "evt_1d517de85001pKUFup5RZIJTW9",
         "return_status": "completed"
       },
       "basis": {
@@ -39,9 +39,9 @@
           {
             "receipt": 33,
             "call": [
-              "ses_e2be705f3ffepo8oZveC4ijm7D",
-              "msg_1d418fa1d0012hcpniqVwI9QAQ",
-              "6c6f199d-d6a6-403d-8db5-949132eff483"
+              "ses_e2ae822c9ffelG6d91ry58EqT8",
+              "msg_1d517dd72001w1wzIHORBQWnWh",
+              "652adf92-84a1-458a-9645-4b9388e24801"
             ]
           }
         ],
@@ -54,12 +54,12 @@
       "concurrent": [
         {
           "parent": [
-            "ses_e2be70673ffezlo31kCBsa4hzU",
-            "msg_1d418faac0010zpEhuZyr5lRdB",
-            "c4773332-5e81-402f-bbb9-da8fd38aa3d8"
+            "ses_e2ae8248cffefDX0Jo7jOLjrHD",
+            "msg_1d517df6c001I1A32z7N9evgo8",
+            "948c2b44-e79e-4252-a8f7-0006c1533aca"
           ],
           "binding": "observed",
-          "child_session_id": "ses_e2be70537ffe151qgk4pIQOLeq",
+          "child_session_id": "ses_e2ae82032ffeS74UZlTalolAi2",
           "reason": null,
           "admission_binding": "UNQUALIFIED",
           "observer_ready_receipt": 1,
@@ -73,12 +73,12 @@
         },
         {
           "parent": [
-            "ses_e2be70673ffezlo31kCBsa4hzU",
-            "msg_1d418faac0010zpEhuZyr5lRdB",
-            "6cd956a4-a28b-4782-9802-39dc61333fc7"
+            "ses_e2ae8248cffefDX0Jo7jOLjrHD",
+            "msg_1d517df6c001I1A32z7N9evgo8",
+            "a24da11c-ab31-4dd1-8939-0d9ac8d2875a"
           ],
           "binding": "observed",
-          "child_session_id": "ses_e2be70534ffemtZnDgUUmDKDUO",
+          "child_session_id": "ses_e2ae8202cffedt899EJH0u7xQq",
           "reason": null,
           "admission_binding": "UNQUALIFIED",
           "observer_ready_receipt": 1,
@@ -94,12 +94,12 @@
       "reused": [
         {
           "parent": [
-            "ses_e2be70673ffezlo31kCBsa4hzU",
-            "msg_1d418f9b0001zRMGmMD35PQzzL",
-            "ac10c4e2-b11d-4ade-977e-485cf3ab8f7b"
+            "ses_e2ae8248cffefDX0Jo7jOLjrHD",
+            "msg_1d517dbc6001JT5p0xgJF01H7t",
+            "40a0a25b-b9f6-438b-9677-84bcd4f94842"
           ],
           "binding": "observed",
-          "child_session_id": "ses_e2be705f3ffepo8oZveC4ijm7D",
+          "child_session_id": "ses_e2ae822c9ffelG6d91ry58EqT8",
           "reason": null,
           "admission_binding": "UNQUALIFIED",
           "observer_ready_receipt": 1,
@@ -110,17 +110,17 @@
           "progress_receipts": [
             19
           ],
-          "terminal_event_id": "evt_1d418fa6b00160bzgsWGO7PgGv",
+          "terminal_event_id": "evt_1d517de85001pKUFup5RZIJTW9",
           "return_status": "completed"
         },
         {
           "parent": [
-            "ses_e2be70673ffezlo31kCBsa4hzU",
-            "msg_1d418fc2e001n5JfTWZGZmZnr4",
-            "e6acfde8-151a-4bc9-abaa-0f7b44ee21c2"
+            "ses_e2ae8248cffefDX0Jo7jOLjrHD",
+            "msg_1d517e2d800170o8OT6KFPsMJy",
+            "876c54a9-0078-4606-bc7c-088c6f4fde0f"
           ],
           "binding": "observed",
-          "child_session_id": "ses_e2be705f3ffepo8oZveC4ijm7D",
+          "child_session_id": "ses_e2ae822c9ffelG6d91ry58EqT8",
           "reason": null,
           "admission_binding": "UNQUALIFIED",
           "observer_ready_receipt": 1,
@@ -131,19 +131,19 @@
           "progress_receipts": [
             162
           ],
-          "terminal_event_id": "evt_1d418fc5f001Q5jHFHk1Nu9ewF",
+          "terminal_event_id": "evt_1d517e382001lU8Og2NAKNOfqa",
           "return_status": "completed"
         }
       ],
       "running_reuse": [
         {
           "parent": [
-            "ses_e2be70673ffezlo31kCBsa4hzU",
-            "msg_1d418fca8001W8RCLG0FubjpMa",
-            "126ef8c7-845a-4fc5-b43d-a0e382f8299b"
+            "ses_e2ae8248cffefDX0Jo7jOLjrHD",
+            "msg_1d517e438001aNOidoYbdjhe3N",
+            "0ecbb321-8fb7-45f3-b5f3-c21429a386b7"
           ],
           "binding": "observed",
-          "child_session_id": "ses_e2be705f3ffepo8oZveC4ijm7D",
+          "child_session_id": "ses_e2ae822c9ffelG6d91ry58EqT8",
           "reason": null,
           "admission_binding": "UNQUALIFIED",
           "observer_ready_receipt": 1,
@@ -154,17 +154,17 @@
           "progress_receipts": [
             202
           ],
-          "terminal_event_id": "evt_1d418fcc5001GAcq2BkVPKEXi1",
+          "terminal_event_id": "evt_1d517e4b80011IAlF3U6Ht29XL",
           "return_status": "running"
         },
         {
           "parent": [
-            "ses_e2be70673ffezlo31kCBsa4hzU",
-            "msg_1d418fd37001jFEHg9snxegItB",
-            "b3cdbeda-18a3-480f-a83d-f61c5e817b09"
+            "ses_e2ae8248cffefDX0Jo7jOLjrHD",
+            "msg_1d517e660001Jf5XnqMbxJE8Cq",
+            "9109ab36-9be0-49a2-ba2e-1e0bce94f90e"
           ],
           "binding": "observed",
-          "child_session_id": "ses_e2be705f3ffepo8oZveC4ijm7D",
+          "child_session_id": "ses_e2ae822c9ffelG6d91ry58EqT8",
           "reason": null,
           "admission_binding": "UNQUALIFIED",
           "observer_ready_receipt": 1,
@@ -175,7 +175,7 @@
           "progress_receipts": [
             251
           ],
-          "terminal_event_id": "evt_1d418fd4d001uBejkEFQNJbrqA",
+          "terminal_event_id": "evt_1d517e6e9001uPP2qBjECYYmsy",
           "return_status": "running"
         }
       ],
@@ -186,17 +186,17 @@
       "status": "PASS",
       "admissions": [
         {
-          "session_id": "ses_e2be70067ffeWDMmWTewRyskLo",
-          "input_id": "msg_1d418ff9b001G1t04Fmkh3KlEe",
-          "event_id": "evt_1d418ff9b002uADgXogkKLvm60",
-          "manifest_sha256": "f576219f8e52c7c82a5dc0d06e3e36bb310970353757341e45b30b52dce218b6",
+          "session_id": "ses_e2ae811a4ffet7RtBIwUW3uima",
+          "input_id": "msg_1d517ee68001B1Zl4RvLgx8A7p",
+          "event_id": "evt_1d517ee6a001GzpYGXhC2NUrgO",
+          "manifest_sha256": "8863a5fba46e9d00e8eca3f60640cc4686421b621288cf2c28da96708dbd395f",
           "dispatch_binding": "UNQUALIFIED"
         },
         {
-          "session_id": "ses_e2be6ffb3ffeNrWMBoE4ppx8mT",
-          "input_id": "msg_1d419004f002qlc6Hn7Rm75GIx",
-          "event_id": "evt_1d419004f0034SNsJ1paxiDMFU",
-          "manifest_sha256": "b72ecd0cf78be8c1e6a70b7453fd2e712b0ba25b6bceb1f703539ae478e367fc",
+          "session_id": "ses_e2ae80f05ffeHOB0K3xBiI4wdz",
+          "input_id": "msg_1d517f106001Wv1ZuUxadCD1rv",
+          "event_id": "evt_1d517f10700174zgHujCXyDV2f",
+          "manifest_sha256": "d2c078713c2c0b45f4f63902e5effa285049a09105a512386993907319d04b97",
           "dispatch_binding": "UNQUALIFIED"
         }
       ],
@@ -213,9 +213,9 @@
           {
             "receipt": 490,
             "call": [
-              "ses_e2be6fee4ffetKRkzqoI5qefEO",
-              "msg_1d4190128001Fy45KqH0dHe72g",
-              "49c9d87f-9cad-4f40-8c83-9d1f4f201202"
+              "ses_e2ae80c94ffe40Rx76qQYL0SOR",
+              "msg_1d517f387001zLVWo3xKYnX7aD",
+              "79a60316-2dab-495a-b97e-b01d6ab7e822"
             ]
           }
         ],
@@ -233,7 +233,7 @@
         "retrieved": [],
         "same_review_invocation": "UNQUALIFIED"
       },
-      "positive_admission_id": "msg_1d419011e002I6HWqxER5GSuvK",
+      "positive_admission_id": "msg_1d517f375001MAaEpLyJXBpTJF",
       "cited_and_claimed_inspected": "observed reviewer-authored return, not access proof"
     },
     {
@@ -247,9 +247,9 @@
           {
             "receipt": 610,
             "call": [
-              "ses_e2be70673ffezlo31kCBsa4hzU",
-              "msg_1d419036c001Ooyk3JVWGuwLTw",
-              "b99a96b5-e75f-455a-9697-b1fd42bb93da"
+              "ses_e2ae8248cffefDX0Jo7jOLjrHD",
+              "msg_1d517fa4e001rbcmLU08fl2FMP",
+              "2150d221-d4c8-4f57-8be2-43c5382412e8"
             ]
           }
         ],
@@ -261,9 +261,9 @@
         "same_review_invocation": "UNQUALIFIED"
       },
       "denied_call": [
-        "ses_e2be6fc14ffex4eIP95pLXiVg4",
-        "msg_1d41903f500197WwRH55jW0pYY",
-        "f6427c23-6016-4d52-81bd-6820873d9fe2"
+        "ses_e2ae80334ffelW94P4aP7RrKZN",
+        "msg_1d517fd1400111azSlq03tQLV3",
+        "1d58629f-a603-4be1-bd75-ec9e322addf3"
       ],
       "inline_counterexample": {
         "supplied": [
@@ -281,15 +281,15 @@
       "name": "Q6-real-inner-call-collision-and-incomplete-observation-control",
       "status": "PASS",
       "shared_native_call": [
-        "ses_e2be6fa19ffeGxt4X09tJ936TR",
-        "msg_1d419061b001OoQqziAajOAlAA",
-        "b50ff7de-dc7b-4a75-8588-e6e986c3cbec"
+        "ses_e2ae7fb22ffe5BSE6RYyxozN2G",
+        "msg_1d5180597001bKTmMQfSHR0Fzz",
+        "0f58ecf4-be0f-40f8-8fd8-2ec338616d78"
       ],
-      "outer_record_id": "d724db87-53bd-4c27-809c-d8d1f714fb0f",
+      "outer_record_id": "9c892f9f-c9bd-41f1-a18a-ae53b26d4056",
       "missing_source_call": [
-        "ses_e2be6fa19ffeGxt4X09tJ936TR",
-        "msg_1d4190762001OVRRyLHNypubcb",
-        "760c2343-9dd0-4e02-97ad-2fd01514f4db"
+        "ses_e2ae7fb22ffe5BSE6RYyxozN2G",
+        "msg_1d51809cc001b4Nl74Px3Nq1u5",
+        "2eaafcb8-2113-48f8-b8b8-bc872718574e"
       ],
       "inner_provenance": "UNQUALIFIED: native inner ID absent; Loom meta-tool capture excluded",
       "missing_provider_control": "PASS for deliberately reduced trace oracle only, not an injected native outage"
@@ -298,31 +298,31 @@
       "name": "Q7-native-scope-change-and-original-work-ref",
       "status": "PASS",
       "native_call": [
-        "ses_e2be6f84effe2bXv2czUI732K7",
-        "msg_1d4190882001xZW1TvYVqx6Qez",
-        "8cfd4c1f-a3f9-481b-b144-497973f572a1"
+        "ses_e2ae7f588ffeKjzshpIyHQfISR",
+        "msg_1d5180efc001PLjk6eKi7qdSgF",
+        "4363070a-5d2d-4224-a8dc-ddb34c9ff0be"
       ],
       "work_ref": {
-        "action_id": "16debad8-8be7-4b5e-96e0-501017ca6fc1",
+        "action_id": "7553ba50-b367-4452-b9a6-372c8eea7e20",
         "node_id": "task-a",
         "action_revision": 1,
         "plan_revision": 1,
-        "hash": "74543506a5e97229e8f68aaef4a6abb29357d02cac5dbddc2f262ea7689b84db"
+        "hash": "dd60986301ced75bacac90b62f931bc911c3b4c9ccf373c3b9bf9be2b41db0db"
       },
-      "start_record": "8283eb33-0fa9-4931-b651-c040d5039e6c",
-      "finish_record": "1ac130f6-644d-469e-a1a4-fcfc78dc3c9d",
-      "completion_record": "311f1787-6f01-4bcc-9869-6d8ad4239ffb"
+      "start_record": "081c8502-0fdd-456e-8139-2ab43ee44009",
+      "finish_record": "cd01a6fc-13ac-45fe-aabd-0601e2db2ed9",
+      "completion_record": "ac3759e8-6fe8-461c-972b-97e62566837a"
     },
     {
       "name": "R1-interrupt-compact-reopen-and-public-history",
       "status": "PASS",
-      "interruption_event_id": "evt_1d4190c75001HASPeqbBFc0aul",
-      "compaction_event_id": "evt_1d4190d050025uwAWHDOrnQ4lx",
+      "interruption_event_id": "evt_1d518235f0018hZM48Ghp4F1c5",
+      "compaction_event_id": "evt_1d51825b8001AybHR2A5yeoVrZ",
       "processes": [
-        17,
-        361
+        15,
+        358
       ],
-      "completion_record": "311f1787-6f01-4bcc-9869-6d8ad4239ffb",
+      "completion_record": "ac3759e8-6fe8-461c-972b-97e62566837a",
       "postcompaction_source_marker_seen": false,
       "limitation": "Normal process reopen after interruption; crash during dispatch and per-dispatch recovery lineage remain unqualified"
     }
@@ -455,17 +455,17 @@
     "Fixture-authored mandates are test inputs; production Loom review admission remains unimplemented.",
     "No protected source retention policy, background learning, or canonical change is activated."
   ],
-  "source_head": "6b4a0a330adcad8ba64b8c313f4a74d92586330b",
+  "source_head": "c62081db68a6bf61d30ac1de2c7a93b3fa7e42de",
   "source_dirty": false,
   "input_sha256": {
-    "tests/installed_native_review.py": "41f7d58477eb70f586c4ce0c6d1ae53a6ce29d060ffc51d1067c770ad3dbed35",
+    "tests/installed_native_review.py": "a00477a2be0be8eb6522079114558534ccf287221bd30ae8fc3306c4176cf712",
     "tests/native_review_oracle.py": "2358bc61618910a7ab7825cf4b560e81f4ef2853114a5d47dcad226e3ae74834",
     "tests/question-host/server.ts": "33c5d27f82c3e9bf6dd26f9de05d18761ddca6a7be6266ae67468f91b2bdfb93",
     "tests/question-host/review-script.ts": "b3bc6bd7bba799b08b006a83e6e8dfec6259de4aab9beae8e7260ecb7ef25977",
     "tests/question-host/provider.mjs": "8e98dfa238f709d6b89df590a23c7d708e5283f44fc6f3a4b5193c05a81d66b0",
     "tests/installed_host_smoke.py": "dc3ebaba211f5338f8e12f298c7b53b1dbd9585be9e9eaa69c02e5fba4ee5fb6",
     "tests/installed_instruction_variants.py": "295d62f3ffd7d30bf87a62e6be05003abf3927b40097635d2c5d073e5d27b258",
-    "tests/installed_questions.py": "928026182bd36f62e4d9284bd7be3cab5d59d426d68f3c993f75723593f1cd76",
+    "tests/installed_questions.py": "e2972315d9f18c63b9b2bbd2e7f85a362b1cb8ebf9b4ac862396308afef77bea",
     ".bun-version": "b99b4c7cdf236f59bc9f65d963deaecae3b16a7dad87939cacb9057f7664daee",
     "bun.lock": "6b239350c433d4e18982499d7a9849db7f380466ccab030d431aa454eb46aa8c",
     "package.json": "0b62be84895944c8fd859e4819903db640cb4d778f8d4e016dcf63e312639d21"
@@ -474,7 +474,7 @@
     "name": "loom-plugin",
     "version": "2.0.0-alpha.1",
     "sdk_version": "2.2.6",
-    "artifact_sha256": "342882fa595cd6aedbaff43c25eb873a7be07ff9af4c39de98bd0d2f7f57e563",
+    "artifact_sha256": "e359fb4e6d2400ff609bd4dd776a32139244a033adfd265393c40cc96748ee26",
     "artifact_filename": "loom-plugin-2.0.0-alpha.1.tgz"
   },
   "runtime_sha256": {
@@ -512,21 +512,227 @@
   "cli_sha256": "50503d24577fa4117a7c95ee85b2cd679606a87eacf20ca54ed5db5c9e1cf895",
   "observed_host": "opencode v2.2.6",
   "synthetic_sources": {
-    "evidence-a.txt": "56b414ea09883a60bdfe47cfd6ecc36ef47b0b06842fa8e5abeded3afd189097",
-    "evidence-b.txt": "b9be66a442753602fb92056d782a824dfff473478de960f3e435aeddb67e6b3c",
-    "protected-b.txt": "a2efd0922d68e625200bc8acde12d30d6bbf6f1589ce6a3c3b4c39ab30f8335f"
+    "evidence-a.txt": "bf88af79e74b7650fae02139fa9a6dddab45c5d5fbedc7b6cda899ae1527ca43",
+    "evidence-b.txt": "db9ce5571357ae264a4cecaac86c9e0103d0011a7544bf8ca558ad09b1467738",
+    "protected-b.txt": "ba3f28439e48e227adaaf4d2562d224a5defca7f22b24e2538a18127fe1e9a3f"
   },
   "host_runtime_versions": {
     "bun": "1.4.4",
     "node": "26.3.0"
   },
-  "audit_sha256": "d5e62a134db57c0a0729ed28ccdc4a29bd8fbdd8367c28380687d2906caa8798",
+  "audit_sha256": "60beb31e1c76241a2b467c3e077631973ae6c8f7a597ae75cac3a7b58ff99cba",
+  "audit_bytes": 5568609,
   "audit_receipts": 1144,
   "record_state": "executed-exact-clean-commit",
   "record_purpose": "Durable output evidence only; never consumed as an expected answer by the harness.",
   "observed_at_utc": {
-    "first": "2026-11-13T08:49:28.878000+00:00",
-    "last": "2026-11-13T08:49:35.563000+00:00"
+    "first": "2026-11-13T13:27:52.682000+00:00",
+    "last": "2026-11-13T13:28:17.548000+00:00"
   },
-  "diagnostic_retention": "Raw synthetic audit kept by each run and the installed-native-review CI artifact with seven-day CI retention; committed record omits transcripts and machine paths."
+  "diagnostic_retention": "Raw synthetic audits and reports are retained by each run. CI uploads the normal run in installed-native-review-<sha> and both loss controls in installed-native-review-audit-loss-<sha>, with seven-day retention. This committed record omits transcripts and machine paths.",
+  "audit_loss_controls": {
+    "scope": "Separate actual-host CLI runs; only post-shutdown audit-file loss is substituted.",
+    "pass_condition": "All eight native mechanical checks pass before the fault; the intended audit error alone then produces native status/execution FAIL and CLI exit 1.",
+    "baseline_driver_note": "Baseline runs used the initial control driver; corrected runs additionally require the primary error to equal the intended audit error, rejecting unrelated post-check failures.",
+    "reviewed_baseline": {
+      "source_head": "19919bad152da7b9016bdda68d399661fab175cd",
+      "source_dirty": false,
+      "cases": [
+        {
+          "control_status": "FAIL",
+          "fault": {
+            "kind": "missing",
+            "injected": true,
+            "injection_count": 1,
+            "host_label": "reopened",
+            "writer_stopped": true,
+            "before_bytes": 5570355,
+            "before_receipts": 1146,
+            "before_sha256": "c467bc18899bd763c0a05c7e9693beb77e708bf0dcda72b7a20385ce64486ab0",
+            "after_bytes": null,
+            "after_receipts": null,
+            "after_sha256": null
+          },
+          "all_eight_mechanical_checks_passed": true,
+          "native_result": {
+            "status": "UNQUALIFIED",
+            "execution_status": "PASS",
+            "cli_exit": 0,
+            "error": null,
+            "audit_error": null
+          },
+          "retained_final_audit": {
+            "exists": false,
+            "bytes": null,
+            "sha256": null
+          },
+          "pre_fault_observed_at_utc": {
+            "first": "2026-11-13T13:18:01.988000+00:00",
+            "last": "2026-11-13T13:18:32.412000+00:00"
+          },
+          "control_report_sha256": "dd17eb60ff2e4064f5968a31e98d23662618885886d463c8feba2582a092bd9e",
+          "native_report_sha256": "4ae2c402e0a2096744d2fcf7127e6c77a2ab1ec2a0519e2aba9efd351467fe5f"
+        },
+        {
+          "control_status": "FAIL",
+          "fault": {
+            "kind": "prefix",
+            "injected": true,
+            "injection_count": 1,
+            "host_label": "reopened",
+            "writer_stopped": true,
+            "before_bytes": 5568594,
+            "before_receipts": 1144,
+            "before_sha256": "1e054062f5405b4db4cf4a7a2bee8a43a53bc082f93562edd5dbc9413c8b985d",
+            "after_bytes": 323,
+            "after_receipts": 1,
+            "after_sha256": "f8f8cf065a69584b85ccdd3f874adc45a870a6ac3d948c4f3596aaa3ec57db3c"
+          },
+          "all_eight_mechanical_checks_passed": true,
+          "native_result": {
+            "status": "UNQUALIFIED",
+            "execution_status": "PASS",
+            "cli_exit": 0,
+            "error": null,
+            "audit_error": null
+          },
+          "retained_final_audit": {
+            "exists": true,
+            "bytes": 323,
+            "sha256": "f8f8cf065a69584b85ccdd3f874adc45a870a6ac3d948c4f3596aaa3ec57db3c"
+          },
+          "pre_fault_observed_at_utc": {
+            "first": "2026-11-13T13:19:04.963000+00:00",
+            "last": "2026-11-13T13:19:31.157000+00:00"
+          },
+          "control_report_sha256": "20f906e3928873a7551624188b8ad0384db19837c77cf8618b265c373a0a2e6b",
+          "native_report_sha256": "4dec07683d179bd2813cedd4b08a1c9bcf9542fa0f8a0a849f364ae26b28a578"
+        }
+      ],
+      "driver_sha256": "d755369824b22edb2d7f4a741f72dfea4361bfec16d1e069193434dd28d936ba",
+      "input_sha256": {
+        "tests/installed_native_review.py": "41f7d58477eb70f586c4ce0c6d1ae53a6ce29d060ffc51d1067c770ad3dbed35",
+        "tests/native_review_oracle.py": "2358bc61618910a7ab7825cf4b560e81f4ef2853114a5d47dcad226e3ae74834",
+        "tests/question-host/server.ts": "33c5d27f82c3e9bf6dd26f9de05d18761ddca6a7be6266ae67468f91b2bdfb93",
+        "tests/question-host/review-script.ts": "b3bc6bd7bba799b08b006a83e6e8dfec6259de4aab9beae8e7260ecb7ef25977",
+        "tests/question-host/provider.mjs": "8e98dfa238f709d6b89df590a23c7d708e5283f44fc6f3a4b5193c05a81d66b0",
+        "tests/installed_host_smoke.py": "dc3ebaba211f5338f8e12f298c7b53b1dbd9585be9e9eaa69c02e5fba4ee5fb6",
+        "tests/installed_instruction_variants.py": "295d62f3ffd7d30bf87a62e6be05003abf3927b40097635d2c5d073e5d27b258",
+        "tests/installed_questions.py": "928026182bd36f62e4d9284bd7be3cab5d59d426d68f3c993f75723593f1cd76",
+        ".bun-version": "b99b4c7cdf236f59bc9f65d963deaecae3b16a7dad87939cacb9057f7664daee",
+        "bun.lock": "6b239350c433d4e18982499d7a9849db7f380466ccab030d431aa454eb46aa8c",
+        "package.json": "0b62be84895944c8fd859e4819903db640cb4d778f8d4e016dcf63e312639d21"
+      },
+      "candidate": {
+        "name": "loom-plugin",
+        "version": "2.0.0-alpha.1",
+        "sdk_version": "2.2.6",
+        "artifact_sha256": "c94f44d9bdebf116304860abfbe34dd7bef6356f8ab7d6df7cd00d6ef7954c2a",
+        "artifact_filename": "loom-plugin-2.0.0-alpha.1.tgz"
+      },
+      "cli_sha256": "50503d24577fa4117a7c95ee85b2cd679606a87eacf20ca54ed5db5c9e1cf895",
+      "observed_host": "opencode v2.2.6",
+      "runtime_sha256_reference": "/runtime_sha256"
+    },
+    "corrected_candidate": {
+      "source_head": "c62081db68a6bf61d30ac1de2c7a93b3fa7e42de",
+      "source_dirty": false,
+      "cases": [
+        {
+          "control_status": "PASS",
+          "fault": {
+            "kind": "missing",
+            "injected": true,
+            "injection_count": 1,
+            "host_label": "reopened",
+            "writer_stopped": true,
+            "before_bytes": 5568612,
+            "before_receipts": 1144,
+            "before_sha256": "aa7b726e694e6e3d8c5fd5f4d4519921918d0cdd4ac5a3fdd6838e968e1d4170",
+            "after_bytes": null,
+            "after_receipts": null,
+            "after_sha256": null
+          },
+          "all_eight_mechanical_checks_passed": true,
+          "native_result": {
+            "status": "FAIL",
+            "execution_status": "FAIL",
+            "cli_exit": 1,
+            "error": "RuntimeError: Final audit file is missing",
+            "audit_error": "RuntimeError: Final audit file is missing"
+          },
+          "retained_final_audit": {
+            "exists": false,
+            "bytes": null,
+            "sha256": null
+          },
+          "pre_fault_observed_at_utc": {
+            "first": "2026-11-13T13:27:58.174000+00:00",
+            "last": "2026-11-13T13:28:24.654000+00:00"
+          },
+          "control_report_sha256": "1b5d7c43bd4bea727b5f3008dce571c11923711709dfb5003a154a98a081203e",
+          "native_report_sha256": "843ea47ac464377273b019138c22cd7caebbb7e87545f5b481237052b8b580e2"
+        },
+        {
+          "control_status": "PASS",
+          "fault": {
+            "kind": "prefix",
+            "injected": true,
+            "injection_count": 1,
+            "host_label": "reopened",
+            "writer_stopped": true,
+            "before_bytes": 5568601,
+            "before_receipts": 1144,
+            "before_sha256": "18f5e578fdb964df769958ae2174aaa1503851cfd98c054fda8f410a5c57cd50",
+            "after_bytes": 323,
+            "after_receipts": 1,
+            "after_sha256": "4aaa5cba55a6b5f411de1e8a4390b974059a2c0883b735ab2c2c21612636808d"
+          },
+          "all_eight_mechanical_checks_passed": true,
+          "native_result": {
+            "status": "FAIL",
+            "execution_status": "FAIL",
+            "cli_exit": 1,
+            "error": "RuntimeError: Audit raw prefix changed or was truncated",
+            "audit_error": "RuntimeError: Audit raw prefix changed or was truncated"
+          },
+          "retained_final_audit": {
+            "exists": true,
+            "bytes": 323,
+            "sha256": "4aaa5cba55a6b5f411de1e8a4390b974059a2c0883b735ab2c2c21612636808d"
+          },
+          "pre_fault_observed_at_utc": {
+            "first": "2026-11-13T13:27:58.248000+00:00",
+            "last": "2026-11-13T13:28:24.433000+00:00"
+          },
+          "control_report_sha256": "794e9658d84e97c99bfe2ca6833e59a187baf571d2515c0dafcfea4706ce8a7f",
+          "native_report_sha256": "0b1dd65261a68420ef9d1908640022ffbb7b05cd56693ff7d3629ae7fdf5e685"
+        }
+      ],
+      "driver_sha256": "e4939a0b04eff322a58c49478b678bd6e447bd518d6df77d3f16475af60628e3",
+      "input_sha256": {
+        "tests/installed_native_review.py": "a00477a2be0be8eb6522079114558534ccf287221bd30ae8fc3306c4176cf712",
+        "tests/native_review_oracle.py": "2358bc61618910a7ab7825cf4b560e81f4ef2853114a5d47dcad226e3ae74834",
+        "tests/question-host/server.ts": "33c5d27f82c3e9bf6dd26f9de05d18761ddca6a7be6266ae67468f91b2bdfb93",
+        "tests/question-host/review-script.ts": "b3bc6bd7bba799b08b006a83e6e8dfec6259de4aab9beae8e7260ecb7ef25977",
+        "tests/question-host/provider.mjs": "8e98dfa238f709d6b89df590a23c7d708e5283f44fc6f3a4b5193c05a81d66b0",
+        "tests/installed_host_smoke.py": "dc3ebaba211f5338f8e12f298c7b53b1dbd9585be9e9eaa69c02e5fba4ee5fb6",
+        "tests/installed_instruction_variants.py": "295d62f3ffd7d30bf87a62e6be05003abf3927b40097635d2c5d073e5d27b258",
+        "tests/installed_questions.py": "e2972315d9f18c63b9b2bbd2e7f85a362b1cb8ebf9b4ac862396308afef77bea",
+        ".bun-version": "b99b4c7cdf236f59bc9f65d963deaecae3b16a7dad87939cacb9057f7664daee",
+        "bun.lock": "6b239350c433d4e18982499d7a9849db7f380466ccab030d431aa454eb46aa8c",
+        "package.json": "0b62be84895944c8fd859e4819903db640cb4d778f8d4e016dcf63e312639d21"
+      },
+      "candidate": {
+        "name": "loom-plugin",
+        "version": "2.0.0-alpha.1",
+        "sdk_version": "2.2.6",
+        "artifact_sha256": "e359fb4e6d2400ff609bd4dd776a32139244a033adfd265393c40cc96748ee26",
+        "artifact_filename": "loom-plugin-2.0.0-alpha.1.tgz"
+      },
+      "cli_sha256": "50503d24577fa4117a7c95ee85b2cd679606a87eacf20ca54ed5db5c9e1cf895",
+      "observed_host": "opencode v2.2.6",
+      "runtime_sha256_reference": "/runtime_sha256"
+    }
+  }
 }
