@@ -264,7 +264,8 @@ test("plugin integration: configured roles, core plugin tools, reload, scoping, 
     if (oldConfig === undefined) delete process.env.OPENCODE_CONFIG_DIR; else process.env.OPENCODE_CONFIG_DIR = oldConfig
     await rm(dir, { recursive: true, force: true })
   }
-  expect(disposed).toBe(5)
+  // The automatic learning idle hook is also disposed.
+  expect(disposed).toBe(6)
 })
 
 test("removed-task recovery is injected, repeatable, non-mutating and cleared by explicit selection", async () => {

@@ -220,6 +220,26 @@ export class ReviewRequests {
     this.frozenWork(request)
     return request
   }
+  /** Internal original-source projection. Caller owns the read snapshot and native
+   * source permission; the existing requester check is never bypassed. */
+  evaluationSource(actor: Actor, requestID: string, relationshipID?: string): Record<string, unknown> {
+    const request = this.getRequest(actor, requestID)
+    if (relationshipID !== undefined) {
+      const row = this.db.prepare(`SELECT id,sequence,${guarded} FROM review_relationships WHERE request_id=? AND id=?`)
+        .get(requestID, relationshipID) as { id: string; sequence: number; data: string } | undefined
+      if (!row) throw new ReviewRequestError("source-missing", "Review relationship unavailable")
+      const parsed = relationshipBody(json(row))
+      if (parsed.request_id !== requestID || parsed.member_ids.some(id => !request.members.some(member => member.member_id === id)))
+        throw new ReviewRequestError("history-unavailable", "Relationship no longer identifies the frozen request membership")
+      return { id: row.id, sequence: row.sequence, ...parsed }
+    }
+    const membership = this.frozenWork(request), histories = new Map<string, unknown>()
+    for (const member of membership) {
+      const ref = member.selection, key = `${ref.action_id}:${ref.action_revision}:${ref.plan_revision}`
+      if (!histories.has(key)) histories.set(key, this.store.collaboration.resolveWork(ref))
+    }
+    return { request, frozen_work_membership: membership, historical_work: [...histories.values()] }
+  }
   freeze(actor: Actor, raw: unknown) {
     const request = parseRequest(actor, raw), encoded = encode(request)
     return this.atomic(true, () => {

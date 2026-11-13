@@ -17,6 +17,7 @@ import { renderFullHistory } from "./history-renderer.js"
 import { fullThreadMarkdown } from "./response-format.js"
 import { Store } from "./store.js"
 import { Learning } from "./learning.js"
+import { EVALUATION_READS, registerAutomaticLearning, type AutomaticLearningRuntime } from "./learning-runtime.js"
 import type { ObjectiveSource, ObjectivePhase } from "./objectives.js"
 import { QUESTION_DISPATCH, questionRecipient } from "./collaboration.js"
 import { questionRoute, sendQuestion, type NativeModel, type QuestionRoute } from "./question-routing.js"
@@ -124,7 +125,7 @@ const specs = [
       session_id: str, export_path: { type: "string", minLength: 1, maxLength: 4096 },
       include_text: { type: "boolean" }, limit: { type: "integer", minimum: 1, maximum: 50 },
       cursor: { type: "string", minLength: 1, maxLength: 4096 } }, ["operation"]) },
-  { name: "insights", description: TOOL_HELP.insights, input: obj({ operation: choice("action", "window", "findings"), finding_cursor: { type: "string", maxLength: 512 }, action_id: str, before: { type: "integer", minimum: 1 }, limit: { type: "integer", minimum: 1, maximum: 200 }, since_at: str, until_at: str }, ["operation"]) },
+  { name: "insights", description: TOOL_HELP.insights, input: obj({ operation: choice("action", "window", "findings", ...EVALUATION_READS), batch_id: str, member_key: str, after: num, finding_cursor: { type: "string", maxLength: 512 }, action_id: str, before: { type: "integer", minimum: 1 }, limit: { type: "integer", minimum: 1, maximum: 200 }, since_at: str, until_at: str }, ["operation"]) },
   { name: "objective", description: TOOL_HELP.objective, input: obj({
       operation: choice("create", "link", "read", "list", "find"),
       objective_id: str, label: { type: "string", maxLength: 200 }, unit_key: str,
@@ -230,12 +231,15 @@ export default Plugin.define({
     // Learning history is optional; corruption must never remove the healthy
     // Action tools, observation capture or the independently guarded routing path.
     let learningStage = "learning-database-file", learningFailure: string | undefined
+    let learningFilename = join(state, "learning.sqlite")
+    let learningRuntime: AutomaticLearningRuntime | undefined
     try {
       const learningPath = join(state, "learning.sqlite")
       const learningHandle = await open(learningPath, "a", 0o600)
       await learningHandle.close()
       learningStage = "learning-database-open"
-      learningDB = new Database(await realpath(learningPath))
+      learningFilename = await realpath(learningPath)
+      learningDB = new Database(learningFilename)
       learningStage = "learning-initialization"
       learning = new Learning(learningDB, store, db)
     } catch (error) {
@@ -247,7 +251,7 @@ export default Plugin.define({
       learning = undefined
     }
     const learningStatus = () => learning
-      ? { available: true, storage: "separate-project-sqlite", automatic_mutation: false, findings: "historical-read-only", automatic_findings: false, automatic_model_calls: false }
+      ? { available: true, storage: "separate-project-sqlite", automatic_mutation: false, findings: "historical-read-only", automatic_findings: false, automatic_model_calls: false, automatic_descriptions: learningRuntime?.status() ?? { registered: false } }
       : { available: false, stage: learningFailure ?? "unavailable", automatic_mutation: false,
           note: "Existing Action/record/trace tools and native execution remain available; learning evidence is preserved for operator repair" }
     const requiredLearning = () => {
@@ -410,7 +414,7 @@ export default Plugin.define({
                     : await readSessionExport(directory, String(input.export_path), targetID, ctx.location.project.id, async canonicalPath => {
                         await ctx.permission.assert({
                           action: "read", resources: [canonicalPath], sessionID: actor.session_id,
-                          agent: actor.agent,
+                          agent: toolContext.agent,
                           source: { type: "tool", messageID: toolContext.messageID, id: toolContext.id },
                         })
                         if (!await owns(targetID)) throw new Error("Source Session moved during export permission approval")
@@ -453,7 +457,17 @@ export default Plugin.define({
                 break
               }
               case "insights":
-                if (input.operation === "action") {
+                if ((EVALUATION_READS as readonly unknown[]).includes(input.operation)) {
+                  await ctx.permission.assert({ action: "read", resources: [filename, learningFilename],
+                    sessionID: toolContext.sessionID, agent: toolContext.agent,
+                    source: { type: "tool", messageID: toolContext.messageID, id: toolContext.id } })
+                  lifetime.signal.throwIfAborted(); toolContext.signal.throwIfAborted()
+                  await checkedSession(actor.session_id)
+                  if (!learningRuntime) throw new Error("LOOM_LEARNING_UNAVAILABLE: automatic report runtime is unavailable")
+                  result = learningRuntime.read(input, actor.session_id, !snapshot.errors.length && snapshot.config.ledger.capture === "automatic")
+                } else if (input.batch_id !== undefined || input.member_key !== undefined || input.after !== undefined) {
+                  throw new Error("Evaluation fields require an evaluation read operation")
+                } else if (input.operation === "action") {
                   const actionID = input.action_id === undefined ? store.selected(actor.session_id)?.action_id : String(input.action_id)
                   if (!actionID) throw new Error("Insights action view requires explicit or selected action_id")
                   result = requiredLearning().events({ action_id: actionID, before: input.before as number | undefined, limit: input.limit as number | undefined,
@@ -711,7 +725,7 @@ export default Plugin.define({
                   result = await resumeAnswer(store, committed, async sessionID => {
                     const target = payload(unwrapped(await ctx.session.get({ sessionID })))
                     return target.id === sessionID && await sessionIsLocal(target)
-                  }, notice => ctx.session.synthetic(notice), AbortSignal.any([toolContext.signal, lifetime.signal]))
+                  }, notice => ctx.session.synthetic(notice), AbortSignal.any([toolContext.signal, lifetime.signal]), lifetime.signal)
                   break
                 }
                 if (input.operation === "ask") {
@@ -834,6 +848,9 @@ export default Plugin.define({
                 break
               }
             }
+            if ((spec.name === "record" && input.operation !== "query") ||
+                (spec.name === "objective" && ["create", "link"].includes(String(input.operation))) ||
+                (spec.name === "review" && ["freeze", "relate", "prepare"].includes(String(input.operation)))) learningRuntime?.notify(actor.session_id)
             if (spec.name === "record" && input.operation === "query" && (!input.view || input.view === "ledger") && !input.record_id) {
               const page = result as ReturnType<Store["records"]>
               result = { ...page, items: page.items.map(r => ({ ...r, data: typeof r.data.statement === "string" && r.data.statement.length > 600
@@ -902,6 +919,7 @@ export default Plugin.define({
               }
             }
           }
+          learningRuntime?.notify(event.sessionID)
         } catch (error) { warn(error) } // A missing ledger or invalid config must not block native reasoning.
       }))
       disposers.push(await ctx.tool.hook("execute.before", async event => {
@@ -928,6 +946,7 @@ export default Plugin.define({
               ? { ...event, error: { format: "loom-tool-error/v1", message: event.error.message } }
               : event
             const record = observer.after(observed, captureEnabled)
+            if (record) learningRuntime?.notify(event.sessionID)
             if (record && record.data.attribution !== "captured-at-start") warn(`Evidence is unpaired (${record.data.attribution}). Inspect loom_record with operation=query, session_only=true.`)
             // Native skill loader result: provenance hint, not proof of model use.
             // Never store the skill body, original tool output or a claim of final delivery.
@@ -960,6 +979,11 @@ export default Plugin.define({
       try { learningDatabase?.close() } finally { database.close() }
       throw error
     }
+    try {
+      learningRuntime = await registerAutomaticLearning(ctx, { learning, ledgerPath: filename, learningPath: learningFilename,
+        signal: lifetime.signal, getConfig, checkedSession, warn })
+      disposers.push(learningRuntime)
+    } catch { warn("Optional automatic learning registration unavailable; core guards and source recording remain active") }
     // The early guard remains restrictive until the entire plugin initialized.
     // A valid, explicitly disabled policy removes it; a guarded runtime
     // delegates to the fully registered model.request hook. Unknown hosts
@@ -975,6 +999,7 @@ export default Plugin.define({
       // guard and retain their existing setup behavior.
       startupDenial = "LOOM_MODEL_ROUTING_HOST_UNQUALIFIED: no proven native request guard"
     }
+    learningRuntime?.start()
     const captureCompanion = async (receipt: import("./review-companions.js").CompanionReceipt) => {
       try {
         if (lifetime.signal.aborted || !await owns(receipt.sessionID)) return
@@ -986,6 +1011,7 @@ export default Plugin.define({
           source: "successful-companion-tool-result",
           observation: "successful permission-checked companion tool result; not proof of final model receipt or application",
         })
+        learningRuntime?.notify(receipt.sessionID)
       } catch (error) { warn(error) }
     }
     return Object.assign(async () => {

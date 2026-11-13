@@ -314,6 +314,11 @@ export class EvaluationStore {
       blocked_reason: batch.blocked_reason, member_count: count.total, processed_count: count.done, report_id: batch.report_id,
       created_at: batch.created_at, updated_at: batch.updated_at, invalidations }
   }
+  nextUnfinished(owner: string, scope: string): EvaluationBatch | null {
+    const row = this.db.prepare("SELECT id FROM learning_evaluation_batches WHERE owner_session=? AND scope_key=? AND state IN ('pending','processing') ORDER BY sequence LIMIT 1")
+      .get(text(owner, "owner", 200), text(scope, "scope", 200)) as { id: string } | undefined
+    return row ? this.get(row.id, owner) : null
+  }
   list(owner: string, input: { before?: number; limit?: number } = {}): { items: EvaluationBatch[]; next_before: number | null } {
     const take = integer(input.limit ?? 20, "page limit", 1, 100), before = integer(input.before ?? Number.MAX_SAFE_INTEGER, "cursor", 1)
     const rows = this.db.prepare("SELECT id,sequence FROM learning_evaluation_batches WHERE owner_session=? AND sequence<? ORDER BY sequence DESC LIMIT ?").all(text(owner, "owner", 200), before, take + 1) as Array<{ id: string; sequence: number }>
