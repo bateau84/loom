@@ -42,6 +42,24 @@ REQUIRED_COLUMNS = {
         "observed_sha256", "observed_effect", "statement", "evidence_refs",
     },
 }
+# Mirrors evaluation schema v1 in src/evaluation-store.ts. No evaluation tables
+# means legacy state; a partial schema must never be certified as that legacy.
+EVALUATION_COLUMNS = {
+    "learning_evaluation_schema": {"singleton", "version"},
+    "learning_evaluation_batches": {
+        "sequence", "id", "identity", "owner_session", "scope_key", "source_store_id",
+        "boundary_json", "method_json", "membership_sha256", "revision", "previous_batch_id",
+        "state", "blocked_reason", "claim_token", "worker_id", "lease_until_ms",
+        "created_at", "updated_at", "report_id",
+    },
+    "learning_evaluation_members": {"batch_id", "key", "ordinal", "kind", "source_refs", "report_id"},
+    "learning_evaluation_reports": {
+        "id", "batch_id", "member_key", "slot", "created_at", "body_json", "qualifications_json", "sha256",
+    },
+    "learning_evaluation_dependencies": {"report_id", "source_key", "source_ref"},
+    "learning_evaluation_invalidations": {"sequence", "batch_id", "source_key", "reason", "recorded_at"},
+    "learning_evaluation_opportunities": {"session_id", "state", "reason", "generation", "updated_at"},
+}
 REVIEW_COLUMNS = {
     "review_store_identity": {"singleton", "store_id"},
     "review_requests": {"request_id", "requester_session", "data", "membership_data", "created_at"},
@@ -143,6 +161,11 @@ def inspect_sql(directory, file_names):
                 required_columns = REQUIRED_COLUMNS if name == "learning.sqlite" else (
                     REVIEW_COLUMNS if version == 2 else {}
                 )
+                has_evaluation = name == "learning.sqlite" and any(
+                    table.startswith("learning_evaluation_") for table in tables
+                )
+                if has_evaluation:
+                    required_columns = {**required_columns, **EVALUATION_COLUMNS}
                 required_tables = REQUIRED_TABLES[name] | set(required_columns)
                 require(required_tables <= tables,
                         "Missing required " + name + " tables: " +
@@ -154,6 +177,14 @@ def inspect_sql(directory, file_names):
                     require(required <= columns,
                             "Incompatible " + table + " columns: " +
                             ", ".join(sorted(required - columns)))
+                if has_evaluation:
+                    markers = db.execute(
+                        "SELECT singleton,version FROM learning_evaluation_schema"
+                    ).fetchall()
+                    require(len(markers) == 1 and markers[0][0] == 1,
+                            "Missing or invalid evaluation schema marker")
+                    require(markers[0][1] == 1,
+                            "Unsupported evaluation schema version: " + str(markers[0][1]))
                 if name == "ledger.sqlite" and version == 2:
                     identity = db.execute(
                         "SELECT singleton,store_id FROM review_store_identity"
