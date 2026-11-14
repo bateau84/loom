@@ -1,59 +1,99 @@
 {
   "format": "loom-learning-stage3-redo-status/v1",
-  "status": "PARTIAL_IMPLEMENTATION_NOT_PRODUCT_ACCEPTANCE",
-  "runtime_commit": "9b917da133174d46eb1e0b14f1c9052640b36699",
-  "runtime_tree": "860a1b01a1bf47f8e1d09218ecf730e8a0da491f",
+  "status": "STABILIZATION_INCOMPLETE_CI_RED_NOT_PRODUCT_ACCEPTANCE",
   "pull_request": 233,
   "required_pr_state": "open-draft-unmerged",
-  "implemented": [
-    "Automatic source notifications and startup catch-up over existing permitted sources",
-    "Durable frozen populations, bounded processing quanta, leases, checkpoints and attributable report revisions",
-    "Calling-Session ownership and native source-file permission checks for processing and every public report page",
-    "Cancellation, shutdown ownership, capture opt-out and concurrent notification handling",
-    "Original source dependencies and withholding derived bodies when required originals are unavailable",
-    "Authored objective and correction relationships without treating authored entries as independent originating goals",
-    "Historical review A and partial B membership without substituting the latest Plan or broadening declared review coverage",
-    "Bounded public member and source-reference pagination"
-  ],
-  "local_validation": {
-    "runtime": { "bun": "1.4.2", "sqlite": "3.53.2" },
-    "native_suite": { "passed": 411, "failed": 0, "assertions": 8984, "files": 49 },
-    "core_suite": { "passed": 387, "failed": 0 },
-    "python_suite": { "passed": 241 },
-    "repository_typecheck": "PASS",
-    "production_build": "PASS",
-    "qualification": "These results are from the local candidate. Runtime source bytes were checked against the published runtime tree. The local candidate additionally included backup regression additions, longer budgets for subprocess-heavy backup tests and documentation changes that are not all in the runtime checkpoint commit. These counts are not a claim of fresh final-head CI or installed-host acceptance."
+  "runtime_commit": "731331dffdfd1ca55327fae9c382d7a98fcaa4f6",
+  "independent_review": {
+    "reviewed_head": "b0f73cf345d2eb8d54e58c093831b6792ee2216d",
+    "source": "User-supplied Independent Cold Review — Loom PR #233, Stage 3",
+    "disposition": "CONDITIONAL; do not merge",
+    "scope": "Implementation, accepted contracts and GitHub Actions evidence; reviewer did not run a separate local suite or new installed-host journey.",
+    "correction_review": "Not yet performed against the stabilization changes."
   },
-  "regression_examples_exercised_locally": [
-    "501 authored objectives sharing one original source do not establish 501 independent goals",
-    "2001 source references remain retrievable through bounded pages",
-    "A 100-task original review and a later 10-task B re-review retain distinct original revisions and declared verdict scopes",
-    "Permission withdrawal at publication preserves resumable checkpoints without publishing an overall report",
-    "Foreign original sources are not silently read by the worker",
-    "Late contradictions produce a new attributable revision rather than independent success/failure episodes",
-    "Shutdown does not append an answer-resume annotation after plugin lifetime cancellation"
+  "implemented": [
+    "Native source notifications, idle opportunities and startup catch-up over existing permitted sources",
+    "Durable frozen populations, bounded quanta, leases, checkpoints and attributable report revisions",
+    "Calling-Session ownership and native source-file permission checks for processing and public report pages",
+    "Original source dependencies; missing or changed required originals withhold derived bodies",
+    "Authored objective correction links without inferring independent originating goals",
+    "Historical review A and partial B membership without whole-objective success claims",
+    "Bounded public member and source-reference pagination",
+    "Explicit capture-continuity and attribution projections; changed method fingerprint preserves old reports without reusing the old interpretation"
   ],
+  "review_findings": {
+    "F-01": {
+      "status": "CORRECTED_WITH_CI_REGRESSION_EVIDENCE",
+      "commit": "4e2f4a14fd89bb4c4671c96ee2ab0fd817fd05a2",
+      "change": "Offline backup/restore validates all evaluation v1 tables, columns and singleton version marker when any evaluation table is present. Genuine pre-Stage 3 databases remain supported.",
+      "red_run": 43525996178,
+      "red_job": 132231772261,
+      "evidence": "Six corruption controls failed before the validator correction. All eight evaluation-backup controls pass in the observed stabilization run, including checksum-consistent damaged restore rejection."
+    },
+    "F-02": {
+      "status": "ORIGINAL_REGRESSION_PASSES_STRONGER_SHUTDOWN_PROBE_UNRESOLVED",
+      "change": "Production materialized SQL operations explicitly finalize their prepared statements. Plugin shutdown retains cancellation/disposal ordering and closes owned connections. Existing source-file hash assertions are unchanged.",
+      "evidence": "Original closed and residual-WAL backup tests and the two SQL-adapter tests pass. The stronger production shutdown test still observes an executable retained reader, including in its fresh-process child.",
+      "unresolved": "The diagnostic names SQL and Store line locations absent from the reviewed source. Loaded-module paths, file blob identities and the Store implementation are now recorded to resolve the evidence mismatch before another production change. No complete shutdown qualification or data-loss conclusion is claimed."
+    },
+    "F-03": {
+      "status": "CORRECTED_WITH_CI_REGRESSION_EVIDENCE",
+      "commit": "22a884bfd5e17a3b7904e7ebd0ee4537c0cb752c",
+      "change": "Reports retain true/false/unknown capture continuity, bounded attribution with excerpt status and finish-pairing qualification. Overall summaries count unique source records and never claim complete native history.",
+      "evidence": "Four continuity regressions failed before the correction and pass in the observed stabilization run, including preservation of old-method reports without replaying their omitted-gap interpretation."
+    },
+    "F-04": {
+      "status": "DOCUMENTATION_RECONCILED_WITH_EXPLICIT_REMAINING_FAILURE",
+      "change": "The playbook, this record and PR description distinguish implemented automatic behavior, exact observed CI evidence, the unresolved shutdown diagnostic and outstanding installed-host/product qualifications."
+    }
+  },
+  "observed_ci": {
+    "head": "27dff90c12c5d629885c3f840fdc8d27f3102a08",
+    "checkout": "9ddc60163e1c72604263cbb45791498e5a3b7aaf",
+    "plugin_run": 43532673087,
+    "plugin_job": 132253968353,
+    "runtime": { "bun": "1.4.2" },
+    "repository_and_fixture_typechecks": "PASS",
+    "core_suite": { "passed": 387, "failed": 0 },
+    "native_suite": { "passed": 426, "failed": 1, "assertions": 9189, "files": 53 },
+    "remaining_failed_test": "tests/learning-shutdown-native.test.ts: production shutdown finalizes retained statements before stopped-state hashes are taken",
+    "later_main_ci_steps": "SKIPPED after native-suite failure; no Code Mode, Python, build or packaging result is claimed for this run.",
+    "workflows": [
+      { "name": "Plugin CI", "run_id": 43532673087, "result": "FAIL" },
+      { "name": "Installed V2 routing", "run_id": 43532673113, "result": "FAIL" },
+      { "name": "Installed questions / Stage 1–2", "run_id": 43532673124, "result": "PASS" },
+      { "name": "Unqualified routing guard", "run_id": 43532673121, "result": "PASS" },
+      { "name": "Boot and trust", "run_id": 43532673102, "result": "PASS" }
+    ],
+    "qualification": "These are observations for the exact named commit and run, not blanket acceptance of subsequent commits or complete Stage 3."
+  },
+  "latest_diagnostic": {
+    "commit": "8caaed8914f575b1af4ddefdeb735abae0dd9aeb",
+    "scope": "Loaded-source identity only; production assertions and implementation unchanged.",
+    "verification": "NOT_YET_ESTABLISHED"
+  },
+  "local_validation": {
+    "stabilization_pass": "NOT_RUN; local execution environment unavailable.",
+    "historical_record": "The previous local-candidate claims remain in Git history at b0f73cf345d2eb8d54e58c093831b6792ee2216d. They are not current-head CI or installed-host acceptance evidence."
+  },
   "not_qualified": {
-    "installed_stage3_host": "A new qualification harness was drafted but has not produced a verified passing installed-host result for this reconstruction.",
-    "independent_review": "Not performed; implementation-owner checks are not an independent review.",
-    "Q4": "PARTIAL: exact native request-to-execution/source/result provenance remains unqualified.",
-    "Q5": "UNQUALIFIED: protected recipient transfer remains withheld.",
-    "E11": "UNQUALIFIED: deterministic source descriptions do not satisfy complete automatic whole-objective evaluation.",
-    "genuine_evaluator": "NOT EXERCISED: no real-model Evaluator judgement is claimed.",
-    "included_usage_route": "UNQUALIFIED: no paid fallback or new billing authority introduced."
+    "installed_stage3_host": "No verified passing end-to-end Stage 3 installed-host journey against this stabilization candidate.",
+    "Q4": "UNQUALIFIED exact native admission/execution/source-consumption provenance.",
+    "Q5": "Native protected incoming-transfer counterexample remains; Loom protected delivery is withheld.",
+    "E11": "UNPROVEN; deterministic descriptions are not complete whole-objective evaluation.",
+    "genuine_evaluator": "NOT EXERCISED; no real-model interpretation is claimed.",
+    "included_usage_route": "UNQUALIFIED; no automatic model dispatch or paid fallback introduced."
   },
   "unchanged_boundaries": [
     "No automatic model dispatch, canonical instruction mutation or experiment activation",
-    "No new raw transcript/tool-content collection",
-    "No new cross-Session disclosure authority",
-    "No claim of power-loss durability or reconciliation of restored backups with uncertain external effects",
-    "A complete processing batch means all frozen members were processed, not that the original user objective succeeded"
+    "No new raw transcript/tool-content collection or cross-Session disclosure authority",
+    "No cross-database atomicity, power-loss durability or stale-backup/external-effect reconciliation claim",
+    "A complete processing batch means all frozen members were processed, not objective success"
   ],
   "remaining_work": [
-    "Finish and execute the installed-host qualification harness against the exact packed and published candidate; inspect its complete raw audit receipts.",
-    "Publish and verify the remaining backup-test and documentation changes from the saved local candidate.",
-    "Reconcile final documentation and PR description with the implemented scope and current evidence.",
-    "Obtain independent review without substituting the implementation owner's assessment.",
-    "Resolve native provenance, protected transfer and eligible dispatch gates before claiming genuine Evaluator or E11 acceptance."
+    "Resolve the remaining shutdown/source-identity diagnostic without weakening source-preservation assertions, then obtain clean exact-head CI.",
+    "Execute Stage 3 discovery, interruption, restart and authorized readback against the exact packaged candidate and inspect complete raw evidence.",
+    "Obtain independent re-review of the corrected assembled implementation.",
+    "Qualify native provenance, protected transfer and eligible dispatch separately before genuine Evaluator or E11 acceptance."
   ]
 }
