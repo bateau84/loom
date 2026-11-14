@@ -15,6 +15,7 @@ import argparse
 from contextlib import closing
 import hashlib
 import json
+import secrets
 from pathlib import Path
 import shutil
 import sqlite3
@@ -33,6 +34,7 @@ CHECKS = {
     "S3-foreign-and-revoked-readers-denied",
     "S3-denied-source-caught-up-after-restart",
     "S3-later-source-creates-a-new-revision",
+    "S3-authored-R1-correction-and-partial-R2-scope",
     "S3-capture-off-prevents-automatic-analysis",
     "S3-no-automatic-model-or-mutation",
 }
@@ -54,6 +56,9 @@ def view(dbfile: Path, session: str) -> dict:
             batch = db.execute(
                 "SELECT id,state,report_id FROM learning_evaluation_batches WHERE owner_session=? "
                 "ORDER BY sequence DESC LIMIT 1", (session,)).fetchone()
+            overall = db.execute(
+                "SELECT body_json FROM learning_evaluation_reports WHERE id=?",
+                (batch[2],)).fetchone() if batch and batch[2] else None
         except sqlite3.OperationalError as error:
             if "no such table" in str(error):
                 return {}
@@ -61,6 +66,7 @@ def view(dbfile: Path, session: str) -> dict:
     return {
         "opportunity": list(opportunity) if opportunity else None,
         "batch": list(batch) if batch else None,
+        "observations": json.loads(overall[0]).get("observations", {}) if overall else {},
     }
 
 
@@ -311,6 +317,113 @@ def run(args):
                     check("S3-later-source-creates-a-new-revision",
                           prior_batch=batch_a, later_batch=batch_b,
                           later_record=next_record["id"])
+
+                    # Author a real historical WorkRef, freeze R1 against A,
+                    # record a finding, revise the Plan, and freeze partial R2
+                    # against B. No native reviewer delivery is performed:
+                    # this proves automatic source interpretation, not Q4/Q5.
+                    action = scenario.invoke(owner, "action", {
+                        "operation": "create", "title": "Synthetic reviewed objective",
+                        "goal": "Retain historical work and partial corrective review",
+                    })
+                    scenario.invoke(owner, "plan", {
+                        "operation": "save", "action_id": action["id"], "expected_revision": 0,
+                        "nodes": [{"id": "task", "kind": "task", "title": "Artifact A",
+                                   "outcome": "Original A criterion"}],
+                    })
+                    work_a = scenario.invoke(owner, "context", {
+                        "action_id": action["id"], "node_id": "task"})["work_ref"]
+                    artifact_a = project / "stage3-artifact-a.txt"
+                    artifact_a.write_text("Synthetic assembled artifact A; not native review evidence.\n")
+
+                    def member(key, work, artifact, prior=None):
+                        return {
+                            "member_id": key, "work_ref": work, "producing_attempt_refs": [],
+                            "artifact_refs": [{"locator": str(artifact), "version": {
+                                "kind": "sha256", "value": sha(artifact)}, "content_ref": None}],
+                            "prior_review_request_id": prior, "membership_source_refs": [],
+                            "gaps": [{"reason": "not-observed", "source_ref": None}],
+                        }
+
+                    def mandate(question, revision):
+                        return {
+                            "question": question, "dimensions": ["correctness"],
+                            "criteria": [{"text": "Preserve " + revision + " task obligations",
+                                          "source_ref": None}],
+                            "mode": "independent", "inclusions": [revision],
+                            "exclusions": ["other unreviewed work"],
+                        }
+
+                    r1 = "stage3-r1-" + secrets.token_hex(8)
+                    frozen_a = scenario.invoke(owner, "review", {
+                        "operation": "freeze", "request": {
+                            "format": "loom-review-request/v1", "request_id": r1,
+                            "mandate": mandate("Synthetic R1 examines A", "original A"),
+                            "intended_recipient": {"agent": "reviewer", "session_id": None},
+                            "members": [member("original-task", work_a, artifact_a)],
+                            "rechecks": [],
+                        },
+                    })
+                    require(frozen_a["status"] == "created",
+                            "Production review owner did not freeze first request")
+                    finding = append_original(scenario, owner, "Synthetic R1 found a defect in A")
+                    scenario.invoke(owner, "review", {
+                        "operation": "relate", "request_id": r1,
+                        "relationship": "finding", "source_record_id": finding["id"],
+                        "member_ids": ["original-task"],
+                    })
+                    historical_a = scenario.invoke(owner, "review", {
+                        "operation": "work", "request_id": r1, "member_id": "original-task"})
+                    require("Original A criterion" in json.dumps(historical_a),
+                            "The initial original work scope was not retained")
+
+                    scenario.invoke(owner, "plan", {
+                        "operation": "save", "action_id": action["id"], "expected_revision": 1,
+                        "nodes": [{"id": "task", "kind": "task", "title": "Artifact B",
+                                   "outcome": "Corrected B criterion"}],
+                    })
+                    work_b = scenario.invoke(owner, "context", {
+                        "action_id": action["id"], "node_id": "task"})["work_ref"]
+                    artifact_b = project / "stage3-artifact-b.txt"
+                    artifact_b.write_text("Synthetic corrected artifact B; not native review evidence.\n")
+                    r2 = "stage3-r2-" + secrets.token_hex(8)
+                    frozen_b = scenario.invoke(owner, "review", {
+                        "operation": "freeze", "request": {
+                            "format": "loom-review-request/v1", "request_id": r2,
+                            "mandate": mandate("Synthetic partial R2 examines correction", "corrected B"),
+                            "intended_recipient": {"agent": "reviewer", "session_id": None},
+                            "members": [member("corrected-task", work_b, artifact_b, r1)],
+                            "rechecks": [],
+                        },
+                    })
+                    require(frozen_b["status"] == "created",
+                            "Production review owner did not freeze corrective R2")
+                    historical_after_b = scenario.invoke(owner, "review", {
+                        "operation": "work", "request_id": r1, "member_id": "original-task"})
+                    require("Original A criterion" in json.dumps(historical_after_b)
+                            and "Corrected B criterion" not in json.dumps(historical_after_b),
+                            "R2 changed R1's immutable historical work")
+                    scope_b = scenario.invoke(owner, "review", {
+                        "operation": "work", "request_id": r2, "member_id": "corrected-task"})
+                    require("Corrected B criterion" in json.dumps(scope_b),
+                            "R2 did not retain the corrected historical work")
+
+                    combined = until(learning, owner,
+                        lambda v: v.get("batch") is not None and v["batch"][1] == "complete"
+                        and v.get("observations", {}).get("review-request", 0) >= 2
+                        and sum(count for kind, count in v.get("observations", {}).items()
+                                if kind.startswith("review-") and kind != "review-request") >= 1,
+                        "Automatic R1/finding/partial-R2 interpretation")
+                    combined_id = combined["batch"][0]
+                    interpretation = report_result(scenario, owner, combined_id)["report"]["body"]
+                    require(interpretation["objective_success"] == "not-assessed"
+                            and interpretation["observations"].get("review-request", 0) == 2
+                            and interpretation["genuine_evaluator"]["state"] == "blocked",
+                            "Automatic review interpretation invented a native verdict")
+                    check("S3-authored-R1-correction-and-partial-R2-scope",
+                          request_ids=[r1, r2], report=combined_id,
+                          historical_work_preserved=True, native_review_dispatch="withheld",
+                          report_review_requests=interpretation["observations"]["review-request"])
 
                     # Same native Session was authorized before switching to
                     # read-denied agent; all private readers must now fail.
