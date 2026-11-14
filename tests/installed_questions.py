@@ -18,6 +18,8 @@ import subprocess
 import tempfile
 import time
 from contextlib import closing
+from contextvars import ContextVar
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.request import Request
 
@@ -81,9 +83,150 @@ def request(host, method, path, body=None):
     return value.get('data', value) if isinstance(value, dict) else value
 
 
-def events(root):
-    path = root / 'audit.ndjson'
-    return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+_ACTIVE_AUDIT = ContextVar('installed_questions_audit', default=None)
+
+
+@dataclass(frozen=True)
+class AuditSnapshot:
+    events: list[dict]
+    sha256: str
+    byte_count: int
+
+
+class _AuditSession:
+    def __init__(self, root):
+        self.root = Path(root).resolve()
+        self._token = None
+        self._entered = False
+        self._seen_file = False
+        self._byte_count = 0
+        self._sha256 = hashlib.sha256(b'').digest()
+        self._failure = None
+
+    def __enter__(self):
+        if self._entered:
+            self._fail(RuntimeError('Audit scope cannot be re-entered'))
+        active = _ACTIVE_AUDIT.get()
+        if active is not None:
+            active._fail(RuntimeError('Nested audit scopes are not allowed'))
+        self._entered = True
+        self._token = _ACTIVE_AUDIT.set(self)
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self._require_active()
+        _ACTIVE_AUDIT.reset(self._token)
+        self._token = None
+
+    def _require_active(self):
+        if _ACTIVE_AUDIT.get() is not self or self._token is None:
+            self._fail(RuntimeError('Audit owner requires its active scope'))
+
+    def _read(self, root, *, final=False, healthy=False):
+        self._require_active()
+        if Path(root).resolve() != self.root:
+            self._fail(RuntimeError('Active audit root does not match requested root'))
+        try:
+            raw = _audit_bytes(self.root)
+        except OSError as error:
+            self._fail(error)
+        return self._validate(raw, final=final, healthy=healthy)
+
+    def _fail(self, error):
+        if self._failure is None:
+            self._failure = error
+        raise self._failure
+
+    def _observe(self, raw):
+        if raw is None:
+            require(not self._seen_file, 'Previously observed audit file is missing')
+            return
+        self._seen_file = True
+        require(len(raw) >= self._byte_count
+                and hashlib.sha256(raw[:self._byte_count]).digest() == self._sha256,
+                'Audit raw prefix changed or was truncated')
+        self._byte_count = len(raw)
+        self._sha256 = hashlib.sha256(raw).digest()
+
+    def _validate(self, raw, *, final=False, healthy=False):
+        if self._failure is not None:
+            raise self._failure
+        try:
+            if final:
+                require(raw is not None, 'Final audit file is missing')
+            self._observe(raw)
+            if final:
+                require(raw, 'Final audit is empty')
+            observed = [] if raw is None else _parse_events(raw, final=final)
+            if healthy:
+                require(not any(event['type'] == 'observer-failure' for event in observed),
+                        'Passive native observer failed; coverage incomplete')
+            return observed
+        except Exception as error:
+            self._fail(error)
+
+    def finalize(self, destination: Path) -> AuditSnapshot:
+        self._require_active()
+        try:
+            raw = _audit_bytes(self.root)
+            if raw is None:
+                destination.unlink(missing_ok=True)
+                self._fail(RuntimeError('Final audit file is missing'))
+            destination.write_bytes(raw)
+            destination.chmod(0o600)
+        except OSError as error:
+            self._fail(error)
+        observed = self._validate(raw, final=True, healthy=True)
+        return AuditSnapshot(observed, hashlib.sha256(raw).hexdigest(), len(raw))
+
+
+def audit_session(root):
+    """Own one qualification audit across its host process restarts."""
+    return _AuditSession(root)
+
+
+def events(root, *, final=False):
+    """Read receipts, deferring an incomplete live tail until a later read.
+
+    Outside audit_session this is a pure fixture parser, even with final=True;
+    it cannot validate qualification completeness. A complete last JSON value
+    needs no newline. Final managed validation belongs to final_events/finalize.
+    """
+    owner = _ACTIVE_AUDIT.get()
+    if owner is not None:
+        return owner._read(root, final=final)
+    raw = _audit_bytes(root)
+    if raw is None:
+        return []
+    return _parse_events(raw, final=final)
+
+
+def _audit_bytes(root):
+    try:
+        return (root / 'audit.ndjson').read_bytes()
+    except FileNotFoundError:
+        return None
+
+
+def _parse_events(raw, *, final):
+    lines = raw.split(b'\n')
+    observed = [json.loads(line.decode('utf-8')) for line in lines[:-1]]
+    if lines[-1]:
+        try:
+            observed.append(json.loads(lines[-1].decode('utf-8')))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            # A live append may end inside JSON or a UTF-8 character. Complete
+            # rows above remain strict, and the next read retries this tail.
+            if final:
+                raise
+    return observed
+
+
+def final_events(root):
+    """Validate the complete audit after every writer has stopped."""
+    owner = _ACTIVE_AUDIT.get()
+    require(owner is not None, 'Final audit validation requires an active audit scope')
+    return owner._read(root, final=True, healthy=True)
 
 
 def idle(host, sessions, timeout=30):
@@ -324,7 +467,8 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
     report['owned_hosts'] = []
     host = None
     owned_hosts = []
-    with tempfile.TemporaryDirectory(prefix='loom-questions-') as temp:
+    with tempfile.TemporaryDirectory(prefix='loom-questions-') as temp, \
+            audit_session(Path(temp).resolve()) as audit_log:
         root = Path(temp).resolve()
         project = root / 'project'
         project.mkdir()
@@ -366,6 +510,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
                     raise
             host = start('prepare')
             host.close(); host = None
+            final_events(root)
             ledger = list((root / 'state/loom/actions-v1').glob('*/ledger.sqlite'))
             require(len(ledger) == 1, 'Expected one candidate-created disposable ledger')
             ledger = ledger[0]
@@ -756,6 +901,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             admission_before = len(synthetic_events(root))
             model_before = sum(e['type'] == 'model-request' for e in events(root))
             host.close(); host = None
+            final_events(root)
             (project / '.loom.yaml').write_text(
                 'agents:\n  question-reader:\n    roles: [implementation]\n  question-specialist:\n    roles: [research]\n'
                 'ledger:\n  capture: automatic\n')
@@ -856,6 +1002,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             # Restart must never reconstruct old or new eligibility. No model
             # prompt is sent to test startup; read-only probes do not wake work.
             host.close(); host = None
+            final_events(root)
             count = len(synthetic_events(root))
             model_count = sum(e['type'] == 'model-request' for e in events(root))
             host = start('restart')
@@ -1047,6 +1194,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             # Native subagent_depth=0 must refuse a new direct OQ child even when
             # delegation permission is otherwise allowed. Prove zero child creation.
             host.close(); host = None
+            final_events(root)
             config['experimental'] = {'subagent_depth': 0}
             (Path(env['OPENCODE_CONFIG_DIR']) / 'opencode.json').write_text(json.dumps(config))
             host = start('zero-depth-policy')
@@ -1092,9 +1240,17 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
                     owned.close()
             for identity, owned in zip(report['owned_hosts'], owned_hosts):
                 identity['process_dead'] = owned.proc.poll() is not None
-            if (root / 'audit.ndjson').exists():
-                shutil.copy2(root / 'audit.ndjson', output / 'audit.ndjson')
-            report['activity'] = {kind: sum(e['type'] == kind for e in events(root)) for kind in ['model-request', 'provider-request', 'tool-before', 'tool-after', 'prompt']}
+            try:
+                finalized = audit_log.finalize(output / 'audit.ndjson')
+                observed = finalized.events
+                report['audit_sha256'] = finalized.sha256
+                report['audit_bytes'] = finalized.byte_count
+                report['audit_receipts'] = len(observed)
+                report['activity'] = {kind: sum(e['type'] == kind for e in observed) for kind in ['model-request', 'provider-request', 'tool-before', 'tool-after', 'prompt']}
+            except Exception as error:  # Persist final evidence failures alongside any scenario failure.
+                report['status'] = 'FAIL'
+                report['audit_error'] = f'{type(error).__name__}: {error}'
+                report.setdefault('error', report['audit_error'])
     report['private_root_removed'] = not Path(report['private_root']).exists()
     (output / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
     return report

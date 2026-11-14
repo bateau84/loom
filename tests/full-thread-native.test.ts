@@ -1,13 +1,14 @@
 import { test, expect } from "bun:test"
 import { registeredLoom } from "./helpers/registered-loom.js"
 import { Database } from "bun:sqlite"
-import { readdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, readdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { Store } from "../src/store.js"
-import { PROCESSING_LIMITS } from "../src/model.js"
+import { digest, PROCESSING_LIMITS } from "../src/model.js"
 import { renderFullHistory } from "../src/history-renderer.js"
-import { populate, snapshot } from "./fixtures/baseline-c9ffcfa/oracle.js"
+import { populate, snapshot, type Snapshot } from "./fixtures/baseline-c9ffcfa/oracle.js"
+import { assertReviewMigration } from "./helpers/review-migration.js"
 import plugin from "../server.js"
 
 // Independently recover the labelled JSON representation, not renderer helpers.
@@ -41,7 +42,7 @@ test("registered full_thread reads explicit other-Session conversations without 
     expect(text).toContain("response, not resolution")
     expect(text).not.toMatch(/^# <script>/m)
     expect((await f.invoke("context", {}, "reader")).result).toEqual(before)
-    expect(f.tools.size).toBe(12)
+    expect(f.tools.size).toBe(13)
     expect(f.tools.get("record").input.properties.view.enum).toContain("full_thread")
   } finally { await f.close() }
 })
@@ -190,10 +191,21 @@ test("renderer refuses even in-range non-boundary offsets and emits only real st
 })
 
 test("real frozen producer plus registered new writes render full mixed history and independent membership oracle", async () => {
-  const f = await registeredLoom()
+  let populated: ReturnType<typeof populate> | undefined, original: Snapshot | undefined
+  const f = await registeredLoom([], { beforeSetup: async directory => {
+    // The frozen v1 producer runs before the candidate opens/migrates its Store.
+    // It must never be made to accept a v2 database just to populate this fixture.
+    const state = join(directory, "state", "loom", "actions-v1", digest({ project: "tool-help", canonical: directory }))
+    await mkdir(state, { recursive: true })
+    const baseline = new Database(join(state, "ledger.sqlite"))
+    try { populated = populate(baseline); original = snapshot(baseline) }
+    finally { baseline.close() }
+  } })
   const db = await openRegisteredDB(f)
   try {
-    const old = populate(db)
+    if (!populated || !original) throw new Error("Frozen producer did not create the pre-migration fixture")
+    const old = populated
+    assertReviewMigration(db, original)
     const q = (await f.invoke("record", { operation: "ask", question: "New question", to_agent: "investigator", blocking: false,
       reference: { action_id: old.action.id, kind: "action", id: old.action.id } }, "new-author")).result
     await f.invoke("record", { operation: "answer", question_id: q.id, answer: "Direct new answer" }, "new-responder")

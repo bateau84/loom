@@ -7,7 +7,7 @@ import { registeredLoom } from "./helpers/registered-loom.js"
 for (const name of Object.keys(TOOL_HELP) as LoomToolName[]) test(`registered ${name} tool carries complete search help without role injection`, async () => {
   const fixture = await registeredLoom()
   try {
-    expect([...fixture.tools.keys()].sort()).toEqual(["action", "agents", "assessment", "context", "insights", "objective", "plan", "qa", "record", "trace", "trends", "tweak"])
+    expect([...fixture.tools.keys()].sort()).toEqual(["action", "agents", "assessment", "context", "insights", "objective", "plan", "qa", "record", "review", "trace", "trends", "tweak"])
     expect(fixture.namespaces.get("loom").description).toBe(LOOM_NAMESPACE_HELP)
     const tool = fixture.tools.get(name)
     expect(tool.description).toBe(TOOL_HELP[name])
@@ -23,6 +23,51 @@ for (const name of Object.keys(TOOL_HELP) as LoomToolName[]) test(`registered ${
       for (const key of Object.keys(input)) expect(Object.hasOwn(tool.input.properties, key)).toBe(true)
     }
   } finally { await fixture.close() }
+})
+
+test("registered insights help exposes automatic evaluation readers and truthful limits", async () => {
+  const f = await registeredLoom([], { beforeSetup: async directory => {
+    await writeFile(join(directory, ".loom.yaml"), "agents: {}\ninstructions: {enabled: false}\nledger: {capture: automatic}\n")
+  } })
+  f.sessions.set("s", { id: "s", agent: "author", projectID: "tool-help", location: { directory: f.directory } })
+  try {
+    const tool = f.tools.get("insights")
+    const help = tool.description as string
+    const operations = ["evaluation-status", "evaluations", "evaluation", "evaluation-members", "evaluation-sources"]
+    for (const operation of operations) {
+      expect(tool.input.properties.operation.enum).toContain(operation)
+      expect(TOOL_EXAMPLES.insights.some(input => input.operation === operation)).toBe(true)
+      expect(help).toContain(operation)
+    }
+    for (const phrase of ["native source", "startup catch-up", "deterministic", "calling Session", "source", "read permission", "genuine Evaluator"]) {
+      expect(help).toContain(phrase)
+    }
+    expect(help).not.toContain("Automatic reporting is unavailable")
+    expect(help).not.toContain("There are no model calls, scheduler")
+
+    const start = { sessionID: "s", agent: "author", messageID: "m", id: "help-evidence", tool: "shell", input: { command: "fixture" } }
+    await f.hooks.get("execute.before")(start)
+    await f.hooks.get("execute.after")({ ...start, status: "error", error: { message: "fixture failure" } })
+    let listing: any
+    for (let i = 0; i < 120; i++) {
+      listing = (await f.invoke("insights", { operation: "evaluations", limit: 5 })).result
+      if (listing.items?.some((item: any) => item.state === "complete")) break
+      await new Promise<void>(resolve => setTimeout(resolve, 10))
+    }
+    const batch = listing.items?.find((item: any) => item.state === "complete")
+    expect(batch).toBeDefined()
+    expect((await f.invoke("insights", TOOL_EXAMPLES.insights.find(e => e.operation === "evaluation-status"))).result)
+      .toMatchObject({ enabled: true, processing: "deterministic-descriptions-only", automatic_model_calls: false })
+    const sample = (input: unknown) => JSON.parse(JSON.stringify(input).replaceAll("BATCH_ID", batch.id))
+    const report = (await f.invoke("insights", sample(TOOL_EXAMPLES.insights.find(e => e.operation === "evaluation")))).result
+    expect(report.report.availability).toBe("available")
+    expect(report.report.body.genuine_evaluator.state).toBe("blocked")
+    const members = (await f.invoke("insights", sample(TOOL_EXAMPLES.insights.find(e => e.operation === "evaluation-members")))).result
+    expect(members.items.length).toBeGreaterThan(0)
+    const sources = (await f.invoke("insights", sample(TOOL_EXAMPLES.insights.find(e => e.operation === "evaluation-sources")))).result
+    expect(sources.source_ref_count).toBeGreaterThan(0)
+    expect(sources.items.some((r: any) => r.available)).toBe(true)
+  } finally { await f.close() }
 })
 
 test("registered help examples run against the actual callbacks and explain dependency filtering", async () => {
@@ -83,7 +128,7 @@ test("canonical collaboration help matches conditional schemas and rejects alias
   try {
     const tool = f.tools.get("record")
     for (const [operation, required, allowed] of [
-      ["ask", ["operation", "question", "blocking"], ["operation", "question", "to_agent", "recipient", "blocking", "context", "context_attachments", "reference"]],
+      ["ask", ["operation", "question", "blocking"], ["operation", "question", "to_agent", "recipient", "blocking", "context", "context_attachments", "reference", "review"]],
       ["answer", ["operation", "question_id", "answer"], ["operation", "question_id", "answer", "context_attachments"]],
     ] as const) {
       const schema = tool.input.allOf.find((s: any) => s.if.properties.operation?.const === operation).then
@@ -209,7 +254,7 @@ test("Plan rejects missing required and invented lifecycle fields without writin
 test("search-visible help explains awaited writes and independent-call failure handling", async () => {
   const f = await registeredLoom()
   try {
-    expect(f.tools.size).toBe(12)
+    expect(f.tools.size).toBe(13)
     for (const tool of f.tools.values()) {
       expect(tool.description).toContain("Await writes before using IDs or ending Code Mode")
       expect(tool.description).toContain("Promise.allSettled and inspect every outcome")

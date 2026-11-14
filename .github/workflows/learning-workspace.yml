@@ -29,12 +29,16 @@ jobs:
           mkdir -p "$out" "$RUNNER_TEMP/tools-bundle"
           git archive HEAD | gzip > "$out/source.tar.gz"
           git archive origin/main | gzip > "$out/main.tar.gz"
+          # Preserve Git objects as well as working files for exact-revision recovery.
+          # A bundle contains repository objects only, not checkout credentials or home state.
+          git bundle create "$out/source.bundle" HEAD refs/remotes/origin/main
+          git bundle verify "$out/source.bundle"
           git rev-parse HEAD origin/main > "$out/source-sha.txt"
           tar -czf "$out/dependencies.tar.gz" node_modules
           tar -C "$RUNNER_TEMP/qualification-tools" -czf "$RUNNER_TEMP/tools-bundle/tools.tar.gz" node_modules package.json package-lock.json
           cp "$(command -v bun)" "$out/bun"
           cd "$out"
-          sha256sum source.tar.gz main.tar.gz dependencies.tar.gz bun source-sha.txt > SHA256SUMS
+          sha256sum source.tar.gz source.bundle main.tar.gz dependencies.tar.gz bun source-sha.txt > SHA256SUMS
           cd "$RUNNER_TEMP/tools-bundle"
           sha256sum tools.tar.gz > SHA256SUMS
           du -h "$out"/* ./*
@@ -43,10 +47,10 @@ jobs:
           name: learning-qualification-workspace
           path: ${{ runner.temp }}/qualification-workspace/
           if-no-files-found: error
-          retention-days: 2
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
           name: learning-qualification-tools
           path: ${{ runner.temp }}/tools-bundle/
           if-no-files-found: error
-          retention-days: 2
+          retention-days: 7

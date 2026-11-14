@@ -1,5 +1,6 @@
 import { Plugin } from "@opencode/plugin"
 import { Database } from "bun:sqlite"
+import { sqliteConnection } from "./sqlite-connection.js"
 import { createHash, randomUUID } from "node:crypto"
 import { decodeConfigYaml } from "./config-parser.js"
 import { mkdir, open, realpath } from "node:fs/promises"
@@ -15,8 +16,9 @@ import { resolveContextSelection, workContext } from "./work-context.js"
 import { digest, PROCESSING_LIMITS, type Actor, type Focus } from "./model.js"
 import { renderFullHistory } from "./history-renderer.js"
 import { fullThreadMarkdown } from "./response-format.js"
-import { Store } from "./store.js"
+import { Store, type SQL } from "./store.js"
 import { Learning } from "./learning.js"
+import { EVALUATION_READS, registerAutomaticLearning, type AutomaticLearningRuntime } from "./learning-runtime.js"
 import type { ObjectiveSource, ObjectivePhase } from "./objectives.js"
 import { QUESTION_DISPATCH, questionRecipient } from "./collaboration.js"
 import { questionRoute, sendQuestion, type NativeModel, type QuestionRoute } from "./question-routing.js"
@@ -71,19 +73,60 @@ const obj = (properties: Record<string, unknown>, required: string[] = []) => ({
 const choice = (...values: string[]) => ({ type: "string", enum: values })
 const workRefInput = obj({ action_id: str, node_id: str, action_revision: { type: "integer", minimum: 1 }, plan_revision: { type: "integer", minimum: 1 }, hash: str },
   ["action_id", "node_id", "action_revision", "plan_revision", "hash"])
+const nullableString = { type: ["string", "null"] }
+const artifactRefInput = obj({ locator: str, version: { oneOf: [
+  obj({ kind: { const: "git" }, repository: str, object_id: str, path: nullableString }, ["kind", "repository", "object_id", "path"]),
+  obj({ kind: { const: "sha256" }, value: str }, ["kind", "value"]),
+] }, content_ref: nullableString }, ["locator", "version", "content_ref"])
+const reviewRequestInput = obj({
+  format: { const: "loom-review-request/v1" }, request_id: str,
+  mandate: obj({ question: str, dimensions: list,
+    criteria: { type: "array", maxItems: 100, items: obj({ text: str, source_ref: nullableString }, ["text", "source_ref"]) },
+    mode: str, inclusions: list, exclusions: list, currentness: { const: "current-at-issue-claim" },
+  }, ["question", "dimensions", "criteria", "mode", "inclusions", "exclusions"]),
+  intended_recipient: obj({ agent: str, session_id: nullableString }, ["agent", "session_id"]),
+  work_revision_policy: choice("frozen-historical", "current-at-issue-claim"),
+  members: { type: "array", maxItems: 100, items: obj({ member_id: str,
+    work_ref: { anyOf: [workRefInput, { type: "null" }] }, producing_attempt_refs: list,
+    artifact_refs: { type: "array", maxItems: 50, items: artifactRefInput },
+    prior_review_request_id: nullableString, membership_source_refs: list,
+    gaps: { type: "array", maxItems: 100, items: obj({ reason: choice("not-observed", "unsupported-host-boundary",
+      "missing-native-field", "opaque-inner-call", "capture-disabled", "capture-failed", "observer-discontinuity",
+      "history-unavailable", "compacted", "redacted", "not-authorized", "source-missing", "source-changed",
+      "unsupported-version", "processing-limit"), source_ref: nullableString }, ["reason", "source_ref"]) },
+  }, ["member_id", "work_ref", "producing_attempt_refs", "artifact_refs", "prior_review_request_id", "membership_source_refs", "gaps"]) },
+  rechecks: { type: "array", maxItems: 100, items: obj({ request_id: str, finding_ids: list }, ["request_id", "finding_ids"]) },
+  extensions: { type: "object", additionalProperties: true },
+}, ["format", "request_id", "mandate", "intended_recipient", "members", "rechecks"])
 const contextAttachments = { type: "array", items: { type: "string", maxLength: 2000 }, maxItems: 50 }
 const recipientInput = obj({ kind: choice("agent", "role", "dispatcher", "user"), id: str }, ["kind"])
 const askInput = { question: str, to_agent: str, recipient: recipientInput, blocking: { type: "boolean" }, context: str, context_attachments: contextAttachments,
-  reference: obj({ action_id: str, kind: choice("action", "phase", "wave", "task", "subtask"), id: str }, ["action_id", "kind", "id"]) }
+  reference: obj({ action_id: str, kind: choice("action", "phase", "wave", "task", "subtask"), id: str }, ["action_id", "kind", "id"]), review: reviewRequestInput }
 const answerInput = { question_id: str, answer: str, context_attachments: contextAttachments }
 const bindInput = { question_id: str, respondent_session_id: str }
 const specs = [
   { name: "agents", description: TOOL_HELP.agents, input: obj({}) },
+  { name: "review", description: TOOL_HELP.review, input: {
+    ...obj({ operation: choice("freeze", "read", "issue", "prepare", "relate", "work"), request: reviewRequestInput, request_id: str, authorization_ref: str,
+      after: num, relationship_after: num, issue_after: num, limit: { type: "integer", minimum: 1, maximum: 50 }, member_id: str,
+      relationship: choice("observed", "retrieved", "cited", "claimed-inspected", "finding", "correction"),
+      source_record_id: str, member_ids: list, supersedes: str }, ["operation"]),
+    oneOf: [
+      obj({ operation: { const: "freeze" }, request: reviewRequestInput }, ["operation", "request"]),
+      obj({ operation: { const: "read" }, request_id: str, after: num, relationship_after: num, issue_after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation", "request_id"]),
+      obj({ operation: { const: "prepare" }, request_id: str }, ["operation", "request_id"]),
+      obj({ operation: { const: "issue" }, request_id: str, authorization_ref: str, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation", "request_id"]),
+      obj({ operation: { const: "relate" }, request_id: str,
+        relationship: choice("observed", "retrieved", "cited", "claimed-inspected", "finding", "correction"),
+        source_record_id: str, member_ids: list, supersedes: str }, ["operation", "request_id", "relationship", "source_record_id", "member_ids"]),
+      obj({ operation: { const: "work" }, request_id: str, member_id: str }, ["operation", "request_id", "member_id"]),
+    ],
+  } },
   { name: "trace", description: TOOL_HELP.trace, input: obj({ operation: choice("timeline", "children"),
       session_id: str, export_path: { type: "string", minLength: 1, maxLength: 4096 },
       include_text: { type: "boolean" }, limit: { type: "integer", minimum: 1, maximum: 50 },
       cursor: { type: "string", minLength: 1, maxLength: 4096 } }, ["operation"]) },
-  { name: "insights", description: TOOL_HELP.insights, input: obj({ operation: choice("action", "window", "findings"), finding_cursor: { type: "string", maxLength: 512 }, action_id: str, before: { type: "integer", minimum: 1 }, limit: { type: "integer", minimum: 1, maximum: 200 }, since_at: str, until_at: str }, ["operation"]) },
+  { name: "insights", description: TOOL_HELP.insights, input: obj({ operation: choice("action", "window", "findings", ...EVALUATION_READS), batch_id: str, member_key: str, after: num, finding_cursor: { type: "string", maxLength: 512 }, action_id: str, before: { type: "integer", minimum: 1 }, limit: { type: "integer", minimum: 1, maximum: 200 }, since_at: str, until_at: str }, ["operation"]) },
   { name: "objective", description: TOOL_HELP.objective, input: obj({
       operation: choice("create", "link", "read", "list", "find"),
       objective_id: str, label: { type: "string", maxLength: 200 }, unit_key: str,
@@ -168,6 +211,7 @@ export default Plugin.define({
     let filename = join(state, "ledger.sqlite")
     let stage = "state-directory"
     let db: Database | undefined, learningDB: Database | undefined
+    let actionSQL: SQL
     let store: Store, observer: Observer, learning: Learning | undefined
     try {
       await mkdir(state, { recursive: true, mode: 0o700 })
@@ -177,36 +221,40 @@ export default Plugin.define({
       filename = await realpath(filename)
       stage = "database-open"
       db = new Database(filename)
+      actionSQL = sqliteConnection(db)
       stage = "store-initialization"
-      store = new Store(db, projectScope)
+      store = new Store(actionSQL, projectScope)
       stage = "observer-initialization"
       observer = new Observer(store)
     } catch (error) {
       // Cleanup must not replace the initialization cause. No recovery or retry here.
-      try { db?.close() } catch { /* Preserve the primary failure. */ }
+      try { db?.close(true) } catch { /* Preserve the primary failure. */ }
       throw new Error(`Loom startup failed (stage=${stage}, database=${JSON.stringify(filename)}): ${error instanceof Error ? error.message : String(error)}`, { cause: error })
     }
     // Learning history is optional; corruption must never remove the healthy
     // Action tools, observation capture or the independently guarded routing path.
     let learningStage = "learning-database-file", learningFailure: string | undefined
+    let learningFilename = join(state, "learning.sqlite")
+    let learningRuntime: AutomaticLearningRuntime | undefined
     try {
       const learningPath = join(state, "learning.sqlite")
       const learningHandle = await open(learningPath, "a", 0o600)
       await learningHandle.close()
       learningStage = "learning-database-open"
-      learningDB = new Database(await realpath(learningPath))
+      learningFilename = await realpath(learningPath)
+      learningDB = new Database(learningFilename)
       learningStage = "learning-initialization"
-      learning = new Learning(learningDB, store, db)
+      learning = new Learning(sqliteConnection(learningDB), store, actionSQL)
     } catch (error) {
       learningFailure = learningStage
       try { console.warn(`Loom optional learning unavailable (${learningStage}): ${error instanceof Error ? error.message : String(error)}`) }
       catch { /* Diagnostic sink failure cannot disable core startup or its native deny guard. */ }
-      try { learningDB?.close() } catch { /* Keep the original learning failure. */ }
+      try { learningDB?.close(true) } catch { /* Keep the original learning failure. */ }
       learningDB = undefined
       learning = undefined
     }
     const learningStatus = () => learning
-      ? { available: true, storage: "separate-project-sqlite", automatic_mutation: false, findings: "historical-read-only", automatic_findings: false, automatic_model_calls: false }
+      ? { available: true, storage: "separate-project-sqlite", automatic_mutation: false, findings: "historical-read-only", automatic_findings: false, automatic_model_calls: false, automatic_descriptions: learningRuntime?.status() ?? { registered: false } }
       : { available: false, stage: learningFailure ?? "unavailable", automatic_mutation: false,
           note: "Existing Action/record/trace tools and native execution remain available; learning evidence is preserved for operator repair" }
     const requiredLearning = () => {
@@ -232,7 +280,7 @@ export default Plugin.define({
       try { return await realpath(location.directory) === directory } catch { return false }
     }
     const owns = async (sessionID: Parameters<typeof ctx.session.get>[0]["sessionID"]) =>
-      sessionIsLocal(payload(unwrapped(await ctx.session.get({ sessionID }))))
+      sessionIsLocal(payload(unwrapped(await ctx.session.get({ sessionID: sessionID }))))
     const checkedSession = async (sessionID: string) => {
       const session = payload(unwrapped(await ctx.session.get({ sessionID })))
       if (session.id !== sessionID || !await sessionIsLocal(session))
@@ -290,8 +338,47 @@ export default Plugin.define({
             toolContext.signal.throwIfAborted()
             const diagnostics = spec.name === "context" ? contextConfigDiagnostics(snapshot.errors, snapshot.config.context.max_chars)
               : snapshot.errors.length ? { config_errors: snapshot.errors } : {}
+            const authorizeReview = async () => {
+              // The native source-file read owner is the existing authority for
+              // this private projection. Project membership or an intended
+              // recipient name alone cannot grant access to request metadata.
+              await ctx.permission.assert({ action: "read", resources: [filename],
+                sessionID: toolContext.sessionID, agent: toolContext.agent,
+                source: { type: "tool", messageID: toolContext.messageID, id: toolContext.id } })
+              lifetime.signal.throwIfAborted()
+              toolContext.signal.throwIfAborted()
+              await checkedSession(actor.session_id)
+            }
             let result: unknown
             switch (spec.name) {
+              case "review": {
+                const allowed = input.operation === "freeze" ? ["operation", "request"]
+                  : input.operation === "read" ? ["operation", "request_id", "after", "relationship_after", "issue_after", "limit"]
+                    : input.operation === "issue" ? ["operation", "request_id", "authorization_ref", "after", "limit"]
+                    : input.operation === "prepare" ? ["operation", "request_id"]
+                      : input.operation === "work" ? ["operation", "request_id", "member_id"]
+                        : input.operation === "relate" ? ["operation", "request_id", "relationship", "source_record_id", "member_ids", "supersedes"] : undefined
+                if (!allowed) throw new Error("Unknown review operation")
+                if (Object.keys(input).some(key => !allowed.includes(key))) throw new Error("Unsupported review operation field")
+                await authorizeReview()
+                if (input.operation === "freeze") result = store.reviews.freeze(actor, input.request)
+                else {
+                  if (typeof input.request_id !== "string") throw new Error("Review request_id is required")
+                  if (input.operation === "read") result = store.reviews.read(actor, input.request_id, {
+                    after: input.after as number | undefined, relationship_after: input.relationship_after as number | undefined, issue_after: input.issue_after as number | undefined, limit: input.limit as number | undefined })
+                  else if (input.operation === "prepare") result = store.reviews.prepareIssue(actor, input.request_id, { kind: "initial" })
+                  else if (input.operation === "issue") result = store.reviews.readIssue(actor, input.request_id, {
+                    authorization_ref: input.authorization_ref as string | undefined, after: input.after as number | undefined, limit: input.limit as number | undefined })
+                  else if (input.operation === "work") {
+                    if (typeof input.member_id !== "string") throw new Error("Review member_id is required")
+                    result = store.reviews.work(actor, input.request_id, input.member_id)
+                  } else {
+                    const { operation: _operation, request_id: _requestID, ...relationship } = input
+                    result = store.reviews.relate(actor, input.request_id, relationship)
+                  }
+                }
+                break
+              }
               case "agents": {
                 const entries = registry(snapshot.config, agents(await ctx.agent.list()))
                 const modelPolicies = snapshot.config.modelRouting.enabled
@@ -330,7 +417,7 @@ export default Plugin.define({
                     : await readSessionExport(directory, String(input.export_path), targetID, ctx.location.project.id, async canonicalPath => {
                         await ctx.permission.assert({
                           action: "read", resources: [canonicalPath], sessionID: actor.session_id,
-                          agent: actor.agent,
+                          agent: toolContext.agent,
                           source: { type: "tool", messageID: toolContext.messageID, id: toolContext.id },
                         })
                         if (!await owns(targetID)) throw new Error("Source Session moved during export permission approval")
@@ -373,7 +460,17 @@ export default Plugin.define({
                 break
               }
               case "insights":
-                if (input.operation === "action") {
+                if ((EVALUATION_READS as readonly unknown[]).includes(input.operation)) {
+                  await ctx.permission.assert({ action: "read", resources: [filename, learningFilename],
+                    sessionID: toolContext.sessionID, agent: toolContext.agent,
+                    source: { type: "tool", messageID: toolContext.messageID, id: toolContext.id } })
+                  lifetime.signal.throwIfAborted(); toolContext.signal.throwIfAborted()
+                  await checkedSession(actor.session_id)
+                  if (!learningRuntime) throw new Error("LOOM_LEARNING_UNAVAILABLE: automatic report runtime is unavailable")
+                  result = learningRuntime.read(input, actor.session_id, !snapshot.errors.length && snapshot.config.ledger.capture === "automatic")
+                } else if (input.batch_id !== undefined || input.member_key !== undefined || input.after !== undefined) {
+                  throw new Error("Evaluation fields require an evaluation read operation")
+                } else if (input.operation === "action") {
                   const actionID = input.action_id === undefined ? store.selected(actor.session_id)?.action_id : String(input.action_id)
                   if (!actionID) throw new Error("Insights action view requires explicit or selected action_id")
                   result = requiredLearning().events({ action_id: actionID, before: input.before as number | undefined, limit: input.limit as number | undefined,
@@ -572,6 +669,7 @@ export default Plugin.define({
                 break
               }
               case "record": {
+                if (input.review !== undefined && input.operation !== "ask") throw new Error("review is only supported for a typed ask")
                 if (input.response_format !== undefined) {
                   if (input.response_format !== "markdown" && input.response_format !== "json") throw new Error("response_format must be markdown or json")
                   if (input.operation !== "query" || input.view !== "full_thread") throw new Error("response_format is only supported for full_thread queries")
@@ -594,7 +692,7 @@ export default Plugin.define({
                 // Explicit work/thread identity must not depend on saved selection.
                 const identityScoped = ["complete", "answer", "bind-respondent"].includes(String(input.operation))
                   || (input.operation === "query" && input.view === "thread")
-                const focus = identityScoped || input.session_only || (input.operation === "ask" && input.reference !== undefined) ? undefined : focusFor(input, actor.session_id)
+                const focus = identityScoped || input.session_only || (input.operation === "ask" && (input.reference !== undefined || input.review !== undefined)) ? undefined : focusFor(input, actor.session_id)
                 if (input.operation === "bind-respondent") {
                   const question = store.collaboration.thread(String(input.question_id)).question
                   if (question.data.format !== "loom-question/v2" ||
@@ -630,11 +728,12 @@ export default Plugin.define({
                   result = await resumeAnswer(store, committed, async sessionID => {
                     const target = payload(unwrapped(await ctx.session.get({ sessionID })))
                     return target.id === sessionID && await sessionIsLocal(target)
-                  }, notice => ctx.session.synthetic(notice), AbortSignal.any([toolContext.signal, lifetime.signal]))
+                  }, notice => ctx.session.synthetic(notice), AbortSignal.any([toolContext.signal, lifetime.signal]), lifetime.signal)
                   break
                 }
                 if (input.operation === "ask") {
                   if (input.recipient === undefined) {
+                    if (input.review !== undefined) throw new Error("A review request requires a typed agent or role recipient")
                     result = { ...store.collaboration.execute(actor, input, focus) as object, dispatch: QUESTION_DISPATCH,
                       guidance: input.blocking === true
                         ? "Recipient not contacted. Manual/native handling is required. If manual handling has been arranged, you may naturally yield for a response; blocking intent does not force a wait."
@@ -671,6 +770,33 @@ export default Plugin.define({
                     : plannedRoute
                   if (route.mode === "notify" && route.session && !await owns(route.session))
                     route = { mode: "manual", reason: "parent-not-local" }
+                  if (input.review !== undefined) {
+                    // Explicit structured reviews enter the same production
+                    // initiator as other questions, but their private mandate
+                    // must not leak into the ordinary project-readable ledger.
+                    const allowed = ["operation", "question", "recipient", "blocking", "review"]
+                    if (Object.keys(input).some(key => !allowed.includes(key)))
+                      throw new Error("A structured review ask accepts only question, recipient, blocking and review; preserve context and scope in the immutable review mandate/members")
+                    if (typeof input.blocking !== "boolean") throw new Error("Review ask blocking must be Boolean")
+                    if (recipient.kind !== "agent" && recipient.kind !== "role")
+                      throw new Error("A review request requires a typed agent or role recipient")
+                    const review = payload(input.review), mandate = payload(review.mandate), intended = payload(review.intended_recipient)
+                    if (mandate.question !== input.question) throw new Error("Review mandate must preserve the exact original question")
+                    const recipientAgent = recipient.kind === "agent" ? recipient.id : plannedRoute.expected_agent
+                    if (!recipientAgent || intended.agent !== recipientAgent)
+                      throw new Error("Review intended recipient must match the original resolved agent; use an explicit agent when a role is ambiguous")
+                    await authorizeReview()
+                    const frozen = store.reviews.freeze(actor, review)
+                    result = { review: frozen,
+                      ...(frozen.status !== "conflict" ? { issue: store.reviews.prepareIssue(actor, frozen.request_id, { kind: "initial" }) } : {}),
+                      dispatch: { status: "not-attempted", attempted: false,
+                        reason: frozen.status === "conflict" ? "review-request-conflict" : "recipient-specific-protected-transfer-unqualified" },
+                      guidance: frozen.status === "conflict"
+                        ? "This request ID already preserves a different original review. The submitted change was not stored and no issue was prepared or dispatched. Read the existing request and reconcile the original mandate."
+                        : "The original review mandate and membership are persisted privately. Read them with loom_review read. Protected delivery is withheld because this host cannot enforce recipient-specific incoming transfer; no native review execution or paid dispatch is claimed. An existing initial issue is never a new issue permit.",
+                    }
+                    break
+                  }
                   const { operation: _askOperation, ...askFields } = input
                   const stored = store.collaboration.ask(actor, focus, askFields, {
                     ...(route.expected_agent ? { expected_agent: route.expected_agent } : {}),
@@ -725,6 +851,9 @@ export default Plugin.define({
                 break
               }
             }
+            if ((spec.name === "record" && input.operation !== "query") ||
+                (spec.name === "objective" && ["create", "link"].includes(String(input.operation))) ||
+                (spec.name === "review" && ["freeze", "relate", "prepare"].includes(String(input.operation)))) learningRuntime?.notify(actor.session_id)
             if (spec.name === "record" && input.operation === "query" && (!input.view || input.view === "ledger") && !input.record_id) {
               const page = result as ReturnType<Store["records"]>
               result = { ...page, items: page.items.map(r => ({ ...r, data: typeof r.data.statement === "string" && r.data.statement.length > 600
@@ -793,6 +922,7 @@ export default Plugin.define({
               }
             }
           }
+          learningRuntime?.notify(event.sessionID)
         } catch (error) { warn(error) } // A missing ledger or invalid config must not block native reasoning.
       }))
       disposers.push(await ctx.tool.hook("execute.before", async event => {
@@ -819,6 +949,7 @@ export default Plugin.define({
               ? { ...event, error: { format: "loom-tool-error/v1", message: event.error.message } }
               : event
             const record = observer.after(observed, captureEnabled)
+            if (record) learningRuntime?.notify(event.sessionID)
             if (record && record.data.attribution !== "captured-at-start") warn(`Evidence is unpaired (${record.data.attribution}). Inspect loom_record with operation=query, session_only=true.`)
             // Native skill loader result: provenance hint, not proof of model use.
             // Never store the skill body, original tool output or a claim of final delivery.
@@ -848,9 +979,14 @@ export default Plugin.define({
     } catch (error) {
       lifetime.abort()
       await Promise.allSettled(disposers.map(d => d.dispose()))
-      try { learningDatabase?.close() } finally { database.close() }
+      try { learningDatabase?.close(true) } finally { database.close(true) }
       throw error
     }
+    try {
+      learningRuntime = await registerAutomaticLearning(ctx, { learning, ledgerPath: filename, learningPath: learningFilename,
+        signal: lifetime.signal, getConfig, checkedSession, warn })
+      disposers.push(learningRuntime)
+    } catch { warn("Optional automatic learning registration unavailable; core guards and source recording remain active") }
     // The early guard remains restrictive until the entire plugin initialized.
     // A valid, explicitly disabled policy removes it; a guarded runtime
     // delegates to the fully registered model.request hook. Unknown hosts
@@ -866,6 +1002,7 @@ export default Plugin.define({
       // guard and retain their existing setup behavior.
       startupDenial = "LOOM_MODEL_ROUTING_HOST_UNQUALIFIED: no proven native request guard"
     }
+    learningRuntime?.start()
     const captureCompanion = async (receipt: import("./review-companions.js").CompanionReceipt) => {
       try {
         if (lifetime.signal.aborted || !await owns(receipt.sessionID)) return
@@ -877,13 +1014,16 @@ export default Plugin.define({
           source: "successful-companion-tool-result",
           observation: "successful permission-checked companion tool result; not proof of final model receipt or application",
         })
+        learningRuntime?.notify(receipt.sessionID)
       } catch (error) { warn(error) }
     }
     return Object.assign(async () => {
       startupDispatch = "deny"
       lifetime.abort()
       await Promise.allSettled(disposers.map(d => d.dispose()))
-      try { learningDatabase?.close() } finally { database.close() }
+      // Bun's default close defers cleanup to statement finalizers. This owner
+      // must finish closing both databases before stopped-state backup can begin.
+      try { learningDatabase?.close(true) } finally { database.close(true) }
       await disposeStartupGuard()
     }, { captureCompanion })
     } catch (error) {

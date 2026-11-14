@@ -4,6 +4,46 @@ type: Log
 
 # Update Log
 
+## 2026-11-13
+
+**Native audit completeness (NRQ-003):** Qualification now preserves the complete observed
+audit prefix across live reads and host restarts. Missing, empty, truncated or rewritten
+final evidence fails qualification; finalized observer failures are rejected consistently.
+Retained diagnostic bytes and successful report hashes/counts share one captured snapshot.
+Routing's per-mode request counts use the finalized audit. Native capability classifications
+remain separate from these evidence-integrity checks.
+
+**Native review cold-review corrections:** The [evidence contract](learning-native-evidence-spec.md)
+now arbitrates initial issue and authorized retry intents before creating or claiming an attempt
+(NRQ-001). The [qualification oracle](native-review-qualification.md) rejects reversed causal
+receipts, replayed hooks and cross-observer joins while preserving valid delayed native progress
+(NRQ-002). Original native evidence remains distinguishable from offline adversarial controls.
+Fresh qualification failed during live audit parsing; a partial-append control reproduced
+the failure mechanism. Incomplete trailing fragments are deferred during execution, and
+strict final reads still fail on corruption after teardown.
+The native-review and question runners recheck observer failures against the finalized audit.
+Production admission and automatic learning remain unimplemented; the native attribution and
+recipient-transfer gaps retain their unqualified/unsupported classifications.
+
+## 2026-11-12
+
+**First learning engineering stage:** Added the [native review qualification](native-review-qualification.md)
+and [implementation-facing specification](learning-native-evidence-spec.md) in the existing draft PR #233.
+The isolated installed-host probe reuses the scripted provider and exercises actual native dispatch,
+admission, reads, read denial, child reuse, opaque inner calls, historical scope, interruption,
+compaction and process reopen. Exact input-to-execution causality and incoming protected-content
+transfer enforcement remain unqualified/unsupported. Native read denial is not a transfer fence.
+No production runtime code, capture policy, routing protection or automatic learning engine changed.
+
+**Learning architecture requirements (proposal):** The user accepted the independently reviewed
+[review-scoped evidence architecture](learning-evidence-and-review-scope.md) (PR #233), and the
+[automatic learning requirements](requirements/learning-retrospectives/br-001-preserve-execution-attribution.md)
+were added under the same draft PR. The new indexed bundle defines 9 Behavioral Requirements,
+5 Quality Scenarios and 4 Obligation Contracts for attribution, actual review evidence,
+automatic multi-Session evaluation, interruption recovery and protected derived reports.
+Documentation profile adds Quality Scenario to the supported corpus vocabulary. Requirements
+remain pending independent assessment, and there are no runtime/reporting activations.
+
 ## 2026-11-11
 
 **Learning Phase 2 qualification and recovery:** Added actual-host provenance

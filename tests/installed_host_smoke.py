@@ -19,7 +19,10 @@ from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
-EXPECTED_TABLES = {"actions", "plans", "focus", "ledger"}
+EXPECTED_TABLES = {
+    "actions", "plans", "focus", "ledger", "review_store_identity",
+    "review_requests", "review_relationships", "review_issue_intents", "review_issue_outcomes",
+}
 PROBE_AGENTS = {
     "probe-research": {"description": "External research fixture", "mode": "subagent", "system": "Read the supplied sources."},
     "probe-worker": {"description": "External worker fixture", "mode": "subagent", "system": "Implement only the assigned task."},
@@ -153,7 +156,7 @@ def ledger_inventory(state: Path) -> list[dict]:
             tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             require(EXPECTED_TABLES <= tables, f"Incomplete Loom schema at {path}")
             require(db.execute("PRAGMA integrity_check").fetchone()[0] == "ok", "Loom database integrity failure")
-            require(db.execute("PRAGMA user_version").fetchone()[0] == 1, "Unexpected Loom schema version")
+            require(db.execute("PRAGMA user_version").fetchone()[0] == 2, "Unexpected Loom schema version")
             result.append({"relative_path": str(path.relative_to(state)), "counts": {
                 table: db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in sorted(EXPECTED_TABLES)}})
     return result
@@ -273,7 +276,10 @@ def run_probe(executable: str, repo: Path, output: Path, expected: str, disable_
                     require(not ledger, "Baseline unexpectedly loaded Loom")
                 elif label == "with-loom":
                     require(len(ledger) == 1, "Expected exactly one host-created Loom database")
-                    require(all(n == 0 for n in ledger[0]["counts"].values()), "Boot invented work or ledger entries")
+                    counts = ledger[0]["counts"]
+                    require(counts["review_store_identity"] == 1, "Boot did not preserve one source-store identity")
+                    require(all(n == 0 for table, n in counts.items() if table != "review_store_identity"),
+                            "Boot invented work, review requests or ledger entries")
                     first = ledger
                 else:
                     require(ledger == first, "Restart/removal changed the existing empty ledger")

@@ -1,10 +1,33 @@
-import { Collaboration } from "./collaboration.js"
+import { Collaboration, checkedRef, workReference, type WorkRef } from "./collaboration.js"
 import { FullHistory } from "./history.js"
+import { ReviewRequests } from "./review-requests.js"
 import { randomUUID } from "node:crypto"
 import { realpathSync } from "node:fs"
 import { type Action, type Actor, type Focus, type LedgerRecord, type Plan, type PlanNode, type RecordKind, subject, uid, validatePlan, canonical, ProcessingBudget, ProcessingLimitError, PROCESSING_LIMITS } from "./model.js"
 
 export interface SQL { exec(sql: string): unknown; prepare(sql: string): { get(...params: any[]): unknown; all(...params: any[]): unknown[]; run(...params: any[]): unknown } }
+/** Local work association, never a native dispatch/admission attestation. */
+export type ObservationWorkScope =
+  | { status: "established"; work_ref: WorkRef }
+  | { status: "unscoped" }
+  | { status: "unknown"; reason: "source-missing" | "history-unavailable" | "processing-limit" | "not-observed"; detail?: string }
+  | { status: "ambiguous"; candidates: WorkRef[]; observation_ids: string[] }
+function savedObservationWorkScope(data: Record<string, unknown>): ObservationWorkScope {
+  const value = data.work_scope
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const scope = value as Record<string, unknown>
+    if (scope.status === "unscoped" && Object.keys(scope).length === 1) return { status: "unscoped" }
+    if (scope.status === "established" && Object.keys(scope).every(k => ["status", "work_ref"].includes(k))) {
+      // checkedRef validates every required field and rejects unknown keys at runtime.
+      try { return { status: "established", work_ref: checkedRef(scope.work_ref as WorkRef) } } catch { /* Preserve the unsupported original start below. */ }
+    }
+    if (scope.status === "unknown" && Object.keys(scope).every(k => ["status", "reason", "detail"].includes(k))
+      && (scope.reason === "source-missing" || scope.reason === "history-unavailable" || scope.reason === "processing-limit" || scope.reason === "not-observed")
+      && (scope.detail === undefined || typeof scope.detail === "string" && scope.detail.length <= 500))
+      return { status: "unknown", reason: scope.reason, ...(scope.detail === undefined ? {} : { detail: scope.detail }) }
+  }
+  return { status: "unknown", reason: "history-unavailable", detail: "Saved start has no supported frozen work scope; current selection was not substituted." }
+}
 const parse = <T>(row: unknown, maxChars: number = PROCESSING_LIMITS.recordChars): T => {
   const text = (row as { data: string }).data
   // Before JSON.parse, not after constructing a potentially huge object graph.
@@ -27,9 +50,10 @@ const nonempty = (s: unknown, label: string, max = 16000): string => {
 export class Store {
   readonly collaboration: Collaboration
   readonly history: FullHistory
+  readonly reviews: ReviewRequests
   constructor(private db: SQL, _projectScope = "") {
     const version = db.prepare("PRAGMA user_version").get() as { user_version: number }
-    if (![0, 1].includes(version.user_version)) throw new Error("Unsupported Loom Action database version; existing data was not modified")
+    if (![0, 1, 2].includes(version.user_version)) throw new Error("Unsupported Loom Action database version; existing data was not modified")
     db.exec("PRAGMA busy_timeout=2000; PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
     // Legacy delivery tables are inert history: never migrate, hydrate a queue,
     // or derive authorization from them during initialization.
@@ -52,9 +76,11 @@ export class Store {
       CREATE INDEX IF NOT EXISTS ledger_session_node ON ledger(session_id, json_extract(data,'$.node_id'), seq);
       CREATE INDEX IF NOT EXISTS ledger_observation_action ON ledger(action_id, seq) WHERE kind='observation';
       CREATE INDEX IF NOT EXISTS ledger_observation_scope ON ledger(action_id, json_extract(data,'$.node_id'), seq) WHERE kind='observation';
-      PRAGMA user_version=1;`)
+      `)
       this.collaboration = new Collaboration(this, db)
       this.history = new FullHistory(this, db)
+      this.reviews = new ReviewRequests(this, db, version.user_version === 2)
+      db.exec("PRAGMA user_version=2")
       db.exec("COMMIT")
     } catch (error) { db.exec("ROLLBACK"); throw error }
   }
@@ -161,12 +187,27 @@ export class Store {
     return this.transaction(() => {
       const focus = this.selected(actor.session_id)
       let fingerprint: string | undefined
+      let workScope: ObservationWorkScope = { status: "unscoped" }
       if (focus) {
-        // A removed Task still has a historical selection, but no current contract.
-        const action = this.action(focus.action_id), plan = this.plan(focus.action_id)
-        if (!focus.node_id || plan.nodes.some(n => n.id === focus.node_id)) fingerprint = subject(action, plan, focus.node_id)
+        try {
+          // Resolve both versions while this same write transaction owns selection.
+          const action = this.action(focus.action_id), plan = this.plan(focus.action_id)
+          if (!focus.node_id) {
+            fingerprint = subject(action, plan)
+            workScope = { status: "unknown", reason: "not-observed", detail: "Selection names an Action but no Task or group WorkRef." }
+          } else if (!plan.nodes.some(n => n.id === focus.node_id)) {
+            // A removed Task retains its selected identity, not a guessed old contract.
+            workScope = { status: "unknown", reason: "source-missing", detail: "Selected Task is absent from the saved current Plan at this start." }
+          } else {
+            fingerprint = subject(action, plan, focus.node_id)
+            workScope = { status: "established", work_ref: workReference(action, plan, focus.node_id) }
+          }
+        } catch (error) {
+          if (!(error instanceof ProcessingLimitError)) throw error
+          workScope = { status: "unknown", reason: "processing-limit", detail: "The frozen work reference exceeded the supported processing budget." }
+        }
       }
-      return this.observe(actor, focus, data, fingerprint)
+      return this.observe(actor, focus, { ...data, work_scope: workScope }, fingerprint)
     })
   }
   private observationBoundary(key: string, phase: string, limit: number): LedgerRecord[] {
@@ -205,8 +246,20 @@ export class Store {
       // Do not record a disabled/uncertain call just to diagnose why it cannot pair.
       if (!recordUnpaired && !matched) return undefined
       const focus = matched?.action_id ? { action_id: matched.action_id, ...(matched.node_id ? { node_id: matched.node_id } : {}) } : undefined
+      let workScope: ObservationWorkScope = matched ? savedObservationWorkScope(matched.data)
+        : { status: "unknown", reason: "not-observed", detail: `${reason}; no unique captured start establishes this work scope.` }
+      if (reason === "ambiguous-host-call") {
+        const known = new Map<string, WorkRef>()
+        for (const candidate of starts) {
+          const scope = savedObservationWorkScope(candidate.data)
+          if (scope.status === "established") known.set(canonical(scope.work_ref), scope.work_ref)
+        }
+        // These are known possibilities from the bounded collision probe, never
+        // an exhaustive population or a selector for one of the saved starts.
+        workScope = { status: "ambiguous", candidates: [...known.values()], observation_ids: starts.map(r => r.id) }
+      }
       return this.observe(matched ? { session_id: matched.session_id, agent: matched.agent } : actor, focus,
-        { ...data, ...(matched ? { start_id: matched.id } : {}),
+        { ...data, ...(matched ? { start_id: matched.id } : {}), work_scope: workScope,
           attribution: matched ? "captured-at-start" : `${reason}; not assigned to current work` }, matched?.fingerprint)
     })
   }

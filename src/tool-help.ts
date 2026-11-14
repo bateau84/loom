@@ -1,6 +1,19 @@
 /** Registered discovery help. No guide-file read or extra tool call is required. */
 export const TOOL_EXAMPLES = {
   agents: [{}],
+  review: [
+    { operation: "freeze", request: { format: "loom-review-request/v1", request_id: "REVIEW_REQUEST_ID",
+      mandate: { question: "Assess correctness of the exact cited artifact.", dimensions: ["correctness"],
+        criteria: [{ text: "Preserve the accepted behavior", source_ref: null }], mode: "independent", inclusions: [], exclusions: [] },
+      intended_recipient: { agent: "reviewer", session_id: null },
+      members: [{ member_id: "artifact", work_ref: null, producing_attempt_refs: [],
+        artifact_refs: [{ locator: "ARTIFACT_PATH", version: { kind: "sha256", value: "0000000000000000000000000000000000000000000000000000000000000000" }, content_ref: null }],
+        prior_review_request_id: null, membership_source_refs: [], gaps: [{ reason: "source-missing", source_ref: null }] }], rechecks: [] } },
+    { operation: "read", request_id: "REVIEW_REQUEST_ID", limit: 20 },
+    { operation: "issue", request_id: "REVIEW_REQUEST_ID", limit: 20 },
+    { operation: "work", request_id: "REVIEW_REQUEST_ID", member_id: "MEMBER_ID" },
+    { operation: "relate", request_id: "REVIEW_REQUEST_ID", relationship: "finding", source_record_id: "RECORD_ID", member_ids: ["MEMBER_ID"] },
+  ],
   trace: [
     { operation: "timeline", limit: 25 },
     { operation: "timeline", session_id: "SESSION_ID", export_path: "private-retro/session.json", include_text: true, limit: 25 },
@@ -10,6 +23,11 @@ export const TOOL_EXAMPLES = {
     { operation: "action", action_id: "ACTION_ID", limit: 50 },
     { operation: "window", limit: 50, since_at: "2026-11-01T00:00:00.000Z" },
     { operation: "findings", limit: 20 },
+    { operation: "evaluation-status" },
+    { operation: "evaluations", limit: 5 },
+    { operation: "evaluation", batch_id: "BATCH_ID" },
+    { operation: "evaluation-members", batch_id: "BATCH_ID", limit: 10 },
+    { operation: "evaluation-sources", batch_id: "BATCH_ID", limit: 50 },
   ],
   objective: [
     { operation: "create", source_type: "native-message", source_id: "msg_request", label: "One requested behavior", unit_key: "goal-1" },
@@ -70,6 +88,12 @@ export const TOOL_EXAMPLES = {
 export type LoomToolName = keyof typeof TOOL_EXAMPLES
 
 const entries: Record<LoomToolName, { summary: string; usage: string; returns: string; caution: string }> = {
+  review: {
+    summary: "Preserve an original review mandate and frozen subjects; reconstruct qualified private evidence.",
+    usage: "freeze takes a stable request_id, complete original mandate, intended_recipient, exact members and rechecks in loom-review-request/v1. Set mandate.currentness=current-at-issue-claim only for an original freshness condition; otherwise historical scope is frozen. read takes request_id and limit (1-50); follow next_after, next_relationship_after and next_issue_after as after, relationship_after and issue_after. work returns a member's historical Action/Plan. issue reads initial intent/outcomes; optional authorization_ref selects a canonical retry. Follow next_outcome_sequence as after. relate links own-Session source_record_id to member_ids. Recheck finding_ids name prior finding/correction relationship IDs. prepare creates or finds the initial intent; it never dispatches. Typed loom_record ask accepts review with the same question and intended agent.",
+    returns: "Original mandate, frozen subjects and group constituents, artifact availability gaps, original source records and qualified relationships. Authored links are the link author's unverified interpretation, separate from source_producer. Issue reads preserve original decision/predecessor and outcome receipts. A structured review ask persists and prepares automatically, then withholds protected delivery.",
+    caution: "Each operation/page requires native ledger read permission and the requesting Session. Intended recipient or project membership grants no disclosure. Same-ID changes conflict. Artifact references do not collect bytes or prove access. No raw prompt/result collection, issue permit, retry approval, native model dispatch, protected transfer, exact-execution proof or automatic Evaluator reasoning. A consumed intent stays consumed. Replace the example digest.",
+  },
   agents: {
     summary: "Discover native agents and Loom roles; inspect configuration, capture and load-queue diagnostics.",
     usage: "Use {} to find the actual roster before native delegation. Choose by available=true, enabled=true and relevant roles; configured=true alone does not establish availability. Match agents[].roles with role_descriptions by role ID. Agent and role descriptions are coordination hints, not permissions or automatic matching. Agents and skills are defined outside Loom.",
@@ -83,11 +107,12 @@ const entries: Record<LoomToolName, { summary: string; usage: string; returns: s
     caution: "Read-only and restricted to the plugin's project, workspace and canonical directory. Export JSON must be a regular project-local file (maximum 16 MiB); path escapes, permission denial and mismatched Session identity fail closed. Nonblocking descriptor opens reject FIFO replacements without hanging. Export identity checks cannot prove the content was an unmodified complete OpenCode export. Sanitize exports, then delete them; read permission does not prove authenticity. Session-file replacement is checked before, during and after opening. include_text can still expose private prompt excerpts; do not copy secrets into durable reports. Native context cannot prove what happened before compaction; child listing is not recursive, and per-Session exports are not family exports. Project source IDs are validated, strings are bounded, and final response size is limited to 262144 bytes. Provided JSON is reparsed per page; paging is not a snapshot. Check completeness and never treat counts or agent claims as proven causes.",
   },
   insights: {
-    summary: "Read source-linked Action observations or historical learning findings without grading agent handbacks.",
-    usage: "operation=findings lists up to 20 preserved project-local historical findings; follow next_cursor as finding_cursor for the same snapshot. No new findings or model calls are generated. operation=action with action_id or current selection, or operation=window for project-local ledger. Both accept before/limit=1-200 (default 100); follow next_before as before to page older metadata. Optional since_at/until_at are ISO time filters on each bounded page, not a complete indexed history scan. Counts come from Loom records only, not original OpenCode Session history.",
-    returns: "action/window pages give observed tool starts, finishes, errors and native skill-load results, plus reported results/completions/concerns/reviews, source IDs and timestamps. findings returns immutable notice signatures, source-linked original objective IDs, their original evidence window, uncertainty, and next-action text for Evaluator. It does not return candidate instruction content.",
-    caution: "Historical findings are untrusted observational prompts, not certified independent-origin patterns, causal claims or accepted instruction changes. Automatic reporting is unavailable until trusted originating-request lineage is qualified. There are no model calls, scheduler, automatic experiments or canonical promotion. One Action, Session, tool invocation or DONE handback is not necessarily one independent user objective. The ledger omits unselected work, native child histories and compaction gaps. Missing events are unknown, not successful. A page is not a time-window trend or causal result. Compare complete objectives with original Session/outcome evidence before proposing general guidance changes.",
+    summary: "Read Action observations, historical findings and automatic source-linked deterministic evaluation reports.",
+    usage: "operation=action or window reads project-local ledger metadata; before/limit=1-200 (default 100), optional ISO since_at/until_at; next_before pages older records. operation=findings lists historical findings (max 20; next_cursor as finding_cursor). Automatic Stage 3 runs from native source notifications, idle and startup catch-up when ledger.capture=automatic; no manual evaluation command is required. evaluation-status reads the calling Session's queue, opportunity and qualification state. evaluations lists that Session's batches with before/limit (default 5, max 100); follow next_before. evaluation takes batch_id and optional member_key. evaluation-members pages frozen member reports using batch_id, after/next_after and limit up to 100. evaluation-sources pages original source references using batch_id, optional member_key, after/next_after and limit up to 200.",
+    returns: "action/window return bounded observations, reports, errors and source IDs. findings returns preserved notices, original objective IDs and uncertainty. evaluation-status returns enabled/queued/opportunity, deterministic-only mode, genuine Evaluator block and Q4/Q5/E11 qualifications. evaluations returns items/next_before. evaluation returns the batch, available overall/member report and bounded sources. evaluation-members returns items/next_after; evaluation-sources returns source_ref_count, availability, items/next_after. Reports reference originals, not copied raw payloads.",
+    caution: "Every evaluation read requires native read permission on both databases and calling Session ownership; project membership, recipient names or previous permission grant no disclosure. Missing/changed originals withhold report bodies. Complete frozen processing is not complete native history, objective success, verified Reviewer execution or genuine Evaluator judgment. Findings/descriptions cannot certify independent originating requests or causality. Capture-off suppresses automatic processing; missed/blocked sources can remain pending for catch-up. No automatic model calls, paid fallback, protected transfer, instruction mutation or canonical promotion; Q4/Q5/E11 remain unqualified. Pages are bounded.",
   },
+
   objective: {
     summary: "Reconstruct a work objective across exact original sources, corrective attempts and checks.",
     usage: "create: label, source_type/source_id anchor and optional unit_key (distinct goals in one message need distinct keys). Repeating the same anchor/key is idempotent. link: objective_id, phase, source_type/source_id and optional related_sequence, assessment, confidence, gap_reason, note. Native calls require source_message_id; source_session_id defaults to caller. Other Sessions require authorized export_path, not direct native reads. ledger-record resolves an original Action record; external-ref is a declared HTTPS URL; unavailable requires coverage-gap plus gap_reason. Phases: request, coordination, dispatch, handback, verification, corrective-dispatch, continuation, planned-increment, requirement-change, environment-failure, outcome, coverage-gap, link-correction. Continuation, corrective-dispatch and link-correction require an earlier same-objective related_sequence. Handback reports reported-done/reported-failed/inconclusive, verification/outcome pass/fail/inconclusive; corrections confirm/reject. read: objective_id, cursor, limit 1-50; list/find: offset, find by exact source identity.",
@@ -139,6 +164,7 @@ export const TOOL_HELP = Object.fromEntries(Object.entries(entries).map(([name, 
   `Returns: ${help.returns}`,
   `Caution: ${help.caution}`,
   ...(name === "record" ? ["Concerns: kind=concern needs a statement, no Action or verdict. Every agent records its own task-related concerns, not only handoffs. State suspected versus confirmed with support or unknowns. Documented, outside-task or handed-off is not resolved. General routes blockers natively; critic cites original Action or Session and concern record IDs. Read Action sources using action_id+record_id (no node_id), Session sources using full_thread session_id. Concern IDs are not observation evidence_ids. Append follow-ups; no automatic escalation, gate or lifecycle."] : []),
+  ...(name === "record" ? ["Structured reviews: ask with a typed agent/role recipient may include review:loom-review-request/v1. Preserve the exact question and intended agent in that immutable request. Put all scope/context in its mandate/members; do not mix context/reference fields. Loom freezes the request and prepares the canonical initial intent automatically. Protected delivery remains withheld on this host; no ordinary question body, native child, model call or issue permit is created. Read the private request through loom_review in the original requesting Session with native ledger-read permission."] : []),
   'Examples (JSON inputs, not shell commands; replace ACTION_ID/RECORD_ID/QUESTION_ID; copy work_ref from worked-against context):',
   ...TOOL_EXAMPLES[name as LoomToolName].map(input => JSON.stringify(input)),
   name === "record"
