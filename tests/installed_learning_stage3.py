@@ -38,6 +38,7 @@ CHECKS = {
     "S3-capture-off-prevents-automatic-analysis",
     "S3-no-automatic-model-or-mutation",
     "S3-stopped-backup-restore-fresh-host-readback",
+    "S3-501-objective-population-through-native-scheduler-and-pages",
 }
 
 
@@ -613,6 +614,122 @@ def run(args):
                           backup_set_id=manifest["set_id"], membership=len(original_members),
                           original_unchanged=True, restored_bytes_identical=True,
                           native_revocation_preserved=True, foreign_denied=True)
+
+                    # More than 500 authored objectives from one true original
+                    # Loom record. No test writes into SQLite directly. Capture
+                    # is off during native creation, so the finished population
+                    # must be discovered on the next production host's startup,
+                    # not from direct evaluator invocation or a prebuilt report.
+                    population = make_session(host, project, "general")
+                    anchor = append_original(
+                        scenario, population, "One request with 501 declared work units")
+                    require(isinstance(anchor.get("id"), str),
+                            "Native large-population original was not created")
+                    large_path = restored_state_home / "loom" / "actions-v1" / expected_scope / "learning.sqlite"
+                    require(view(large_path, population).get("batch") is None,
+                            "Capture-off created a large-population evaluation")
+                    objectives_created = 0
+                    for offset in range(0, 501, 25):
+                        end = min(offset + 25, 501)
+                        code = (
+                            "const source_id=" + json.dumps(anchor["id"]) + ";"
+                            + f"for(let i={offset};i<{end};i++){{"
+                            + "const response=JSON.parse((await tools.loom.objective({"
+                            + 'operation:"create",source_type:"ledger-record",'
+                            + 'source_id,label:"Synthetic work unit "+i,unit_key:"unit-"+i'
+                            + "})).result);"
+                            + 'if(response.existing!==false)throw Error("Unexpected objective replay");'
+                            + "}return " + str(end - offset) + ";"
+                        )
+                        observed = scenario.command(population, code)
+                        completed = [e for e in observed if e["type"] == "tool-after"
+                                     and e["data"].get("sessionID") == population
+                                     and e["data"].get("tool") in
+                                     ("loom_objective", "loom.objective")
+                                     and e["data"].get("status") == "completed"]
+                        require(len(completed) == end - offset,
+                                "Installed Code Mode did not execute every native objective creation")
+                        objectives_created += len(completed)
+                    require(objectives_created == 501,
+                            "Native large-population source did not produce 501 objectives")
+                    require(view(large_path, population).get("batch") is None,
+                            "Capture opt-out allowed background evaluation during bulk creation")
+
+                    host.close()
+                    host = None
+                    final_events(root)
+                    capture.write_text(
+                        "instructions: {enabled: false}\nledger: {capture: automatic}\n")
+                    host = boot("large-population-catchup")
+                    scenario = Scenario(host, root)
+                    # A cold startup discovers all existing authored sources.
+                    # No new native source is emitted to trigger processing.
+                    large_state = until(large_path, population,
+                        lambda v: v.get("batch") is not None
+                        and v["batch"][1] == "complete"
+                        and v["batch"][2] is not None
+                        and v.get("observations", {}).get("authored-objective", 0) == 501,
+                        "501-objective installed startup synthesis", timeout=120)
+                    large_batch = large_state["batch"][0]
+                    outcome = report_result(scenario, population, large_batch)
+                    overall = outcome["report"]["body"]
+                    require(overall["population"]["authored_objectives"] == 501
+                            and overall["population"]["independent_originating_requests"] is None
+                            and overall["population"]["complete_through_frozen_boundary"] is True
+                            and overall["coverage"]["complete_native_history"] is False,
+                            "Large population inflated independence or fabricated full native history")
+                    seen_members = set()
+                    after = 0
+                    while True:
+                        page = scenario.invoke(population, "insights", {
+                            "operation": "evaluation-members", "batch_id": large_batch,
+                            "after": after, "limit": 10,
+                        })
+                        for row in page["items"]:
+                            require(row["key"] not in seen_members,
+                                    "Paginated native evaluation repeated a frozen member")
+                            seen_members.add(row["key"])
+                            require(row["report"]["availability"] == "available",
+                                    "Completed population has an unavailable member")
+                        if page["next_after"] is None:
+                            break
+                        require(page["next_after"] > after,
+                                "Native report pagination failed to progress")
+                        after = page["next_after"]
+                    require(len(seen_members) > 500,
+                            "Large native report published a truncated member prefix")
+
+                    source_refs = set()
+                    source_after = 0
+                    expected_source_count = outcome["report"]["source_ref_count"]
+                    while True:
+                        page = scenario.invoke(population, "insights", {
+                            "operation": "evaluation-sources", "batch_id": large_batch,
+                            "after": source_after, "limit": 50,
+                        })
+                        require(page["source_ref_count"] == expected_source_count,
+                                "Source-reference pagination changed the frozen denominator")
+                        for ref in page["items"]:
+                            identity = (ref["kind"], ref["id"], ref.get("revision"))
+                            require(identity not in source_refs and ref["available"],
+                                    "Source page repeated or lost an available original")
+                            source_refs.add(identity)
+                        if page["next_after"] is None:
+                            break
+                        require(page["next_after"] > source_after,
+                                "Native source pagination did not progress")
+                        source_after = page["next_after"]
+                    require(len(source_refs) == expected_source_count
+                            and sum(kind == "objective" for kind, _, _ in source_refs) == 501
+                            and sum(kind == "ledger-record" and refid == anchor["id"]
+                                    for kind, refid, _ in source_refs) == 1,
+                            "Large native source pagination omitted or duplicated originating evidence")
+                    check("S3-501-objective-population-through-native-scheduler-and-pages",
+                          owner_session=population, original_record=anchor["id"],
+                          authored_objectives=501, actual_members=len(seen_members),
+                          unique_source_refs=len(source_refs),
+                          independent_requests="unknown", batch=large_batch,
+                          trigger="cold-start catch-up without a new source or manual evaluation")
 
                     require({x["name"] for x in result["checks"]} == CHECKS,
                             "Installed Stage 3 mechanics did not execute the entire required check set")
