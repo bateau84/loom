@@ -127,6 +127,8 @@ def run(args):
         require(args.opencode is not None and args.opencode.is_file(), "Pinned installed OpenCode binary missing")
         result["source_head"] = subprocess.check_output(
             ["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
+        require(result["source_head"] == args.expect_head,
+                "Installed Stage 3 proof did not checkout the exact reviewed PR head")
         result["source_dirty"] = bool(subprocess.check_output(
             ["git", "-C", str(repo), "status", "--porcelain"], text=True).strip())
         require(not result["source_dirty"], "Qualification requires a clean exact source candidate")
@@ -517,6 +519,7 @@ def main():
     parser.add_argument("--plugin", type=Path, required=True)
     parser.add_argument("--artifact", type=Path, required=True)
     parser.add_argument("--expect-plugin-version", default="2.0.0-alpha.1")
+    parser.add_argument("--expect-head", required=True)
     parser.add_argument("--report-directory", type=Path, required=True)
     parser.add_argument("--disable-filewatcher", action="store_true")
     result = run(parser.parse_args())
