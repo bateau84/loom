@@ -37,6 +37,7 @@ CHECKS = {
     "S3-authored-R1-correction-and-partial-R2-scope",
     "S3-capture-off-prevents-automatic-analysis",
     "S3-no-automatic-model-or-mutation",
+    "S3-stopped-backup-restore-fresh-host-readback",
 }
 
 
@@ -119,7 +120,7 @@ def run(args):
             "No protected review transfer, original human lineage or final-model exposure receipt.",
             "Scripted external provider; no genuine Evaluator reasoning or live-provider billing proof.",
             "The SQLite read-only observer only waits for state; public Loom tools prove report readback.",
-            "Graceful restart; forced process crash/power-loss recovery not proven by this run.",
+            "Graceful restart and verified stopped-state restore; forced process crash/power-loss recovery not proven.",
         ],
     }
     host = None
@@ -486,6 +487,128 @@ def run(args):
                     check("S3-no-automatic-model-or-mutation",
                           external_provider="question-fixture", new_subagent_calls=0,
                           instruction_changes=0)
+
+                    # Stop both SQLite owners before backup. The file-set backup
+                    # utility must inspect disposable copies and leave original
+                    # source, WAL and SHM bytes unchanged. Restore is isolated in
+                    # a fresh state home; only the real public native Loom tools
+                    # are then permitted to validate retained report readback.
+                    session_info = request(host, "GET", f"/api/session/{owner}")
+                    project_id = session_info.get("projectID")
+                    require(isinstance(project_id, str) and project_id,
+                            "Native project identity unavailable for offline backup")
+                    canonical_project = str(project.resolve())
+                    expected_scope = hashlib.sha256(json.dumps(
+                        {"canonical": canonical_project, "project": project_id},
+                        sort_keys=True, ensure_ascii=False, separators=(",", ":")
+                    ).encode()).hexdigest()
+                    source_dir = learning.parent
+                    require(source_dir.name == expected_scope,
+                            "Cannot bind the installed SQLite namespace to the native project")
+                    original_members = {
+                        item.name: sha(item) for item in source_dir.iterdir() if item.is_file()
+                    }
+                    require("ledger.sqlite" in original_members
+                            and "learning.sqlite" in original_members,
+                            "Complete installed Action/learning storage was not present")
+                    host.close()
+                    host = None
+                    final_events(root)
+                    backup_dir = root / "private-stopped-backup"
+                    restored_state_home = root / "restored-state-home"
+                    restore_parent = restored_state_home / "loom" / "actions-v1"
+                    restore_parent.mkdir(parents=True)
+                    restore_dir = restore_parent / expected_scope
+                    utility = repo / "tools" / "learning-state-backup.py"
+                    shared_flags = [
+                        "--project-id", project_id,
+                        "--project-canonical", canonical_project,
+                        "--loom-revision", result["source_head"],
+                        "--package-version", args.expect_plugin_version,
+                    ]
+                    stopped_env = {**env, "LOOM_WRITERS_STOPPED": "yes"}
+                    backed = subprocess.run(["python3", str(utility), "backup",
+                        "--source-dir", str(source_dir), "--backup-dir", str(backup_dir),
+                        *shared_flags], env=stopped_env, capture_output=True,
+                        text=True, timeout=45)
+                    require(backed.returncode == 0, "Actual offline backup rejected the "
+                            "stopped installed product state: " + backed.stderr[-1200:])
+                    backup_members = {
+                        item.name: sha(item) for item in backup_dir.iterdir() if item.is_file()
+                        and item.name != "loom-state-manifest.json"
+                    }
+                    require(backup_members == original_members,
+                            "Stopped-state backup changed/omitted source file bytes")
+                    restored = subprocess.run(["python3", str(utility), "restore",
+                        "--backup-dir", str(backup_dir), "--destination-dir", str(restore_dir),
+                        *shared_flags], env=stopped_env, capture_output=True,
+                        text=True, timeout=45)
+                    require(restored.returncode == 0, "Actual offline restore failed: "
+                            + restored.stderr[-1200:])
+                    restored_members = {
+                        item.name: sha(item) for item in restore_dir.iterdir() if item.is_file()
+                    }
+                    require(restored_members == original_members
+                            and {item.name: sha(item) for item in source_dir.iterdir()
+                                 if item.is_file()} == original_members,
+                            "Restore or inspection modified original, backup or restored bytes")
+                    manifest = json.loads(
+                        (backup_dir / "loom-state-manifest.json").read_text())
+                    require(manifest["learning"] == "present",
+                            "Manifest did not identify durable learning state")
+
+                    # Reuse original native Sessions, but not the original Loom
+                    # state home or prior server process. The same native agent
+                    # that was read-denied before backup must remain denied
+                    # after restoration until a real native agent change.
+                    env["XDG_STATE_HOME"] = str(restored_state_home)
+                    host = boot("restored")
+                    scenario = Scenario(host, root)
+                    require(request(host, "GET", f"/api/session/{owner}")["agent"] == "restricted",
+                            "Native read-revocation state was not retained")
+                    denied_offset = len(events(root))
+                    _, _ = scenario.begin(owner, "return await tools.loom.insights(" +
+                        json.dumps({"operation": "evaluation", "batch_id": combined_id}) + ");")
+                    idle(host, [owner])
+                    denied_events = events(root)[denied_offset:]
+                    require(any(e["type"] == "tool-after"
+                                and e["data"].get("tool") in ("loom_insights", "loom.insights")
+                                and e["data"].get("status") == "error"
+                                for e in denied_events)
+                            and not any(e["type"] == "tool-after"
+                                        and e["data"].get("tool") in ("loom_insights", "loom.insights")
+                                        and e["data"].get("status") == "completed"
+                                        for e in denied_events),
+                            "Restored host returned protected material to revoked native reader")
+                    request(host, "POST", f"/api/session/{owner}/agent", {"agent": "general"})
+                    restored_public = report_result(scenario, owner, combined_id)
+                    original_public = interpretation
+                    require(restored_public["report"]["body"] == original_public,
+                            "Restored public overall report differs from original native read")
+                    require(restored_public["report"]["sha256"] != "",
+                            "Restored public report lost its integrity identity")
+                    frozen_read = scenario.invoke(owner, "review", {
+                        "operation": "read", "request_id": r2
+                    })
+                    require(frozen_read["request"]["rechecks"] == [
+                        {"request_id": r1, "finding_ids": [finding_ref]}],
+                        "Fresh restored host lost the R2 historical review recheck")
+                    foreign_offset = len(events(root))
+                    scenario.command(unrelated, "let denied=false;try{await tools.loom.insights(" +
+                        json.dumps({"operation": "evaluation", "batch_id": combined_id}) +
+                        ");}catch(error){denied=true;}if(!denied)throw new Error("
+                        "\"Restored foreign Session disclosed private evaluation\");return \"denied\";")
+                    require(any(e["type"] == "tool-after"
+                                and e["data"].get("tool") in ("loom_insights", "loom.insights")
+                                and e["data"].get("status") == "error"
+                                for e in events(root)[foreign_offset:]),
+                            "Foreign restored-host source read did not fail")
+                    check("S3-stopped-backup-restore-fresh-host-readback",
+                          old_session=owner, restored_batch=combined_id,
+                          restored_report_sha256=restored_public["report"]["sha256"],
+                          backup_set_id=manifest["set_id"], membership=len(original_members),
+                          original_unchanged=True, restored_bytes_identical=True,
+                          native_revocation_preserved=True, foreign_denied=True)
 
                     require({x["name"] for x in result["checks"]} == CHECKS,
                             "Installed Stage 3 mechanics did not execute the entire required check set")
