@@ -505,15 +505,19 @@ def run(args):
                     source_dir = learning.parent
                     require(source_dir.name == expected_scope,
                             "Cannot bind the installed SQLite namespace to the native project")
+                    host.close()
+                    host = None
+                    final_events(root)
+                    # SQLite may checkpoint WAL and remove sidecars when its last
+                    # connection closes. The accepted byte-for-byte invariant
+                    # starts at the actual stopped-writers boundary, not while
+                    # the live plugin still owns its files.
                     original_members = {
                         item.name: sha(item) for item in source_dir.iterdir() if item.is_file()
                     }
                     require("ledger.sqlite" in original_members
                             and "learning.sqlite" in original_members,
-                            "Complete installed Action/learning storage was not present")
-                    host.close()
-                    host = None
-                    final_events(root)
+                            "Complete stopped Action/learning storage was not present")
                     backup_dir = root / "private-stopped-backup"
                     restored_state_home = root / "restored-state-home"
                     restore_parent = restored_state_home / "loom" / "actions-v1"
