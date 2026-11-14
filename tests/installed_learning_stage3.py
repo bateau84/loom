@@ -634,10 +634,10 @@ def run(args):
                         code = (
                             "const source_id=" + json.dumps(anchor["id"]) + ";"
                             + f"for(let i={offset};i<{end};i++){{"
-                            + "const response=JSON.parse((await tools.loom.objective({"
+                            + "const response=JSON.parse(await tools.loom.objective({"
                             + 'operation:"create",source_type:"ledger-record",'
                             + 'source_id,label:"Synthetic work unit "+i,unit_key:"unit-"+i'
-                            + "})).result);"
+                            + "})).result;"
                             + 'if(response.existing!==false)throw Error("Unexpected objective replay");'
                             + "}return " + str(end - offset) + ";"
                         )
