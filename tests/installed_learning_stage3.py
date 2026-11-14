@@ -372,6 +372,12 @@ def run(args):
                         "relationship": "finding", "source_record_id": finding["id"],
                         "member_ids": ["original-task"],
                     })
+                    r1_read = scenario.invoke(owner, "review", {
+                        "operation": "read", "request_id": r1,
+                    })
+                    require(len(r1_read["relationships"]) == 1,
+                            "Native R1 finding relationship not recoverable")
+                    finding_ref = r1_read["relationships"][0]["id"]
                     historical_a = scenario.invoke(owner, "review", {
                         "operation": "work", "request_id": r1, "member_id": "original-task"})
                     require("Original A criterion" in json.dumps(historical_a),
@@ -393,7 +399,7 @@ def run(args):
                             "mandate": mandate("Synthetic partial R2 examines correction", "corrected B"),
                             "intended_recipient": {"agent": "reviewer", "session_id": None},
                             "members": [member("corrected-task", work_b, artifact_b, r1)],
-                            "rechecks": [],
+                            "rechecks": [{"request_id": r1, "finding_ids": [finding_ref]}],
                         },
                     })
                     require(frozen_b["status"] == "created",
@@ -407,6 +413,12 @@ def run(args):
                         "operation": "work", "request_id": r2, "member_id": "corrected-task"})
                     require("Corrected B criterion" in json.dumps(scope_b),
                             "R2 did not retain the corrected historical work")
+                    r2_read = scenario.invoke(owner, "review", {
+                        "operation": "read", "request_id": r2,
+                    })
+                    require(r2_read["request"]["rechecks"] == [
+                        {"request_id": r1, "finding_ids": [finding_ref]}],
+                        "R2 lost the specific original finding it rechecks")
 
                     combined = until(learning, owner,
                         lambda v: v.get("batch") is not None and v["batch"][1] == "complete"
