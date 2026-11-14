@@ -641,7 +641,29 @@ def run(args):
                             + 'if(response.existing!==false)throw Error("Unexpected objective replay");'
                             + "}return " + str(end - offset) + ";"
                         )
-                        observed = scenario.command(population, code)
+                        try:
+                            observed = scenario.command(population, code)
+                        except RuntimeError as error:
+                            # The outer native execute can finish while its
+                            # Code Mode metadata reports a failed script.
+                            # Preserve the actual error for the owning test,
+                            # rather than silently accepting a partial prefix.
+                            recent = [e for e in events(root) if e["type"] == "tool-after"
+                                      and e["data"].get("sessionID") == population]
+                            failed = [e for e in recent if e["data"].get("status") == "error"]
+                            execute = [e for e in recent if e["data"].get("tool") == "execute"]
+                            final = execute[-1]["data"].get("result", {}) if execute else {}
+                            diagnostic = {
+                                "range": [offset, end],
+                                "nested_completed": len([e for e in recent
+                                    if e["data"].get("tool") in ("loom_objective", "loom.objective")
+                                    and e["data"].get("status") == "completed"]),
+                                "native_errors": [repr(e["data"].get("error"))[:500] for e in failed[-3:]],
+                                "execute_metadata": repr(final.get("metadata"))[:1000],
+                                "execute_content": repr(final.get("content"))[:1000],
+                            }
+                            raise RuntimeError("Native large-population source creation failed: "
+                                               + json.dumps(diagnostic)) from error
                         completed = [e for e in observed if e["type"] == "tool-after"
                                      and e["data"].get("sessionID") == population
                                      and e["data"].get("tool") in
