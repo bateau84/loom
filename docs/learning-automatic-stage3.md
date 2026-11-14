@@ -52,16 +52,29 @@ Required original hashes and source-store identity are checked at publication an
 
 The Action and learning databases have separate read snapshots; the boundary is a vector, not a cross-database atomic snapshot. Source revalidation detects unavailable dependencies. This is not a power-loss durability guarantee or reconciliation of an old backup with uncertain external execution.
 
-The Bun SQL adapter now owns prepared-statement lifetime for production materialized `get`, `all` and `run` operations. It finalizes each execution on success or failure; reusable query handles do not retain native statements between executions. Plugin teardown cancels learning work and disposes registrations before closing its owned connections. The shutdown regression must verify the assembled boundary; changing a close argument alone was insufficient.
+The Bun SQL adapter now owns prepared-statement lifetime for production materialized `get`, `all` and `run` operations. It finalizes each execution on success or failure; reusable query handles do not retain native statements between executions. Plugin teardown cancels learning work and disposes registrations before closing its owned connections. The assembled Bun 1.4.2 shutdown regression and independent fresh-process countercheck now pass: no retained production statement remains usable after disposal, and later statement finalization changes no original source bytes. This does not prove power-loss durability.
 
 The existing [stopped-state backup procedure](manual-backup-restore.md) still requires every writer and connection to be stopped. The offline utility inspects disposable copies, not original or preserved backup databases. When any evaluation table is present, it requires the complete evaluation v1 table/column set and a valid singleton version marker. Truly pre-Stage 3 learning databases remain supported. An incomplete schema is rejected without a successful backup manifest or restore destination, even when SQLite integrity checks and file checksums pass.
 
 ## Verification and remaining gates
 
-The supplied cold review assessed `b0f73cf345d2eb8d54e58c093831b6792ee2216d` as conditional. Its four stabilization findings concern evaluation-schema verification, shutdown/source stability, capture-gap projections and stale documentation. New tests reproduced the schema and continuity omissions before their corrections.
+The original cold review assessed `b0f73cf345d2eb8d54e58c093831b6792ee2216d` as conditional. The follow-up review assessed `1636650affe623d972ae9401fae715defe68039b` as conditional, identifying one remaining F-05 test defect: a missing manifested database was incorrectly assumed to leave an orphan WAL/SHM sidecar.
 
-At candidate `75395bcd0665c1aa5b416b08c0ffecf2632607a9`, CI passed repository/fixture typechecks and all 387 core tests. The native suite had 426 passes and one remaining shutdown-probe failure. The original closed and residual-WAL recovery tests, evaluation-schema controls and all four continuity tests passed. This is not a claim that that candidate's complete CI passed; subsequent steps were skipped. The [status record](learning-automatic-stage3-redo-status.json) identifies exact verification candidates and later results.
+F-05 was corrected at `959969c3a7e538c125feda04b6d46efa1445bdf8`. The regression now tests **both** an absent manifested learning database *without* sidecars (manifest membership rejection) and an **explicitly constructed orphan WAL** (orphan-sidecar rejection), with no restore destination created in either case. The validator and source-preservation checks were not weakened.
 
-No local execution is claimed for this stabilization pass. Earlier local counts are historical and do not certify a later Git head. Existing installed Stage 1/2 workflows cannot establish the new Stage 3 end-to-end journey. Stage 3 installed discovery, interruption, restart and constrained report readback still require exact-artifact qualification.
+**Exact evidence head:** `959969c3a7e538c125feda04b6d46efa1445bdf8` (Bun 1.4.2).
+
+| Check | Verified result |
+| --- | --- |
+| [Plugin CI](https://github.com/bateau84/loom/actions/runs/43583444612) | PASS: typecheck, 387 core, 427 native, six Code Mode, 241 Python tests, production build |
+| [Installed V2 routing](https://github.com/bateau84/loom/actions/runs/43583444581) | PASS |
+| [Installed questions production-path](https://github.com/bateau84/loom/actions/runs/43583444632) | PASS |
+| [Installed unqualified routing guard](https://github.com/bateau84/loom/actions/runs/43583444579) | PASS |
+| [Installed boot and trust](https://github.com/bateau84/loom/actions/runs/43583444640) | PASS |
+| [Learning qualification workspace](https://github.com/bateau84/loom/actions/runs/43583444576) | PASS — packages the workspace; does not establish a Stage 3 end-to-end journey |
+
+F-01 evaluation-schema validation, F-02 stopped-source stability within the tested shutdown boundary, and F-03 capture-gap projections retain passing regression evidence. F-04 documentation now tracks the later reviewed head and exact green CI evidence; see the [status record](learning-automatic-stage3-redo-status.json). Later documentation-only commits require their own CI verification. The follow-up review covered the preceding head, not the corrected green head, and is **not** independent approval of that head.
+
+No local execution is claimed for this stabilization pass. Earlier local counts remain historical, and green installed Stage 1/2 or workspace-preparation workflows are **not** final Stage 3 acceptance. The complete installed Stage 3 R1, corrective attempts, partial R2, interruption/restart, and source-constrained report-readback journey still requires proof against the exact packed candidate.
 
 Q4 native causal provenance remains unqualified. Q5 retains its failed native parent-inline protected-transfer counterexample; Loom withholds protected delivery. Genuine Evaluator interpretation and E11 remain unproven, and an included-usage dispatch route remains unqualified. No automatic model request, paid fallback, raw transcript/tool-content collection, canonical instruction mutation or experiment activation is introduced by these corrections.
