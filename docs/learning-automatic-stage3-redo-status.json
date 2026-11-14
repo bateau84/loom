@@ -1,9 +1,9 @@
 {
   "format": "loom-learning-stage3-redo-status/v1",
-  "status": "BOUNDED_STAGE3_INSTALLED_MECHANICS_PASS_COMPLETE_E11_UNPROVEN",
+  "status": "BOUNDED_STAGE3_INSTALLED_10_CHECKS_PASS_E11_BLOCKED",
   "pull_request": 233,
   "required_pr_state": "open-draft-unmerged",
-  "runtime_commit": "731331dffdfd1ca55327fae9c382d7a98fcaa4f6",
+  "runtime_commit": "8a1a5afdf68f84f233171d179acd1fc5fb8ea9d6",
   "independent_review": {
     "reviewed_head": "1636650affe623d972ae9401fae715defe68039b",
     "previous_reviewed_head": "b0f73cf345d2eb8d54e58c093831b6792ee2216d",
@@ -44,8 +44,8 @@
       "evidence": "Four continuity regressions failed before the correction and pass in the observed stabilization run, including preservation of old-method reports without replaying their omitted-gap interpretation."
     },
     "F-04": {
-      "status": "STATUS_AND_PLAYBOOK_RECONCILED_WITH_INSTALLED_EXACT_HEAD_PROOF",
-      "change": "Documentation now records exact packaged PR-head installed Stage 3 mechanics as bounded PASS, not complete E11 or genuine Evaluator qualification."
+      "status": "PLAYBOOK_STATUS_AND_PR_SYNCHRONIZED_TO_ACCEPTANCE_REMEDIATION",
+      "change": "Document installed 10-check product mechanics and PA-F02 registered-help correction; preserve exact post-review head and independent/host-qualification limits."
     },
     "F-05": {
       "status": "CORRECTED_AND_VERIFIED_GREEN_CI",
@@ -56,9 +56,9 @@
     }
   },
   "observed_ci": {
-    "head": "39e158ff50e1d0daba2ced48e25c0011fca57055",
-    "checkout": "39e158ff50e1d0daba2ced48e25c0011fca57055",
-    "checkout_method": "Explicit pull_request.head.sha and expected-head check; not PR merge checkout",
+    "head": "8a1a5afdf68f84f233171d179acd1fc5fb8ea9d6",
+    "checkout": "8a1a5afdf68f84f233171d179acd1fc5fb8ea9d6",
+    "checkout_method": "Stage3 workflow explicitly checks out PR head sha and asserts source_head equals that immutable commit; other workflows run standard PR test composition.",
     "runtime": {
       "opencode": "2.2.6",
       "bun": "1.4.2",
@@ -70,7 +70,7 @@
       "failed": 0
     },
     "native_suite": {
-      "passed": 427,
+      "passed": 428,
       "failed": 0,
       "files": 53
     },
@@ -86,41 +86,41 @@
     "workflows": [
       {
         "name": "Plugin CI",
-        "run_id": 43611682053,
+        "run_id": 43615795890,
         "result": "PASS"
       },
       {
         "name": "Installed V2 routing",
-        "run_id": 43611681904,
+        "run_id": 43615795928,
         "result": "PASS"
       },
       {
         "name": "Installed questions",
-        "run_id": 43611681946,
+        "run_id": 43615795878,
         "result": "PASS"
       },
       {
-        "name": "Boot and trust",
-        "run_id": 43611681986,
+        "name": "Installed boot and trust",
+        "run_id": 43615795866,
         "result": "PASS"
       },
       {
         "name": "Routing guard",
-        "run_id": 43611681911,
+        "run_id": 43615795875,
         "result": "PASS"
       },
       {
         "name": "Learning qualification workspace",
-        "run_id": 43611681897,
+        "run_id": 43615795889,
         "result": "PASS"
       },
       {
         "name": "Installed Stage 3 automatic mechanics",
-        "run_id": 43611681894,
+        "run_id": 43615795998,
         "result": "PASS"
       }
     ],
-    "qualification": "All seven workflows pass at this runtime SHA. Installed Stage 3 mechanics PASS for named eight checks, not the 100-task native Review/Evaluator/E11 journey."
+    "qualification": "All seven workflows passed at this runtime head. Ten installed Stage 3 mechanics are verified through an actual OpenCode 2.2.6 host, not genuine model reasoning or complete E11."
   },
   "latest_diagnostic": {
     "commit": "8caaed8914f575b1af4ddefdeb735abae0dd9aeb",
@@ -129,11 +129,11 @@
     "evidence": "The loaded .js specifiers resolve to checked-in TypeScript source; exact source blobs matched. The fresh-process and in-suite shutdown controls pass at verified_ci_head."
   },
   "local_validation": {
-    "stabilization_pass": "Not executed locally; actual CI ran installed OpenCode 2.2.6 and published artifacts.",
+    "stabilization_pass": "No local execution in this ChatGPT session; GitHub Actions ran actual packed OpenCode 2.2.6 and retained synthetic redacted receipts.",
     "historical_record": "The previous local-candidate claims remain in Git history at b0f73cf345d2eb8d54e58c093831b6792ee2216d. They are not current-head CI or installed-host acceptance evidence."
   },
   "not_qualified": {
-    "installed_stage3_host": "Installed Stage 3 bounded mechanics PASS on pinned OpenCode 2.2.6; complete E11 native multi-Session/review/Evaluator journey remains UNPROVEN",
+    "installed_stage3_host": "10 bounded installed mechanics PASS at exact PR source head, including restore/readback and >500 population. Full E11 remains unproven.",
     "Q4": "UNQUALIFIED exact native admission/execution/source-consumption provenance.",
     "Q5": "Native protected incoming-transfer counterexample remains; Loom protected delivery is withheld.",
     "E11": "UNPROVEN; deterministic descriptions are not complete whole-objective evaluation.",
@@ -147,34 +147,75 @@
     "A complete processing batch means all frozen members were processed, not objective success"
   ],
   "remaining_work": [
-    "Exact Q4 native review admission→execution→source consumption provenance requires upstream host receipts not exposed by pinned OpenCode; the currently safe Loom behavior stays qualified as unknown.",
-    "Q5 protected incoming content transfer requires a host-enforced recipient gate; the existing native negative counterexample remains, so Loom withholds transfer.",
-    "Real original authorized multi-Session 100-task/E11 and genuine Evaluator judgment need original protected source access, explicit retention/derived disclosure policy and verified included-only model budget; no such authorization/host guarantee supplied.",
-    "Independent external product acceptance/re-review of the corrected assembled PR remains separate from implementation-owner CI.",
-    "Forced crash or power-loss recovery, beyond the executed permission-blocked graceful restart and component checkpoint tests, remains unqualified."
+    "Independent product-acceptance re-review of this exact assembled head and its installed artifact/audit evidence. The prior review targeted a5e9ee8 and could not independently execute the native host.",
+    "Q4 needs upstream native host-attested parent admission→child execution→source consumption for the same invocation, including retries/compaction; no Loom-side attribution inference can replace it.",
+    "Q5 needs pre-transfer host-enforced recipient-specific protection; the pinned-host negative counterexample remains, so structured protected review delivery stays withheld.",
+    "The complete E11 100-task multi-Session real Reviewer→correction→partial Reviewer→genuine Evaluator workflow is not implemented/qualified. Actual original Session access, retention/declassification and verified included-only model budget need operator policy/authorization.",
+    "Installed check covers graceful restart, blocked authorization, and stopped-state restore; kill during partial multi-quantum publication and power-loss durability remain unqualified."
   ],
-  "verified_ci_head": "39e158ff50e1d0daba2ced48e25c0011fca57055",
-  "runtime_commit_note": "Last recorded code implementation checkpoint; exact CI evidence is tied to verified_ci_head, not this historical runtime checkpoint.",
+  "verified_ci_head": "8a1a5afdf68f84f233171d179acd1fc5fb8ea9d6",
+  "runtime_commit_note": "Exact reviewed source includes registered-help F-02 fix and installed Stage 3 qualification; no genuine Evaluator model dispatch.",
   "installed_stage3_mechanics": {
-    "head": "39e158ff50e1d0daba2ced48e25c0011fca57055",
-    "run_id": 43611681894,
-    "status": "PASS (bounded mechanics)",
-    "source": "CI report.json and private audit under installed-stage3-mechanics artifact; only external model is scripted; packed plugin and unmodified host real",
+    "head": "8a1a5afdf68f84f233171d179acd1fc5fb8ea9d6",
+    "run_id": 43615795998,
+    "status": "PASS — ten bounded installed-product mechanics",
+    "artifact": "installed-stage3-mechanics workflow archive contains private synthetic audit.ndjson and report.json; source/plugin/CLI hashes recorded",
+    "boundary": "Actual packed PR-head Loom plugin, unmodified OpenCode 2.2.6 host, native Code Mode calls and real SQLite; only external model responses scripted",
     "checks": [
-      "Native original source triggers automatic evaluation without manual evaluation tool",
-      "Authorized owner public report and source-reference readback",
-      "Cross-Session and same-Session revocation denial",
-      "Blocked native permission, separate host restart, catch-up without new original event",
-      "Late original evidence produces attributable revision and preserves old report",
-      "Authoritative authored R1 mandate/finding, historical A, corrected B, partial R2 with exact R1 recheck and derived report",
-      "Capture off prevents automatic processing",
-      "No automatic native model dispatch or skill mutation"
+      "native record source triggers automatic scheduling and deterministic report without manual evaluation command",
+      "authorized public report and original source-reference readback",
+      "same-project foreign Session denial and same-Session native permission revocation",
+      "blocked native read followed by changed agent and separate host restart catches up original source",
+      "late source creates attributable revision and retains original report",
+      "authoritative authored R1/finding/A → corrected B/partial R2 recheck remains historical, without native execution claims",
+      "capture opt-out suppresses automatic processing",
+      "no automatic model request, protected transfer, recursive subagent dispatch or canonical instruction mutation",
+      "stopped-writers backup/restore of actual Action and evaluation SQLite into isolated state home, exact byte/manifest stability and fresh-host authorized/revoked/foreign public readback",
+      "501 authored objectives created through native tool calls from one original ledger record while capture-off; startup auto catches up 502 members/1003 source refs, all pages retrievable, no fabricated independent-request count"
     ],
+    "observed_large_population": {
+      "authored_objectives": 501,
+      "frozen_members": 502,
+      "unique_source_references": 1003,
+      "independent_originating_requests": "unknown",
+      "startup_catch_up": true
+    },
     "unqualified": [
-      "Native review delivery/execution and Q4 causal provenance",
-      "Q5 protected incoming content transfer",
-      "Genuine Evaluator model reasoning and authorized included-only provider budget",
-      "Actual 100-task E11, forced crash/power-loss and complete cross-Session reconstruction"
+      "Reviewer native delivery, exact Q4 same-invocation admission/source-consumption causal provenance",
+      "Q5 protected recipient-specific source transfer",
+      "true original 100-task multi-Session native Reviewer E11 journey and genuine Evaluator interpretation",
+      "provider/account included-only budget guarantees and original evidence/operator retention/disclosure authorization",
+      "forced process kill mid-quantum, power-loss durability and stale-backup external-effect reconciliation"
     ]
+  },
+  "product_acceptance_review": {
+    "reviewed_head": "a5e9ee8dadb34ddd68b1bc1a1642cfbac0d3938e",
+    "disposition_at_reviewed_head": {
+      "bounded_stage3": "CONDITIONAL",
+      "full_e11": "NO-GO",
+      "merge_readiness": "NO-GO"
+    },
+    "execution_limit": "Reviewer recovered and inspected source/artifacts but could not run independently installed OpenCode; this is not a runtime failure.",
+    "findings": {
+      "PA-F01": {
+        "reviewed": "Installed Stage 3 end-to-end proof missing at reviewed head",
+        "later_evidence": "Installed exact-packed-head Stage 3 CI now executes 10 real native mechanics, including stopped-state restore and 501 authored objectives; implementation-owner CI is not independent approval.",
+        "run_id": 43615795998
+      },
+      "PA-F02": {
+        "reviewed": "Registered loom_insights help falsely claimed no automatic scheduling/evaluation and omitted five evaluation readers",
+        "status": "CORRECTED_CI_GREEN",
+        "commit": "55efdb41a2af69560cb623d47a9ec93b69e98ba9",
+        "evidence": "Registered-help regression exercises all five evaluation operation examples through real registered callbacks. Native installed candidate hashes match source."
+      },
+      "PA-F03": {
+        "status": "BLOCKED_UPSTREAM_QUALIFICATION",
+        "reason": "Pinned OpenCode lacks the required Q4 causal receipt chain and Q5 pre-transfer recipient enforcement. Loom keeps protected delivery withheld."
+      },
+      "PA-F04": {
+        "status": "UNIMPLEMENTED_ACCEPTED_FUTURE_CAPABILITY",
+        "reason": "No genuine Evaluator reasoning, independent originating-request lineage or full cross-Session E11 synthesis is claimed by bounded Stage 3."
+      }
+    }
   }
 }

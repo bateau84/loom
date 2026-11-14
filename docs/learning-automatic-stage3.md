@@ -58,27 +58,34 @@ The existing [stopped-state backup procedure](manual-backup-restore.md) still re
 
 ## Verification and remaining gates
 
-The original cold review assessed `b0f73cf345d2eb8d54e58c093831b6792ee2216d` as conditional. The follow-up review assessed `1636650affe623d972ae9401fae715defe68039b` as conditional, identifying one remaining F-05 test defect: a missing manifested database was incorrectly assumed to leave an orphan WAL/SHM sidecar.
+The two earlier independent source reviews assessed Stage 3 at `b0f73cf345d2eb8d54e58c093831b6792ee2216d` and `1636650affe623d972ae9401fae715defe68039b`. The F-01–F-05 backup-schema, shutdown, capture-gap, documentation and orphan-sidecar-test corrections remain in place, including explicit stopped-writers byte-preservation tests.
 
-F-05 was corrected at `959969c3a7e538c125feda04b6d46efa1445bdf8`. The regression now tests **both** an absent manifested learning database *without* sidecars (manifest membership rejection) and an **explicitly constructed orphan WAL** (orphan-sidecar rejection), with no restore destination created in either case. The validator and source-preservation checks were not weakened.
+The later **Independent Product Acceptance Review** at `a5e9ee8dadb34ddd68b1bc1a1642cfbac0d3938e` returned bounded Stage 3 **CONDITIONAL** and full E11 **NO-GO**. It could inspect source/workspace/CI but did **not** execute an independent installed host. Its *PA-F02* identified a real user-facing defect: `loom_insights` help still claimed that automatic reporting and scheduling were absent. Commit `55efdb41a2af69560cb623d47a9ec93b69e98ba9` corrected the registered help and five evaluation reader examples, and added a registered-callback regression that executes the public examples. This is distinct from the earlier cold-review F-02 SQLite issue.
 
-**Exact evidence head:** `959969c3a7e538c125feda04b6d46efa1445bdf8` (Bun 1.4.2).
+### Exact later CI and installed-host proof
 
-| Check | Verified result |
+**Implementation/test head:** `8a1a5afdf68f84f233171d179acd1fc5fb8ea9d6` (OpenCode 2.2.6, Bun 1.4.2). The installed Stage 3 workflow checks out this **exact PR head**, not GitHub's synthetic merge ref; it independently records installed package/runtime/source identities. Only its external model provider is scripted, so no paid/live-provider or genuine Evaluator claim follows.
+
+| Exact-head workflow | Verified result |
 | --- | --- |
-| [Plugin CI](https://github.com/bateau84/loom/actions/runs/43583444612) | PASS: typecheck, 387 core, 427 native, six Code Mode, 241 Python tests, production build |
-| [Installed V2 routing](https://github.com/bateau84/loom/actions/runs/43583444581) | PASS |
-| [Installed questions production-path](https://github.com/bateau84/loom/actions/runs/43583444632) | PASS |
-| [Installed unqualified routing guard](https://github.com/bateau84/loom/actions/runs/43583444579) | PASS |
-| [Installed boot and trust](https://github.com/bateau84/loom/actions/runs/43583444640) | PASS |
-| [Learning qualification workspace](https://github.com/bateau84/loom/actions/runs/43583444576) | PASS — packages the workspace; does not establish a Stage 3 end-to-end journey |
+| [Plugin CI](https://github.com/bateau84/loom/actions/runs/43615795890) | PASS: repository/fixture typechecks, 387 core, 428 native, six Code Mode and 241 Python tests, production bundle |
+| [Installed Stage 3 mechanics](https://github.com/bateau84/loom/actions/runs/43615795998) | **PASS: ten bounded installed-product checks** |
+| [Installed V2 routing](https://github.com/bateau84/loom/actions/runs/43615795928) | PASS |
+| [Installed questions and Stage 1/2](https://github.com/bateau84/loom/actions/runs/43615795878) | PASS |
+| [Installed boot/trust](https://github.com/bateau84/loom/actions/runs/43615795866) | PASS |
+| [Installed routing guard](https://github.com/bateau84/loom/actions/runs/43615795875) | PASS |
+| [Learning qualification workspace](https://github.com/bateau84/loom/actions/runs/43615795889) | PASS |
 
-F-01 evaluation-schema validation, F-02 stopped-source stability within the tested shutdown boundary, and F-03 capture-gap projections retain passing regression evidence. F-04 documentation now tracks the later reviewed head and exact green CI evidence; see the [status record](learning-automatic-stage3-redo-status.json). Later documentation-only commits require their own CI verification. The follow-up review covered the preceding head, not the corrected green head, and is **not** independent approval of that head.
+The installed candidate produced original native evidence, triggered background processing, published source-linked reports, and preserved historical authored R1/A → finding → correction B → partial R2 with exact recheck scope. It denied foreign and revoked readers, caught up previously blocked sources after a separate host restart, created attributable later revisions, respected capture-off and made no unqualified model or instruction mutation call.
 
-No local execution is claimed for this stabilization pass. Earlier local counts remain historical. An additional installed Stage 3 mechanics workflow now exercises the **exact packed PR-head artifact** through the real OpenCode 2.2.6 host using a scripted external provider. [Run 43611681894](https://github.com/bateau84/loom/actions/runs/43611681894), source head `39e158ff50e1d0daba2ced48e25c0011fca57055`, passed eight checks: real native source→automatic report, source-linked public readback, foreign/revoked reader denial, blocked read→separate restart catch-up, late-source revision, authored R1/finding/Plan B/partial R2 with exact R1 recheck, capture-off and no unqualified model/mutation. The audit report retains installed package and native source identities; its external provider is explicitly scripted.
+A new **stopped-writers backup/restore** check closed both databases, froze the actual source files *after* native shutdown, verified original/backup/restored file hashes and manifest, then booted an isolated restored host. The original report and R2 finding relationship were recovered through public Loom tools; foreign and revoked reads stayed denied.
 
-All **seven** workflows passed at that exact runtime source: [Plugin CI](https://github.com/bateau84/loom/actions/runs/43611682053), [installed V2 routing](https://github.com/bateau84/loom/actions/runs/43611681904), [installed questions](https://github.com/bateau84/loom/actions/runs/43611681946), [boot/trust](https://github.com/bateau84/loom/actions/runs/43611681986), [routing guard](https://github.com/bateau84/loom/actions/runs/43611681911), [workspace packaging](https://github.com/bateau84/loom/actions/runs/43611681897) and installed Stage 3 mechanics. The [status record](learning-automatic-stage3-redo-status.json) distinguishes this runtime evidence from documentation-only commits.
+A separate installed **large-population acceptance** created 501 authored objectives through native Loom APIs from one original ledger record with capture off. Automatic cold-start catch-up processed **502 frozen members** and reported **1,003 unique source references**. Public member and source pagination covered every item without fabricating 501 independent originating requests. No direct evaluator call, fake batch injection or manual report creation was used.
 
-**Not accepted:** these are bounded installed mechanics, not actual native R1 or R2 Reviewer executions, a full 100-task multi-Session E11 journey, genuine Evaluator reasoning, protected Q5 content transfer, exact Q4 admitted-input→execution/source-consumption provenance, an approved included-only provider budget or forced crash/power-loss proof. The original review and correction are authored, appropriately qualified source relationships; native review delivery stays withheld.
+The [machine-readable status](learning-automatic-stage3-redo-status.json) records the exact run identities, the old acceptance-review head and verified later scope. These are implementation-owner CI receipts, not an independent re-review approval.
 
-Q4 native causal provenance remains unqualified. Q5 retains its failed native parent-inline protected-transfer counterexample; Loom withholds protected delivery. Genuine Evaluator interpretation and E11 remain unproven, and an included-usage dispatch route remains unqualified. No automatic model request, paid fallback, raw transcript/tool-content collection, canonical instruction mutation or experiment activation is introduced by these corrections.
+### Product limits that remain
+
+This bounded implementation intentionally produces deterministic descriptions, not genuine Evaluator judgments. It does **not** establish actual native Reviewer admission, same-invocation supplied/retrieved source exposure (Q4), enforced protected incoming transfer (Q5), complete multi-Session/100-task E11 synthesis, included-only model entitlement/billing, or direct human provenance. Structured protected delivery remains withheld; no fallback or simulated native receipt may be used to mark E11 complete.
+
+The installed run exercises blocked permission, graceful host restart, complete stopped-state restore, source revalidation and large-population chunking. It does **not** prove crash/restart at every partial checkpoint, forced process termination during publication, power-loss durability, cross-database atomicity or external-effect reconciliation. A complete E11 acceptance claim remains **NO-GO / UNPROVEN** until upstream and operator gates are qualified and a genuine authorized Evaluator journey is executed.
