@@ -11,6 +11,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # pull_request defaults to a synthetic merge SHA; acceptance targets the actual reviewed head.
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@v2
         with:
@@ -37,6 +39,7 @@ jobs:
           --plugin "$RUNNER_TEMP/loom-stage3-install/node_modules/loom-plugin"
           --artifact "$(find "$RUNNER_TEMP/loom-stage3-package" -maxdepth 1 -name 'loom-plugin-*.tgz' -print -quit)"
           --repository "$GITHUB_WORKSPACE"
+          --expect-head "${{ github.event.pull_request.head.sha }}"
           --expect-plugin-version "$(node -p 'require("./package.json").version')"
           --report-directory "$RUNNER_TEMP/loom-stage3-installed-report"
       - uses: actions/upload-artifact@v4
