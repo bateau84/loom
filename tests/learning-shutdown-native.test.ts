@@ -46,6 +46,14 @@ test("driver control: a retained prepare delays WAL cleanup under close(false), 
 })
 
 test("production shutdown finalizes retained statements before stopped-state hashes are taken", async () => {
+  if (process.env.LOOM_SHUTDOWN_FRESH_PROBE !== "yes") {
+    const child = Bun.spawnSync([process.execPath, "test", import.meta.path, "--test-name-pattern", "production shutdown"], {
+      env: { ...process.env, LOOM_SHUTDOWN_FRESH_PROBE: "yes" },
+      timeout: 15000,
+    })
+    console.log("Fresh-process shutdown comparison", child.exitCode, child.stdout.toString(), child.stderr.toString())
+    expect(child.exitCode).toBe(0)
+  }
   const directory = mkdtempSync(join(tmpdir(), "loom-shutdown-"))
   type Retained = { statement: Statement; sql: string; finalized: boolean; origin: string }
   const statements: Retained[] = []
@@ -92,4 +100,4 @@ test("production shutdown finalizes retained statements before stopped-state has
     await host?.close()
     rmSync(directory, { recursive: true, force: true })
   }
-})
+}, 20000)
