@@ -1,0 +1,48 @@
+name: Installed Stage 3 automatic learning mechanics
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  stage3:
+    runs-on: ubuntu-latest
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - run: git diff --exit-code -- bun.lock
+      - name: Pack and install exact Loom candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/loom-stage3-package"
+          npm pack --json --pack-destination "$RUNNER_TEMP/loom-stage3-package" > "$RUNNER_TEMP/loom-stage3-package/pack.json"
+          ARTIFACT=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))[0].filename)' "$RUNNER_TEMP/loom-stage3-package/pack.json")
+          npm install --prefix "$RUNNER_TEMP/loom-stage3-install" --no-audit --no-fund "$RUNNER_TEMP/loom-stage3-package/$ARTIFACT"
+      - name: Install unmodified pinned OpenCode 2.2.6
+        run: npm install --prefix "$RUNNER_TEMP/loom-stage3-host" --no-audit --no-fund @opencode/cli@2.2.6
+      - name: Verify installed automatic learning through real native product path
+        run: >-
+          python3 tests/installed_learning_stage3.py
+          --opencode "$RUNNER_TEMP/loom-stage3-host/node_modules/.bin/opencode"
+          --plugin "$RUNNER_TEMP/loom-stage3-install/node_modules/loom-plugin"
+          --artifact "$(find "$RUNNER_TEMP/loom-stage3-package" -maxdepth 1 -name 'loom-plugin-*.tgz' -print -quit)"
+          --repository "$GITHUB_WORKSPACE"
+          --expect-plugin-version "$(node -p 'require("./package.json").version')"
+          --report-directory "$RUNNER_TEMP/loom-stage3-installed-report"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installed-stage3-mechanics-${{ github.sha }}
+          path: ${{ runner.temp }}/loom-stage3-installed-report/
+          if-no-files-found: warn
+          retention-days: 7
