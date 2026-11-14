@@ -47,17 +47,18 @@ test("driver control: a retained prepare delays WAL cleanup under close(false), 
 
 test("production shutdown finalizes retained statements before stopped-state hashes are taken", async () => {
   const directory = mkdtempSync(join(tmpdir(), "loom-shutdown-"))
-  const statements: Statement[] = []
-  const readers = new Map<Database, Statement>()
+  type Retained = { statement: Statement; sql: string; finalized: boolean; origin: string }
+  const statements: Retained[] = []
+  const readers = new Map<Database, Retained>()
   const closes = new Map<Database, Array<boolean | undefined>>()
   const original = Database.prototype.prepare, originalClose = Database.prototype.close
-  // The forwarding spy preserves the generic return type of the real driver.
   const intercept = function(this: Database, ...args: Parameters<Database["prepare"]>) {
     const statement = original.apply(this, args)
-    statements.push(statement)
-    // Strong references make cleanup deterministic instead of relying on GC timing.
-    // Both private production connections prepare SELECTs during startup.
-    if (typeof args[0] === "string" && /^SELECT\b/i.test(args[0])) readers.set(this, statement)
+    const retained = { statement, sql: String(args[0]), finalized: false, origin: new Error("prepared here").stack ?? "unavailable" }
+    const finalize = statement.finalize.bind(statement)
+    statement.finalize = () => { finalize(); retained.finalized = true }
+    statements.push(retained)
+    if (/^SELECT\b/i.test(retained.sql)) readers.set(this, retained)
     return statement
   } as Database["prepare"]
   const prepare = spyOn(Database.prototype, "prepare").mockImplementation(intercept)
@@ -72,20 +73,22 @@ test("production shutdown finalizes retained statements before stopped-state has
     expect(readers.size).toBe(2)
     await host.close()
     host = undefined
-    console.log("Production close ownership", [...readers.keys()].map(db => ({ filename: db.filename, close_arguments: closes.get(db) ?? [] })))
+    console.log("Production close ownership", [...readers].map(([db, reader]) => ({ filename: db.filename,
+      close_arguments: closes.get(db) ?? [], sql: reader.sql, finalized: reader.finalized, origin: reader.origin })))
+    console.log("Unfinalized production statements", statements.filter(item => !item.finalized).map(({ sql, origin }) => ({ sql, origin })))
     for (const db of readers.keys()) expect(closes.get(db)).toEqual([true])
     const root = join(directory, "state", "loom", "actions-v1")
     const scopes = readdirSync(root)
     expect(scopes).toHaveLength(1)
     const state = join(root, scopes[0]!)
     const beforeFinalization = hashes(state)
-    for (const statement of readers.values()) expect(() => statement.all()).toThrow()
-    for (const statement of statements) statement.finalize()
+    for (const { statement } of readers.values()) expect(() => statement.all()).toThrow()
+    for (const { statement } of statements) statement.finalize()
     expect(hashes(state)).toEqual(beforeFinalization)
     console.log("PASS: production shutdown closed both databases; later statement finalization changed no source bytes")
   } finally {
     prepare.mockRestore(); close.mockRestore()
-    for (const statement of statements) { try { statement.finalize() } catch {} }
+    for (const { statement } of statements) { try { statement.finalize() } catch {} }
     await host?.close()
     rmSync(directory, { recursive: true, force: true })
   }
