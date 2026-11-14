@@ -4,11 +4,26 @@ import { createHash } from "node:crypto"
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
+import { Store } from "../src/store.js"
 import { registeredLoom } from "./helpers/registered-loom.js"
 
 function hashes(directory: string) {
   return Object.fromEntries(readdirSync(directory).sort().map(name => [name,
     createHash("sha256").update(readFileSync(join(directory, name))).digest("hex")]))
+}
+
+function loadedIdentity() {
+  const modules = ["../server.js", "../src/plugin.js", "../src/store.js", "../src/sqlite-connection.js"]
+  const files = modules.map(specifier => {
+    const path = Bun.resolveSync(specifier, import.meta.dir)
+    const bytes = readFileSync(path)
+    const git_blob = createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex")
+    return { specifier, path, git_blob }
+  })
+  const implementation = Store.toString()
+  console.log("Shutdown source identity", JSON.stringify({ files,
+    loaded_store_sha256: createHash("sha256").update(implementation).digest("hex"),
+    loaded_store_prefix: implementation.slice(0, 5000) }))
 }
 
 test("driver control: a retained prepare delays WAL cleanup under close(false), not close(true)", () => {
@@ -46,6 +61,7 @@ test("driver control: a retained prepare delays WAL cleanup under close(false), 
 })
 
 test("production shutdown finalizes retained statements before stopped-state hashes are taken", async () => {
+  loadedIdentity()
   if (process.env.LOOM_SHUTDOWN_FRESH_PROBE !== "yes") {
     const child = Bun.spawnSync([process.execPath, "test", import.meta.path, "--test-name-pattern", "production shutdown"], {
       env: { ...process.env, LOOM_SHUTDOWN_FRESH_PROBE: "yes" },
