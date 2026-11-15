@@ -82,9 +82,10 @@ sequence: the latest explicit report is the current report, not an approval deci
 - `ask`: required `question`, explicit Boolean `blocking` and exactly one of
   `recipient:{kind,id?}` (agent/role requires id, dispatcher/user no id) or legacy
   `to_agent`; optional `context`, `context_attachments`,
-  `reference:{action_id,kind,id}`. Reference kinds are action, phase, wave, task,
+  `reference:{action_id,kind,id}`, `answer_type` and `choices`. Reference kinds are action, phase, wave, task,
   subtask. The returned record ID is the question ID.
-- `answer`: required `question_id`, `answer`; optional `context_attachments`.
+- `answer`: required `question_id` and a text answer, choice selection or cannot-select
+  response as described below; optional `context_attachments`.
   The original question supplies its nullable Action/node association.
 - `bind-respondent`: `question_id` and `respondent_session_id`. After native
   specialist delegation, only the dispatching Session can bind one matching
@@ -149,6 +150,20 @@ or permitted to proceed. `dispatch.status:admission-observed` means a native
 prompt/notice was durably admitted, not run or consumed. Unknown results are
 not retried; partial native side effects cannot be assumed absent.
 Blocking is collaboration intent, never a forced wait or execution gate.
+
+## Structured answer formats
+
+Omitted `answer_type` or `text` preserves free-text answers. `multi-choice` stores
+2–20 immutable `{id,answer}` choices, requires typed `recipient` (not `to_agent`),
+and accepts one `choice_id`, optionally with
+`reason`, or `status:"cannot-select"` with a required reason. The original label
+is resolved by Loom, not supplied by the respondent. Text and choice forms cannot
+be mixed. See [the complete contract](structured-questions.md) for limits and
+compatibility. Format never changes recipient routing or decision authority.
+
+A cannot-select response counts as answered, not resolved, and follows the same
+first-answer-only continuation. Later conflicting selections remain distinct;
+none silently overwrites an earlier reply. Read the full thread before acting.
 
 ## One-shot first-answer resume
 

@@ -18,6 +18,7 @@ scan root so the profile is discovered; it declares no mandatory link counts.
 - [Implementation boundaries](design.md) — Current plugin architecture and non-goals
 - [Loom tool reference](tools.md) — Tool inputs, scopes and failures
 - [Tool discovery](tool-discovery.md) — How agents find registered help
+- [Structured Open Questions](structured-questions.md) — Choice contract, usage investigation and qualification limits
 - [Coordination](coordination.md) — Optional agent coordination using OpenCode
 
 ## Agent work and evidence
