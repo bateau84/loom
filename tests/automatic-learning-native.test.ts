@@ -229,14 +229,19 @@ test("legal large frozen review remains fully retrievable through stable public 
   const requestID = "stage3-large-review"
   const memberIDs = Array.from({ length: 100 }, (_, i) => "member-" + String(i).padStart(3, "0") + "-" + "m".repeat(109))
   try {
+    const action = f.store.create("Large original review scope", "Check frozen work", f.actor)
+    const plan = f.store.savePlan(action.id, 0, Array.from({ length: 100 }, (_, i) => ({
+      id: "task-" + i, kind: "task" as const, title: "Artifact " + i,
+      outcome: "Original acceptance contract " + "a".repeat(1500),
+    })), f.actor)
     const frozen: any = { format: "loom-review-request/v1", request_id: requestID,
       mandate: { question: "Inspect exactly this frozen authored population", dimensions: ["correctness"],
         criteria: [{ text: "Retain findings and source identity", source_ref: null }],
         mode: "independent", inclusions: [], exclusions: [] },
       intended_recipient: { agent: "reviewer", session_id: null },
       members: memberIDs.map((member_id, i) => ({
-        member_id, work_ref: null, producing_attempt_refs: [],
-        artifact_refs: [{ locator: "/private/artifact-" + i + "-" + "a".repeat(600),
+        member_id, work_ref: workReference(action, plan, "task-" + i), producing_attempt_refs: [],
+        artifact_refs: [{ locator: "/private/artifact-" + i + "-" + "a".repeat(350),
           version: { kind: "sha256", value: String(i).padStart(64, "0") }, content_ref: null }],
         prior_review_request_id: null, membership_source_refs: [], gaps: [{ reason: "source-missing", source_ref: null }],
       })), rechecks: [] }
@@ -319,16 +324,17 @@ test("combined member readback stays bounded even when each stored member fits a
     expect(stored.length).toBeGreaterThan(2)
     for (const item of stored) expect(JSON.stringify(item.report!.body).length).toBeLessThan(262144)
     const seen = new Set<string>()
-    let after = 0, paged = 0
+    expect(stored.reduce((size, member) => size + JSON.stringify(member.report!.body).length, 0)).toBeGreaterThan(262144)
+    let after = 0, pages = 0
     do {
       const page = runtime.read({ operation: "evaluation-members", batch_id: result.batch_id, after, limit: 100 }, "owner", true) as any
       expect(JSON.stringify(page).length).toBeLessThanOrEqual(262144)
+      pages++
       expect(page.items.length).toBeGreaterThan(0)
       for (const item of page.items) {
         expect(seen.has(item.key)).toBe(false)
         seen.add(item.key)
         if (item.report.body_paginated) {
-          paged++
           const observationPage = runtime.read({ operation: "evaluation-observations", batch_id: result.batch_id,
             member_key: item.key, report_id: item.report.id }, "owner", true) as any
           expect(observationPage.items.length).toBeGreaterThan(0)
@@ -339,7 +345,7 @@ test("combined member readback stays bounded even when each stored member fits a
       after = page.next_after
     } while (true)
     expect(seen.size).toBe(stored.length)
-    expect(paged).toBeGreaterThan(0)
+    expect(pages).toBeGreaterThan(1)
   } finally { await runtime.dispose(); f.close() }
 }, 30000)
 
