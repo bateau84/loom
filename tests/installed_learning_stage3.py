@@ -992,19 +992,36 @@ def run(args):
                     # Verify the immutable predecessor chain instead of assuming
                     # that the newest report immediately follows the crashed one.
                     predecessor = next_report["batch"]["previous_batch_id"]
-                    ancestry = set()
-                    while predecessor is not None and predecessor != large_batch:
-                        require(predecessor not in ancestry and len(ancestry) < 100,
-                                "Evaluation revision ancestry is cyclic or unbounded")
-                        ancestry.add(predecessor)
-                        previous = scenario.invoke(population, "insights", {
-                            "operation": "evaluation", "batch_id": predecessor,
-                        })["batch"]
-                        require(previous["id"] == predecessor,
-                                "Public prior-revision reader changed historical identity")
-                        predecessor = previous["previous_batch_id"]
+                    ancestry = []
+                    with closing(sqlite3.connect(
+                            large_path.as_uri() + "?mode=ro", uri=True)) as db:
+                        db.execute("PRAGMA query_only=ON")
+                        db.execute("BEGIN")
+                        while predecessor is not None and predecessor != large_batch:
+                            require(predecessor not in ancestry and len(ancestry) < 100,
+                                    "Evaluation revision ancestry is cyclic or unbounded")
+                            ancestry.append(predecessor)
+                            row = db.execute(
+                                "SELECT previous_batch_id,owner_session,scope_key "
+                                "FROM learning_evaluation_batches WHERE id=?",
+                                (predecessor,)).fetchone()
+                            require(row is not None and row[1] == population
+                                    and row[2] == "permitted-session-evidence",
+                                    "Late-source revision ancestry crossed its source/owner boundary")
+                            predecessor = row[0]
                     require(predecessor == large_batch,
                             "Late-source evaluation is not descended from the recovered frozen batch")
+                    # Check that the same first historical edge is publicly
+                    # reconstructible, without issuing hundreds of Code Mode
+                    # introspection requests that create extra native events.
+                    if ancestry:
+                        first_prior = scenario.invoke(population, "insights", {
+                            "operation": "evaluation", "batch_id": ancestry[0],
+                        })["batch"]
+                        require(first_prior["id"] == ancestry[0]
+                                and first_prior["previous_batch_id"] ==
+                                (ancestry[1] if len(ancestry) > 1 else large_batch),
+                                "The public prior-revision reader contradicted durable ancestry")
                     # A native tool invocation may produce an authored original
                     # and separate observer metadata. Compare complete source
                     # identities and public denominators, not 'one call = one row'.
