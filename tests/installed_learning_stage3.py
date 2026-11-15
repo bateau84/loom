@@ -96,6 +96,9 @@ def frozen_progress(dbfile: Path, session: str, batch_id: str | None = None) -> 
         return None
     with closing(sqlite3.connect(dbfile.as_uri() + "?mode=ro", uri=True, timeout=.2)) as db:
         db.execute("PRAGMA query_only=ON")
+        # Two SELECTs must observe one snapshot while native checkpoints commit.
+        # In WAL mode a read transaction does not block the production writer.
+        db.execute("BEGIN")
         where = "b.id=?" if batch_id is not None else "b.owner_session=?"
         try:
             row = db.execute(
