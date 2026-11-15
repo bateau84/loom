@@ -64,17 +64,17 @@ The later **Independent Product Acceptance Review** at `a5e9ee8dadb34ddd68b1bc1a
 
 ### Exact later CI and installed-host proof
 
-**Implementation/test head:** `8a1a5afdf68f84f233171d179acd1fc5fb8ea9d6` (OpenCode 2.2.6, Bun 1.4.2). The installed Stage 3 workflow checks out this **exact PR head**, not GitHub's synthetic merge ref; it independently records installed package/runtime/source identities. Only its external model provider is scripted, so no paid/live-provider or genuine Evaluator claim follows.
+**Implementation/test head:** `a9fbf17c63bb99bec1f2574114046c7e95f38aa5` (OpenCode 2.2.6, Bun 1.4.2). The installed Stage 3 workflow checks out this **exact PR head**, not GitHub's synthetic merge ref; it independently records installed package/runtime/source identities. Only its external model provider is scripted, so no paid/live-provider or genuine Evaluator claim follows.
 
 | Exact-head workflow | Verified result |
 | --- | --- |
-| [Plugin CI](https://github.com/bateau84/loom/actions/runs/43615795890) | PASS: repository/fixture typechecks, 387 core, 428 native, six Code Mode and 241 Python tests, production bundle |
-| [Installed Stage 3 mechanics](https://github.com/bateau84/loom/actions/runs/43615795998) | **PASS: ten bounded installed-product checks** |
-| [Installed V2 routing](https://github.com/bateau84/loom/actions/runs/43615795928) | PASS |
-| [Installed questions and Stage 1/2](https://github.com/bateau84/loom/actions/runs/43615795878) | PASS |
-| [Installed boot/trust](https://github.com/bateau84/loom/actions/runs/43615795866) | PASS |
-| [Installed routing guard](https://github.com/bateau84/loom/actions/runs/43615795875) | PASS |
-| [Learning qualification workspace](https://github.com/bateau84/loom/actions/runs/43615795889) | PASS |
+| [Plugin CI](https://github.com/bateau84/loom/actions/runs/43695597603) | PASS: repository/fixture typechecks, 387 core, 428 native, six Code Mode and 241 Python tests, production bundle |
+| [Installed Stage 3 mechanics](https://github.com/bateau84/loom/actions/runs/43695597604) | **PASS: eleven bounded installed-product checks, including SIGKILL recovery** |
+| [Installed V2 routing](https://github.com/bateau84/loom/actions/runs/43695597663) | PASS |
+| [Installed questions and Stage 1/2](https://github.com/bateau84/loom/actions/runs/43695597618) | PASS |
+| [Installed boot/trust](https://github.com/bateau84/loom/actions/runs/43695597572) | PASS |
+| [Installed routing guard](https://github.com/bateau84/loom/actions/runs/43695597569) | PASS |
+| [Learning qualification workspace](https://github.com/bateau84/loom/actions/runs/43695597554) | PASS |
 
 The installed candidate produced original native evidence, triggered background processing, published source-linked reports, and preserved historical authored R1/A → finding → correction B → partial R2 with exact recheck scope. It denied foreign and revoked readers, caught up previously blocked sources after a separate host restart, created attributable later revisions, respected capture-off and made no unqualified model or instruction mutation call.
 
@@ -82,10 +82,12 @@ A new **stopped-writers backup/restore** check closed both databases, froze the 
 
 A separate installed **large-population acceptance** created 501 authored objectives through native Loom APIs from one original ledger record with capture off. Automatic cold-start catch-up processed **502 frozen members** and reported **1,003 unique source references**. Public member and source pagination covered every item without fabricating 501 independent originating requests. No direct evaluator call, fake batch injection or manual report creation was used.
 
+A follow-up evidence review at `af152bd94156d3c489d01c72e198ff3bea2d8e67` identified the strongest remaining false-confidence case: a crash with a nonempty but incomplete committed member population. The installed harness now starts the actual packed OpenCode host, polls committed checkpoint receipts using a coherent read-only SQLite snapshot, **SIGKILLs the real server process after one checkpoint**, and restarts independently. [Run 43695597604](https://github.com/bateau84/loom/actions/runs/43695597604) verifies the same frozen 502-member batch identity and checkpoint receipt, completion of all 502 members, exactly one logical batch and one overall publication, and authorized public reconstruction of all 1,003 original sources. A newly authored source after the crash appears in a later report descended from that frozen boundary; actual Code Mode readback events may produce additional intervening versions, so the check verifies their immutable predecessor chain and complete source pages rather than asserting one invocation equals one record. These are real installed-host observations, **not** a simulated kill or a directly invoked processor.
+
 The [machine-readable status](learning-automatic-stage3-redo-status.json) records the exact run identities, the old acceptance-review head and verified later scope. These are implementation-owner CI receipts, not an independent re-review approval.
 
 ### Product limits that remain
 
 This bounded implementation intentionally produces deterministic descriptions, not genuine Evaluator judgments. It does **not** establish actual native Reviewer admission, same-invocation supplied/retrieved source exposure (Q4), enforced protected incoming transfer (Q5), complete multi-Session/100-task E11 synthesis, included-only model entitlement/billing, or direct human provenance. Structured protected delivery remains withheld; no fallback or simulated native receipt may be used to mark E11 complete.
 
-The installed run exercises blocked permission, graceful host restart, complete stopped-state restore, source revalidation and large-population chunking. It does **not** prove crash/restart at every partial checkpoint, forced process termination during publication, power-loss durability, cross-database atomicity or external-effect reconciliation. A complete E11 acceptance claim remains **NO-GO / UNPROVEN** until upstream and operator gates are qualified and a genuine authorized Evaluator journey is executed.
+The installed run now exercises blocked permission, graceful host restart, complete stopped-state restore, source revalidation, large-population chunking **and forced SIGKILL after one committed checkpoint before overall publication**. This does **not** prove every interruption boundary (including during atomic overall publication), power-loss durability, cross-database atomicity or external-effect reconciliation. A complete E11 acceptance claim remains **NO-GO / UNPROVEN** until upstream and operator gates are qualified and a genuine authorized Evaluator journey is executed.

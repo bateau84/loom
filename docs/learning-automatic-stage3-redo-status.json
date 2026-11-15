@@ -1,6 +1,6 @@
 {
   "format": "loom-learning-stage3-redo-status/v1",
-  "status": "BOUNDED_STAGE3_INSTALLED_10_CHECKS_PASS_E11_BLOCKED",
+  "status": "BOUNDED_STAGE3_INSTALLED_11_CHECKS_FORCED_CRASH_PASS_E11_BLOCKED",
   "pull_request": 233,
   "required_pr_state": "open-draft-unmerged",
   "runtime_commit": "8a1a5afdf68f84f233171d179acd1fc5fb8ea9d6",
@@ -56,8 +56,8 @@
     }
   },
   "observed_ci": {
-    "head": "8a1a5afdf68f84f233171d179acd1fc5fb8ea9d6",
-    "checkout": "8a1a5afdf68f84f233171d179acd1fc5fb8ea9d6",
+    "head": "a9fbf17c63bb99bec1f2574114046c7e95f38aa5",
+    "checkout": "a9fbf17c63bb99bec1f2574114046c7e95f38aa5",
     "checkout_method": "Stage3 workflow explicitly checks out PR head sha and asserts source_head equals that immutable commit; other workflows run standard PR test composition.",
     "runtime": {
       "opencode": "2.2.6",
@@ -86,41 +86,41 @@
     "workflows": [
       {
         "name": "Plugin CI",
-        "run_id": 43615795890,
+        "run_id": 43695597603,
         "result": "PASS"
       },
       {
         "name": "Installed V2 routing",
-        "run_id": 43615795928,
+        "run_id": 43695597663,
         "result": "PASS"
       },
       {
         "name": "Installed questions",
-        "run_id": 43615795878,
+        "run_id": 43695597618,
         "result": "PASS"
       },
       {
         "name": "Installed boot and trust",
-        "run_id": 43615795866,
+        "run_id": 43695597572,
         "result": "PASS"
       },
       {
         "name": "Routing guard",
-        "run_id": 43615795875,
+        "run_id": 43695597569,
         "result": "PASS"
       },
       {
         "name": "Learning qualification workspace",
-        "run_id": 43615795889,
+        "run_id": 43695597554,
         "result": "PASS"
       },
       {
         "name": "Installed Stage 3 automatic mechanics",
-        "run_id": 43615795998,
+        "run_id": 43695597604,
         "result": "PASS"
       }
     ],
-    "qualification": "All seven workflows passed at this runtime head. Ten installed Stage 3 mechanics are verified through an actual OpenCode 2.2.6 host, not genuine model reasoning or complete E11."
+    "qualification": "All seven workflows passed at this exact runtime head. Eleven installed Stage 3 mechanics, including a real SIGKILL after a committed partial checkpoint and source-linked later revision, PASS. This is not genuine Evaluator or E11 proof."
   },
   "latest_diagnostic": {
     "commit": "8caaed8914f575b1af4ddefdeb735abae0dd9aeb",
@@ -147,18 +147,18 @@
     "A complete processing batch means all frozen members were processed, not objective success"
   ],
   "remaining_work": [
-    "Independent product-acceptance re-review of this exact assembled head and its installed artifact/audit evidence. The prior review targeted a5e9ee8 and could not independently execute the native host.",
-    "Q4 needs upstream native host-attested parent admission→child execution→source consumption for the same invocation, including retries/compaction; no Loom-side attribution inference can replace it.",
-    "Q5 needs pre-transfer host-enforced recipient-specific protection; the pinned-host negative counterexample remains, so structured protected review delivery stays withheld.",
-    "The complete E11 100-task multi-Session real Reviewer→correction→partial Reviewer→genuine Evaluator workflow is not implemented/qualified. Actual original Session access, retention/declassification and verified included-only model budget need operator policy/authorization.",
-    "Installed check covers graceful restart, blocked authorization, and stopped-state restore; kill during partial multi-quantum publication and power-loss durability remain unqualified."
+    "Independent product-acceptance re-review of exact head a9fbf17c63bb99bec1f2574114046c7e95f38aa5 and its installed proof; implementation-owner CI cannot approve its own work.",
+    "Q4 needs upstream host-attested same-execution parent admission, child execution and source-consumption receipts across retries/compaction; no Loom inference substitutes.",
+    "Q5 needs host-enforced recipient-specific pre-transfer protection; the pinned host counterexample persists, so structured protected delivery remains withheld.",
+    "Complete E11 requires original authorized multi-Session 100-task native Reviewer work, corrective partial re-review and genuine Evaluator interpretation, plus operator-approved source access, retention/declassification and verified included-only model budget.",
+    "One forced SIGKILL after a committed partial checkpoint is now installed-qualified; crashes during overall publication, power-loss durability, cross-database atomicity and stale-backup external-effect reconciliation remain unqualified."
   ],
-  "verified_ci_head": "8a1a5afdf68f84f233171d179acd1fc5fb8ea9d6",
+  "verified_ci_head": "a9fbf17c63bb99bec1f2574114046c7e95f38aa5",
   "runtime_commit_note": "Exact reviewed source includes registered-help F-02 fix and installed Stage 3 qualification; no genuine Evaluator model dispatch.",
   "installed_stage3_mechanics": {
-    "head": "8a1a5afdf68f84f233171d179acd1fc5fb8ea9d6",
-    "run_id": 43615795998,
-    "status": "PASS — ten bounded installed-product mechanics",
+    "head": "a9fbf17c63bb99bec1f2574114046c7e95f38aa5",
+    "run_id": 43695597604,
+    "status": "PASS — eleven bounded installed-product mechanics including forced process crash recovery",
     "artifact": "installed-stage3-mechanics workflow archive contains private synthetic audit.ndjson and report.json; source/plugin/CLI hashes recorded",
     "boundary": "Actual packed PR-head Loom plugin, unmodified OpenCode 2.2.6 host, native Code Mode calls and real SQLite; only external model responses scripted",
     "checks": [
@@ -171,7 +171,8 @@
       "capture opt-out suppresses automatic processing",
       "no automatic model request, protected transfer, recursive subagent dispatch or canonical instruction mutation",
       "stopped-writers backup/restore of actual Action and evaluation SQLite into isolated state home, exact byte/manifest stability and fresh-host authorized/revoked/foreign public readback",
-      "501 authored objectives created through native tool calls from one original ledger record while capture-off; startup auto catches up 502 members/1003 source refs, all pages retrievable, no fabricated independent-request count"
+      "501 authored objectives created through native tool calls from one original ledger record while capture-off; startup auto catches up 502 members/1003 source refs, all pages retrievable, no fabricated independent-request count",
+      "real OpenCode process SIGKILL after one durable member checkpoint before overall publication; separate host recovers same 502-member frozen identity, retains checkpoint/report IDs, publishes one logical report, then preserves late-source revisions without collapsing original scope"
     ],
     "observed_large_population": {
       "authored_objectives": 501,
@@ -185,8 +186,28 @@
       "Q5 protected recipient-specific source transfer",
       "true original 100-task multi-Session native Reviewer E11 journey and genuine Evaluator interpretation",
       "provider/account included-only budget guarantees and original evidence/operator retention/disclosure authorization",
-      "forced process kill mid-quantum, power-loss durability and stale-backup external-effect reconciliation"
-    ]
+      "Forced SIGKILL at one checkpoint is qualified; other crash windows (especially publication-time), power-loss durability and stale-backup external-effect reconciliation remain unqualified."
+    ],
+    "observed_forced_crash": {
+      "head": "a9fbf17c63bb99bec1f2574114046c7e95f38aa5",
+      "run_id": 43695597604,
+      "host": "OpenCode 2.2.6",
+      "termination": "SIGKILL",
+      "return_code": -9,
+      "original_member_count": 502,
+      "checkpointed_before_crash": 1,
+      "recovered_members": 502,
+      "preserved_checkpoint_receipts": 1,
+      "unique_original_sources": 1003,
+      "logical_batches_for_original_identity": 1,
+      "overall_publications_for_original_identity": 1,
+      "later_report_source_count": 1149,
+      "intervening_report_revisions": 15,
+      "revision_chain_reaches_original": true,
+      "source_pages_complete": true,
+      "report_bodies_authorized_via_public_tools": true,
+      "caveat": "The original 1003 source references are retained; later native Code Mode readbacks and the authored late source legitimately create additional observed metadata and intervening versions. Not real model/E11 acceptance or power-loss proof."
+    }
   },
   "product_acceptance_review": {
     "reviewed_head": "a5e9ee8dadb34ddd68b1bc1a1642cfbac0d3938e",
@@ -199,8 +220,8 @@
     "findings": {
       "PA-F01": {
         "reviewed": "Installed Stage 3 end-to-end proof missing at reviewed head",
-        "later_evidence": "Installed exact-packed-head Stage 3 CI now executes 10 real native mechanics, including stopped-state restore and 501 authored objectives; implementation-owner CI is not independent approval.",
-        "run_id": 43615795998
+        "later_evidence": "11 bounded installed Stage 3 product mechanics passed at head a9fbf17c63bb99bec1f2574114046c7e95f38aa5, including SIGKILL after a real checkpoint, stable frozen membership, one overall publication, late-source revision and authorized original/derived report readback.",
+        "run_id": 43695597604
       },
       "PA-F02": {
         "reviewed": "Registered loom_insights help falsely claimed no automatic scheduling/evaluation and omitted five evaluation readers",
@@ -216,6 +237,12 @@
         "status": "UNIMPLEMENTED_ACCEPTED_FUTURE_CAPABILITY",
         "reason": "No genuine Evaluator reasoning, independent originating-request lineage or full cross-Session E11 synthesis is claimed by bounded Stage 3."
       }
+    },
+    "followup_review": {
+      "reviewed_head": "af152bd94156d3c489d01c72e198ff3bea2d8e67",
+      "disposition": "CONDITIONAL for bounded Stage 3; NO-GO for full E11",
+      "remaining_adversarial_gap_at_review": "No installed forced termination after a nonzero number of partial member checkpoints",
+      "later_correction": "Installed forced-process SIGKILL check passed in workflow 43695597604 at head a9fbf17c63bb99bec1f2574114046c7e95f38aa5. Independent acceptance of this newer head remains a separate review."
     }
   }
 }
