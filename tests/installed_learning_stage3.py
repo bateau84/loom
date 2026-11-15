@@ -985,9 +985,26 @@ def run(args):
                             "Late source was not published in a new attributable revision")
                     next_report = report_result(scenario, population, newer["id"])
                     revised_count = next_report["report"]["body"]["population"]["source_count"]
-                    require(next_report["batch"]["previous_batch_id"] == large_batch
-                            and revised_count > expected_source_count,
-                            "Late-source revision lost the original population or omitted new evidence")
+                    require(revised_count > expected_source_count,
+                            "Late-source revision did not extend the original source population")
+                    # Code Mode readback is itself a real native outer execute,
+                    # which can append observation evidence and later revisions.
+                    # Verify the immutable predecessor chain instead of assuming
+                    # that the newest report immediately follows the crashed one.
+                    predecessor = next_report["batch"]["previous_batch_id"]
+                    ancestry = set()
+                    while predecessor is not None and predecessor != large_batch:
+                        require(predecessor not in ancestry and len(ancestry) < 100,
+                                "Evaluation revision ancestry is cyclic or unbounded")
+                        ancestry.add(predecessor)
+                        previous = scenario.invoke(population, "insights", {
+                            "operation": "evaluation", "batch_id": predecessor,
+                        })["batch"]
+                        require(previous["id"] == predecessor,
+                                "Public prior-revision reader changed historical identity")
+                        predecessor = previous["previous_batch_id"]
+                    require(predecessor == large_batch,
+                            "Late-source evaluation is not descended from the recovered frozen batch")
                     # A native tool invocation may produce an authored original
                     # and separate observer metadata. Compare complete source
                     # identities and public denominators, not 'one call = one row'.
@@ -1028,6 +1045,8 @@ def run(args):
                           late_source=late["id"], later_revision=newer["id"],
                           original_source_count=expected_source_count,
                           later_source_count=next_report["report"]["body"]["population"]["source_count"],
+                          intervening_report_revisions=len(ancestry),
+                          revision_ancestry_reaches_recovered_batch=True,
                           source_and_report_bodies_checked_through_native_tools=True,
                           host_termination=crashed["termination"],
                           host_return_code=crashed["return_code"],
