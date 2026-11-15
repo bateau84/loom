@@ -867,11 +867,20 @@ def run(args):
                     # late evidence is produced while recovery is pending.
                     host = boot("large-population-recovery")
                     scenario = Scenario(host, root)
+                    before_late = frozen_progress(large_path, population, large_batch)
+                    require(before_late is not None and before_late["report_id"] is None
+                            and before_late["state"] in ("pending", "processing")
+                            and 0 < before_late["processed_count"] < before_late["member_count"],
+                            "Late-source stimulus was not started during unfinished recovery")
                     late = append_original(
                         scenario, population,
                         "Synthetic late source after forced process crash; belongs to the next boundary")
                     require(late.get("id") and late["id"] != anchor["id"],
                             "Late source did not originate in a new native operation")
+                    after_late = frozen_progress(large_path, population, large_batch)
+                    require(after_late is not None and after_late["report_id"] is None
+                            and after_late["processed_count"] < after_late["member_count"],
+                            "Late source was not proven committed before original publication")
                     recovered = None
                     end = time.monotonic() + 120
                     while time.monotonic() < end:
@@ -934,12 +943,14 @@ def run(args):
                         require(page["next_after"] > after,
                                 "Native report pagination failed to progress")
                         after = page["next_after"]
-                    require(len(seen_members) > 500,
-                            "Large native report published a truncated member prefix")
+                    require(len(seen_members) == partial["member_count"],
+                            "Public native member pagination omitted a frozen member")
 
                     source_refs = set()
                     source_after = 0
                     expected_source_count = outcome["report"]["source_ref_count"]
+                    require(expected_source_count == 1003,
+                            "Frozen 501-objective source population lost expected references")
                     while True:
                         page = scenario.invoke(population, "insights", {
                             "operation": "evaluation-sources", "batch_id": large_batch,
@@ -1067,6 +1078,7 @@ def run(args):
                           source_and_report_bodies_checked_through_native_tools=True,
                           host_termination=crashed["termination"],
                           host_return_code=crashed["return_code"],
+                          late_evidence_admitted_while_original_pending=True,
                           report_is_genuine_evaluator=False)
 
                     require({x["name"] for x in result["checks"]} == CHECKS,
