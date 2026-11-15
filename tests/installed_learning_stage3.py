@@ -984,10 +984,13 @@ def run(args):
                             and newer["state"] == "complete" and newer["report_id"],
                             "Late source was not published in a new attributable revision")
                     next_report = report_result(scenario, population, newer["id"])
+                    revised_count = next_report["report"]["body"]["population"]["source_count"]
                     require(next_report["batch"]["previous_batch_id"] == large_batch
-                            and next_report["report"]["body"]["population"]["source_count"]
-                            == expected_source_count + 1,
-                            "Late-source revision lost the original population or duplicated sources")
+                            and revised_count > expected_source_count,
+                            "Late-source revision lost the original population or omitted new evidence")
+                    # A native tool invocation may produce an authored original
+                    # and separate observer metadata. Compare complete source
+                    # identities and public denominators, not 'one call = one row'.
                     last_sources = set()
                     after = 0
                     while True:
@@ -995,12 +998,25 @@ def run(args):
                             "operation": "evaluation-sources", "batch_id": newer["id"],
                             "after": after, "limit": 50,
                         })
-                        last_sources.update(item["id"] for item in page["items"])
+                        require(page["source_ref_count"] ==
+                                next_report["report"]["source_ref_count"],
+                                "Late revision changed its advertised source denominator")
+                        for item in page["items"]:
+                            identity = (item["kind"], item["id"], item.get("revision"))
+                            require(identity not in last_sources and item["available"],
+                                    "Late revision repeated or withheld a source")
+                            last_sources.add(identity)
                         if page["next_after"] is None:
                             break
+                        require(page["next_after"] > after,
+                                "Late revision source pagination did not progress")
                         after = page["next_after"]
-                    require(late["id"] in last_sources and anchor["id"] in last_sources,
-                            "New report omitted the late source or its original anchor")
+                    require(source_refs.issubset(last_sources)
+                            and any(refid == late["id"] for _, refid, _ in last_sources)
+                            and any(refid == anchor["id"] for _, refid, _ in last_sources)
+                            and revised_count == len(last_sources)
+                            and next_report["report"]["source_ref_count"] == len(last_sources),
+                            "Late revision did not retain original identities and all new sources")
                     check("S3-forced-crash-partial-checkpoint-and-late-source-recovery",
                           frozen_batch=large_batch, recovered_batch=recovered["id"],
                           persisted_members=partial["member_count"],
