@@ -2,7 +2,8 @@ import type { Plugin } from "@opencode/plugin"
 import type { ConfigSnapshot } from "./config.js"
 import { configLoadStatus } from "./config-admission.js"
 import type { Learning } from "./learning.js"
-import { canonical, ProcessingBudget, uid } from "./model.js"
+import type { EvaluationReport, EvaluationSourceRef } from "./evaluation-store.js"
+import { canonical, ProcessingBudget, ProcessingLimitError, uid } from "./model.js"
 import { EVALUATOR_BLOCK } from "./automatic-learning.js"
 
 type Options = {
@@ -11,7 +12,43 @@ type Options = {
   checkedSession: (id: string) => Promise<Record<string, unknown>>;
   warn: (error: unknown) => void;
 }
-export const EVALUATION_READS = ["evaluation-status", "evaluations", "evaluation", "evaluation-members", "evaluation-sources"] as const
+export const EVALUATION_READS = ["evaluation-status", "evaluations", "evaluation", "evaluation-members", "evaluation-sources", "evaluation-observations"] as const
+
+const PUBLIC_READ_CHARS = 262144
+/** A failed fit test must never consume a cursor or silently drop an observation. */
+function fitsRead(value: unknown): boolean {
+  try { canonical(value, new ProcessingBudget(PUBLIC_READ_CHARS)); return true }
+  catch (error) { if (error instanceof ProcessingLimitError) return false; throw error }
+}
+function observationsOf(report: Pick<EvaluationReport, "body">): unknown[] | null {
+  const body = report.body
+  if (!body || typeof body !== "object" || Array.isArray(body)) return null
+  return Array.isArray((body as Record<string, unknown>).observations)
+    ? (body as { observations: unknown[] }).observations : null
+}
+function compactReport(report: EvaluationReport) {
+  return { ...report, source_ref_count: report.source_refs.length,
+    source_refs: report.source_refs.slice(0, 50), next_source_after: report.source_refs.length > 50 ? 50 : null,
+    missing_source_count: report.missing_sources.length, missing_sources: report.missing_sources.slice(0, 50),
+    sources_operation: "evaluation-sources" }
+}
+function pagedReport(report: ReturnType<typeof compactReport>) {
+  const observations = observationsOf(report)
+  if (!observations) throw new ProcessingLimitError("Oversized evaluation body has no observation pages")
+  return { ...report, body: null, body_paginated: true, observation_count: observations.length,
+    observations_operation: "evaluation-observations" }
+}
+function compactMember<T extends { source_refs: EvaluationSourceRef[]; report: EvaluationReport | null; ordinal: number }>(member: T) {
+  return { ...member, source_ref_count: member.source_refs.length, source_refs: member.source_refs.slice(0, 50),
+    next_source_after: member.source_refs.length > 50 ? 50 : null,
+    report: member.report ? compactReport(member.report) : null }
+}
+function pageNumber(value: unknown, fallback: number, minimum: number, maximum: number, name: string) {
+  const number = value ?? fallback
+  if (!Number.isSafeInteger(number) || (number as number) < minimum || (number as number) > maximum)
+    throw new Error("Invalid evaluation " + name)
+  return number as number
+}
 
 /** Cancellation owns the continuation even when a host RPC has no AbortSignal parameter. */
 async function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -157,7 +194,8 @@ export async function registerAutomaticLearning(ctx: Plugin.Context, options: Op
         : operation === "evaluations" ? ["operation", "before", "limit"]
         : operation === "evaluation" ? ["operation", "batch_id", "member_key"]
         : operation === "evaluation-members" ? ["operation", "batch_id", "after", "limit"]
-        : operation === "evaluation-sources" ? ["operation", "batch_id", "member_key", "after", "limit"] : []
+        : operation === "evaluation-sources" ? ["operation", "batch_id", "member_key", "after", "limit"]
+        : operation === "evaluation-observations" ? ["operation", "batch_id", "member_key", "report_id", "after", "limit"] : []
       if (!allowed.length || Object.keys(input).some(key => !allowed.includes(key))) throw new Error("Invalid evaluation read fields")
       let result: unknown
       if (operation === "evaluation-status") result = { enabled: captureEnabled, scope: "calling-session", queued: dirty.has(session) || rescan, opportunity: engine.history.opportunity(session),
@@ -166,24 +204,68 @@ export async function registerAutomaticLearning(ctx: Plugin.Context, options: Op
       else if (operation === "evaluations") result = engine.history.list(session, { before: input.before as number | undefined, limit: input.limit as number | undefined ?? 5 })
       else {
         if (typeof input.batch_id !== "string") throw new Error("Evaluation batch_id is required")
-        if (operation === "evaluation-members") result = engine.history.reports(input.batch_id, session, { after: input.after as number | undefined, limit: input.limit as number | undefined ?? 10 })
-        else {
-          const report = engine.history.report(input.batch_id, session, input.member_key as string | undefined)
-          if (operation === "evaluation-sources") {
-            const after = input.after ?? 0, limit = input.limit ?? 50
-            if (!Number.isSafeInteger(after) || (after as number) < 0 || !Number.isSafeInteger(limit) || (limit as number) < 1 || (limit as number) > 200)
-              throw new Error("Invalid evaluation source page")
-            const refs = report?.source_refs ?? [], end = (after as number) + (limit as number)
-            const missing = new Set(report?.missing_sources.map(ref => canonical(ref)))
-            result = { report_id: report?.id ?? null, availability: report?.availability ?? "not-published", source_ref_count: refs.length,
-              items: refs.slice(after as number, end).map(ref => ({ ...ref, available: !missing.has(canonical(ref)) })), next_after: end < refs.length ? end : null }
-          } else result = { batch: engine.history.get(input.batch_id, session), report: report ? { ...report,
-            source_ref_count: report.source_refs.length, source_refs: report.source_refs.slice(0, 50), next_source_after: report.source_refs.length > 50 ? 50 : null,
-            missing_source_count: report.missing_sources.length, missing_sources: report.missing_sources.slice(0, 50),
-            sources_operation: "evaluation-sources" } : null }
+        if (operation === "evaluation-members") {
+          const page = engine.history.reports(input.batch_id, session, { after: input.after as number | undefined, limit: input.limit as number | undefined ?? 10 })
+          const items: Array<ReturnType<typeof compactMember>> = []
+          for (const member of page.items) {
+            let item = compactMember(member)
+            const candidate = () => ({ items: [...items, item], next_after: member.ordinal })
+            if (!fitsRead(candidate()) && item.report?.body !== null && item.report !== null)
+              item = { ...item, report: pagedReport(item.report) }
+            if (!fitsRead(candidate())) {
+              if (!items.length) throw new ProcessingLimitError("One evaluation member exceeds the public read budget")
+              break
+            }
+            items.push(item)
+          }
+          result = { items, next_after: items.length < page.items.length ? items.at(-1)!.ordinal : page.next_after }
+        } else {
+          if (operation === "evaluation-observations") {
+            if (typeof input.member_key !== "string" || typeof input.report_id !== "string")
+              throw new Error("Evaluation observations require member_key and report_id")
+            const after = pageNumber(input.after, 0, 0, Number.MAX_SAFE_INTEGER, "observation cursor")
+            const limit = pageNumber(input.limit, 20, 1, 200, "observation page")
+            const report = engine.history.report(input.batch_id, session, input.member_key)
+            if (!report || report.id !== input.report_id) throw new Error("Evaluation member report identity unavailable")
+            const observations = observationsOf(report)
+            if (report.availability === "available" && !observations)
+              throw new Error("Evaluation member observations unavailable")
+            const page = { batch_id: report.batch_id, member_key: report.member_key, report_id: report.id,
+              report_sha256: report.sha256, availability: report.availability,
+              observation_count: observations?.length ?? null, items: [] as unknown[],
+              next_after: null as number | null }
+            if (observations) {
+              for (let i = after; i < Math.min(observations.length, after + limit); i++) {
+                const candidate = { ...page, items: [...page.items, observations[i]], next_after: i + 1 < observations.length ? i + 1 : null }
+                if (!fitsRead(candidate)) {
+                  if (!page.items.length) throw new ProcessingLimitError("One evaluation observation exceeds the public read budget")
+                  break
+                }
+                page.items.push(observations[i])
+              }
+              page.next_after = after + page.items.length < observations.length ? after + page.items.length : null
+            }
+            result = page
+          } else {
+            const report = engine.history.report(input.batch_id, session, input.member_key as string | undefined)
+            if (operation === "evaluation-sources") {
+              const after = input.after ?? 0, limit = input.limit ?? 50
+              if (!Number.isSafeInteger(after) || (after as number) < 0 || !Number.isSafeInteger(limit) || (limit as number) < 1 || (limit as number) > 200)
+                throw new Error("Invalid evaluation source page")
+              const refs = report?.source_refs ?? [], end = (after as number) + (limit as number)
+              const missing = new Set(report?.missing_sources.map(ref => canonical(ref)))
+              result = { report_id: report?.id ?? null, availability: report?.availability ?? "not-published", source_ref_count: refs.length,
+                items: refs.slice(after as number, end).map(ref => ({ ...ref, available: !missing.has(canonical(ref)) })), next_after: end < refs.length ? end : null }
+            } else {
+              const batch = engine.history.get(input.batch_id, session)
+              let shown = report ? compactReport(report) : null
+              if (!fitsRead({ batch, report: shown }) && shown && shown.body !== null) shown = pagedReport(shown)
+              result = { batch, report: shown }
+            }
+          }
         }
       }
-      canonical(result, new ProcessingBudget(262144))
+      canonical(result, new ProcessingBudget(PUBLIC_READ_CHARS))
       return result
     },
   }

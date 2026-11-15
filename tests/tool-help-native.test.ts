@@ -33,7 +33,7 @@ test("registered insights help exposes automatic evaluation readers and truthful
   try {
     const tool = f.tools.get("insights")
     const help = tool.description as string
-    const operations = ["evaluation-status", "evaluations", "evaluation", "evaluation-members", "evaluation-sources"]
+    const operations = ["evaluation-status", "evaluations", "evaluation", "evaluation-members", "evaluation-sources", "evaluation-observations"]
     for (const operation of operations) {
       expect(tool.input.properties.operation.enum).toContain(operation)
       expect(TOOL_EXAMPLES.insights.some(input => input.operation === operation)).toBe(true)
@@ -67,6 +67,13 @@ test("registered insights help exposes automatic evaluation readers and truthful
     const sources = (await f.invoke("insights", sample(TOOL_EXAMPLES.insights.find(e => e.operation === "evaluation-sources")))).result
     expect(sources.source_ref_count).toBeGreaterThan(0)
     expect(sources.items.some((r: any) => r.available)).toBe(true)
+    const firstMember = members.items.find((item: any) => item.report?.availability === "available")
+    expect(firstMember).toBeDefined()
+    const observationsExample = JSON.parse(JSON.stringify(TOOL_EXAMPLES.insights.find(e => e.operation === "evaluation-observations"))
+      .replaceAll("BATCH_ID", batch.id).replaceAll("MEMBER_KEY", firstMember.key).replaceAll("REPORT_ID", firstMember.report.id))
+    const observationPage = (await f.invoke("insights", observationsExample)).result
+    expect(observationPage.report_id).toBe(firstMember.report.id)
+    expect(observationPage.items.length).toBeGreaterThan(0)
   } finally { await f.close() }
 })
 

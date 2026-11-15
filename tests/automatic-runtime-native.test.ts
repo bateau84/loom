@@ -52,8 +52,16 @@ test("every public report page rechecks native permission and denies unrelated o
     const id = listing.items[0].id
     expect((await f.invoke("insights", { operation: "evaluations" }, "unrelated")).result.items).toEqual([])
     await expect(f.invoke("insights", { operation: "evaluation", batch_id: id }, "unrelated")).rejects.toThrow("unavailable")
+    const member = (await f.invoke("insights", { operation: "evaluation-members", batch_id: id, limit: 1 })).result.items[0]
+    const observations = { operation: "evaluation-observations", batch_id: id, member_key: member.key,
+      report_id: member.report.id, after: 0, limit: 1 }
+    const firstPage = (await f.invoke("insights", observations)).result
+    expect(firstPage).toMatchObject({ report_id: member.report.id, availability: "available" })
+    expect(firstPage.observation_count).toBeGreaterThan(0)
+    expect(firstPage.items.length).toBe(1)
+    await expect(f.invoke("insights", observations, "unrelated")).rejects.toThrow("unavailable")
     f.permission.error = new Error("native source permission revoked")
-    for (const input of [{ operation: "evaluation-status" }, { operation: "evaluations" },
+    for (const input of [observations, { operation: "evaluation-status" }, { operation: "evaluations" },
       { operation: "evaluation", batch_id: id }, { operation: "evaluation-members", batch_id: id }]) {
       await expect(f.invoke("insights", input)).rejects.toThrow("permission revoked")
     }

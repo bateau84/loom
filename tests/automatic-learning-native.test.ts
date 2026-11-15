@@ -219,6 +219,130 @@ test("large published reports expose every original through bounded public sourc
   } finally { await runtime.dispose(); f.close() }
 }, 30000)
 
+test("legal large frozen review remains fully retrievable through stable public observation pages", async () => {
+  const f = fixture()
+  const { registerAutomaticLearning } = await import("../src/learning-runtime.js")
+  const runtime = await registerAutomaticLearning({ session: { hook: async () => ({ dispose: async () => {} }) } } as any,
+    { learning: f.learning, ledgerPath: "unused", learningPath: "unused", signal: new AbortController().signal,
+      getConfig: async () => { throw new Error("readback must not start discovery") },
+      checkedSession: async () => { throw new Error("readback caller owns permission") }, warn: () => {} })
+  const requestID = "stage3-large-review"
+  const memberIDs = Array.from({ length: 100 }, (_, i) => "member-" + String(i).padStart(3, "0") + "-" + "m".repeat(109))
+  try {
+    const frozen: any = { format: "loom-review-request/v1", request_id: requestID,
+      mandate: { question: "Inspect exactly this frozen authored population", dimensions: ["correctness"],
+        criteria: [{ text: "Retain findings and source identity", source_ref: null }],
+        mode: "independent", inclusions: [], exclusions: [] },
+      intended_recipient: { agent: "reviewer", session_id: null },
+      members: memberIDs.map((member_id, i) => ({
+        member_id, work_ref: null, producing_attempt_refs: [],
+        artifact_refs: [{ locator: "/private/artifact-" + i + "-" + "a".repeat(600),
+          version: { kind: "sha256", value: String(i).padStart(64, "0") }, content_ref: null }],
+        prior_review_request_id: null, membership_source_refs: [], gaps: [{ reason: "source-missing", source_ref: null }],
+      })), rechecks: [] }
+    f.store.reviews.freeze(f.actor, frozen)
+    for (let i = 0; i < 16; i++) {
+      const record = f.store.record(f.actor, undefined, { kind: "qa", verdict: "fail", statement: "Authored finding " + i })
+      f.store.reviews.relate(f.actor, requestID, { relationship: "finding", source_record_id: record.id, member_ids: memberIDs })
+    }
+    let result = await f.learning.automatic.run("owner", async () => {}, new AbortController().signal)
+    while (result.state === "pending") result = await f.learning.automatic.run("owner", async () => {}, new AbortController().signal)
+    expect(result.state).toBe("complete")
+    const stored = f.learning.automatic.history.reports(result.batch_id!, "owner", { limit: 100 }).items
+    const oversized = stored.find(member => member.key === "review:" + requestID + ":0")!
+    expect(oversized).toBeDefined()
+    const original = (oversized.report!.body as { observations: unknown[] }).observations
+    expect(JSON.stringify(oversized.report!.body).length).toBeGreaterThan(262144)
+
+    const single = runtime.read({ operation: "evaluation", batch_id: result.batch_id, member_key: oversized.key }, "owner", true) as any
+    expect(single.report).toMatchObject({ id: oversized.report!.id, availability: "available",
+      body: null, body_paginated: true, observation_count: original.length,
+      observations_operation: "evaluation-observations" })
+
+    const listed = new Set<string>()
+    let memberAfter = 0
+    do {
+      const page = runtime.read({ operation: "evaluation-members", batch_id: result.batch_id, after: memberAfter, limit: 100 }, "owner", true) as any
+      expect(page.items.length).toBeGreaterThan(0)
+      for (const item of page.items) { expect(listed.has(item.key)).toBe(false); listed.add(item.key) }
+      const target = page.items.find((item: any) => item.key === oversized.key)
+      if (target) expect(target.report).toMatchObject({ body: null, body_paginated: true, observation_count: original.length })
+      if (page.next_after === null) break
+      expect(page.next_after).toBeGreaterThan(memberAfter)
+      memberAfter = page.next_after
+    } while (true)
+    expect(listed.size).toBe(stored.length)
+
+    const obtained: unknown[] = []
+    let after = 0
+    do {
+      const page = runtime.read({ operation: "evaluation-observations", batch_id: result.batch_id,
+        member_key: oversized.key, report_id: oversized.report!.id, after, limit: 200 }, "owner", true) as any
+      expect(page).toMatchObject({ report_id: oversized.report!.id, report_sha256: oversized.report!.sha256,
+        availability: "available", observation_count: original.length })
+      expect(page.items.length).toBeGreaterThan(0)
+      obtained.push(...page.items)
+      if (page.next_after === null) break
+      expect(page.next_after).toBeGreaterThan(after)
+      after = page.next_after
+    } while (true)
+    expect(obtained).toEqual(original)
+    expect(new Set((obtained as any[]).map(x => x.source.kind + ":" + x.source.id)).size).toBe(original.length)
+    expect(() => runtime.read({ operation: "evaluation-observations", batch_id: result.batch_id, member_key: oversized.key,
+      report_id: "wrong-id" }, "owner", true)).toThrow("identity unavailable")
+    expect(() => runtime.read({ operation: "evaluation-observations", batch_id: result.batch_id, member_key: oversized.key,
+      report_id: oversized.report!.id }, "foreign", true)).toThrow("unavailable")
+    expect(() => runtime.read({ operation: "evaluation-observations", batch_id: result.batch_id, member_key: oversized.key,
+      report_id: oversized.report!.id, after: -1 }, "owner", true)).toThrow("Invalid evaluation observation cursor")
+
+    f.action.query("DELETE FROM review_relationships WHERE request_id=?").run(requestID)
+    const invalidated = runtime.read({ operation: "evaluation-observations", batch_id: result.batch_id,
+      member_key: oversized.key, report_id: oversized.report!.id }, "owner", true) as any
+    expect(invalidated).toMatchObject({ availability: "source-unavailable", observation_count: null,
+      items: [], next_after: null })
+  } finally { await runtime.dispose(); f.close() }
+}, 60000)
+
+test("combined member readback stays bounded even when each stored member fits alone", async () => {
+  const f = fixture()
+  const { registerAutomaticLearning } = await import("../src/learning-runtime.js")
+  const runtime = await registerAutomaticLearning({ session: { hook: async () => ({ dispose: async () => {} }) } } as any,
+    { learning: f.learning, ledgerPath: "unused", learningPath: "unused", signal: new AbortController().signal,
+      getConfig: async () => { throw new Error("readback must not start discovery") },
+      checkedSession: async () => { throw new Error("readback caller owns permission") }, warn: () => {} })
+  try {
+    for (let i = 0; i < 128; i++)
+      f.store.observe(f.actor, undefined, { phase: "finished", status: "completed", work_scope: { label: "x".repeat(3000) }, call_id: "large-" + i })
+    let result = await f.learning.automatic.run("owner", async () => {}, new AbortController().signal)
+    while (result.state === "pending") result = await f.learning.automatic.run("owner", async () => {}, new AbortController().signal)
+    const stored = f.learning.automatic.history.reports(result.batch_id!, "owner", { limit: 100 }).items
+    expect(stored.length).toBeGreaterThan(2)
+    for (const item of stored) expect(JSON.stringify(item.report!.body).length).toBeLessThan(262144)
+    const seen = new Set<string>()
+    let after = 0, paged = 0
+    do {
+      const page = runtime.read({ operation: "evaluation-members", batch_id: result.batch_id, after, limit: 100 }, "owner", true) as any
+      expect(JSON.stringify(page).length).toBeLessThanOrEqual(262144)
+      expect(page.items.length).toBeGreaterThan(0)
+      for (const item of page.items) {
+        expect(seen.has(item.key)).toBe(false)
+        seen.add(item.key)
+        if (item.report.body_paginated) {
+          paged++
+          const observationPage = runtime.read({ operation: "evaluation-observations", batch_id: result.batch_id,
+            member_key: item.key, report_id: item.report.id }, "owner", true) as any
+          expect(observationPage.items.length).toBeGreaterThan(0)
+        }
+      }
+      if (page.next_after === null) break
+      expect(page.next_after).toBeGreaterThan(after)
+      after = page.next_after
+    } while (true)
+    expect(seen.size).toBe(stored.length)
+    expect(paged).toBeGreaterThan(0)
+  } finally { await runtime.dispose(); f.close() }
+}, 30000)
+
 test("native agent context observations remain practices, not causal success credit", async () => {
   const f = fixture()
   try {

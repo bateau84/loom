@@ -126,7 +126,7 @@ const specs = [
       session_id: str, export_path: { type: "string", minLength: 1, maxLength: 4096 },
       include_text: { type: "boolean" }, limit: { type: "integer", minimum: 1, maximum: 50 },
       cursor: { type: "string", minLength: 1, maxLength: 4096 } }, ["operation"]) },
-  { name: "insights", description: TOOL_HELP.insights, input: obj({ operation: choice("action", "window", "findings", ...EVALUATION_READS), batch_id: str, member_key: str, after: num, finding_cursor: { type: "string", maxLength: 512 }, action_id: str, before: { type: "integer", minimum: 1 }, limit: { type: "integer", minimum: 1, maximum: 200 }, since_at: str, until_at: str }, ["operation"]) },
+  { name: "insights", description: TOOL_HELP.insights, input: obj({ operation: choice("action", "window", "findings", ...EVALUATION_READS), batch_id: str, member_key: str, report_id: str, after: num, finding_cursor: { type: "string", maxLength: 512 }, action_id: str, before: { type: "integer", minimum: 1 }, limit: { type: "integer", minimum: 1, maximum: 200 }, since_at: str, until_at: str }, ["operation"]) },
   { name: "objective", description: TOOL_HELP.objective, input: obj({
       operation: choice("create", "link", "read", "list", "find"),
       objective_id: str, label: { type: "string", maxLength: 200 }, unit_key: str,
@@ -468,7 +468,7 @@ export default Plugin.define({
                   await checkedSession(actor.session_id)
                   if (!learningRuntime) throw new Error("LOOM_LEARNING_UNAVAILABLE: automatic report runtime is unavailable")
                   result = learningRuntime.read(input, actor.session_id, !snapshot.errors.length && snapshot.config.ledger.capture === "automatic")
-                } else if (input.batch_id !== undefined || input.member_key !== undefined || input.after !== undefined) {
+                } else if (input.batch_id !== undefined || input.member_key !== undefined || input.report_id !== undefined || input.after !== undefined) {
                   throw new Error("Evaluation fields require an evaluation read operation")
                 } else if (input.operation === "action") {
                   const actionID = input.action_id === undefined ? store.selected(actor.session_id)?.action_id : String(input.action_id)

@@ -133,7 +133,7 @@
     "historical_record": "The previous local-candidate claims remain in Git history at b0f73cf345d2eb8d54e58c093831b6792ee2216d. They are not current-head CI or installed-host acceptance evidence."
   },
   "not_qualified": {
-    "installed_stage3_host": "10 bounded installed mechanics PASS at exact PR source head, including restore/readback and >500 population. Full E11 remains unproven.",
+    "installed_stage3_host": "11 bounded installed mechanics PASS at exact PR source head, including restore/readback and >500 population. Full E11 remains unproven.",
     "Q4": "UNQUALIFIED exact native admission/execution/source-consumption provenance.",
     "Q5": "Native protected incoming-transfer counterexample remains; Loom protected delivery is withheld.",
     "E11": "UNPROVEN; deterministic descriptions are not complete whole-objective evaluation.",
