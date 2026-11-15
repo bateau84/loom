@@ -18,14 +18,18 @@ import json
 import os
 import secrets
 import signal
+import threading
 from pathlib import Path
+from urllib.request import Request, ProxyHandler, build_opener
+import base64
 import shutil
 import sqlite3
 import subprocess
 import tempfile
 import time
 
-from installed_host_smoke import PrivateHost, installed_plugin_inventory, isolated_environment, require
+from installed_host_smoke import (PrivateHost, installed_plugin_inventory, isolated_environment,
+    require, ready_url, endpoint_path, roster_response, NoRedirect)
 from installed_instruction_variants import verify_host_version
 from installed_questions import Scenario, audit_session, events, final_events, idle, request
 
@@ -139,12 +143,63 @@ def force_crash_mid_checkpoint(
     stderr = (output / "partial-crash.server.stderr.txt").open("w")
     process = None
     before = None
+    observed_progress = None
+    activation = {"started": False, "active": False, "errors": []}
+    activation_thread = None
     try:
+        password = secrets.token_urlsafe(24)
         process = subprocess.Popen(
             [str(executable), "serve", "--stdio", "--hostname", "127.0.0.1", "--port", "0"],
-            cwd=project, env={**env, "OPENCODE_PASSWORD": secrets.token_urlsafe(24)},
+            cwd=project, env={**env, "OPENCODE_PASSWORD": password},
             stdin=subprocess.PIPE, stdout=stdout, stderr=stderr, start_new_session=True,
         )
+        # The native host initializes plugins lazily when a location-scoped
+        # roster is requested. Raw CLI startup alone leaves no learning worker.
+        # Activate through the exact public host endpoint concurrently with
+        # committed-checkpoint polling, so no partial window can be missed while
+        # waiting for plugin registration or host readiness.
+        url = None
+        ready_deadline = time.monotonic() + 30
+        stdout_path = output / "partial-crash.server.stdout.txt"
+        while time.monotonic() < ready_deadline:
+            require(process.poll() is None, "Crash host exited before native readiness")
+            with stdout_path.open() as reader:
+                first_line = reader.readline(65536)
+            if first_line.endswith("\n"):
+                url = ready_url(first_line)
+                break
+            time.sleep(.01)
+        require(url is not None, "Crash host never advertised the native HTTP endpoint")
+        opener = build_opener(ProxyHandler({}), NoRedirect())
+        token = base64.b64encode(("opencode:" + password).encode()).decode()
+        def activate_native_plugin():
+            activation["started"] = True
+            for attempt in range(120):
+                if process.poll() is not None:
+                    break
+                try:
+                    req = Request(url + endpoint_path("/api/plugin", project),
+                                  headers={"Authorization": "Basic " + token})
+                    with opener.open(req, timeout=10) as response:
+                        raw = response.read(2 * 1024 * 1024 + 1)
+                    require(len(raw) <= 2 * 1024 * 1024,
+                            "Native roster exceeded expected response budget")
+                    plugins = roster_response(raw.decode(), project)
+                    if all(any(item.get("id") == identity
+                               and item.get("state", {}).get("status") == "active"
+                               for item in plugins) for identity in ("loom", "loom.question.fixture")):
+                        activation["active"] = True
+                        return
+                    if any(item.get("state", {}).get("status") == "failed" for item in plugins):
+                        activation["errors"].append("Installed plugin reported startup failure")
+                        return
+                except Exception as error:
+                    if process.poll() is not None:
+                        return
+                    activation["errors"].append(type(error).__name__)
+                time.sleep(.02)
+        activation_thread = threading.Thread(target=activate_native_plugin, daemon=True)
+        activation_thread.start()
         end = time.monotonic() + timeout
         while time.monotonic() < end:
             require(process.poll() is None,
@@ -157,6 +212,9 @@ def force_crash_mid_checkpoint(
                 if "locked" not in str(error).lower() and "busy" not in str(error).lower():
                     raise
                 candidate = None
+            if candidate is not None:
+                observed_progress = {key: candidate[key] for key in
+                                     ("id", "state", "report_id", "member_count", "processed_count")}
             if (candidate is not None and candidate["state"] in ("processing", "pending")
                     and candidate["report_id"] is None
                     and 0 < candidate["processed_count"] < candidate["member_count"]):
@@ -176,7 +234,8 @@ def force_crash_mid_checkpoint(
                         "return_code": code, "observed_before_signal": before,
                         "durable_after_exit": after}
             time.sleep(.002)
-        raise RuntimeError("Could not catch a committed partial batch before final publication")
+        raise RuntimeError("Could not catch a committed partial batch before final publication: "
+                           + json.dumps({"last_progress": observed_progress, "activation": activation}))
     finally:
         if process is not None:
             if process.poll() is None:
@@ -184,6 +243,8 @@ def force_crash_mid_checkpoint(
             process.wait(timeout=10)
             if process.stdin is not None and not process.stdin.closed:
                 process.stdin.close()
+        if activation_thread is not None:
+            activation_thread.join(timeout=1)
         stdout.close()
         stderr.close()
 
