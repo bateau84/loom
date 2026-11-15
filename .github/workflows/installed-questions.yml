@@ -30,6 +30,29 @@ jobs:
           npm install --prefix "$RUNNER_TEMP/loom-question-install" --no-audit --no-fund "$RUNNER_TEMP/loom-question-artifact/$ARTIFACT"
       - name: Install exact isolated unmodified OpenCode 2.2.6
         run: npm install --prefix "$RUNNER_TEMP/loom-question-host" --no-audit --no-fund @opencode/cli@2.2.6
+      - name: Native review boundaries and explicit unsupported guarantees (scripted provider only)
+        run: >-
+          python3 tests/installed_native_review.py
+          --opencode "$RUNNER_TEMP/loom-question-host/node_modules/.bin/opencode"
+          --plugin "$RUNNER_TEMP/loom-question-install/node_modules/loom-plugin"
+          --artifact "$(find "$RUNNER_TEMP/loom-question-artifact" -maxdepth 1 -name 'loom-plugin-*.tgz' -print -quit)"
+          --repository "$GITHUB_WORKSPACE"
+          --expect-plugin-version "$(node -p 'require("./package.json").version')"
+          --report-directory "$RUNNER_TEMP/loom-native-review-report"
+      - name: Final audit deletion and valid-prefix loss must fail native qualification
+        run: |
+          set -eu
+          for fault in missing prefix; do
+            python3 tests/installed_native_review_audit_loss_control.py \
+              --fault "$fault" \
+              --expect-head "$GITHUB_SHA" \
+              --opencode "$RUNNER_TEMP/loom-question-host/node_modules/.bin/opencode" \
+              --plugin "$RUNNER_TEMP/loom-question-install/node_modules/loom-plugin" \
+              --artifact "$(find "$RUNNER_TEMP/loom-question-artifact" -maxdepth 1 -name 'loom-plugin-*.tgz' -print -quit)" \
+              --repository "$GITHUB_WORKSPACE" \
+              --expect-plugin-version "$(node -p 'require("./package.json").version')" \
+              --report-directory "$RUNNER_TEMP/loom-native-review-audit-loss/$fault"
+          done
       - name: Scoped Evaluator observer and exact public recovery receipts (scripted provider only)
         run: >-
           python3 tests/installed_evaluator_observer.py
@@ -39,6 +62,15 @@ jobs:
           --repository "$GITHUB_WORKSPACE"
           --expect-plugin-version "$(node -p 'require("./package.json").version')"
           --report-directory "$RUNNER_TEMP/loom-evaluator-observer-report"
+      - name: Stage 2 private review persistence and authorized public recovery (scripted provider only)
+        run: >-
+          python3 tests/installed_review_persistence.py
+          --opencode "$RUNNER_TEMP/loom-question-host/node_modules/.bin/opencode"
+          --plugin "$RUNNER_TEMP/loom-question-install/node_modules/loom-plugin"
+          --artifact "$(find "$RUNNER_TEMP/loom-question-artifact" -maxdepth 1 -name 'loom-plugin-*.tgz' -print -quit)"
+          --repository "$GITHUB_WORKSPACE"
+          --expect-plugin-version "$(node -p 'require("./package.json").version')"
+          --report-directory "$RUNNER_TEMP/loom-review-persistence-report"
       # T1 prepares the real candidate path. T2 owns executing and reviewing this
       # packed-candidate E2E; this workflow definition alone proves no scenario.
       - name: Qualify original native objective sources and corrective runtime attempts
@@ -120,6 +152,20 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
+          name: installed-native-review-${{ github.sha }}
+          path: ${{ runner.temp }}/loom-native-review-report/
+          if-no-files-found: warn
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installed-native-review-audit-loss-${{ github.sha }}
+          path: ${{ runner.temp }}/loom-native-review-audit-loss/
+          if-no-files-found: warn
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
           name: installed-question-qualification-${{ github.sha }}
           path: ${{ runner.temp }}/loom-question-report/
           if-no-files-found: warn
@@ -136,5 +182,12 @@ jobs:
         with:
           name: installed-evaluator-observer-${{ github.sha }}
           path: ${{ runner.temp }}/loom-evaluator-observer-report/
+          if-no-files-found: warn
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installed-review-persistence-${{ github.sha }}
+          path: ${{ runner.temp }}/loom-review-persistence-report/
           if-no-files-found: warn
           retention-days: 7

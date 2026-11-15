@@ -166,7 +166,7 @@ class BootHarnessTest(unittest.TestCase):
                 for table in sorted(smoke.EXPECTED_TABLES):
                     db.execute(f"CREATE TABLE {table}(data TEXT)")
                 db.execute("INSERT INTO ledger(data) VALUES ('preserved')")
-                db.execute("PRAGMA user_version=1")
+                db.execute("PRAGMA user_version=2")
             self.assertEqual(smoke.ledger_inventory(state)[0]["counts"]["ledger"], 1)
             with closing(sqlite3.connect(path)) as db, db:
                 self.assertEqual(db.execute("SELECT data FROM ledger").fetchone()[0], "preserved")

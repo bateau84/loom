@@ -374,5 +374,8 @@ Tests isolate config and state in temporary directories. No paid inference is
 required by CI. The native contract test uses a fake host API with real Bun
 primitives; it does **not** replace a live OpenCode installation smoke test.
 
+The [Stage 2 review foundation](docs/learning-review-stage2.md) records persistent
+review mandates, historical reconstruction, retry authority and qualified host limits.
+
 See [Design and implementation boundaries](docs/design.md) and [Coordination](docs/coordination.md);
 [the alpha operating policy](docs/operating-policy.md) defines the narrower release scope.

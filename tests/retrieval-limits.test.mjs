@@ -244,6 +244,6 @@ test('existing databases gain retrieval indexes without changing recorded bytes'
   const indexes = db.prepare("SELECT name FROM sqlite_schema WHERE type='index'").all().map(r => r.name)
   for (const name of ['ledger_action_node', 'ledger_session_node', 'ledger_observation_action', 'ledger_observation_scope']) assert.ok(indexes.includes(name))
   assert.equal(db.prepare('SELECT data FROM ledger').get().data, bytes)
-  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 1)
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, 2)
   assert.equal(store.records({ action_id: action.id }).items[0].id, 'historical')
 })

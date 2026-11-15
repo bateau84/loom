@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs"
 import { Store } from "../src/store.js"
 import type { HistoryQuery, HistoryRecord } from "../src/history.js"
 import { hydrate, snapshot, populate, type Snapshot } from "./fixtures/baseline-c9ffcfa/oracle.js"
+import { assertReviewMigration } from "./helpers/review-migration.js"
 
 function rows(db: Database): HistoryRecord[] {
   return (db.query("SELECT seq,data FROM ledger ORDER BY seq").all() as { seq: number; data: string }[])
@@ -42,6 +43,7 @@ test("frozen populated historical history is complete, attributed and unchanged 
     const all = rows(db), sessions = [...new Set(all.map(r => r.session_id))]
     const actions = [...new Set(all.flatMap(r => r.action_id === undefined ? [] : [r.action_id]))]
     expect(all).toHaveLength(44)
+    let storeID: string | undefined
     for (let restart = 0; restart < 2; restart++) {
       const store = new Store(db)
       for (const session_id of [...sessions, "researcher", "unrelated-same-agent-session"]) {
@@ -60,7 +62,8 @@ test("frozen populated historical history is complete, attributed and unchanged 
       // their original questions. Primary only authored the no-Plan question.
       expect(primary.filter(r => r.kind === "question")).toHaveLength(1)
       expect(primary.some(r => r.kind === "answer")).toBe(false)
-      expect(snapshot(db)).toEqual(frozen)
+      storeID = assertReviewMigration(db, frozen, storeID)
+      expect(store.reviews.storeID).toBe(storeID)
     }
   } finally { db.close() }
 })

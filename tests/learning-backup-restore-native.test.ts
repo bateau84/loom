@@ -270,6 +270,16 @@ test("manifest rejects missing learning, mixed files, wrong identity and revisio
     rejected(python(restoreArgs(project, backup, restored)), "Missing or non-regular backup manifest")
     writeFileSync(manifestPath, manifest)
     unlinkSync(mixed)
+    // Closing SQLite can remove WAL/SHM files. Missing manifest membership
+    // without a remaining sidecar must still be rejected, but is not an orphan.
+    for (const suffix of ["-wal", "-shm", "-journal"]) {
+      const sidecar = join(backup, "learning.sqlite" + suffix)
+      if (existsSync(sidecar)) unlinkSync(sidecar)
+    }
+    rejected(python(restoreArgs(project, backup, restored)), "Backup file membership, size or SHA-256 mismatch")
+    expect(existsSync(restored)).toBe(false)
+    // Create an explicit orphan instead of depending on SQLite shutdown timing.
+    writeFileSync(join(backup, "learning.sqlite-wal"), "orphan WAL fixture")
     rejected(python(restoreArgs(project, backup, restored)), "Orphan sidecar without learning.sqlite")
     expect(existsSync(restored)).toBe(false)
     expect(rawHashes(source(project))).toEqual(Object.fromEntries(

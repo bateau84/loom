@@ -1,0 +1,726 @@
+{
+  "format": "loom-stage3-independent-qualification/v1",
+  "date": "2026-11-15",
+  "pull_request": "https://github.com/bateau84/loom/pull/233",
+  "reviewed_source_sha": "4cf442510c29aa1387b1ce7e2de6716d926f5452",
+  "verdict": {
+    "bounded_stage3": "GO",
+    "merge_recommendation": "GO subject to current required checks and explicit user approval",
+    "Q4": "UNQUALIFIED",
+    "Q5": "UNQUALIFIED",
+    "E11": "NO-GO / UNPROVEN"
+  },
+  "independence": {
+    "kind": "Follow-up independent installed execution and evidence assessment; prior review context was available",
+    "fresh_source_checkout": true,
+    "fresh_npm_host_and_plugin_install": true,
+    "fresh_project_home_config_cache_state_databases_sessions": true,
+    "prior_implementation_owner_databases_or_run_receipts_reused_as_execution": false,
+    "execution_location": "Separate qualification processes and isolated state on the ChatGPT Linux workspace; not the implementation-owner GitHub Actions run or a separate physical hardware claim",
+    "product_owned_path": "native Session and Code Mode -> installed Loom public tools -> production source notification/startup scheduler -> production source readers/checkpoints/publisher -> real SQLite -> native authorized public readback",
+    "external_substitution": "Scripted question-fixture model provider only; synthetic work content, no genuine Evaluator reasoning",
+    "source_faults": "Only stopped isolated synthetic original-source databases were altered or deleted; no evaluated state or report was injected"
+  },
+  "environment": {
+    "kernel": "6.18.57",
+    "architecture": "x86_64",
+    "opencode": "opencode v2.2.6",
+    "plugin_sdk": "2.2.6",
+    "plugin": "2.0.0-alpha.1",
+    "bun_verifier": "1.4.2 (744846f84)",
+    "node": "v24.22.1",
+    "python": "3.12.14",
+    "sqlite_python_observer": "3.53.1",
+    "sqlite_bun_verifier": "3.53.2",
+    "sqlite_version_note": "Observer/verifier versions were measured separately; no claim that these introspect the embedded OpenCode SQLite build",
+    "filewatcher_disabled": false
+  },
+  "artifact": {
+    "name": "loom-plugin",
+    "version": "2.0.0-alpha.1",
+    "sdk_version": "2.2.6",
+    "artifact_sha256": "d40bc20c3068e46892eb8c4695bc7c0a6beab23be7e49ed719dfc129ada78d17",
+    "artifact_filename": "loom-plugin-2.0.0-alpha.1.tgz",
+    "artifact_path": "/workspace/scratch/a9b19f94dc90/qualification/package/loom-plugin-2.0.0-alpha.1.tgz",
+    "installed_path": "/workspace/scratch/a9b19f94dc90/qualification/install/node_modules/loom-plugin"
+  },
+  "host_executable_sha256": "50503d24577fa4117a7c95ee85b2cd679606a87eacf20ca54ed5db5c9e1cf895",
+  "production_runtime_files": {
+    "server.ts": "f295040f1a22281835d43d04006e1c1cefbadfb82216b5bc7a4d4e6c610c5434",
+    "src/agents.ts": "002adffbdf081ff5934686a53ce2ad829602d57b5213c47bf53b4f758a9b9842",
+    "src/answer-resume.ts": "a353fcc77a5e10e83af099986528565b3eafd9bf8ba45164beaa6996a21dcdc8",
+    "src/automatic-learning.ts": "cb46ada9bf57f9537773d6094c710caa207e3872a21f0008fe5f4051c291d9c5",
+    "src/collaboration.ts": "202b5a03e091f60183749e2dcaab7d7d1811b680e2ed6eff97b9bd1182a402f6",
+    "src/config-admission.ts": "7d3754b3dcae9bc08d90d22acf71cdd2bbded564b889c8e80976358fb314b9f1",
+    "src/config-parser.ts": "9b1502e18720eded50244470304022b1a986edf08bcc0ed4a8cc9f04ef5f1d7f",
+    "src/config.ts": "4b5a723537eac7ac755e45c6261c7a0db83dfc626049b2b1ff77f487f8e50e16",
+    "src/context.ts": "31d159dccec85b0e9613aad4f0d45a842467b40ace3cd9387a1f6b54e306f515",
+    "src/evaluation-store.ts": "890b94c12ce1fd123ce335754bed9c8d6ab52649a23d684359ea53f2c0f779cf",
+    "src/history-renderer.ts": "f32bb730ad37b64a7d4763380196a01222779a6f9407d0ffb943ed1b54e333d9",
+    "src/history.ts": "0b99b3a28df06d5ec215a2392428c569827c04488f62290cefa7dedd505e1404",
+    "src/learning-findings.ts": "6f19cfb6244e9272f320e9c6fce093b403a1f8670b6c1a386cc295524571fee7",
+    "src/learning-runtime.ts": "c25794c98735e7f9a7dc2c5f49cbfd934d60479032f75b082df301eaad353533",
+    "src/learning-sources.ts": "3ec29dfad9035fa077df26d937a6bcf205918cc0e1a0d71755c0386b6558b9d4",
+    "src/learning.ts": "ecbae2a614ba8e7d4eab5c526e35599659a3c5ad2cf9fb268d7cc14b27a20ef4",
+    "src/model-routing-adapter.ts": "293381d5ac14aca4e6ec922185e0c7b89e85ba4eccf58edaf5866c9a8636a37e",
+    "src/model-routing-runtime.ts": "56b119d6383d2dc9cbecc02bc624ecf9dbb5cbc32eaa2e4bcd163ca07572a417",
+    "src/model-routing-shared-quota.ts": "4afe41f705d8c3b776ebe9af3607f98e283044efd1b10abaa0376c347cb822b3",
+    "src/model-routing.ts": "3faa266971835600e42f923684b144c181ebd01b9e70e40a71d323561471ecf8",
+    "src/model.ts": "73da3eafb970fd8588ed1ce6a5c6b1a0147834250b2db72105b22eb5908edc9f",
+    "src/objective-trends.ts": "9eeb7a88c163f532e35e8efbc3ddb9db0210531cd35c966e19ce729993e0c7d4",
+    "src/objectives.ts": "33c5d53ea90c1435a3d30ec2a4e3e7c40ff6d73df146231b559c1786003b5efa",
+    "src/plugin.ts": "bc77dce47ad194db9912757c853393e3580b96a37417ed9bd3729f3ca5c81a30",
+    "src/question-routing.ts": "5b63cf58492cc292fcd106e8646232daab1fa99bdeb549328378fdc34417eefd",
+    "src/quota-state.ts": "c5fc68d871d66ce46750262ddf1e383f770d49cc73fc8cf22aedde2d45bf3782",
+    "src/response-format.ts": "6d9c4ec6cc00e58890f4d141692d9be856c677c266e320ba5058d3f2ada72815",
+    "src/review-companions.ts": "6a06147d970a26bd09adcb9b8e0ab2777fb68132520f79eb529c94cfa35ff6bf",
+    "src/review-issues.ts": "f4cb99197d45cad0db7c2b018c4db60df2aad481a3ee77caf235d96fe8ba3043",
+    "src/review-requests.ts": "ddebd649942903aa80db90a26ff7e6414cf9c0bb37cd634025ef02fcbe29c509",
+    "src/session-trace.ts": "8a10fe65534532ee54c858988d2c78c56f5ac34a825e4a7ea4b960f1d6f17b6b",
+    "src/skill.ts": "b6009d65da0bc936f24b9221a099ccf911d2eb4e68e72a16e480333c232ae9bf",
+    "src/skills/loom/SKILL.md": "ea91c74207dc8ec0a39fabce7a9a6de9ace88fe0b58100ad4d6e599ecf83edd9",
+    "src/sqlite-connection.ts": "1ba373fd7a434a989d87f4238bb114aec0baea923e2ce560ed176fc83c07096c",
+    "src/store.ts": "b9a7b712b1a7a1dbef544b5e493ed2518eac9256c44f1ac97cbcaeb523dae295",
+    "src/tool-help.ts": "5564b8468f19883608376cca780dd56ce5844d69139855521a15fe35a6f5fa32",
+    "src/work-context.ts": "3cb3d6435f36e9e955ee91135033ac4b910172ac7ebd902c50562500eb075ce4"
+  },
+  "commands": {
+    "install_host": "npm install --prefix /workspace/scratch/a9b19f94dc90/qualification/host --no-audit --no-fund @opencode/cli@2.2.6 bun@1.4.2",
+    "source_dependencies": "PATH=/workspace/scratch/a9b19f94dc90/qualification/host/node_modules/.bin:$PATH bun install --frozen-lockfile",
+    "pack": "npm pack --json --pack-destination /workspace/scratch/a9b19f94dc90/qualification/package > /workspace/scratch/a9b19f94dc90/qualification/package/pack.json",
+    "install_plugin": "npm install --prefix /workspace/scratch/a9b19f94dc90/qualification/install --no-audit --no-fund /workspace/scratch/a9b19f94dc90/qualification/package/loom-plugin-2.0.0-alpha.1.tgz",
+    "stage3": "python3 tests/installed_learning_stage3.py --opencode /workspace/scratch/a9b19f94dc90/qualification/host/node_modules/.bin/opencode --plugin /workspace/scratch/a9b19f94dc90/qualification/install/node_modules/loom-plugin --artifact /workspace/scratch/a9b19f94dc90/qualification/package/loom-plugin-2.0.0-alpha.1.tgz --repository /workspace/scratch/a9b19f94dc90/loom --expect-head 4cf442510c29aa1387b1ce7e2de6716d926f5452 --expect-plugin-version 2.0.0-alpha.1 --report-directory /workspace/scratch/a9b19f94dc90/qualification/stage3",
+    "readers": "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python3 /workspace/scratch/a9b19f94dc90/qualification/supplement/installed_learning_stage3_readers.py --repository /workspace/scratch/a9b19f94dc90/loom --opencode /workspace/scratch/a9b19f94dc90/qualification/host/node_modules/.bin/opencode --plugin /workspace/scratch/a9b19f94dc90/qualification/install/node_modules/loom-plugin --artifact /workspace/scratch/a9b19f94dc90/qualification/package/loom-plugin-2.0.0-alpha.1.tgz --expect-head 4cf442510c29aa1387b1ce7e2de6716d926f5452 --report-directory /workspace/scratch/a9b19f94dc90/qualification/readers-final",
+    "boot": "python3 tests/installed_host_smoke.py --opencode /workspace/scratch/a9b19f94dc90/qualification/host/node_modules/.bin/opencode --expect-version 2.2.6 --plugin /workspace/scratch/a9b19f94dc90/qualification/install/node_modules/loom-plugin --artifact /workspace/scratch/a9b19f94dc90/qualification/package/loom-plugin-2.0.0-alpha.1.tgz --expect-plugin-version 2.0.0-alpha.1 --expect-sdk-version 2.2.6 --report-directory /workspace/scratch/a9b19f94dc90/qualification/boot",
+    "routing": "python3 tests/installed_model_routing.py --opencode /workspace/scratch/a9b19f94dc90/qualification/host/node_modules/.bin/opencode --plugin /workspace/scratch/a9b19f94dc90/qualification/install/node_modules/loom-plugin --artifact /workspace/scratch/a9b19f94dc90/qualification/package/loom-plugin-2.0.0-alpha.1.tgz --expect-plugin-version 2.0.0-alpha.1 --report-directory /workspace/scratch/a9b19f94dc90/qualification/routing --repository /workspace/scratch/a9b19f94dc90/loom",
+    "native": "PATH=/workspace/scratch/a9b19f94dc90/qualification/host/node_modules/.bin:$PATH bun test tests/evaluation-store-native.test.ts tests/automatic-learning-native.test.ts tests/automatic-runtime-native.test.ts tests/server-startup-native.test.ts tests/routing-startup-native.test.ts tests/tool-help-native.test.ts"
+  },
+  "installed_stage3": {
+    "format": "loom-installed-stage3-mechanics/v1",
+    "status": "PASS",
+    "e11": "UNPROVEN",
+    "genuine_evaluator": "UNPROVEN",
+    "q4": "UNQUALIFIED",
+    "q5": "PROTECTED_TRANSFER_WITHHELD",
+    "model_spending": "SCRIPTED_EXTERNAL_PROVIDER_ONLY",
+    "checks": [
+      {
+        "name": "S3-installed-native-source-to-automatic-report",
+        "status": "PASS",
+        "source_record_id": "3856889e-7714-42c3-80cd-1a7888738955",
+        "batch": "91de2282-1885-42b5-8582-74ad5a44b52a",
+        "entry": "real native loom_record; background scheduler; SQLite publish"
+      },
+      {
+        "name": "S3-owner-only-public-source-linked-readback",
+        "status": "PASS",
+        "batch": "91de2282-1885-42b5-8582-74ad5a44b52a",
+        "report_sha256": "b574cd955a10d0949a53d699774ff4072f8a8de9e175ca0ea31d620db62a10c4",
+        "source_ref_count": 4,
+        "evaluator": "blocked"
+      },
+      {
+        "name": "S3-denied-source-caught-up-after-restart",
+        "status": "PASS",
+        "old_opportunity": "blocked",
+        "recovered_batch": "5c0e4ad9-5010-4bc3-927f-5a3224d4eaef",
+        "original_id": "06a15a5a-6134-446a-9822-2defd4091a34",
+        "processes": [
+          19,
+          102
+        ]
+      },
+      {
+        "name": "S3-later-source-creates-a-new-revision",
+        "status": "PASS",
+        "prior_batch": "91de2282-1885-42b5-8582-74ad5a44b52a",
+        "later_batch": "a2f7d73b-9a9b-4351-ab52-b4513b618eb8",
+        "later_record": "bef91136-14a7-45b8-86f3-f3250b36b3d2"
+      },
+      {
+        "name": "S3-authored-R1-correction-and-partial-R2-scope",
+        "status": "PASS",
+        "request_ids": [
+          "stage3-r1-515cd3183b40b301",
+          "stage3-r2-b8978d8d02a9eb62"
+        ],
+        "report": "4459c641-4347-4e5d-964c-7cb58e7219d4",
+        "historical_work_preserved": true,
+        "native_review_dispatch": "withheld",
+        "report_review_requests": 2
+      },
+      {
+        "name": "S3-foreign-and-revoked-readers-denied",
+        "status": "PASS",
+        "foreign_denied": true,
+        "same_session_revoked": true
+      },
+      {
+        "name": "S3-capture-off-prevents-automatic-analysis",
+        "status": "PASS",
+        "source_record_id": "fa72d89b-34a3-4369-ba54-591fec0cb1b8",
+        "published_batch": false
+      },
+      {
+        "name": "S3-no-automatic-model-or-mutation",
+        "status": "PASS",
+        "external_provider": "question-fixture",
+        "new_subagent_calls": 0,
+        "instruction_changes": 0
+      },
+      {
+        "name": "S3-stopped-backup-restore-fresh-host-readback",
+        "status": "PASS",
+        "old_session": "ses_e20743ab9ffeOShiNezLuVhdTa",
+        "restored_batch": "4459c641-4347-4e5d-964c-7cb58e7219d4",
+        "restored_report_sha256": "0bb3645da168ffef536b07cf4d6380478d42dbc0a1a2d3f39982ee06b144a597",
+        "backup_set_id": "395fa05b-987a-4893-bc74-793c27707277",
+        "membership": 2,
+        "original_unchanged": true,
+        "restored_bytes_identical": true,
+        "native_revocation_preserved": true,
+        "foreign_denied": true
+      },
+      {
+        "name": "S3-501-objective-population-through-native-scheduler-and-pages",
+        "status": "PASS",
+        "owner_session": "ses_e20741508ffeUhrEh0ug7M04aM",
+        "original_record": "a42b857e-940d-40ec-bb17-fe73ada51287",
+        "authored_objectives": 501,
+        "actual_members": 502,
+        "unique_source_refs": 1003,
+        "independent_requests": "unknown",
+        "batch": "b1ddec65-c6ba-412e-a8e8-6f41a3971452",
+        "trigger": "installed cold-start processing, interrupted and resumed"
+      },
+      {
+        "name": "S3-forced-crash-partial-checkpoint-and-late-source-recovery",
+        "status": "PASS",
+        "frozen_batch": "b1ddec65-c6ba-412e-a8e8-6f41a3971452",
+        "recovered_batch": "b1ddec65-c6ba-412e-a8e8-6f41a3971452",
+        "persisted_members": 502,
+        "checkpointed_at_crash": 1,
+        "original_checkpoints_preserved": 1,
+        "total_after_recovery": 502,
+        "logical_batches_for_frozen_identity": 1,
+        "overall_publications_for_frozen_identity": 1,
+        "late_source": "4ff481e1-7852-4900-ac73-e82265be902a",
+        "later_revision": "715d8dc2-22e2-43f3-bead-221393f5cd1b",
+        "original_source_count": 1003,
+        "later_source_count": 1151,
+        "intervening_report_revisions": 15,
+        "revision_ancestry_reaches_recovered_batch": true,
+        "source_and_report_bodies_checked_through_native_tools": true,
+        "host_termination": "SIGKILL",
+        "host_return_code": -9,
+        "late_evidence_admitted_while_original_pending": true,
+        "report_is_genuine_evaluator": false
+      }
+    ],
+    "limitations": [
+      "Synthetic source content, not a real 100-task multi-Session engineering trajectory.",
+      "Original native review execution/exact input/source consumption is unqualified.",
+      "No protected review transfer, original human lineage or final-model exposure receipt.",
+      "Scripted external provider; no genuine Evaluator reasoning or live-provider billing proof.",
+      "The SQLite read-only observer only waits for state; public Loom tools prove report readback.",
+      "Graceful restart, stopped-state restore and forced SIGKILL of a partially checkpointed installed host; OS power-loss/disk durability and model effects unproven."
+    ],
+    "source_head": "4cf442510c29aa1387b1ce7e2de6716d926f5452",
+    "source_dirty": false,
+    "candidate": {
+      "name": "loom-plugin",
+      "version": "2.0.0-alpha.1",
+      "sdk_version": "2.2.6",
+      "artifact_sha256": "d40bc20c3068e46892eb8c4695bc7c0a6beab23be7e49ed719dfc129ada78d17",
+      "artifact_filename": "loom-plugin-2.0.0-alpha.1.tgz",
+      "artifact_path": "/workspace/scratch/a9b19f94dc90/qualification/package/loom-plugin-2.0.0-alpha.1.tgz",
+      "installed_path": "/workspace/scratch/a9b19f94dc90/qualification/install/node_modules/loom-plugin"
+    },
+    "runtime_files_checked": 37,
+    "input_sha256": {
+      "tests/installed_learning_stage3.py": "a1196b9a981d4ea0055baa90b756e47478c929242d656c0c3982836c4b46a0a8",
+      "tests/installed_questions.py": "e2972315d9f18c63b9b2bbd2e7f85a362b1cb8ebf9b4ac862396308afef77bea",
+      "tests/installed_host_smoke.py": "21c83b745ba82153e7b1e41c78d8120493bbd044383c67f806dfb3f9a70c6c4c",
+      "tests/installed_instruction_variants.py": "295d62f3ffd7d30bf87a62e6be05003abf3927b40097635d2c5d073e5d27b258",
+      "tests/question-host/server.ts": "33c5d27f82c3e9bf6dd26f9de05d18761ddca6a7be6266ae67468f91b2bdfb93",
+      "tests/question-host/provider.mjs": "8e98dfa238f709d6b89df590a23c7d708e5283f44fc6f3a4b5193c05a81d66b0",
+      ".bun-version": "b99b4c7cdf236f59bc9f65d963deaecae3b16a7dad87939cacb9057f7664daee",
+      "bun.lock": "6b239350c433d4e18982499d7a9849db7f380466ccab030d431aa454eb46aa8c",
+      "package.json": "0b62be84895944c8fd859e4819903db640cb4d778f8d4e016dcf63e312639d21"
+    },
+    "cli_sha256": "50503d24577fa4117a7c95ee85b2cd679606a87eacf20ca54ed5db5c9e1cf895",
+    "host_version": "opencode v2.2.6",
+    "sessions": {
+      "owner": "ses_e20743ab9ffeOShiNezLuVhdTa",
+      "unrelated": "ses_e20743aacffecf2Tz1RbQkhlun",
+      "denied_source_worker": "ses_e20743a84ffe2xXVL7Xa5630cv"
+    },
+    "audit_sha256": "5fd149d8c250a551b7b8cd0c15207bfc7e431f26d9e6acc587389c1fb4d27612",
+    "audit_receipts": 5485,
+    "audit_bytes": 795738635
+  },
+  "installed_readers": {
+    "status": "PASS",
+    "source_head": "4cf442510c29aa1387b1ce7e2de6716d926f5452",
+    "kind": "independent-installed-stage3-supplement",
+    "external_substitution": "scripted provider only; real native host, plugin, tools, scheduler and SQLite",
+    "q4": "UNQUALIFIED",
+    "q5": "UNQUALIFIED",
+    "e11": "NO-GO / UNPROVEN",
+    "genuine_evaluator_reasoning": "UNPROVEN",
+    "checks": [
+      {
+        "name": "F06-native-large-observation-complete-reconstruction",
+        "status": "PASS",
+        "stored_body_chars": 271991,
+        "report_id": "e07b441f-8ab4-4782-a53c-671892309a94",
+        "report_sha256": "bee500ff553c27032ec302cea31330584417d770c98036a082eb714391f56b54",
+        "observations": 32,
+        "pages": 2,
+        "page_chars": [
+          257285,
+          15229
+        ],
+        "no_duplicates": true
+      },
+      {
+        "name": "F07-native-combined-members-bounded-and-complete",
+        "status": "PASS",
+        "members": 9,
+        "member_pages": 4,
+        "page_chars": [
+          252363,
+          250579,
+          249485,
+          44225
+        ],
+        "individually_fitting_members": 8,
+        "combined_fitting_body_chars": 907544,
+        "deferred_bodies_reconstructed": 3
+      },
+      {
+        "name": "native-paged-reader-permission-and-identity-denials",
+        "status": "PASS",
+        "foreign_session": true,
+        "wrong_report_id": true,
+        "invalid_cursor": true,
+        "same_session_revoked_readers": [
+          "evaluation-observations",
+          "evaluation-members",
+          "evaluation-sources"
+        ],
+        "reauthorized_same_report": true
+      },
+      {
+        "name": "damaged-original-withholds-dependent-bodies",
+        "status": "PASS",
+        "fault": "stopped-host change to original relationship member_ids",
+        "original_relationship": "57d2fb4106ebfc3717767445873cffef1564ad675e4faa5495a8d7f2f6d4fbe3",
+        "observation_items": 0,
+        "overall_body": null,
+        "unaffected_member_remains_available": "review:independent-large-review:32"
+      },
+      {
+        "name": "missing-original-withholds-dependent-observations",
+        "status": "PASS",
+        "fault": "stopped-host delete of one original relationship",
+        "original_relationship": "6a67af40289e8343b7acedd934f1cd38c21bbd8a61d6123431bade16e441a0ba",
+        "dependent_member": "review:independent-large-review:32",
+        "observation_items": 0,
+        "unavailable_source_identified": true
+      },
+      {
+        "name": "historical-report-identity-no-duplicate-after-read-restart-and-source-loss",
+        "status": "PASS",
+        "publications": 1,
+        "report_id": "e07b441f-8ab4-4782-a53c-671892309a94",
+        "report_sha256": "bee500ff553c27032ec302cea31330584417d770c98036a082eb714391f56b54"
+      }
+    ],
+    "command": "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python3 /workspace/scratch/a9b19f94dc90/qualification/supplement/installed_learning_stage3_readers.py --repository /workspace/scratch/a9b19f94dc90/loom --opencode /workspace/scratch/a9b19f94dc90/qualification/host/node_modules/.bin/opencode --plugin /workspace/scratch/a9b19f94dc90/qualification/install/node_modules/loom-plugin --artifact /workspace/scratch/a9b19f94dc90/qualification/package/loom-plugin-2.0.0-alpha.1.tgz --expect-head 4cf442510c29aa1387b1ce7e2de6716d926f5452 --report-directory /workspace/scratch/a9b19f94dc90/qualification/readers-final",
+    "started_at_utc": "2026-11-15T14:15:24Z",
+    "candidate": {
+      "name": "loom-plugin",
+      "version": "2.0.0-alpha.1",
+      "sdk_version": "2.2.6",
+      "artifact_sha256": "d40bc20c3068e46892eb8c4695bc7c0a6beab23be7e49ed719dfc129ada78d17",
+      "artifact_filename": "loom-plugin-2.0.0-alpha.1.tgz",
+      "artifact_path": "/workspace/scratch/a9b19f94dc90/qualification/package/loom-plugin-2.0.0-alpha.1.tgz",
+      "installed_path": "/workspace/scratch/a9b19f94dc90/qualification/install/node_modules/loom-plugin"
+    },
+    "runtime_files_checked": 37,
+    "host_version": "opencode v2.2.6",
+    "host_sha256": "50503d24577fa4117a7c95ee85b2cd679606a87eacf20ca54ed5db5c9e1cf895",
+    "script_sha256": "1a60890a2aefdc04c25bf9acc2ef6dd27a079897ff593565253abdb20d77f887",
+    "sessions": {
+      "owner": "ses_e206fe32bffeyuReWfojeeThu0",
+      "foreign": "ses_e206fe323ffe3soXMLEBC4kyUK"
+    },
+    "databases": {
+      "learning": "/workspace/scratch/a9b19f94dc90/qualification/readers-final/private/state/loom/actions-v1/6178503999c0b8461abbd0f9b719561a3842175803c4ff3f32091dd01c74bb1e/learning.sqlite",
+      "ledger": "/workspace/scratch/a9b19f94dc90/qualification/readers-final/private/state/loom/actions-v1/6178503999c0b8461abbd0f9b719561a3842175803c4ff3f32091dd01c74bb1e/ledger.sqlite"
+    },
+    "batch_id": "77ec0bf5-d614-476e-8361-49fc34204f7b",
+    "audit_sha256": "1431508b31eeb9b57939368f87a1138e28a4b1a6d91e5033b7a8ddf9aa724371",
+    "audit_bytes": 75778601,
+    "audit_receipts": 1644,
+    "finished_at_utc": "2026-11-15T14:17:41Z"
+  },
+  "installed_boot": {
+    "status": "passed",
+    "kind": "installed-host-boot-only",
+    "head": "4cf442510c29aa1387b1ce7e2de6716d926f5452",
+    "observed_version": "opencode v2.2.6",
+    "model_prompts_sent_by_probe": 0,
+    "checks": [
+      {
+        "name": "baseline",
+        "agents": 9,
+        "plugins": 92,
+        "agent_read_attempts": 1,
+        "plugin_read_attempts": 1,
+        "elapsed_seconds": 1.254
+      },
+      {
+        "name": "with-loom",
+        "agents": 9,
+        "plugins": 93,
+        "agent_read_attempts": 1,
+        "plugin_read_attempts": 1,
+        "elapsed_seconds": 0.884
+      },
+      {
+        "name": "restart",
+        "agents": 9,
+        "plugins": 93,
+        "agent_read_attempts": 1,
+        "plugin_read_attempts": 1,
+        "elapsed_seconds": 0.932
+      },
+      {
+        "name": "removed",
+        "agents": 9,
+        "plugins": 92,
+        "agent_read_attempts": 1,
+        "plugin_read_attempts": 1,
+        "elapsed_seconds": 1.054
+      }
+    ]
+  },
+  "installed_routing_guard": {
+    "status": "PASS",
+    "kind": "installed-routing-negative",
+    "host": "2.2.6",
+    "sdk": "2.2.6",
+    "checks": [
+      {
+        "name": "routing-enabled",
+        "status": "PASS",
+        "outcome": "failed",
+        "provider_requests": 0
+      },
+      {
+        "name": "routing-disabled",
+        "status": "PASS",
+        "outcome": "succeeded",
+        "provider_requests": 1
+      }
+    ],
+    "limits": [
+      "No live subscription or genuine billing attestation",
+      "No real same-model provider fallback or tool-side-effect replay acceptance",
+      "Only host-unqualified pre-dispatch refusal is tested, not individual billing policy decisions"
+    ],
+    "candidate": {
+      "name": "loom-plugin",
+      "version": "2.0.0-alpha.1",
+      "sdk_version": "2.2.6",
+      "artifact_sha256": "d40bc20c3068e46892eb8c4695bc7c0a6beab23be7e49ed719dfc129ada78d17",
+      "artifact_filename": "loom-plugin-2.0.0-alpha.1.tgz",
+      "artifact_path": "/workspace/scratch/a9b19f94dc90/qualification/package/loom-plugin-2.0.0-alpha.1.tgz",
+      "installed_path": "/workspace/scratch/a9b19f94dc90/qualification/install/node_modules/loom-plugin"
+    },
+    "audit_sha256": "864c368272db9bf0296f91699dabe433b8ed4ccfe9aadc7d1bfad0489a321c85",
+    "audit_receipts": 23,
+    "audit_bytes": 82810
+  },
+  "targeted_native": {
+    "status": "PASS",
+    "passed": 70,
+    "failed": 0,
+    "files": 6,
+    "assertions": 2860,
+    "log": "logs/qualification-native.log",
+    "log_sha256": "58a02515d56e5b105be7cf4d0091f62218ad4f638d24668dab5f8a3d98bdb03b",
+    "boundary": "Production component tests and registered callback controls, separate from installed-host execution"
+  },
+  "ci": {
+    "format": "loom-pr233-ci-evidence/v1",
+    "inspected_at_utc": "2026-11-15",
+    "reviewed_source_sha": "4cf442510c29aa1387b1ce7e2de6716d926f5452",
+    "base_sha": "b235ed712b471fd25fc9b0ec12eb805f0e5ad4be",
+    "standard_ci_merge_sha": "b85b22564c4734628f391c4a2c8478da9d95b490",
+    "evidence_scope": "Observed implementation-owner CI, independently inspected. This is not independent installed-host execution or genuine Evaluator reasoning.",
+    "workflow_runs": [
+      {
+        "name": "Installed OpenCode boot and trust regression",
+        "run_id": 43715516788,
+        "url": "https://github.com/bateau84/loom/actions/runs/43715516788",
+        "status": "completed",
+        "conclusion": "success",
+        "jobs": [
+          {
+            "job_id": 132816079885,
+            "name": "installed-host",
+            "url": "https://github.com/bateau84/loom/actions/runs/43715516788/job/132816079885",
+            "conclusion": "success"
+          }
+        ],
+        "checkout": "b85b22564c4734628f391c4a2c8478da9d95b490",
+        "checkout_note": "Standard pull-request merge composition; exact checkout verified in this workflow job log."
+      },
+      {
+        "name": "Installed OpenCode 2.2.6 unqualified routing guard",
+        "run_id": 43715516602,
+        "url": "https://github.com/bateau84/loom/actions/runs/43715516602",
+        "status": "completed",
+        "conclusion": "success",
+        "jobs": [
+          {
+            "job_id": 132816079413,
+            "name": "routing",
+            "url": "https://github.com/bateau84/loom/actions/runs/43715516602/job/132816079413",
+            "conclusion": "success"
+          }
+        ],
+        "checkout": "b85b22564c4734628f391c4a2c8478da9d95b490",
+        "checkout_note": "Standard pull-request merge composition; exact checkout verified in this workflow job log."
+      },
+      {
+        "name": "Loom plugin CI",
+        "run_id": 43715516610,
+        "url": "https://github.com/bateau84/loom/actions/runs/43715516610",
+        "status": "completed",
+        "conclusion": "success",
+        "jobs": [
+          {
+            "job_id": 132816080000,
+            "name": "test",
+            "url": "https://github.com/bateau84/loom/actions/runs/43715516610/job/132816080000",
+            "conclusion": "success"
+          }
+        ],
+        "checkout": "b85b22564c4734628f391c4a2c8478da9d95b490",
+        "checkout_note": "Standard pull-request merge composition; exact checkout verified in this workflow job log."
+      },
+      {
+        "name": "Learning qualification workspace",
+        "run_id": 43715516619,
+        "url": "https://github.com/bateau84/loom/actions/runs/43715516619",
+        "status": "completed",
+        "conclusion": "success",
+        "jobs": [
+          {
+            "job_id": 132816079422,
+            "name": "workspace",
+            "url": "https://github.com/bateau84/loom/actions/runs/43715516619/job/132816079422",
+            "conclusion": "success"
+          }
+        ],
+        "checkout": "b85b22564c4734628f391c4a2c8478da9d95b490",
+        "checkout_note": "Standard pull-request merge composition; exact checkout verified in this workflow job log."
+      },
+      {
+        "name": "Installed V2 routing acceptance (local providers)",
+        "run_id": 43715516631,
+        "url": "https://github.com/bateau84/loom/actions/runs/43715516631",
+        "status": "completed",
+        "conclusion": "success",
+        "jobs": [
+          {
+            "job_id": 132816079351,
+            "name": "installed-routing",
+            "url": "https://github.com/bateau84/loom/actions/runs/43715516631/job/132816079351",
+            "conclusion": "success"
+          }
+        ],
+        "checkout": "b85b22564c4734628f391c4a2c8478da9d95b490",
+        "checkout_note": "Standard pull-request merge composition; exact checkout verified in this workflow job log."
+      },
+      {
+        "name": "Installed question production-path qualification",
+        "run_id": 43715516632,
+        "url": "https://github.com/bateau84/loom/actions/runs/43715516632",
+        "status": "completed",
+        "conclusion": "success",
+        "jobs": [
+          {
+            "job_id": 132816079369,
+            "name": "questions",
+            "url": "https://github.com/bateau84/loom/actions/runs/43715516632/job/132816079369",
+            "conclusion": "success"
+          }
+        ],
+        "checkout": "b85b22564c4734628f391c4a2c8478da9d95b490",
+        "checkout_note": "Standard pull-request merge composition; exact checkout verified in this workflow job log."
+      },
+      {
+        "name": "Installed Stage 3 automatic learning mechanics",
+        "run_id": 43715516589,
+        "url": "https://github.com/bateau84/loom/actions/runs/43715516589",
+        "status": "completed",
+        "conclusion": "success",
+        "jobs": [
+          {
+            "job_id": 132816079379,
+            "name": "stage3",
+            "url": "https://github.com/bateau84/loom/actions/runs/43715516589/job/132816079379",
+            "conclusion": "success"
+          }
+        ],
+        "checkout": "4cf442510c29aa1387b1ce7e2de6716d926f5452"
+      }
+    ],
+    "regression_counts": {
+      "core": {
+        "passed": 387,
+        "failed": 0
+      },
+      "native": {
+        "passed": 430,
+        "failed": 0,
+        "files": 53
+      },
+      "codemode": {
+        "passed": 6,
+        "failed": 0,
+        "files": 1
+      },
+      "python": {
+        "passed": 241,
+        "failed": 0
+      },
+      "nested_shutdown_note": "A separate 1-test fresh-process shutdown invocation is part of native suite evidence; do not double-count."
+    },
+    "typechecks": "PASS",
+    "production_build": "PASS",
+    "runtime": {
+      "opencode": "2.2.6",
+      "bun": "1.4.2 (744846f84)",
+      "runner": "Ubuntu 26.04.1 LTS",
+      "provider": "scripted external question-fixture"
+    },
+    "installed_stage3": {
+      "run_id": 43715516589,
+      "job_id": 132816079379,
+      "source_checkout": "4cf442510c29aa1387b1ce7e2de6716d926f5452",
+      "status": "PASS",
+      "checks": 11,
+      "artifact": {
+        "id": 14162358149,
+        "name": "installed-stage3-mechanics-b85b22564c4734628f391c4a2c8478da9d95b490",
+        "size_in_bytes": 67466063,
+        "url": "https://api.github.com/repos/bateau84/loom/actions/artifacts/14162358149",
+        "archive_download_url": "https://api.github.com/repos/bateau84/loom/actions/artifacts/14162358149/zip",
+        "expired": false,
+        "created_at": "2026-11-15T12:54:33Z",
+        "expires_at": "2026-11-22T12:54:27Z",
+        "updated_at": "2026-11-15T12:54:33Z",
+        "digest": "sha256:f43bffd38ada98dea20fde6bee4d56204b896d82a04256b0f4e661bccfb441cd",
+        "workflow_run": {
+          "id": 43715516589,
+          "repository_id": 1378151150,
+          "head_repository_id": 1378151150,
+          "head_branch": "docs/learning-review-scope-concept-20261112",
+          "head_sha": "4cf442510c29aa1387b1ce7e2de6716d926f5452"
+        }
+      },
+      "artifact_name_note": "Archive name includes github.sha synthetic merge identifier, but checkout, harness source_head and artifact metadata head_sha all identify 4cf4425.",
+      "expected_artifacts": [
+        "report.json",
+        "audit.ndjson",
+        "native host request/output/error receipts and retained synthetic state directories"
+      ],
+      "output_file": "installed-stage3-output.json"
+    },
+    "resolved_findings": {
+      "F-06/F-07": {
+        "correction_commit": "e7afc3ef32933cb253c67c176d2c85b652cec611",
+        "regression_correction_commit": "4cf442510c29aa1387b1ce7e2de6716d926f5452",
+        "behavior": "Oversized legal member bodies return body:null/body_paginated:true and complete report-ID-pinned observation pages; combined member pages shrink to the public response budget without skipping members.",
+        "tests": [
+          {
+            "file": "tests/automatic-learning-native.test.ts",
+            "name": "legal large frozen review remains fully retrievable through stable public observation pages",
+            "status": "PASS in native CI",
+            "scope": "Production Learning, stores, runtime read projection and SQLite; fixture host, not installed host"
+          },
+          {
+            "file": "tests/automatic-learning-native.test.ts",
+            "name": "combined member readback stays bounded even when each stored member fits alone",
+            "status": "PASS in native CI",
+            "scope": "Production Learning, stores, runtime read projection and SQLite; fixture host, not installed host"
+          }
+        ],
+        "supporting_tests": [
+          "tests/automatic-runtime-native.test.ts: every public report page rechecks native permission and denies unrelated owners",
+          "tests/tool-help-native.test.ts: registered insights help exposes automatic evaluation readers and truthful limits"
+        ],
+        "independent_host_gap_at_start": "Existing installed_learning_stage3.py has no evaluation-observations call; independent qualification should explicitly cover this new reader.",
+        "independent_host_gap_resolution": "Closed by six supplemental installed-host checks, final portable run finished 2026-11-15T14:17:41Z; see installed_readers in the independent qualification record."
+      }
+    },
+    "evaluation_readers": [
+      "evaluation-status",
+      "evaluations",
+      "evaluation",
+      "evaluation-members",
+      "evaluation-sources",
+      "evaluation-observations"
+    ],
+    "source_locations": {
+      "registration": "src/learning-runtime.ts:15; src/plugin.ts:129,463",
+      "help": "src/tool-help.ts:31,110-114",
+      "public_callback_regression": "tests/tool-help-native.test.ts:28-80"
+    },
+    "unqualified": {
+      "Q4": "UNQUALIFIED native causal provenance",
+      "Q5": "UNQUALIFIED protected recipient transfer",
+      "E11": "NO-GO / UNPROVEN genuine whole-objective Evaluator learning"
+    },
+    "documentation_findings_at_start": {
+      "timing": "Historical observations before the qualification documentation update",
+      "findings": [
+        "PR description and playbook still cite a9fbf17 and pending eb6305c.",
+        "Playbook lists five readers, omitting evaluation-observations.",
+        "Status JSON lists 428 native tests instead of current 430.",
+        "Status review_findings stops at F-05, omitting F-06/F-07.",
+        "Status forced-crash record cites older run and 15 intervening revisions; current run records 13."
+      ],
+      "resolution": "Resolved by the final Stage 3 playbook/status/PR update; current independent evidence is recorded separately."
+    }
+  },
+  "accepted_release_scope": {
+    "specification": "docs/learning-native-evidence-spec.md: accepted baseline; E11 remains future assembled acceptance target",
+    "architecture": "docs/learning-evidence-and-review-scope.md: Evidence limits must not block all useful automation",
+    "requirements": "docs/requirements/learning-retrospectives/index.md: authorized descriptive reporting and unaffected bounded work may proceed",
+    "effect": "Supersedes the previous independent-qualification hold for bounded Stage 3 only; no Q4/Q5/E11 qualification or merge authorization is created"
+  },
+  "limitations": [
+    "No genuine Evaluator interpretation, 100-task multi-Session engineering outcome, causal independence, or final model exposure proof.",
+    "Q4 native causal provenance and Q5 protected incoming recipient transfer remain UNQUALIFIED; protected delivery stays withheld.",
+    "Installed forced termination covers a committed partial-member checkpoint before overall publication; component tests cover transactional publication failure/lost COMMIT acknowledgement. Other process-crash windows, power-loss durability and full QS-002 end-to-end breadth remain unqualified.",
+    "No cross-database atomicity, stale-backup/external-effect reconciliation, or exactly-once model execution claim.",
+    "No included-only billing qualification, automatic model dispatch, paid fallback, canonical instruction mutation or new source collection.",
+    "262144 canonical-character allowance applies to the evaluation result object, not UTF-8 bytes or the host/tool envelope. Measured supplemental payloads are ASCII.",
+    "Final qualification commit changes documentation, evidence and the reusable test harness only. Production server/src and dependency manifests must remain byte-identical to the reviewed source; subsequent required CI is recorded on the PR."
+  ],
+  "raw_evidence_bundle": {
+    "filename": "loom-pr233-stage3-independent-evidence.tar.gz",
+    "bytes": 75404861,
+    "sha256": "4dd9c400480300786c1f714fda46b9b32a302e1f18c01aa3ee444d10115d6cde",
+    "files": 105,
+    "uncompressed_bytes": 875310893,
+    "delivery": "Full synthetic audit archive delivered with the final qualification response; compact receipts and runnable harness retained in this PR."
+  }
+}

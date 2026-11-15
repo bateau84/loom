@@ -9,7 +9,7 @@ const qualification = "Admission is not processing or completion. Location check
 
 /** Consume only the immediate post-COMMIT handoff. No persisted queue or recovery path. */
 export async function resumeAnswer(store: Store, committed: AnswerCommit,
-  local: (session: string) => Promise<boolean>, synthetic: (notice: Notice) => Promise<unknown>, signal: AbortSignal) {
+  local: (session: string) => Promise<boolean>, synthetic: (notice: Notice) => Promise<unknown>, signal: AbortSignal, lifetime?: AbortSignal) {
   const eligible = committed.resume
   if (!eligible) return committed.continuation
     ? { ...committed.record, continuation: committed.continuation } : committed.record
@@ -51,6 +51,9 @@ export async function resumeAnswer(store: Store, committed: AnswerCommit,
   // Independent autocommit annotation: never rewrite the answer or imply an ordinary host observation.
   let annotation: { status: "stored"; id: string } | { status: "failed"; error: string }
   try {
+    // Caller cancellation may still be recorded, but a stopped plugin must not
+    // append through a database whose shutdown is already in progress.
+    lifetime?.throwIfAborted()
     const record = committed.record
     const saved = store.append({ session_id: record.session_id, agent: "system", kind: "result",
       ...(record.action_id ? { action_id: record.action_id } : {}), ...(record.node_id ? { node_id: record.node_id } : {}),

@@ -4,6 +4,7 @@ import { Plugin } from "@opencode/plugin"
 import { appendFileSync, readFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { randomUUID } from "node:crypto"
+import { nativeReviewScript, providerIdentity } from "./review-script.js"
 
 const provider = "question-fixture"
 const providerPackage = "aisdk:" + new URL("./provider.mjs", import.meta.url).href
@@ -21,7 +22,13 @@ export default Plugin.define({
     const observer = (async () => {
       try {
         for await (const event of ctx.event.subscribe({ signal: stop.signal })) {
-          if (event.type.startsWith("session.inbox.") || event.type.startsWith("session.compaction.") || event.type === "session.synthetic" || event.type.startsWith("permission.")) audit("native-event", event)
+          // Preserve the host's own envelopes/IDs. Tool progress is the native
+          // dispatch -> child boundary; inbox events do not carry its call ID.
+          if (event.type.startsWith("session.inbox.") || event.type.startsWith("session.compaction.")
+            || event.type.startsWith("session.tool.") || event.type.startsWith("session.step.")
+            || event.type.startsWith("session.execution.") || event.type === "session.created"
+            || event.type === "session.text.ended" || event.type === "session.synthetic"
+            || event.type.startsWith("permission.")) audit("native-event", event)
         }
       } catch (error) { if (!stop.signal.aborted) audit("observer-failure", String(error)) }
     })()
@@ -30,13 +37,17 @@ export default Plugin.define({
       specificationVersion: "v3", provider, modelId: role, supportedUrls: {},
       doGenerate: async () => { throw new Error("Unexpected non-streaming model request") },
       doStream: async (input: any) => {
-        audit("provider-request", { role, prompt: input.prompt, tools: input.tools })
+        // Only native Session identity headers; never log credentials or infer a
+        // dispatch identity from a role, job marker, or the order of requests.
+        audit("provider-request", { role, headers: providerIdentity(input.headers), prompt: input.prompt, tools: input.tools })
         const users = input.prompt.filter((m: any) => m.role === "user").map((m: any) =>
           typeof m.content === "string" ? m.content : m.content.filter((p: any) => p.type === "text").map((p: any) => p.text).join("\n"))
         const text = users.join("\n")
         const ids = [...text.matchAll(/LOOM_HARNESS_JOB:([a-f0-9]+)/g)].map(m => m[1])
         const id = ids.at(-1)
         const jobs = JSON.parse(readFileSync(join(root, "jobs.json"), "utf8"))
+        const review = nativeReviewScript(id ? jobs[id] : undefined)
+        const nativeCalls = id && !issued.has(id) ? review.calls : undefined
         const jobCode = id && !issued.has(id) ? jobs[id]?.code : undefined
         const nativeEdit = id && !issued.has(id) && jobs[id]?.nativeEdit === true
         // Bounded observer qualification uses the real native non-Code-Mode
@@ -47,7 +58,7 @@ export default Plugin.define({
           && /^LOOM_HARNESS_JOB:[a-f0-9]{16}$/.test(proposedSubagent.prompt)
           ? { agent: "evaluator", description: "Observer native child fixture", prompt: proposedSubagent.prompt } : undefined
         const followupCode = id && issued.has(id) && !issued.has(id + ":followup") ? jobs[id]?.followupCode : undefined
-        if (jobCode || nativeEdit || nativeSkill || nativeSubagent) issued.add(id!)
+        if (jobCode || nativeEdit || nativeSkill || nativeSubagent || nativeCalls) issued.add(id!)
         if (followupCode) issued.add(id! + ":followup")
         // Exercise installed native child execution with a deterministic model,
         // not a replacement Loom tool or a fabricated answer record.
@@ -58,7 +69,8 @@ export default Plugin.define({
           : undefined
         if (oqCode) issued.add(oqKey!)
         const code = jobCode ?? followupCode ?? oqCode
-        if (id && ((code && jobs[id]?.hold === "before") || (!code && jobs[id]?.hold === "after"))) {
+        const pendingTool = code || nativeEdit || nativeSkill || nativeSubagent || nativeCalls
+        if (id && ((pendingTool && jobs[id]?.hold === "before") || (!pendingTool && jobs[id]?.hold === "after"))) {
           audit("provider-held", { role, job: id, phase: jobs[id].hold })
           for (let i = 0; ; i++) {
             if (stop.signal.aborted) throw new Error("Fixture disposed")
@@ -79,6 +91,10 @@ export default Plugin.define({
         const events: any[] = [{ type: "stream-start", warnings: [] }]
         if (code) {
           events.push({ type: "tool-call", toolCallId: randomUUID(), toolName: "execute", input: JSON.stringify({ code }) })
+        } else if (nativeCalls) {
+          // Multiple model tool calls are executed concurrently by the real
+          // host. This fixture supplies inputs, never child/admission receipts.
+          for (const call of nativeCalls) events.push({ type: "tool-call", toolCallId: randomUUID(), toolName: call.tool, input: JSON.stringify(call.input) })
         } else if (nativeSubagent) {
           events.push({ type: "tool-call", toolCallId: randomUUID(), toolName: "subagent", input: JSON.stringify(nativeSubagent) })
         } else if (nativeSkill) {
@@ -107,10 +123,10 @@ export default Plugin.define({
           events.push({ type: "text-start", id: "text" },
             { type: "text-delta", id: "text", delta: summary
               ? "## Objective\n- Verify context continuity across a native compaction.\n\n## Work State\n### Completed\n- Captured tool evidence.\n\n## Next Move\n1. Check the current Action selection and ledger."
-              : "HARNESS_IDLE" },
+              : review.finalText ?? "HARNESS_IDLE" },
             { type: "text-end", id: "text" })
         }
-        const invokedTool = code || nativeEdit || nativeSkill || nativeSubagent || checkPolicy
+        const invokedTool = pendingTool || checkPolicy
         events.push({ type: "finish", finishReason: { unified: invokedTool ? "tool-calls" : "stop", raw: invokedTool ? "tool_calls" : "stop" }, usage })
         return { stream: new ReadableStream({ start(c) { for (const e of events) c.enqueue(e); c.close() } }) }
       },
@@ -129,12 +145,17 @@ export default Plugin.define({
       regs.push(await ctx.session.hook("title", event => { event.result = "Private question qualification" }))
       regs.push(await ctx.session.hook("model.request", event => {
         if (event.model.providerID !== provider) throw new Error("External model request forbidden")
-        audit("model-request", event)
+        audit("model-request", { ...event, headers: providerIdentity(event.headers) })
       }))
       regs.push(await ctx.session.hook("prompt", event => { audit("prompt", event) }))
+      regs.push(await ctx.session.hook("context", event => { audit("context", {
+        boundary: "session.context-hook", sessionID: event.sessionID, agent: event.agent,
+        system: event.system, messages: event.messages,
+      }) }))
       regs.push(await ctx.tool.hook("execute.before", event => { audit("tool-before", event) }))
       regs.push(await ctx.tool.hook("execute.after", event => { audit("tool-after", event) }))
-      audit("ready", { location: ctx.location })
+      audit("ready", { location: ctx.location, host_version: ctx.app.version,
+        runtime_versions: { bun: process.versions.bun, node: process.versions.node } })
     } catch (error) {
       stop.abort(); await observer; await Promise.allSettled(regs.map(r => r.dispose())); throw error
     }
