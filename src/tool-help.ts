@@ -167,7 +167,7 @@ export const TOOL_HELP = Object.fromEntries(Object.entries(entries).map(([name, 
   `Usage: ${help.usage}`,
   `Returns: ${help.returns}`,
   `Caution: ${help.caution}`,
-  ...(name === "record" ? ["Concerns: use kind=concern with suspected/confirmed evidence. General routes blockers; critic cites exact Action+record or Session+record IDs, never resolves by consolidation. Concern IDs are not observation evidence_ids. Append follow-ups."] : []),
+  ...(name === "record" ? ["Concerns: Every agent records kind=concern with suspected/confirmed evidence. Handoff is not resolved. General routes blockers; critic cites Action+record_id or Session+record_id. Concern IDs are not observation evidence_ids. Append follow-ups."] : []),
   ...(name === "record" ? ["Structured reviews: ask with typed agent/role and review:loom-review-request/v1; retain exact question, recipient, mandate and members. No context/reference fields alongside review. Loom freezes intent privately, prepares an issue, and withholds protected native delivery. Read via loom_review in the requesting Session with native permission."] : []),
   'Examples (JSON inputs; replace IDs and retain original worked-against work_ref):',
   ...TOOL_EXAMPLES[name as LoomToolName].flatMap(input => [
