@@ -15,7 +15,9 @@ import argparse
 from contextlib import closing
 import hashlib
 import json
+import os
 import secrets
+import signal
 from pathlib import Path
 import shutil
 import sqlite3
@@ -39,6 +41,7 @@ CHECKS = {
     "S3-no-automatic-model-or-mutation",
     "S3-stopped-backup-restore-fresh-host-readback",
     "S3-501-objective-population-through-native-scheduler-and-pages",
+    "S3-forced-crash-partial-checkpoint-and-late-source-recovery",
 }
 
 
@@ -83,6 +86,108 @@ def until(dbfile: Path, session: str, predicate, label: str, timeout=30):
     raise RuntimeError(f"{label} not observed for native Session; last states: {observed}")
 
 
+def frozen_progress(dbfile: Path, session: str, batch_id: str | None = None) -> dict | None:
+    """Read committed, published SQLite state without creating evaluation outputs."""
+    if not dbfile.is_file():
+        return None
+    with closing(sqlite3.connect(dbfile.as_uri() + "?mode=ro", uri=True, timeout=.2)) as db:
+        db.execute("PRAGMA query_only=ON")
+        where = "b.id=?" if batch_id is not None else "b.owner_session=?"
+        try:
+            row = db.execute(
+                "SELECT b.id,b.identity,b.membership_sha256,b.state,b.report_id,"
+                "COUNT(m.key),COUNT(m.report_id) "
+                "FROM learning_evaluation_batches b "
+                "JOIN learning_evaluation_members m ON m.batch_id=b.id WHERE "
+                + where + " GROUP BY b.id ORDER BY b.sequence DESC LIMIT 1",
+                (batch_id if batch_id is not None else session,),
+            ).fetchone()
+            if not row:
+                return None
+            keys = db.execute(
+                "SELECT m.key,m.report_id,r.sha256 "
+                "FROM learning_evaluation_members m "
+                "JOIN learning_evaluation_reports r ON r.id=m.report_id "
+                "WHERE m.batch_id=? ORDER BY m.ordinal", (row[0],),
+            ).fetchall()
+        except sqlite3.OperationalError as error:
+            if "no such table" in str(error):
+                return None
+            raise
+        result = {
+            "id": row[0], "identity": row[1], "membership_sha256": row[2],
+            "state": row[3], "report_id": row[4],
+            "member_count": row[5], "processed_count": row[6],
+            "checkpoint_receipts": [[key, report, checksum] for key, report, checksum in keys],
+        }
+        require(len(keys) == result["processed_count"],
+                "A processed checkpoint has no matching durable report receipt")
+        return result
+
+
+def force_crash_mid_checkpoint(
+    executable: Path, project: Path, env: dict, output: Path,
+    dbfile: Path, session: str, timeout=100,
+) -> dict:
+    """Kill only a disposable installed OpenCode process after real committed checkpoints.
+
+    No production hooks, injected reports, artificial scheduler sleeps, or direct
+    application DB writes. If the committed partial window cannot be observed,
+    fail rather than calling an uninterrupted batch a crash-recovery PASS.
+    """
+    stdout = (output / "partial-crash.server.stdout.txt").open("w")
+    stderr = (output / "partial-crash.server.stderr.txt").open("w")
+    process = None
+    before = None
+    try:
+        process = subprocess.Popen(
+            [str(executable), "serve", "--stdio", "--hostname", "127.0.0.1", "--port", "0"],
+            cwd=project, env={**env, "OPENCODE_PASSWORD": secrets.token_urlsafe(24)},
+            stdin=subprocess.PIPE, stdout=stdout, stderr=stderr, start_new_session=True,
+        )
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            require(process.poll() is None,
+                    "Installed OpenCode exited before partial evaluation; inspect crash-host logs")
+            try:
+                candidate = frozen_progress(dbfile, session)
+            except sqlite3.OperationalError as error:
+                # Short WAL ownership/contention during a genuine transaction is
+                # transient; nothing is classified PASS without a committed read.
+                if "locked" not in str(error).lower() and "busy" not in str(error).lower():
+                    raise
+                candidate = None
+            if (candidate is not None and candidate["state"] in ("processing", "pending")
+                    and candidate["report_id"] is None
+                    and 0 < candidate["processed_count"] < candidate["member_count"]):
+                before = candidate
+                os.killpg(process.pid, signal.SIGKILL)
+                code = process.wait(timeout=10)
+                require(code == -signal.SIGKILL,
+                        "Installed host was not actually terminated by SIGKILL")
+                after = frozen_progress(dbfile, session, before["id"])
+                require(after is not None and after["id"] == before["id"]
+                        and after["identity"] == before["identity"]
+                        and after["membership_sha256"] == before["membership_sha256"]
+                        and after["report_id"] is None
+                        and 0 < after["processed_count"] < after["member_count"],
+                        "Crash did not leave durable partial checkpoints before overall publication")
+                return {"process_pid": process.pid, "termination": "SIGKILL",
+                        "return_code": code, "observed_before_signal": before,
+                        "durable_after_exit": after}
+            time.sleep(.002)
+        raise RuntimeError("Could not catch a committed partial batch before final publication")
+    finally:
+        if process is not None:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=10)
+            if process.stdin is not None and not process.stdin.closed:
+                process.stdin.close()
+        stdout.close()
+        stderr.close()
+
+
 def report_result(scenario: Scenario, owner: str, batch_id: str):
     value = scenario.invoke(owner, "insights", {"operation": "evaluation", "batch_id": batch_id})
     require(value["batch"]["id"] == batch_id, "Public result changed the batch identity")
@@ -121,7 +226,7 @@ def run(args):
             "No protected review transfer, original human lineage or final-model exposure receipt.",
             "Scripted external provider; no genuine Evaluator reasoning or live-provider billing proof.",
             "The SQLite read-only observer only waits for state; public Loom tools prove report readback.",
-            "Graceful restart and verified stopped-state restore; forced process crash/power-loss recovery not proven.",
+            "Graceful restart, stopped-state restore and forced SIGKILL of a partially checkpointed installed host; OS power-loss/disk durability and model effects unproven.",
         ],
     }
     host = None
@@ -682,17 +787,64 @@ def run(args):
                     final_events(root)
                     capture.write_text(
                         "instructions: {enabled: false}\nledger: {capture: automatic}\n")
-                    host = boot("large-population-catchup")
+                    crashed = force_crash_mid_checkpoint(
+                        args.opencode.resolve(), project, env, output,
+                        large_path, population)
+                    partial = crashed["durable_after_exit"]
+                    large_batch = partial["id"]
+                    require(partial["member_count"] == 502,
+                            "The killed batch did not freeze all 501 objective members plus its Session")
+                    require(partial["processed_count"] > 0
+                            and partial["processed_count"] < partial["member_count"],
+                            "Crash did not preserve a nonempty proper subset of member checkpoints")
+
+                    # Native startup must recover the original frozen batch.
+                    # Its old 30-second claim may remain busy after process loss;
+                    # late evidence is produced while recovery is pending.
+                    host = boot("large-population-recovery")
                     scenario = Scenario(host, root)
-                    # A cold startup discovers all existing authored sources.
-                    # No new native source is emitted to trigger processing.
-                    large_state = until(large_path, population,
-                        lambda v: v.get("batch") is not None
-                        and v["batch"][1] == "complete"
-                        and v["batch"][2] is not None
-                        and v.get("observations", {}).get("authored-objective", 0) == 501,
-                        "501-objective installed startup synthesis", timeout=120)
-                    large_batch = large_state["batch"][0]
+                    late = append_original(
+                        scenario, population,
+                        "Synthetic late source after forced process crash; belongs to the next boundary")
+                    require(late.get("id") and late["id"] != anchor["id"],
+                            "Late source did not originate in a new native operation")
+                    recovered = None
+                    end = time.monotonic() + 120
+                    while time.monotonic() < end:
+                        recovered = frozen_progress(large_path, population, large_batch)
+                        if (recovered is not None and recovered["state"] == "complete"
+                                and recovered["report_id"] is not None
+                                and recovered["processed_count"] == recovered["member_count"]):
+                            break
+                        time.sleep(.05)
+                    require(recovered is not None and recovered["state"] == "complete"
+                            and recovered["report_id"] is not None,
+                            "Recovery did not finish the original frozen batch")
+                    require(recovered["id"] == partial["id"]
+                            and recovered["identity"] == partial["identity"]
+                            and recovered["membership_sha256"] == partial["membership_sha256"]
+                            and recovered["member_count"] == partial["member_count"]
+                            and recovered["processed_count"] == recovered["member_count"],
+                            "Recovery skipped or replaced original frozen membership")
+                    saved = {key: (report, checksum) for key, report, checksum
+                             in partial["checkpoint_receipts"]}
+                    restored = {key: (report, checksum) for key, report, checksum
+                                in recovered["checkpoint_receipts"]}
+                    require(saved and all(restored.get(key) == record
+                                          for key, record in saved.items()),
+                            "Recovering worker lost or replaced committed checkpoints")
+                    with closing(sqlite3.connect(
+                            large_path.as_uri() + "?mode=ro", uri=True)) as db:
+                        db.execute("PRAGMA query_only=ON")
+                        logical = db.execute(
+                            "SELECT COUNT(*) FROM learning_evaluation_batches WHERE identity=?",
+                            (partial["identity"],)).fetchone()[0]
+                        reports = db.execute(
+                            "SELECT COUNT(*) FROM learning_evaluation_reports "
+                            "WHERE batch_id=? AND slot='overall'",
+                            (large_batch,)).fetchone()[0]
+                    require(logical == 1 and reports == 1,
+                            "Crash retry duplicated a logical batch or overall publication")
                     outcome = report_result(scenario, population, large_batch)
                     overall = outcome["report"]["body"]
                     require(overall["population"]["authored_objectives"] == 501
@@ -746,12 +898,60 @@ def run(args):
                             and sum(kind == "ledger-record" and refid == anchor["id"]
                                     for kind, refid, _ in source_refs) == 1,
                             "Large native source pagination omitted or duplicated originating evidence")
+                    require(not any(refid == late["id"] for _, refid, _ in source_refs),
+                            "Late evidence crossed the original frozen crash boundary")
                     check("S3-501-objective-population-through-native-scheduler-and-pages",
                           owner_session=population, original_record=anchor["id"],
                           authored_objectives=501, actual_members=len(seen_members),
                           unique_source_refs=len(source_refs),
                           independent_requests="unknown", batch=large_batch,
-                          trigger="cold-start catch-up without a new source or manual evaluation")
+                          trigger="installed cold-start processing, interrupted and resumed")
+                    # A source created *after* freeze must result in a later
+                    # revision, not silently extend the recovered report.
+                    newer = None
+                    deadline = time.monotonic() + 120
+                    while time.monotonic() < deadline:
+                        newer = frozen_progress(large_path, population)
+                        if (newer is not None and newer["id"] != large_batch
+                                and newer["state"] == "complete" and newer["report_id"]):
+                            break
+                        time.sleep(.05)
+                    require(newer is not None and newer["id"] != large_batch
+                            and newer["state"] == "complete" and newer["report_id"],
+                            "Late source was not published in a new attributable revision")
+                    next_report = report_result(scenario, population, newer["id"])
+                    require(next_report["batch"]["previous_batch_id"] == large_batch
+                            and next_report["report"]["body"]["population"]["source_count"]
+                            == expected_source_count + 1,
+                            "Late-source revision lost the original population or duplicated sources")
+                    last_sources = set()
+                    after = 0
+                    while True:
+                        page = scenario.invoke(population, "insights", {
+                            "operation": "evaluation-sources", "batch_id": newer["id"],
+                            "after": after, "limit": 50,
+                        })
+                        last_sources.update(item["id"] for item in page["items"])
+                        if page["next_after"] is None:
+                            break
+                        after = page["next_after"]
+                    require(late["id"] in last_sources and anchor["id"] in last_sources,
+                            "New report omitted the late source or its original anchor")
+                    check("S3-forced-crash-partial-checkpoint-and-late-source-recovery",
+                          frozen_batch=large_batch, recovered_batch=recovered["id"],
+                          persisted_members=partial["member_count"],
+                          checkpointed_at_crash=partial["processed_count"],
+                          original_checkpoints_preserved=len(saved),
+                          total_after_recovery=recovered["processed_count"],
+                          logical_batches_for_frozen_identity=logical,
+                          overall_publications_for_frozen_identity=reports,
+                          late_source=late["id"], later_revision=newer["id"],
+                          original_source_count=expected_source_count,
+                          later_source_count=next_report["report"]["body"]["population"]["source_count"],
+                          source_and_report_bodies_checked_through_native_tools=True,
+                          host_termination=crashed["termination"],
+                          host_return_code=crashed["return_code"],
+                          report_is_genuine_evaluator=False)
 
                     require({x["name"] for x in result["checks"]} == CHECKS,
                             "Installed Stage 3 mechanics did not execute the entire required check set")
