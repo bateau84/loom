@@ -1,16 +1,17 @@
 {
   "format": "loom-learning-stage3-redo-status/v1",
-  "status": "BOUNDED_STAGE3_INSTALLED_11_CHECKS_FORCED_CRASH_PASS_E11_BLOCKED",
+  "status": "BOUNDED_STAGE3_INDEPENDENT_QUALIFICATION_GO_E11_UNPROVEN",
   "pull_request": 233,
-  "required_pr_state": "open-draft-unmerged",
-  "runtime_commit": "8a1a5afdf68f84f233171d179acd1fc5fb8ea9d6",
+  "required_pr_state": "unmerged-until-explicit-user-approval",
+  "runtime_commit": "4cf442510c29aa1387b1ce7e2de6716d926f5452",
   "independent_review": {
-    "reviewed_head": "1636650affe623d972ae9401fae715defe68039b",
-    "previous_reviewed_head": "b0f73cf345d2eb8d54e58c093831b6792ee2216d",
-    "source": "User-supplied follow-up Re-review — Loom PR #233, Stage 3",
-    "disposition_at_reviewed_head": "CONDITIONAL; not merge-ready with F-05 failing CI",
-    "scope": "Follow-up changed-source/CI review; reviewer did not run independent local or installed Stage 3 tests",
-    "post_review_fix": "F-05 corrected by 959969c3a7e538c125feda04b6d46efa1445bdf8 and six workflows green; independent review of that head not yet performed."
+    "reviewed_head": "4cf442510c29aa1387b1ce7e2de6716d926f5452",
+    "disposition": "GO for bounded Stage 3 only",
+    "scope": "Follow-up independent installed execution and evidence assessment; prior review context was available",
+    "installed_execution": "PASS: 11 Stage 3 checks, 6 supplemental reader/source-fault checks, 4 boot states and 2 native routing controls",
+    "component_execution": "PASS: 70 targeted native tests across 6 files",
+    "evidence": "learning-stage3-independent-qualification.json",
+    "merge": "Technically eligible to mark ready and merge once current required checks pass; explicit user merge approval still required"
   },
   "implemented": [
     "Native source notifications, idle opportunities and startup catch-up over existing permitted sources",
@@ -19,7 +20,7 @@
     "Original source dependencies; missing or changed required originals withhold derived bodies",
     "Authored objective correction links without inferring independent originating goals",
     "Historical review A and partial B membership without whole-objective success claims",
-    "Bounded public member and source-reference pagination",
+    "Six registered evaluation readers, including bounded member/source/observation pagination pinned to immutable report identity",
     "Explicit capture-continuity and attribution projections; changed method fingerprint preserves old reports without reusing the old interpretation"
   ],
   "review_findings": {
@@ -44,8 +45,8 @@
       "evidence": "Four continuity regressions failed before the correction and pass in the observed stabilization run, including preservation of old-method reports without replaying their omitted-gap interpretation."
     },
     "F-04": {
-      "status": "PLAYBOOK_STATUS_AND_PR_SYNCHRONIZED_TO_ACCEPTANCE_REMEDIATION",
-      "change": "Document installed 10-check product mechanics and PA-F02 registered-help correction; preserve exact post-review head and independent/host-qualification limits."
+      "status": "CURRENT_QUALIFICATION_PLAYBOOK_STATUS_AND_PR_RECONCILED",
+      "change": "Record reviewed head 4cf4425, seven successful associated workflows, exact-source versus merge-composition distinction, 430 native regressions, six registered readers and independent bounded acceptance; preserve unqualified Q4/Q5/E11."
     },
     "F-05": {
       "status": "CORRECTED_AND_VERIFIED_GREEN_CI",
@@ -53,12 +54,53 @@
       "correction_commit": "959969c3a7e538c125feda04b6d46efa1445bdf8",
       "change": "Separate absence of manifested learning.sqlite with no SQLite sidecar from explicit orphan learning.sqlite-wal. The backup must reject both cases without creating a restore destination. No validator weakening.",
       "evidence": "Loom plugin CI run 43583444612 and installed V2 routing run 43583444581 both pass against the correction."
+    },
+    "F-06": {
+      "status": "CORRECTED_AND_INDEPENDENT_INSTALLED_PASS",
+      "correction_commit": "e7afc3ef32933cb253c67c176d2c85b652cec611",
+      "regression_strengthening_commit": "4cf442510c29aa1387b1ce7e2de6716d926f5452",
+      "observed": {
+        "name": "F06-native-large-observation-complete-reconstruction",
+        "status": "PASS",
+        "stored_body_chars": 271991,
+        "report_id": "e07b441f-8ab4-4782-a53c-671892309a94",
+        "report_sha256": "bee500ff553c27032ec302cea31330584417d770c98036a082eb714391f56b54",
+        "observations": 32,
+        "pages": 2,
+        "page_chars": [
+          257285,
+          15229
+        ],
+        "no_duplicates": true
+      },
+      "evidence": "learning-stage3-independent-qualification.json"
+    },
+    "F-07": {
+      "status": "CORRECTED_AND_INDEPENDENT_INSTALLED_PASS",
+      "correction_commit": "e7afc3ef32933cb253c67c176d2c85b652cec611",
+      "regression_strengthening_commit": "4cf442510c29aa1387b1ce7e2de6716d926f5452",
+      "observed": {
+        "name": "F07-native-combined-members-bounded-and-complete",
+        "status": "PASS",
+        "members": 9,
+        "member_pages": 4,
+        "page_chars": [
+          252363,
+          250579,
+          249485,
+          44225
+        ],
+        "individually_fitting_members": 8,
+        "combined_fitting_body_chars": 907544,
+        "deferred_bodies_reconstructed": 3
+      },
+      "evidence": "learning-stage3-independent-qualification.json"
     }
   },
   "observed_ci": {
-    "head": "a9fbf17c63bb99bec1f2574114046c7e95f38aa5",
-    "checkout": "a9fbf17c63bb99bec1f2574114046c7e95f38aa5",
-    "checkout_method": "Stage3 workflow explicitly checks out PR head sha and asserts source_head equals that immutable commit; other workflows run standard PR test composition.",
+    "head": "4cf442510c29aa1387b1ce7e2de6716d926f5452",
+    "checkout": "4cf442510c29aa1387b1ce7e2de6716d926f5452",
+    "checkout_method": "Installed Stage 3 checks exact PR source head; the other six job logs verify the standard GitHub PR merge composition.",
     "runtime": {
       "opencode": "2.2.6",
       "bun": "1.4.2",
@@ -70,7 +112,7 @@
       "failed": 0
     },
     "native_suite": {
-      "passed": 428,
+      "passed": 430,
       "failed": 0,
       "files": 53
     },
@@ -85,42 +127,58 @@
     "production_build": "PASS",
     "workflows": [
       {
-        "name": "Plugin CI",
-        "run_id": 43695597603,
-        "result": "PASS"
+        "name": "Installed OpenCode boot and trust regression",
+        "run_id": 43715516788,
+        "result": "PASS",
+        "checkout": "b85b22564c4734628f391c4a2c8478da9d95b490",
+        "url": "https://github.com/bateau84/loom/actions/runs/43715516788"
       },
       {
-        "name": "Installed V2 routing",
-        "run_id": 43695597663,
-        "result": "PASS"
+        "name": "Installed OpenCode 2.2.6 unqualified routing guard",
+        "run_id": 43715516602,
+        "result": "PASS",
+        "checkout": "b85b22564c4734628f391c4a2c8478da9d95b490",
+        "url": "https://github.com/bateau84/loom/actions/runs/43715516602"
       },
       {
-        "name": "Installed questions",
-        "run_id": 43695597618,
-        "result": "PASS"
-      },
-      {
-        "name": "Installed boot and trust",
-        "run_id": 43695597572,
-        "result": "PASS"
-      },
-      {
-        "name": "Routing guard",
-        "run_id": 43695597569,
-        "result": "PASS"
+        "name": "Loom plugin CI",
+        "run_id": 43715516610,
+        "result": "PASS",
+        "checkout": "b85b22564c4734628f391c4a2c8478da9d95b490",
+        "url": "https://github.com/bateau84/loom/actions/runs/43715516610"
       },
       {
         "name": "Learning qualification workspace",
-        "run_id": 43695597554,
-        "result": "PASS"
+        "run_id": 43715516619,
+        "result": "PASS",
+        "checkout": "b85b22564c4734628f391c4a2c8478da9d95b490",
+        "url": "https://github.com/bateau84/loom/actions/runs/43715516619"
       },
       {
-        "name": "Installed Stage 3 automatic mechanics",
-        "run_id": 43695597604,
-        "result": "PASS"
+        "name": "Installed V2 routing acceptance (local providers)",
+        "run_id": 43715516631,
+        "result": "PASS",
+        "checkout": "b85b22564c4734628f391c4a2c8478da9d95b490",
+        "url": "https://github.com/bateau84/loom/actions/runs/43715516631"
+      },
+      {
+        "name": "Installed question production-path qualification",
+        "run_id": 43715516632,
+        "result": "PASS",
+        "checkout": "b85b22564c4734628f391c4a2c8478da9d95b490",
+        "url": "https://github.com/bateau84/loom/actions/runs/43715516632"
+      },
+      {
+        "name": "Installed Stage 3 automatic learning mechanics",
+        "run_id": 43715516589,
+        "result": "PASS",
+        "checkout": "4cf442510c29aa1387b1ce7e2de6716d926f5452",
+        "url": "https://github.com/bateau84/loom/actions/runs/43715516589"
       }
     ],
-    "qualification": "All seven workflows passed at this exact runtime head. Eleven installed Stage 3 mechanics, including a real SIGKILL after a committed partial checkpoint and source-linked later revision, PASS. This is not genuine Evaluator or E11 proof."
+    "qualification": "All seven workflows associated with reviewed source 4cf4425 passed; Stage 3 checks exact source, the other six check merge composition. CI inspection is distinct from the separately recorded independent installed execution. No genuine Evaluator/E11 proof.",
+    "standard_merge_checkout": "b85b22564c4734628f391c4a2c8478da9d95b490",
+    "base_sha": "b235ed712b471fd25fc9b0ec12eb805f0e5ad4be"
   },
   "latest_diagnostic": {
     "commit": "8caaed8914f575b1af4ddefdeb735abae0dd9aeb",
@@ -129,14 +187,14 @@
     "evidence": "The loaded .js specifiers resolve to checked-in TypeScript source; exact source blobs matched. The fresh-process and in-suite shutdown controls pass at verified_ci_head."
   },
   "local_validation": {
-    "stabilization_pass": "No local execution in this ChatGPT session; GitHub Actions ran actual packed OpenCode 2.2.6 and retained synthetic redacted receipts.",
-    "historical_record": "The previous local-candidate claims remain in Git history at b0f73cf345d2eb8d54e58c093831b6792ee2216d. They are not current-head CI or installed-host acceptance evidence."
+    "current": "Independent fresh installation and execution completed on 2026-11-15. Eleven Stage 3 mechanics, six supplemental reader/source-loss checks, boot and routing controls passed, with 70 supporting native regressions.",
+    "evidence": "learning-stage3-independent-qualification.json",
+    "historical_record": "Earlier implementation-owner local/CI claims remain historical and are not the source of this independent execution verdict."
   },
   "not_qualified": {
-    "installed_stage3_host": "11 bounded installed mechanics PASS at exact PR source head, including restore/readback and >500 population. Full E11 remains unproven.",
     "Q4": "UNQUALIFIED exact native admission/execution/source-consumption provenance.",
-    "Q5": "Native protected incoming-transfer counterexample remains; Loom protected delivery is withheld.",
-    "E11": "UNPROVEN; deterministic descriptions are not complete whole-objective evaluation.",
+    "Q5": "UNQUALIFIED protected recipient transfer; the native counterexample remains and delivery stays withheld.",
+    "E11": "NO-GO / UNPROVEN; deterministic descriptions and scripted mechanics are not genuine whole-objective Evaluator learning.",
     "genuine_evaluator": "NOT EXERCISED; no real-model interpretation is claimed.",
     "included_usage_route": "UNQUALIFIED; no automatic model dispatch or paid fallback introduced."
   },
@@ -147,18 +205,17 @@
     "A complete processing batch means all frozen members were processed, not objective success"
   ],
   "remaining_work": [
-    "Independent product-acceptance re-review of exact head a9fbf17c63bb99bec1f2574114046c7e95f38aa5 and its installed proof; implementation-owner CI cannot approve its own work.",
     "Q4 needs upstream host-attested same-execution parent admission, child execution and source-consumption receipts across retries/compaction; no Loom inference substitutes.",
     "Q5 needs host-enforced recipient-specific pre-transfer protection; the pinned host counterexample persists, so structured protected delivery remains withheld.",
     "Complete E11 requires original authorized multi-Session 100-task native Reviewer work, corrective partial re-review and genuine Evaluator interpretation, plus operator-approved source access, retention/declassification and verified included-only model budget.",
     "One forced SIGKILL after a committed partial checkpoint is now installed-qualified; crashes during overall publication, power-loss durability, cross-database atomicity and stale-backup external-effect reconciliation remain unqualified."
   ],
-  "verified_ci_head": "a9fbf17c63bb99bec1f2574114046c7e95f38aa5",
-  "runtime_commit_note": "Exact reviewed source includes registered-help F-02 fix and installed Stage 3 qualification; no genuine Evaluator model dispatch.",
+  "verified_ci_head": "4cf442510c29aa1387b1ce7e2de6716d926f5452",
+  "runtime_commit_note": "Exact independently tested production source includes F-06/F-07; final qualification-only changes do not modify production runtime or dependency manifests.",
   "installed_stage3_mechanics": {
-    "head": "a9fbf17c63bb99bec1f2574114046c7e95f38aa5",
-    "run_id": 43695597604,
-    "status": "PASS — eleven bounded installed-product mechanics including forced process crash recovery",
+    "head": "4cf442510c29aa1387b1ce7e2de6716d926f5452",
+    "run_id": 43715516589,
+    "status": "PASS: eleven CI mechanics and a separate independent installed rerun; six supplemental independent reader/source-fault checks also pass",
     "artifact": "installed-stage3-mechanics workflow archive contains private synthetic audit.ndjson and report.json; source/plugin/CLI hashes recorded",
     "boundary": "Actual packed PR-head Loom plugin, unmodified OpenCode 2.2.6 host, native Code Mode calls and real SQLite; only external model responses scripted",
     "checks": [
@@ -189,25 +246,32 @@
       "Forced SIGKILL at one checkpoint is qualified; other crash windows (especially publication-time), power-loss durability and stale-backup external-effect reconciliation remain unqualified."
     ],
     "observed_forced_crash": {
-      "head": "a9fbf17c63bb99bec1f2574114046c7e95f38aa5",
-      "run_id": 43695597604,
-      "host": "OpenCode 2.2.6",
-      "termination": "SIGKILL",
-      "return_code": -9,
-      "original_member_count": 502,
-      "checkpointed_before_crash": 1,
-      "recovered_members": 502,
-      "preserved_checkpoint_receipts": 1,
-      "unique_original_sources": 1003,
-      "logical_batches_for_original_identity": 1,
-      "overall_publications_for_original_identity": 1,
-      "later_report_source_count": 1149,
-      "intervening_report_revisions": 15,
-      "revision_chain_reaches_original": true,
-      "source_pages_complete": true,
-      "report_bodies_authorized_via_public_tools": true,
-      "caveat": "The original 1003 source references are retained; later native Code Mode readbacks and the authored late source legitimately create additional observed metadata and intervening versions. Not real model/E11 acceptance or power-loss proof."
-    }
+      "head": "4cf442510c29aa1387b1ce7e2de6716d926f5452",
+      "run_id": 43715516589,
+      "evidence_origin": "implementation-owner CI; independent rerun is recorded separately",
+      "name": "S3-forced-crash-partial-checkpoint-and-late-source-recovery",
+      "status": "PASS",
+      "frozen_batch": "a688a050-de11-4b9c-af18-405dd479a0ee",
+      "recovered_batch": "a688a050-de11-4b9c-af18-405dd479a0ee",
+      "persisted_members": 502,
+      "checkpointed_at_crash": 1,
+      "original_checkpoints_preserved": 1,
+      "total_after_recovery": 502,
+      "logical_batches_for_frozen_identity": 1,
+      "overall_publications_for_frozen_identity": 1,
+      "late_source": "783281d0-5a8f-429c-ac1d-beae37ccc2bb",
+      "later_revision": "3d7a91a1-d356-495e-858a-ec39a615ca8d",
+      "original_source_count": 1003,
+      "later_source_count": 1149,
+      "intervening_report_revisions": 13,
+      "revision_ancestry_reaches_recovered_batch": true,
+      "source_and_report_bodies_checked_through_native_tools": true,
+      "host_termination": "SIGKILL",
+      "host_return_code": -9,
+      "late_evidence_admitted_while_original_pending": true,
+      "report_is_genuine_evaluator": false
+    },
+    "independent_evidence": "learning-stage3-independent-qualification.json"
   },
   "product_acceptance_review": {
     "reviewed_head": "a5e9ee8dadb34ddd68b1bc1a1642cfbac0d3938e",
@@ -220,14 +284,14 @@
     "findings": {
       "PA-F01": {
         "reviewed": "Installed Stage 3 end-to-end proof missing at reviewed head",
-        "later_evidence": "11 bounded installed Stage 3 product mechanics passed at head a9fbf17c63bb99bec1f2574114046c7e95f38aa5, including SIGKILL after a real checkpoint, stable frozen membership, one overall publication, late-source revision and authorized original/derived report readback.",
-        "run_id": 43695597604
+        "later_evidence": "Independent exact-source installed rerun now passes 11 mechanics; supplemental real-host execution also passes all six reader/source-fault checks. See final_qualification.",
+        "run_id": 43715516589
       },
       "PA-F02": {
         "reviewed": "Registered loom_insights help falsely claimed no automatic scheduling/evaluation and omitted five evaluation readers",
         "status": "CORRECTED_CI_GREEN",
         "commit": "55efdb41a2af69560cb623d47a9ec93b69e98ba9",
-        "evidence": "Registered-help regression exercises all five evaluation operation examples through real registered callbacks. Native installed candidate hashes match source."
+        "evidence": "The historical five-reader help correction is preserved. Current registered help exposes all six readers including evaluation-observations; independent targeted tests execute its real registered callbacks."
       },
       "PA-F03": {
         "status": "BLOCKED_UPSTREAM_QUALIFICATION",
@@ -242,7 +306,30 @@
       "reviewed_head": "af152bd94156d3c489d01c72e198ff3bea2d8e67",
       "disposition": "CONDITIONAL for bounded Stage 3; NO-GO for full E11",
       "remaining_adversarial_gap_at_review": "No installed forced termination after a nonzero number of partial member checkpoints",
-      "later_correction": "Installed forced-process SIGKILL check passed in workflow 43695597604 at head a9fbf17c63bb99bec1f2574114046c7e95f38aa5. Independent acceptance of this newer head remains a separate review."
+      "later_correction": "Installed forced-process SIGKILL check passed in workflow 43695597604 at head a9fbf17c63bb99bec1f2574114046c7e95f38aa5. Independent acceptance remained separate then; final_qualification now records the completed independent assessment of 4cf4425."
+    },
+    "final_qualification": {
+      "reviewed_head": "4cf442510c29aa1387b1ce7e2de6716d926f5452",
+      "disposition": "GO for bounded Stage 3 only",
+      "scope": "Follow-up independent installed execution and evidence assessment; prior review context was available",
+      "installed_execution": "PASS: 11 Stage 3 checks, 6 supplemental reader/source-fault checks, 4 boot states and 2 native routing controls",
+      "component_execution": "PASS: 70 targeted native tests across 6 files",
+      "evidence": "learning-stage3-independent-qualification.json",
+      "merge": "Technically eligible to mark ready and merge once current required checks pass; explicit user merge approval still required"
     }
-  }
+  },
+  "historical_independent_review": {
+    "reviewed_head": "1636650affe623d972ae9401fae715defe68039b",
+    "previous_reviewed_head": "b0f73cf345d2eb8d54e58c093831b6792ee2216d",
+    "source": "User-supplied follow-up Re-review — Loom PR #233, Stage 3",
+    "disposition_at_reviewed_head": "CONDITIONAL; not merge-ready with F-05 failing CI",
+    "scope": "Follow-up changed-source/CI review; reviewer did not run independent local or installed Stage 3 tests",
+    "post_review_fix": "F-05 corrected by 959969c3a7e538c125feda04b6d46efa1445bdf8 and six workflows green; independent review of that head not yet performed."
+  },
+  "remaining_work_scope": "Deferred Q4/Q5/E11 and broader durability capability work; these are not remaining mandatory bounded Stage 3 implementation gates.",
+  "merge_pending": [
+    "Current required CI for the qualification-only update",
+    "Explicit user approval before any merge"
+  ],
+  "independent_qualification": "learning-stage3-independent-qualification.json"
 }

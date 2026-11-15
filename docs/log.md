@@ -4,6 +4,18 @@ type: Log
 
 # Update Log
 
+## 2026-11-15
+
+**Bounded Stage 3 final qualification:** Independently installed and executed production
+source `4cf442510c29aa1387b1ce7e2de6716d926f5452` with OpenCode 2.2.6. All eleven
+Stage 3 mechanics and six supplemental reader/source-loss checks pass, together
+with ordinary boot, routing controls and 70 supporting native regressions. The
+[Stage 3 playbook](learning-automatic-stage3.md) now records the six registered
+readers, resolved F-06/F-07, current CI counts, exact source versus merge-composition
+evidence and reproducible commands. Bounded Stage 3 receives GO; Q4/Q5 remain
+UNQUALIFIED and E11 remains NO-GO / UNPROVEN. Merging requires explicit user approval.
+No production runtime, dependency or capture/dispatch policy changed.
+
 ## 2026-11-13
 
 **Native audit completeness (NRQ-003):** Qualification now preserves the complete observed
