@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
-import { canonical, digest, ProcessingBudget } from "./model.js"
+import { canonical, digest, ProcessingBudget, uid, type Actor } from "./model.js"
 import type { SQL } from "./store.js"
+import { evaluatorMethod, parseEvaluatorMethod, type EvaluatorMethodManifest } from "./evaluator-method.js"
 
 export type EvaluationSourceRef = { kind: string; id: string; session_id?: string; revision?: string; sha256?: string; required: boolean }
 export type EvaluationMember = { key: string; kind: "session" | "objective"; source_refs: EvaluationSourceRef[] }
@@ -36,6 +37,20 @@ export type EvaluationBatch = {
   invalidations: Array<{ source_key: string; reason: string; recorded_at: string }>;
 }
 export type EvaluationClaimResult = { status: "claimed"; claim: EvaluationClaim } | { status: "busy"; lease_until_ms: number } | { status: "complete" }
+export type EvaluatorPreparationRecord = {
+  batch_id: string; request_id: string; requester: Actor; method: EvaluatorMethodManifest;
+  data: unknown; sha256: string; created_at: string;
+}
+/** Local idempotency only; this key never attests a native execution. */
+export const evaluatorRequestID = (batch: Pick<EvaluationBatch, "id" | "source_store_id" | "method">) => "evaluator-" + digest({
+  format: "loom-evaluation-request-key/v1", batch_id: batch.id, source_store_id: batch.source_store_id, method: batch.method, slot: "overall",
+})
+
+export const EVALUATOR_COLUMNS = {
+  schema: ["singleton", "version"],
+  methods: ["id", "manifest_json", "manifest_sha256", "instruction_sha256"],
+  requests: ["batch_id", "slot", "method_id", "request_id", "data_json", "sha256", "created_at"],
+} as const
 
 const prefix = "learning_evaluation_"
 export const EVALUATION_COLUMNS = {
@@ -160,6 +175,104 @@ export class EvaluationStore {
     return batch
   }
 
+  /** Optional preparation metadata is initialized only by explicit preparation.
+   * A damaged extension blocks that operation without disabling Stage 3. */
+  private evaluatorSchema(create: boolean): boolean {
+    const existing = this.db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name GLOB 'learning_evaluator_*'").all() as Array<{ name: string }>
+    if (!existing.length) {
+      if (!create) return false
+      this.db.exec(`
+        CREATE TABLE learning_evaluator_schema(singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL CHECK(version=1));
+        CREATE TABLE learning_evaluator_methods(id TEXT PRIMARY KEY, manifest_json TEXT NOT NULL, manifest_sha256 TEXT NOT NULL, instruction_sha256 TEXT NOT NULL);
+        CREATE TABLE learning_evaluator_requests(
+          batch_id TEXT NOT NULL REFERENCES learning_evaluation_batches(id), slot TEXT NOT NULL CHECK(slot='overall'),
+          method_id TEXT NOT NULL REFERENCES learning_evaluator_methods(id), request_id TEXT NOT NULL UNIQUE,
+          data_json TEXT NOT NULL, sha256 TEXT NOT NULL, created_at TEXT NOT NULL,
+          PRIMARY KEY(batch_id,slot,method_id));
+        INSERT INTO learning_evaluator_schema VALUES(1,1);
+      `)
+      return true
+    }
+    for (const [name, required] of Object.entries(EVALUATOR_COLUMNS)) {
+      const columns = this.db.prepare(`PRAGMA table_info(learning_evaluator_${name})`).all() as Array<{ name: string }>
+      if (required.some(column => !columns.some(actual => actual.name === column))) throw new Error("Evaluator preparation schema is incomplete")
+    }
+    const markers = this.db.prepare("SELECT singleton,version FROM learning_evaluator_schema").all() as Array<{ singleton: number; version: number }>
+    if (markers.length !== 1 || markers[0]?.singleton !== 1 || markers[0]?.version !== 1) throw new Error("Unsupported evaluator preparation schema")
+    return true
+  }
+
+  /** Complete original membership, with no foreign or optional-source bypass. */
+  preparationPopulation(batchID: string, owner: string): { batch: EvaluationBatch; members: EvaluationMember[] } {
+    const batch = this.row(batchID, owner), rows = this.verifyMembership(batch)
+    const members = rows.map(row => ({ key: row.key, kind: row.kind, source_refs: refs(JSON.parse(row.source_refs)) }))
+    const sources = members.flatMap(member => member.source_refs)
+    if (sources.some(ref => ref.session_id !== owner || !ref.required) || this.originals(batch, sources).length)
+      throw new Error("Evaluator preparation unavailable")
+    return { batch: this.get(batchID, owner), members }
+  }
+
+  /** One immutable overall slot. The builder is pure; no cross-store writes run
+   * until the mapping and its original requester have committed. */
+  prepareEvaluatorRequest(batchID: string, owner: string, input: unknown, requester: Actor,
+    build: (requestID: string, originalRequester: Actor) => unknown): EvaluatorPreparationRecord {
+    const manifest = parseEvaluatorMethod(input), method = evaluatorMethod(manifest)
+    const origin = { session_id: uid(requester.session_id), agent: text(requester.agent, "requester agent", 200) }
+    if (origin.session_id !== owner) throw new Error("Evaluator preparation unavailable")
+    return this.transaction(() => {
+      const batch = this.row(batchID, owner)
+      if (canonical(JSON.parse(batch.method_json)) !== canonical(method) || batch.scope_key !== "evaluator-preparation/calling-session")
+        throw new Error("Evaluator preparation method or scope mismatch")
+      const mappedBefore = batch.blocked_reason === "evaluator-request-mapped" || batch.blocked_reason === "evaluator-dispatch-unavailable"
+      if (!this.evaluatorSchema(false) && mappedBefore) throw new Error("Evaluator preparation mapping lost; restore required")
+      this.evaluatorSchema(true)
+      const prior = this.readEvaluatorRequest(batchID, owner)
+      if (prior) {
+        if (canonical(prior.method) !== canonical(manifest) || encoded(prior.data) !== encoded(build(prior.request_id, prior.requester)))
+          throw new Error("Evaluator preparation immutable slot conflict")
+        return prior
+      }
+      if (mappedBefore) throw new Error("Evaluator preparation mapping lost; restore required")
+      const savedMethod = this.db.prepare("SELECT manifest_json FROM learning_evaluator_methods WHERE id=?").get(method.id) as { manifest_json: string } | undefined
+      if (savedMethod && savedMethod.manifest_json !== canonical(manifest)) throw new Error("Evaluator method identity conflict")
+      if (!savedMethod) this.db.prepare("INSERT INTO learning_evaluator_methods VALUES(?,?,?,?)")
+        .run(method.id, canonical(manifest), digest(manifest), method.instruction_sha256)
+      const requestID = evaluatorRequestID({ id: batch.id, source_store_id: batch.source_store_id, method }), data = build(requestID, origin), now = new Date(this.clock()).toISOString()
+      const envelope = { requester: origin, data }, json = canonical(envelope, new ProcessingBudget(131072)), sha256 = digest(envelope)
+      this.db.prepare("INSERT INTO learning_evaluator_requests VALUES(?,'overall',?,?,?,?,?)")
+        .run(batchID, method.id, requestID, json, sha256, now)
+      this.db.prepare("UPDATE learning_evaluation_batches SET blocked_reason='evaluator-request-mapped' WHERE id=?").run(batchID)
+      return { batch_id: batchID, request_id: requestID, requester: origin, method: manifest, data, sha256, created_at: now }
+    })
+  }
+
+  readEvaluatorRequest(batchID: string, owner: string): EvaluatorPreparationRecord | null {
+    const batch = this.row(batchID, owner)
+    if (!this.evaluatorSchema(false)) return null
+    const row = this.db.prepare(`SELECT batch_id,slot,method_id,request_id,sha256,created_at,
+      CASE WHEN typeof(data_json)='text' AND octet_length(data_json)<=393216 THEN data_json END AS data_json
+      FROM learning_evaluator_requests WHERE batch_id=? AND slot='overall'`).get(batchID) as {
+        batch_id: string; slot: string; method_id: string; request_id: string; data_json: string | null; sha256: string; created_at: string;
+      } | undefined
+    if (!row) return null
+    const methodRow = this.db.prepare(`SELECT manifest_sha256,instruction_sha256,
+      CASE WHEN typeof(manifest_json)='text' AND octet_length(manifest_json)<=98304 THEN manifest_json END AS manifest_json
+      FROM learning_evaluator_methods WHERE id=?`).get(row.method_id) as { manifest_json: string | null; manifest_sha256: string; instruction_sha256: string } | undefined
+    if (!row.data_json || row.data_json.length > 131072 || !methodRow?.manifest_json) throw new Error("Evaluator preparation unavailable")
+    const manifest = parseEvaluatorMethod(JSON.parse(methodRow.manifest_json)), method = evaluatorMethod(manifest)
+    if (method.id !== row.method_id || digest(manifest) !== methodRow.manifest_sha256 || method.instruction_sha256 !== methodRow.instruction_sha256
+      || canonical(JSON.parse(batch.method_json)) !== canonical(method)) throw new Error("Evaluator method integrity mismatch")
+    const envelope: unknown = JSON.parse(row.data_json)
+    if (!envelope || typeof envelope !== "object" || Array.isArray(envelope) || Object.keys(envelope).sort().join() !== "data,requester"
+      || !("requester" in envelope) || !envelope.requester || typeof envelope.requester !== "object" || Array.isArray(envelope.requester)
+      || Object.keys(envelope.requester).sort().join() !== "agent,session_id"
+      || !("session_id" in envelope.requester) || !("agent" in envelope.requester) || !("data" in envelope)) throw new Error("Invalid evaluator preparation record")
+    const requester = { session_id: uid(envelope.requester.session_id), agent: text(envelope.requester.agent, "requester agent", 200) }
+    if (requester.session_id !== owner || digest(envelope) !== row.sha256 || !Number.isFinite(Date.parse(row.created_at))
+      || row.request_id !== evaluatorRequestID({ id: batch.id, source_store_id: batch.source_store_id, method })) throw new Error("Evaluator preparation integrity mismatch")
+    return { batch_id: row.batch_id, request_id: uid(row.request_id), requester, method: manifest, data: envelope.data, sha256: row.sha256, created_at: row.created_at }
+  }
+
   noteOpportunity(sessionID: string, reason: string): void {
     this.db.prepare("INSERT INTO learning_evaluation_opportunities VALUES(?,'pending',?,1,?) ON CONFLICT(session_id) DO UPDATE SET state='pending',reason=excluded.reason,generation=generation+1,updated_at=excluded.updated_at")
       .run(text(sessionID, "Session", 200), text(reason, "opportunity reason"), new Date(this.clock()).toISOString())
@@ -202,7 +315,7 @@ export class EvaluationStore {
       const latest = this.db.prepare("SELECT * FROM learning_evaluation_batches WHERE owner_session=? AND scope_key=? ORDER BY sequence DESC LIMIT 1").get(owner, scope) as BatchRow | undefined
       const previous = input.previous_batch_id === undefined ? latest : this.row(input.previous_batch_id, owner)
       if (previous && (previous.scope_key !== scope || previous.id !== latest?.id)) throw new Error("Evaluation predecessor is not the current scope revision")
-      const id = randomUUID(), now = new Date(this.clock()).toISOString()
+      const id = scope === "evaluator-preparation/calling-session" ? "eval-preparation-" + identity : randomUUID(), now = new Date(this.clock()).toISOString()
       this.db.prepare("INSERT INTO learning_evaluation_batches(id,identity,owner_session,scope_key,source_store_id,boundary_json,method_json,membership_sha256,revision,previous_batch_id,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,'pending',?,?)")
         .run(id, identity, owner, scope, namespace, canonical(boundary), canonical(method), membership, (latest?.revision ?? 0) + 1, previous?.id ?? null, now, now)
       const insert = this.db.prepare("INSERT INTO learning_evaluation_members(batch_id,key,ordinal,kind,source_refs) VALUES(?,?,?,?,?)")
@@ -319,9 +432,11 @@ export class EvaluationStore {
       .get(text(owner, "owner", 200), text(scope, "scope", 200)) as { id: string } | undefined
     return row ? this.get(row.id, owner) : null
   }
-  list(owner: string, input: { before?: number; limit?: number } = {}): { items: EvaluationBatch[]; next_before: number | null } {
+  list(owner: string, input: { before?: number; limit?: number; exclude_scope?: string } = {}): { items: EvaluationBatch[]; next_before: number | null } {
     const take = integer(input.limit ?? 20, "page limit", 1, 100), before = integer(input.before ?? Number.MAX_SAFE_INTEGER, "cursor", 1)
-    const rows = this.db.prepare("SELECT id,sequence FROM learning_evaluation_batches WHERE owner_session=? AND sequence<? ORDER BY sequence DESC LIMIT ?").all(text(owner, "owner", 200), before, take + 1) as Array<{ id: string; sequence: number }>
+    const args = [text(owner, "owner", 200), before, ...(input.exclude_scope === undefined ? [] : [text(input.exclude_scope, "excluded scope", 200)]), take + 1]
+    const rows = this.db.prepare("SELECT id,sequence FROM learning_evaluation_batches WHERE owner_session=? AND sequence<?"
+      + (input.exclude_scope === undefined ? "" : " AND scope_key<>?") + " ORDER BY sequence DESC LIMIT ?").all(...args) as Array<{ id: string; sequence: number }>
     const selected = rows.slice(0, take)
     return { items: selected.map(row => this.get(row.id, owner)), next_before: rows.length > take ? selected.at(-1)!.sequence : null }
   }

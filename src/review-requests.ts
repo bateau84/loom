@@ -241,6 +241,17 @@ export class ReviewRequests {
     return { request, frozen_work_membership: membership, historical_work: [...histories.values()] }
   }
   freeze(actor: Actor, raw: unknown) {
+    return this.freezeRequest(actor, raw, false)
+  }
+  /** Trusted preparation owner only; no native tool exposes this producer. */
+  freezeEvaluatorPreparation(actor: Actor, raw: unknown) {
+    const value = object(raw, "evaluator preparation request"), extensions = object(value.extensions, "evaluator preparation classification")
+    fields(extensions, ["classification", "evaluation_batch_id"])
+    if (extensions.classification !== "evaluator-preparation" || typeof extensions.evaluation_batch_id !== "string")
+      throw new ReviewRequestError("validation", "Invalid evaluator preparation classification")
+    return this.freezeRequest(actor, raw, true)
+  }
+  private freezeRequest(actor: Actor, raw: unknown, evaluatorPreparation: boolean) {
     const request = parseRequest(actor, raw), encoded = encode(request)
     return this.atomic(true, () => {
       const existing = this.db.prepare(`SELECT requester_session,${guarded} FROM review_requests WHERE request_id=?`).get(request.request_id) as { requester_session: string; data: string } | undefined
@@ -248,6 +259,8 @@ export class ReviewRequests {
         this.getRequest(actor, request.request_id)
         return { status: existing.data === encoded ? "existing" as const : "conflict" as const, request_id: request.request_id }
       }
+      if (request.extensions?.classification === "evaluator-preparation" && !evaluatorPreparation)
+        throw new ReviewRequestError("validation", "Evaluator preparation classification is reserved for its durable owner")
       const membership: FrozenWorkMembership[] = [], membershipBudget = new ProcessingBudget(PROCESSING_LIMITS.recordChars)
       for (const m of request.members) {
         if (m.work_ref) {

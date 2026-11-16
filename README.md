@@ -377,5 +377,10 @@ primitives; it does **not** replace a live OpenCode installation smoke test.
 The [Stage 2 review foundation](docs/learning-review-stage2.md) records persistent
 review mandates, historical reconstruction, retry authority and qualified host limits.
 
+The [Stage 4 preparation increment](docs/learning-stage4-preparation.md) adds
+declared Evaluator/Audit methods, immutable source manifests and recoverable
+canonical review linkage. Its authorized readers expose existing originals;
+genuine Evaluator reasoning and native dispatch remain unavailable.
+
 See [Design and implementation boundaries](docs/design.md) and [Coordination](docs/coordination.md);
 [the alpha operating policy](docs/operating-policy.md) defines the narrower release scope.

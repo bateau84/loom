@@ -1,13 +1,12 @@
-name: Installed Stage 3 automatic learning mechanics
+name: Installed Stage 3 and Stage 4 preparation mechanics
 on:
   pull_request:
-    branches: [main]
 permissions:
   contents: read
 jobs:
   stage3:
     runs-on: ubuntu-latest
-    timeout-minutes: 14
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -47,5 +46,22 @@ jobs:
         with:
           name: installed-stage3-mechanics-${{ github.sha }}
           path: ${{ runner.temp }}/loom-stage3-installed-report/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Verify installed Stage 4 preparation without Evaluator dispatch
+        run: >-
+          python3 tests/installed_learning_stage4.py
+          --opencode "$RUNNER_TEMP/loom-stage3-host/node_modules/.bin/opencode"
+          --plugin "$RUNNER_TEMP/loom-stage3-install/node_modules/loom-plugin"
+          --artifact "$(find "$RUNNER_TEMP/loom-stage3-package" -maxdepth 1 -name 'loom-plugin-*.tgz' -print -quit)"
+          --repository "$GITHUB_WORKSPACE"
+          --expect-head "${{ github.event.pull_request.head.sha }}"
+          --expect-plugin-version "$(node -p 'require("./package.json").version')"
+          --report-directory "$RUNNER_TEMP/loom-stage4-installed-report"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installed-stage4-preparation-${{ github.sha }}
+          path: ${{ runner.temp }}/loom-stage4-installed-report/
           if-no-files-found: warn
           retention-days: 7

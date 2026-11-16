@@ -1,0 +1,181 @@
+import { canonical, digest, ProcessingBudget, ProcessingLimitError, type Actor } from "./model.js"
+import { DESCRIPTIVE_METHOD, EVALUATOR_BLOCK, type AutomaticLearning } from "./automatic-learning.js"
+import { evaluatorRequestID, type EvaluationBatch, type EvaluationMember, type EvaluatorPreparationRecord } from "./evaluation-store.js"
+import { evaluatorMethod, parseEvaluatorMethod, parseEvaluatorPolicy, type EvaluatorMethodManifest, type EvaluatorPolicyRef } from "./evaluator-method.js"
+import type { Store } from "./store.js"
+import type { ReviewRequest } from "./review-requests.js"
+
+const SCOPE = "evaluator-preparation/calling-session"
+const READ_CHARS = 262144
+const populationBudget = () => new ProcessingBudget(33554432, 2000000)
+const same = (a: unknown, b: unknown) => canonical(a, populationBudget()) === canonical(b, populationBudget())
+type Manifest = {
+  format: "loom-evaluation-manifest/v1"; batch_id: string; source_batch_id: string; source_store_id: string;
+  boundary: EvaluationBatch["boundary"]; method: EvaluationBatch["method"]; membership_sha256: string; member_count: number;
+}
+type PreparedRequest = {
+  format: "loom-evaluation-request/v1"; request_id: string; review_request_id: string;
+  batch_id: string; slot: "overall"; source_batch_id: string; source_store_id: string;
+  manifest_sha256: string; method: EvaluationBatch["method"]; target_agent: "evaluator";
+  source_policy: EvaluatorPolicyRef; route_policy: EvaluatorPolicyRef; budget_policy: EvaluatorPolicyRef | null;
+  source_scope: "calling-session-existing-evidence"; originating_request_independence: "unknown";
+  method_binding: "declared-not-admitted"; original_review_requests: "frozen-manifest-source-references";
+  review_request: ReviewRequest;
+}
+
+function policy(input: unknown): EvaluatorPolicyRef | null {
+  return input === null ? null : parseEvaluatorPolicy(input)
+}
+function manifest(batch: EvaluationBatch, sourceBatchID: string): Manifest {
+  return { format: "loom-evaluation-manifest/v1", batch_id: batch.id, source_batch_id: sourceBatchID,
+    source_store_id: batch.source_store_id, boundary: batch.boundary, method: batch.method,
+    membership_sha256: batch.membership_sha256, member_count: batch.member_count }
+}
+function request(batch: EvaluationBatch, sourceBatchID: string, method: EvaluatorMethodManifest,
+  budget: EvaluatorPolicyRef | null, manifestSHA: string, requestID: string, requester: Actor): PreparedRequest {
+  const locator = `loom-evaluation://${batch.source_store_id}/${batch.id}/manifest`
+  const review: ReviewRequest = {
+    format: "loom-review-request/v1", request_id: requestID, requester,
+    mandate: {
+      question: "Assess the complete objective trajectories supported by the frozen authorized evidence, including corrective attempts and remaining gaps.",
+      dimensions: ["observed versus reported outcomes", "verification and rework", "review scope", "positive practices", "counterevidence and uncertainty"],
+      criteria: [{ text: "One goal with fail/fail/pass verification is one trajectory with correction, not three independent successes. Preserve original review mandates and partial re-review limits.", source_ref: locator },
+        { text: "Separate source-backed facts, authored claims, interpretation and unsupported hypotheses. Retain useful practices; no-change and insufficient-evidence conclusions are valid.", source_ref: method.audit_skill.definition.locator }],
+      mode: "whole-objective-retrospective",
+      inclusions: ["All frozen members through the authorized manifest view; accessible authored links do not establish access to foreign originals."],
+      exclusions: ["Independent-pattern or causal claims without evidence", "Canonical instruction changes, experiments and project mutations", "Inference before actual recipient, source, route and budget qualification"],
+    },
+    intended_recipient: { agent: "evaluator", session_id: null }, work_revision_policy: "frozen-historical",
+    members: [{ member_id: "evaluation-manifest", work_ref: null, producing_attempt_refs: [], prior_review_request_id: null,
+      artifact_refs: [{ locator, version: { kind: "sha256", value: manifestSHA }, content_ref: `loom_insights:evaluation-preparation-members:${batch.id}` }],
+      membership_source_refs: [locator], gaps: [{ reason: "unsupported-host-boundary", source_ref: null }] }],
+    rechecks: [], extensions: { classification: "evaluator-preparation", evaluation_batch_id: batch.id },
+  }
+  return { format: "loom-evaluation-request/v1", request_id: requestID, review_request_id: requestID,
+    batch_id: batch.id, slot: "overall", source_batch_id: sourceBatchID, source_store_id: batch.source_store_id,
+    manifest_sha256: manifestSHA, method: evaluatorMethod(method), target_agent: "evaluator",
+    source_policy: method.source_policy, route_policy: method.route_policy, budget_policy: budget,
+    source_scope: "calling-session-existing-evidence", originating_request_independence: "unknown",
+    method_binding: "declared-not-admitted", original_review_requests: "frozen-manifest-source-references", review_request: review }
+}
+
+/** Source preparation only. This module has no native host or provider client,
+ * no issue-claim path and no interpretation/report writer. */
+export class EvaluatorPreparation {
+  constructor(private readonly automatic: AutomaticLearning, private readonly store: Store) {}
+
+  prepare(actor: Actor, sourceBatchID: string, rawMethod: unknown, rawBudget: unknown) {
+    const method = parseEvaluatorMethod(rawMethod), budget = policy(rawBudget)
+    const source = this.automatic.history.preparationPopulation(sourceBatchID, actor.session_id)
+    if (source.batch.source_store_id !== this.automatic.sources.namespace || source.batch.scope_key !== "permitted-session-evidence"
+      || !same(source.batch.method, DESCRIPTIVE_METHOD)) throw new Error("Evaluator preparation source must be a permitted Stage 3 batch")
+    const batch = this.automatic.history.freeze({ owner_session: actor.session_id, scope_key: SCOPE,
+      source_store_id: source.batch.source_store_id, method: evaluatorMethod(method), members: source.members,
+      boundary: { ...source.batch.boundary, preparation_source_batch: source.batch.id, preparation_budget_policy: digest(budget) } })
+    const header = manifest(batch, source.batch.id), manifestSHA = digest({ ...header, members: source.members }, populationBudget())
+    let origin = actor
+    try { origin = this.store.reviews.getRequest(actor, evaluatorRequestID(batch)).requester }
+    catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "not-authorized") throw error }
+    const mapped = this.automatic.history.prepareEvaluatorRequest(batch.id, actor.session_id, method, origin,
+      (id, origin) => request(batch, source.batch.id, method, budget, manifestSHA, id, origin))
+    const saved = this.checked(mapped, actor.session_id)
+    const { requester: _requester, ...review } = saved.request.review_request
+    const frozen = this.store.reviews.freezeEvaluatorPreparation(mapped.requester, review)
+    if (frozen.status === "conflict") throw new Error("Evaluator preparation review request conflict")
+    this.store.reviews.prepareIssue(actor, mapped.request_id, { kind: "initial" })
+    this.automatic.history.block(batch.id, "evaluator-dispatch-unavailable")
+    return this.read(actor.session_id, batch.id)
+  }
+
+  private checked(record: EvaluatorPreparationRecord, owner: string) {
+    const population = this.automatic.history.preparationPopulation(record.batch_id, owner), batch = population.batch
+    if (batch.source_store_id !== this.automatic.sources.namespace || batch.scope_key !== SCOPE || !record.data || typeof record.data !== "object"
+      || Array.isArray(record.data) || !("budget_policy" in record.data) || !("source_batch_id" in record.data)
+      || typeof record.data.source_batch_id !== "string") throw new Error("Evaluator preparation unavailable")
+    const source = this.automatic.history.preparationPopulation(record.data.source_batch_id, owner)
+    const budget = policy(record.data.budget_policy), header = manifest(batch, source.batch.id)
+    if (source.batch.source_store_id !== batch.source_store_id || source.batch.scope_key !== "permitted-session-evidence"
+      || !same(source.batch.method, DESCRIPTIVE_METHOD) || !same(source.members, population.members)
+      || !same(batch.boundary, { ...source.batch.boundary, preparation_source_batch: source.batch.id, preparation_budget_policy: digest(budget) }))
+      throw new Error("Evaluator preparation source boundary mismatch")
+    const sha256 = digest({ ...header, members: population.members }, populationBudget())
+    const expected = request(batch, source.batch.id, record.method, budget, sha256, record.request_id, record.requester)
+    if (!same(expected, record.data)) throw new Error("Evaluator preparation request integrity mismatch")
+    return { request: expected, manifest: header, members: population.members }
+  }
+
+  private load(owner: string, batchID: string) {
+    const record = this.automatic.history.readEvaluatorRequest(batchID, owner)
+    if (!record) throw new Error("Evaluator preparation unavailable")
+    return { record, ...this.checked(record, owner) }
+  }
+
+  assertReview(owner: string, review: ReviewRequest): void {
+    const id = review.extensions?.evaluation_batch_id
+    if (typeof id !== "string") throw new Error("Evaluator preparation unavailable")
+    const saved = this.load(owner, id)
+    if (saved.record.request_id !== review.request_id || !same(review, saved.request.review_request))
+      throw new Error("Evaluator preparation unavailable")
+  }
+
+  read(owner: string, batchID: string) {
+    const { record, request: saved, manifest: header } = this.load(owner, batchID)
+    let issue: ReturnType<Store["reviews"]["readIssue"]> | null = null
+    let state: "prepared" | "incomplete" = "incomplete"
+    try {
+      const review = this.store.reviews.getRequest({ session_id: owner, agent: "preparation-reader" }, record.request_id)
+      if (!same(review, saved.review_request)) throw new Error("Evaluator preparation review request conflict")
+      issue = this.store.reviews.readIssue({ session_id: owner, agent: "preparation-reader" }, record.request_id)
+      state = "prepared"
+    } catch (error) {
+      // A missing cross-store write is recoverable by replaying the explicit
+      // preparation. Reads never fill it in or reset an existing issue claim.
+      if (!(error instanceof Error) || (!("code" in error) || !["not-authorized", "issue-not-found"].includes(String(error.code)))) throw error
+    }
+    return { state, mode: "preparation-only", batch_id: batchID, request_id: record.request_id, review_request_id: record.request_id,
+      method_id: evaluatorMethod(record.method).id, manifest_sha256: saved.manifest_sha256, manifest: header,
+      request: saved, method_manifest: record.method, method_binding: "declared-not-admitted", policy_authority: "not-established",
+      issue, interpretation: null, dispatch: EVALUATOR_BLOCK, automatic_model_calls: false, budget_reservation: null,
+      Q4: "partial-unqualified", Q5: "unqualified-transfer-withheld", E11: "unqualified",
+      qualifications: ["preparation-not-evaluator-reasoning", "same-session-originals-only", "foreign-linked-content-not-inspected",
+        "originating-request-independence-unknown", "method-content-not-loaded-or-attested", "no-native-recipient-or-admission"] }
+  }
+
+  members(owner: string, batchID: string, requestID: unknown, manifestSHA: unknown, after: unknown = 0, limit: unknown = 20) {
+    const { record, request: saved, manifest: header, members } = this.load(owner, batchID)
+    if (requestID !== record.request_id || manifestSHA !== saved.manifest_sha256) throw new Error("Evaluator preparation page identity mismatch")
+    if (!Number.isSafeInteger(after) || (after as number) < 0 || (after as number) > members.length
+      || !Number.isSafeInteger(limit) || (limit as number) < 1 || (limit as number) > 100) throw new Error("Invalid evaluator preparation page")
+    const page = { batch_id: batchID, request_id: record.request_id, manifest_sha256: saved.manifest_sha256, manifest: header,
+      items: [] as Array<EvaluationMember & { ordinal: number }>, next_after: null as number | null }
+    for (let i = after as number; i < Math.min(members.length, (after as number) + (limit as number)); i++) {
+      const member = members[i]!
+      const item = { ...member, ordinal: i + 1 }, next = i + 1 < members.length ? i + 1 : null
+      try { canonical({ ...page, items: [...page.items, item], next_after: next }, new ProcessingBudget(READ_CHARS)) }
+      catch (error) {
+        if (!(error instanceof ProcessingLimitError) || !page.items.length) throw error
+        break
+      }
+      page.items.push(item)
+    }
+    const end = (after as number) + page.items.length
+    page.next_after = end < members.length ? end : null
+    return page
+  }
+
+  source(owner: string, batchID: string, requestID: unknown, manifestSHA: unknown, memberKey: unknown, sourceIndex: unknown) {
+    const { record, request: saved, members } = this.load(owner, batchID)
+    if (requestID !== record.request_id || manifestSHA !== saved.manifest_sha256) throw new Error("Evaluator preparation page identity mismatch")
+    const member = members.find(item => item.key === memberKey)
+    if (!member || !Number.isSafeInteger(sourceIndex) || (sourceIndex as number) < 0 || (sourceIndex as number) >= member.source_refs.length)
+      throw new Error("Invalid evaluator preparation source selection")
+    const ref = member.source_refs[sourceIndex as number]!
+    const original = this.automatic.sources.resolve(ref, this.automatic.sources.namespace)
+    if (!original) throw new Error("Evaluator preparation unavailable")
+    const result = { batch_id: batchID, request_id: record.request_id, manifest_sha256: saved.manifest_sha256,
+      member_key: member.key, source_index: sourceIndex, source: ref, value: original.value,
+      coverage: "existing-stored-record", receiving_session: owner, native_evaluator_retrieval: "not-established" }
+    canonical(result, new ProcessingBudget(READ_CHARS))
+    return result
+  }
+}

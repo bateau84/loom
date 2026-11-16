@@ -16,6 +16,8 @@ Fresh investigation still finds Q4 **partial/unqualified** and Q5 **unsupported/
 
 This document is a **proposed Stage 4 implementation contract**, derived from the accepted behavior below. It is not a claim that Stage 4 is implemented or qualified. This assignment changes documentation only: no upstream changes, dependency upgrade, real-model dispatch, retention expansion or Stage 4 production implementation. [Issue #227](https://github.com/bateau84/loom/issues/227) remains open.
 
+**Subsequent implementation:** The user selected this contract for the next assignment. The [durable preparation increment](learning-stage4-preparation.md) implements a bounded part of section 6 with dispatch unavailable. The documentation-only stop point below records the original PR #235 assignment; it is not a claim that no later implementation exists.
+
 Example: three Coder handbacks concern one goal. The first two fail later verification; the third fixes the defect. R1 reviewed artifact A for security, while R2 checked only the correction in B. An Evaluator should explain the whole trajectory, recovery, useful practices and remaining uncertainty. It must neither count three wins nor promote either scoped review into general acceptance. It can conclude that no system change is justified.
 
 ## Derived from

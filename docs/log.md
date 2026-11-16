@@ -6,6 +6,14 @@ type: Log
 
 ## 2026-11-15
 
+**Stage 4 preparation increment:** Implemented declared method validation,
+complete authorized source manifests, durable evaluation-to-review linkage and
+bounded native readers. Preparation remains explicitly blocked before recipient
+creation, model effects, budget reservation and interpretation publication.
+Recovery fences missing committed mappings and preserves consumed canonical
+issues. Generated preparation reviews are excluded from engineering source
+populations. See the [implementation boundary and operations](learning-stage4-preparation.md).
+
 **Stage 4 architecture and host qualification:** Added the proposed
 [whole-objective learning contract](learning-stage4-contract.md) and its
 [fresh evidence record](learning-stage4-host-evidence.json). Inspected OpenCode
