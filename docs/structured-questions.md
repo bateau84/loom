@@ -21,7 +21,10 @@ Architect's decision authority or replace a genuine user decision.
 ```
 
 This primary-Session example requires a single eligible `research` role discovered
-through `loom_agents`. In a child Session, `recipient:{kind:"dispatcher"}` can
+through `loom_agents`. Alternatively, explicit `session_id` can address a
+verified existing native Session, including another General Session, with an
+optional `action_id` for that Session's Action. The actual asker remains the
+ledger author. In a child Session, `recipient:{kind:"dispatcher"}` can
 instead address its native parent. A primary Session has no dispatcher. User
 questions still need native user interaction; Loom does not fabricate a reply.
 Neither an Action nor a Plan is required.
