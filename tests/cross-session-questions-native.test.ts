@@ -17,7 +17,7 @@ test("explicit cross-Session OQ keeps the real author, associates the destinatio
       action_id: target.id, data: { format: "loom-question/v2", expected_session: "general-b" },
       dispatch: { status: "admission-observed", target_session_id: "general-b" } })
     expect(q.action_id).not.toBe(own.id)
-    expect((await f.invoke("context", {}, "general-a", "general")).result.selected.action_id).toBe(own.id)
+    expect((await f.invoke("context", {}, "general-a", "general")).result.action.id).toBe(own.id)
     expect(f.nativeInputs.some((n: any) => n.sessionID === "general-b" &&
       n.metadata?.question_id === q.id)).toBe(true)
     await expect(f.invoke("record", { operation: "answer", question_id: q.id, answer: "Impersonation" },
