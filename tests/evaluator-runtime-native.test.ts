@@ -1,9 +1,10 @@
-import { test, expect } from "bun:test"
+import { test, expect, spyOn } from "bun:test"
 import { Database } from "bun:sqlite"
 import { writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { registeredLoom } from "./helpers/registered-loom.js"
 import type { EvaluatorMethodManifest } from "../src/evaluator-method.js"
+import { AutomaticLearning } from "../src/automatic-learning.js"
 
 function method(): EvaluatorMethodManifest {
   const ref = (name: string) => ({ locator: "fixture://" + name, sha256: "a".repeat(64) })
@@ -21,10 +22,11 @@ async function fixture() {
   f.nativeAgents.push({ id: "evaluator", mode: "subagent", hidden: false })
   const original = (await f.invoke("record", { operation: "add", session_only: true, kind: "result", statement: "Authorized original record" })).result
   let batch: { id: string } | undefined
-  for (let i = 0; i < 100 && !batch; i++) {
+  const deadline = Date.now() + 4_000
+  while (Date.now() < deadline && !batch) {
     const listing = (await f.invoke("insights", { operation: "evaluations" })).result
     batch = listing.items.find((item: { state: string }) => item.state === "complete")
-    if (!batch) await new Promise(resolve => setTimeout(resolve, 5))
+    if (!batch) await new Promise(resolve => setImmediate(resolve))
   }
   if (!batch) { await f.close(); throw new Error("Stage 3 did not publish original source") }
   return { f, original, input: { operation: "prepare-evaluation", batch_id: batch.id, method: method(), budget_policy: null } }
@@ -90,19 +92,60 @@ test("new readers reject foreign owners and revoked learning permission also fen
   } finally { f.permission.beforeReturn = undefined; await f.close() }
 })
 
-test("changed original withholds preparation through new readers and legacy review replay without leaking list cursor", async () => {
-  const { f, original, input } = await fixture()
+test.each(["settled", "outstanding"] as const)("changed original with %s drain withholds preparation and excludes it across list pages", async (mode) => {
+  let release!: () => void
+  let reached!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const blocked = new Promise<void>(resolve => { reached = resolve })
+  const run = AutomaticLearning.prototype.run
+  const spy = spyOn(AutomaticLearning.prototype, "run").mockImplementation(async function (this: AutomaticLearning, ...args) {
+    const result = await run.apply(this, args)
+    if (mode === "outstanding" && result.state === "complete" && !result.replayed) {
+      reached()
+      await gate
+    }
+    return result
+  })
+  let f: Awaited<ReturnType<typeof fixture>>["f"] | undefined
   try {
+    const fixtureResult = await fixture()
+    f = fixtureResult.f
+    const { original, input } = fixtureResult
+    if (mode === "outstanding") await blocked
+    const waitForIdle = async () => {
+      const deadline = Date.now() + 4_000
+      while (Date.now() < deadline) {
+        const status = (await f!.invoke("insights", { operation: "evaluation-status" })).result
+        if (!status.queued && status.opportunity?.state === "idle") return
+        await new Promise(resolve => setImmediate(resolve))
+      }
+      throw new Error("Stage 3 drain did not settle")
+    }
+    if (mode === "settled") await waitForIdle()
     const prepared = (await f.invoke("review", input)).result
     const ledger = f.permissionRequests.flatMap(request => request.resources).find((path: string) => path.endsWith("ledger.sqlite"))
     const db = new Database(ledger)
     try { db.query("UPDATE ledger SET data=json_set(data,'$.data.statement',?) WHERE id=?").run("Changed original", original.id) } finally { db.close() }
     for (const query of queries(prepared)) await expect(f.invoke("insights", query)).rejects.toThrow("unavailable")
     for (const [name, replay] of replays(prepared)) await expect(f.invoke(name, replay)).rejects.toThrow("unavailable")
-    const listing = (await f.invoke("insights", { operation: "evaluations", limit: 1 })).result
-    expect(listing.items.map((item: { id: string }) => item.id)).toEqual([input.batch_id])
-    expect(listing.next_before).toBeNull()
-  } finally { await f.close() }
+    release()
+    await waitForIdle()
+    const ids: string[] = []
+    let before: number | undefined
+    const cursors = new Set<number>()
+    do {
+      const listing = (await f.invoke("insights", { operation: "evaluations", limit: 1, ...(before === undefined ? {} : { before }) })).result
+      ids.push(...listing.items.map((item: { id: string }) => item.id))
+      before = listing.next_before ?? undefined
+      if (before !== undefined) {
+        expect(cursors.has(before)).toBe(false)
+        cursors.add(before)
+      }
+    } while (before !== undefined)
+    expect(ids).toContain(input.batch_id)
+    expect(ids).not.toContain(prepared.batch_id)
+    expect(new Set(ids).size).toBe(ids.length)
+  } finally { release(); try { if (f) await f.close() } finally { spy.mockRestore() } }
 })
 
 test("prepared page identity and source positions reject forged authority, ambiguous and out-of-range requests", async () => {
