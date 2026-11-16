@@ -8,9 +8,11 @@ timestamp: 2026-11-15T00:00:00Z
 
 # Stage 3: automatic learning implementation
 
-**Bounded Stage 3: GO**, following independent installed-host qualification of production source `4cf442510c29aa1387b1ce7e2de6716d926f5452` on 2026-11-15. This supersedes the earlier independent-qualification hold for this bounded release. PR #233 is technically eligible to be marked ready and merged after its current required checks pass; merging still requires explicit user approval. The qualification update changes documentation, evidence and a reusable test harness only, with production runtime and dependency manifests unchanged from the independently tested source.
+**Bounded Stage 3: merged through [PR #233](https://github.com/bateau84/loom/pull/233) at `e1c6a66c4c6ff2d23881c07533715d59a45000a1` on 2026-11-15.** Independent installed-host qualification of production source `4cf442510c29aa1387b1ce7e2de6716d926f5452` established GO for this bounded release and superseded the earlier qualification hold. The final pre-merge qualification update changed documentation, evidence and a reusable test harness only; production runtime and dependency manifests were unchanged from that independently tested source.
 
 Stage 3 implements automatic, deterministic descriptions of existing permitted evidence. It does **not** establish whole-objective success, genuine Evaluator judgement or E11 acceptance. The accepted [whole-work architecture](learning-evidence-and-review-scope.md) and [Stage 2 private review foundation](learning-review-stage2.md) remain the basis. **Q4 and Q5 remain UNQUALIFIED; E11 remains NO-GO / UNPROVEN.**
+
+The proposed [Stage 4 contract](learning-stage4-contract.md) carries this design forward and records a fresh host investigation, including OpenCode 2.3.0 source. It does not change the Stage 3 runtime or enable Evaluator dispatch.
 
 ## Automatic discovery and processing
 

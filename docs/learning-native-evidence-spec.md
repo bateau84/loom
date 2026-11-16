@@ -14,6 +14,8 @@ The observer and the review reader must agree on two things: who produced a fact
 
 This contract realizes the accepted architecture without creating another orchestrator, transcript store, source ACL policy or retrospective scheduler. Stage 2 implements request/issue persistence, historical scope, authorized readers and migration in the existing Store. Richer capture policy, protected native delivery and exact execution binding remain subsequent dependencies.
 
+The proposed [Stage 4 contract](learning-stage4-contract.md) adds the current Q4/Q5 investigation and the bounded host/API changes needed for genuine Evaluator reasoning. It preserves this specification's identity, mandate, canonical issue and evidence-basis semantics; Stage 3's merged deterministic reports remain a separate method.
+
 ## Derived from
 
 - [Accepted evidence and review architecture](learning-evidence-and-review-scope.md).
