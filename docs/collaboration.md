@@ -80,8 +80,10 @@ sequence: the latest explicit report is the current report, not an approval deci
 `loom_record` supports:
 
 - `ask`: required `question`, explicit Boolean `blocking` and exactly one of
-  `recipient:{kind,id?}` (agent/role requires id, dispatcher/user no id) or legacy
-  `to_agent`; optional `context`, `context_attachments`,
+  `recipient:{kind,id?}` (agent/role requires id, dispatcher/user no id), legacy
+  `to_agent`, or an explicit destination `session_id`. Optional `action_id`
+  associates the question with another existing Action rather than the selected one;
+  it cannot be combined with `reference`. Optional `context`, `context_attachments`,
   `reference:{action_id,kind,id}`, `answer_type` and `choices`. Reference kinds are action, phase, wave, task,
   subtask. The returned record ID is the question ID.
 - `answer`: required `question_id` and a text answer, choice selection or cannot-select
@@ -118,6 +120,27 @@ selection of a verified native child after delegation. Answers require that
 exact Session plus matching agent and parent. Another sibling cannot answer. This checks identity, not the validity of the decision or whether an
 agent genuinely consulted the user. A parent/General relaying a user decision
 must cite the actual user response. Removed Plan nodes retain question threads.
+
+An explicit `session_id` addresses an existing native Session, not an agent name.
+The actual calling Session remains the ledger author; it cannot be overridden.
+The target is verified in the same project/workspace/canonical directory before
+storage and again before dispatch, and becomes the exact authorized respondent.
+Unrelated General Sessions may exchange questions without creating a subagent;
+the recipient receives a qualified native notice with retrieval instructions,
+not an injected answer. The destination may answer even without selecting the
+other Action. `action_id` (when supplied) is validated against the shared local
+Action store but does not change either Session's selection. Omission retains the
+existing focus/reference behavior. Missing, foreign or conflicting destinations
+fail before writing; lost native notice admission remains recorded as uncertain,
+never as a completed answer.
+
+`loom_record operation=query view=inbox` returns a paginated, Session-bound
+list of questions addressed to the actual calling Session across Actions and
+Session-only records; `question_state` defaults to `open`, with `answered` and
+`all` supported. It does not accept a caller-supplied destination or select
+work. This is durable recovery/discovery, not a delivery retry, permission to
+read private native Session context or evidence that the Session consumed a
+notice. The original `query view=thread` remains authoritative.
 
 For new agent/role recipients, exactly one enabled, visible, available,
 subagent-capable target must match. Loom invokes OpenCode 2.2.0's native
@@ -174,8 +197,8 @@ subagent result; nonblocking direct OQs can receive native background completion
 A blocking answer may expose `continuation.owner:native-subagent-execution`,
 identifying the native owner, not an extra action.
 
-Only the FIRST committed answer to a blocking legacy v1 or forwarded typed v2
-question may attempt one best-effort Loom resume of the exact asker.
+Only the FIRST committed answer to a blocking legacy v1, forwarded typed v2 or
+explicitly Session-addressed v2 question may attempt one best-effort Loom resume of the exact asker.
 Later/nonblocking answers do not wake it; legacy delivery stays manual.
 Neither native completion nor Loom admission proves answer consumption.
 Storage failure sends nothing. No retry, eligibility transfer, recovery replay,
@@ -218,6 +241,7 @@ Use `loom_record operation: "query"` with these views:
 | `ledger` (default) | Existing raw history, exact `record_id`, `after`/`next_after`; selected-task filtering is unchanged |
 | `progress` | Action/node or selection; `offset`/`next_offset`; Action-wide pages cover current nodes, explicit node ID can inspect removed progress |
 | `questions` | Explicit or selected Action; optional explicit `node_id`, `respondent`, `question_state: open/answered/all`; `after`/`next_after` |
+| `inbox` | Actual calling Session only (no Action selection required); `question_state: open/answered/all`, `after`/`next_after`; includes Action and Session-only questions |
 | `thread` | `question_id`; full question and answers; `after`/`next_after` pages answers; optional `action_id` must match |
 | `full_thread` | Explicit `action_id` plus optional `node_id` OR `session_id`; optional `cursor`, `limit`; returns `format`, `scope`, escaped `markdown`, `next_cursor` |
 
