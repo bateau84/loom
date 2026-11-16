@@ -109,16 +109,19 @@ const askInput = { question: str, to_agent: str, recipient: recipientInput, bloc
 const answerInput = { question_id: str, answer: str, choice_id: choiceIDInput,
   status: choice("cannot-select"), reason: { type: "string", minLength: 1, maxLength: QUESTION_CHOICE_LIMITS.reason, pattern: "\\S" }, context_attachments: contextAttachments }
 const bindInput = { question_id: str, respondent_session_id: str }
-const evaluatorContentRefInput = obj({ locator: { type: "string", maxLength: 2000 }, sha256: { type: "string", pattern: "^[a-f0-9]{64}$" } }, ["locator", "sha256"])
-const evaluatorPolicyInput = obj({ id: str, revision: str, sha256: { type: "string", pattern: "^[a-f0-9]{64}$" } }, ["id", "revision", "sha256"])
-const evaluatorMethodInput = obj({
+// The host removes unknown fields from closed objects before execution. Preserve
+// them here so Loom's strict operation/method validators reject forged authority.
+const preserveInput = (properties: Record<string, unknown>, required: string[] = []) => ({ ...obj(properties, required), additionalProperties: true })
+const evaluatorContentRefInput = preserveInput({ locator: { type: "string", maxLength: 2000 }, sha256: { type: "string", pattern: "^[a-f0-9]{64}$" } }, ["locator", "sha256"])
+const evaluatorPolicyInput = preserveInput({ id: str, revision: str, sha256: { type: "string", pattern: "^[a-f0-9]{64}$" } }, ["id", "revision", "sha256"])
+const evaluatorMethodInput = preserveInput({
   format: { const: "loom-evaluator-method/v1" },
-  evaluator: obj({ agent: { const: "evaluator" }, definition: evaluatorContentRefInput }, ["agent", "definition"]),
-  audit_skill: obj({ skill: { const: "agent-run-audit" }, definition: evaluatorContentRefInput }, ["skill", "definition"]),
+  evaluator: preserveInput({ agent: { const: "evaluator" }, definition: evaluatorContentRefInput }, ["agent", "definition"]),
+  audit_skill: preserveInput({ skill: { const: "agent-run-audit" }, definition: evaluatorContentRefInput }, ["skill", "definition"]),
   rubric: evaluatorContentRefInput, instruction_bundle: evaluatorContentRefInput,
   result_format: { const: "loom-evaluator-interpretation/v1" },
-  model: obj({ provider_id: str, model_id: str, settings: evaluatorContentRefInput }, ["provider_id", "model_id", "settings"]),
-  adapter: obj({ id: str, version: str, profile: evaluatorPolicyInput }, ["id", "version", "profile"]),
+  model: preserveInput({ provider_id: str, model_id: str, settings: evaluatorContentRefInput }, ["provider_id", "model_id", "settings"]),
+  adapter: preserveInput({ id: str, version: str, profile: evaluatorPolicyInput }, ["id", "version", "profile"]),
   source_policy: evaluatorPolicyInput, route_policy: evaluatorPolicyInput,
 }, ["format", "evaluator", "audit_skill", "rubric", "instruction_bundle", "result_format", "model", "adapter", "source_policy", "route_policy"])
 const evaluatorPrepareInput = { operation: { const: "prepare-evaluation" }, batch_id: str, method: evaluatorMethodInput,
@@ -126,13 +129,13 @@ const evaluatorPrepareInput = { operation: { const: "prepare-evaluation" }, batc
 const specs = [
   { name: "agents", description: TOOL_HELP.agents, input: obj({}) },
   { name: "review", description: TOOL_HELP.review, input: {
-    ...obj({ operation: choice("freeze", "read", "issue", "prepare", "prepare-evaluation", "relate", "work"), request: reviewRequestInput, request_id: str, authorization_ref: str,
+    ...preserveInput({ operation: choice("freeze", "read", "issue", "prepare", "prepare-evaluation", "relate", "work"), request: reviewRequestInput, request_id: str, authorization_ref: str,
       batch_id: str, method: evaluatorMethodInput, budget_policy: evaluatorPrepareInput.budget_policy,
       after: num, relationship_after: num, issue_after: num, limit: { type: "integer", minimum: 1, maximum: 50 }, member_id: str,
       relationship: choice("observed", "retrieved", "cited", "claimed-inspected", "finding", "correction"),
       source_record_id: str, member_ids: list, supersedes: str }, ["operation"]),
     oneOf: [
-      obj(evaluatorPrepareInput, ["operation", "batch_id", "method", "budget_policy"]),
+      preserveInput(evaluatorPrepareInput, ["operation", "batch_id", "method", "budget_policy"]),
       obj({ operation: { const: "freeze" }, request: reviewRequestInput }, ["operation", "request"]),
       obj({ operation: { const: "read" }, request_id: str, after: num, relationship_after: num, issue_after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation", "request_id"]),
       obj({ operation: { const: "prepare" }, request_id: str }, ["operation", "request_id"]),
@@ -147,7 +150,7 @@ const specs = [
       session_id: str, export_path: { type: "string", minLength: 1, maxLength: 4096 },
       include_text: { type: "boolean" }, limit: { type: "integer", minimum: 1, maximum: 50 },
       cursor: { type: "string", minLength: 1, maxLength: 4096 } }, ["operation"]) },
-  { name: "insights", description: TOOL_HELP.insights, input: obj({ operation: choice("action", "window", "findings", ...EVALUATION_READS), batch_id: str, member_key: str, report_id: str,
+  { name: "insights", description: TOOL_HELP.insights, input: preserveInput({ operation: choice("action", "window", "findings", ...EVALUATION_READS), batch_id: str, member_key: str, report_id: str,
     request_id: str, manifest_sha256: str, source_index: num, after: num, finding_cursor: { type: "string", maxLength: 512 }, action_id: str, before: { type: "integer", minimum: 1 }, limit: { type: "integer", minimum: 1, maximum: 200 }, since_at: str, until_at: str }, ["operation"]) },
   { name: "objective", description: TOOL_HELP.objective, input: obj({
       operation: choice("create", "link", "read", "list", "find"),

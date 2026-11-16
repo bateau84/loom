@@ -195,6 +195,20 @@ def assert_unissued(value: dict):
             "Local preparation upgraded native execution provenance")
 
 
+def preparation_snapshot(learning: Path, ledger: Path) -> dict:
+    """Read-only oracle: rejected native inputs cannot add or change durable effects."""
+    result = {}
+    for path, tables in (
+        (learning, ("learning_evaluator_methods", "learning_evaluator_requests")),
+        (ledger, ("review_requests", "review_issue_intents", "review_issue_outcomes")),
+    ):
+        with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as db:
+            db.execute("PRAGMA query_only=ON")
+            for table in tables:
+                result[table] = db.execute("SELECT * FROM " + table + " ORDER BY 1").fetchall()
+    return result
+
+
 def run(args) -> dict:
     repo, output = args.repository.resolve(), args.report_directory.resolve()
     output.mkdir(parents=True, exist_ok=False, mode=0o700)
@@ -366,17 +380,38 @@ def run(args) -> dict:
                     check("S4-native-foreign-and-revoked-readers-denied",
                           foreign_denials=3, revoked_same_owner_denials=3)
 
+                    budget_policy = {"id": "fixture-budget", "revision": "1", "sha256": "c" * 64}
+                    budgeted_input = {**prepare, "budget_policy": budget_policy}
+                    budgeted = scenario.invoke(owner, "review", budgeted_input)
+                    assert_unissued(budgeted)
+                    require(identity(scenario.invoke(owner, "review", budgeted_input)) == identity(budgeted),
+                            "A valid declared budget reference changed preparation identity on replay")
+                    before_rejections = preparation_snapshot(learning, ledger)
                     for query in (
                         {**first_page, "request_id": "wrong-request-identity"},
                         {**first_page, "manifest_sha256": "0" * 64},
                         {**first_page, "after": -1},
                         {**first_page, "limit": 0},
+                        {**first_page, "qualified": True},
                     ):
                         denied(scenario, owner, "insights", query)
-                    forged = json.loads(encoded(method))
-                    forged["host_qualified"] = True
-                    denied(scenario, owner, "review", {**prepare, "method": forged})
-                    check("S4-native-wrong-identity-checksum-and-cursor-denied", negative_controls=5)
+                    for path in ((), ("evaluator", "definition"), ("model", "settings"), ("adapter", "profile")):
+                        forged = json.loads(encoded(method))
+                        target = forged
+                        for field in path:
+                            target = target[field]
+                        target["host_qualified"] = True
+                        denied(scenario, owner, "review", {**prepare, "method": forged})
+                    for query in (
+                        {**prepare, "host_qualified": True},
+                        {**prepare, "request_id": stable["request_id"]},
+                        {**prepare, "budget_policy": {**budget_policy, "approved": True}},
+                    ):
+                        denied(scenario, owner, "review", query)
+                    require(preparation_snapshot(learning, ledger) == before_rejections,
+                            "Rejected native inputs changed a method, mapping, review or canonical issue")
+                    check("S4-native-wrong-identity-checksum-and-cursor-denied", negative_controls=12,
+                          preparation_stores_unchanged=True, declared_budget_replay=True)
 
                     old_pid = host.proc.pid
                     host.close()
