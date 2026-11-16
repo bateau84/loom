@@ -75,8 +75,14 @@ test("registered schema and callbacks require canonical fields and reject aliase
     const ask = schema.allOf.find((s: any) => s.if.properties.operation.const === "ask").then
     const answer = schema.allOf.find((s: any) => s.if.properties.operation.const === "answer").then
     expect(ask.required).toEqual(["operation", "question", "blocking"])
-    expect(ask.oneOf).toEqual([{ required: ["to_agent"], not: { required: ["recipient"] } },
-      { required: ["recipient"], not: { required: ["to_agent"] } }])
+    expect(ask.oneOf).toEqual([
+      { required: ["to_agent"], not: { anyOf: [{ required: ["recipient"] }, { required: ["session_id"] }] } },
+      { required: ["recipient"], not: { anyOf: [{ required: ["to_agent"] }, { required: ["session_id"] }] } },
+      { required: ["session_id"], not: { anyOf: [{ required: ["to_agent"] }, { required: ["recipient"] }] } },
+    ])
+    expect(ask.properties.session_id).toBeDefined()
+    expect(ask.properties.action_id).toBeDefined()
+    expect(ask.allOf[0]).toEqual({ not: { required: ["action_id", "reference"] } })
     expect(answer.required).toEqual(["operation", "question_id"])
     expect(answer.oneOf).toEqual([
       { required: ["answer"], not: { anyOf: [{ required: ["choice_id"] }, { required: ["status"] }, { required: ["reason"] }] } },
@@ -87,9 +93,11 @@ test("registered schema and callbacks require canonical fields and reject aliase
     for (const operation of [ask, answer]) {
       expect(operation.additionalProperties).toBe(false)
       expect(operation.properties.context_attachments.type).toBe("array")
-      for (const alias of ["attachments", "statement", "artifact_refs", "background", "agent", "session_id", "action_id", "node_id"])
+      for (const alias of ["attachments", "statement", "artifact_refs", "background", "agent", "node_id"])
         expect(operation.properties[alias]).toBeUndefined()
     }
+    for (const alias of ["session_id", "action_id"])
+      expect(answer.properties[alias]).toBeUndefined()
     const valid = { operation: "ask", question: "Question?", to_agent: "investigator", blocking: false }
     for (const required of ["question", "blocking"]) {
       const input: any = { ...valid }; delete input[required]

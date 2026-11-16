@@ -165,7 +165,7 @@ const specs = [
   { name: "action", description: TOOL_HELP.action, input: obj({ operation: choice("list", "create", "update", "sessions"), action_id: str, title: str, goal: str, state: choice("active", "paused", "completed", "cancelled"), expected_revision: num, offset: num, archived: { type: "boolean" }, cursor: { type: "string", minLength: 1, maxLength: 4096 }, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
   { name: "plan", description: TOOL_HELP.plan, input: obj({ operation: choice("read", "save"), action_id: str, revision: num, expected_revision: num, nodes: { type: "array", maxItems: 300, items: obj({ id: str, kind: choice("phase", "wave", "task", "subtask"), title: str, parent: str, depends_on: list, outcome: str, context: str, criteria: list, roles: list, skills: list, agent: str }, ["id", "kind", "title"]) } }, ["operation", "action_id"]) },
   { name: "context", description: TOOL_HELP.context, input: obj({ action_id: str, node_id: str, clear: { type: "boolean" }, mode: choice("continuation", "independent"), handoff_id: { type: ["string", "null"] } }) },
-  { name: "record", description: TOOL_HELP.record, input: { ...obj({ operation: choice("add", "query", "complete", "reopen", "ask", "answer", "bind-respondent"), view: choice("ledger", "progress", "questions", "inbox", "thread", "full_thread"), response_format: choice("markdown", "json"), session_id: str, cursor: str, work_ref: workRefInput, ...askInput, ...answerInput, ...bindInput, respondent: str, question_state: choice("open", "answered", "all"), offset: num, action_id: str, node_id: str, kind: choice("claim", "result", "concern", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]),
+  { name: "record", description: TOOL_HELP.record, input: { ...obj({ operation: choice("add", "query", "complete", "reopen", "ask", "answer", "bind-respondent"), view: choice("ledger", "progress", "questions", "inbox", "thread", "full_thread"), response_format: choice("markdown", "json"), cursor: str, work_ref: workRefInput, ...askInput, ...answerInput, ...bindInput, respondent: str, question_state: choice("open", "answered", "all"), offset: num, action_id: str, node_id: str, kind: choice("claim", "result", "concern", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]),
     allOf: [
       { if: { properties: { operation: { const: "ask" } } }, then: {
           ...obj({ operation: { const: "ask" }, ...askInput }, ["operation", "question", "blocking"]),
@@ -811,7 +811,7 @@ export default Plugin.define({
                     if (Object.keys(input).some(key => !allowed.includes(key)))
                       throw new Error("A structured review ask accepts only question, recipient, blocking and review; preserve context and scope in the immutable review mandate/members")
                     if (typeof input.blocking !== "boolean") throw new Error("Review ask blocking must be Boolean")
-                    if (recipient.kind !== "agent" && recipient.kind !== "role")
+                    if (!recipient || (recipient.kind !== "agent" && recipient.kind !== "role"))
                       throw new Error("A review request requires a typed agent or role recipient")
                     const review = payload(input.review), mandate = payload(review.mandate), intended = payload(review.intended_recipient)
                     if (mandate.question !== input.question) throw new Error("Review mandate must preserve the exact original question")
@@ -872,7 +872,7 @@ export default Plugin.define({
                   result = { ...stored, dispatch,
                     guidance: dispatch.status === "admission-observed"
                       ? "Native input admitted; recipient execution/answer is not guaranteed. Read the question thread for a real answer; blocking is advisory."
-                      : recipient.kind === "user" && route.mode === "manual"
+                      : recipient?.kind === "user" && route.mode === "manual"
                         ? "Ask the user using native interaction; record the actual user decision with its source. No user was contacted by Loom."
                         : "Automatic delivery was not confirmed. Inspect the dispatch result and use native handling; do not assume the question was answered." }
                   break
