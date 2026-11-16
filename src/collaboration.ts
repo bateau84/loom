@@ -160,8 +160,6 @@ export class Collaboration {
       CREATE INDEX IF NOT EXISTS ledger_progress ON ledger(action_id,json_extract(data,'$.node_id'),seq)
         WHERE kind IN ('completion','reopen');
       CREATE INDEX IF NOT EXISTS ledger_questions ON ledger(action_id,seq) WHERE kind='question';
-      CREATE INDEX IF NOT EXISTS ledger_question_destination ON ledger(json_extract(data,'$.data.expected_session'),seq)
-        WHERE kind='question';
       CREATE INDEX IF NOT EXISTS ledger_answers ON ledger(action_id,json_extract(data,'$.data.question_id'),seq) WHERE kind='answer';
 `)
 
