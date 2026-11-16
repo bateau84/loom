@@ -193,6 +193,13 @@ def inspect_sql(directory, file_names):
                     require(required <= columns,
                             "Incompatible " + table + " columns: " +
                             ", ".join(sorted(required - columns)))
+                if has_evaluation and not has_evaluator:
+                    mapped = db.execute(
+                        "SELECT 1 FROM learning_evaluation_batches WHERE blocked_reason IN "
+                        "('evaluator-request-mapped', 'evaluator-dispatch-unavailable') LIMIT 1"
+                    ).fetchone()
+                    require(not mapped,
+                            "Missing required learning_evaluator_ tables for mapped evaluator preparation")
                 if has_evaluation or has_evaluator:
                     markers = db.execute(
                         "SELECT singleton,version FROM learning_evaluation_schema"

@@ -4,15 +4,14 @@ import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { evaluatorMethod, parseEvaluatorMethod } from "../src/evaluator-method.js"
+import { parseEvaluatorMethod } from "../src/evaluator-method.js"
 import { Learning } from "../src/learning.js"
-import { canonical, digest } from "../src/model.js"
+import { digest } from "../src/model.js"
 import { Store } from "../src/store.js"
 
 const command = new URL("../tools/learning-state-backup.py", import.meta.url).pathname
 const actor = { session_id: "evaluator-backup-owner", agent: "original-author" }
 const revision = "535db61746773309511dc5110d0786b97b40c96a"
-const requestID = "evaluator-backup-request"
 const sha = (bytes: Uint8Array | string) => createHash("sha256").update(bytes).digest("hex")
 
 function files(directory: string) {
@@ -33,10 +32,14 @@ async function fixture(extension = true) {
   mkdirSync(project); mkdirSync(source)
   const action = new Database(join(source, "ledger.sqlite")), derived = new Database(join(source, "learning.sqlite"))
   let expected: ReturnType<typeof preparationRows> | undefined
-  let issue: ReturnType<Store["reviews"]["readIssue"]> | undefined
+  let prepared: ReturnType<Learning["evaluator"]["prepare"]> | undefined
+  let originalID: string | undefined
+  let manifest: ReturnType<typeof parseEvaluatorMethod> | undefined
   let batchID: string
   try {
     const store = new Store(action), learning = new Learning(derived, store, action)
+    const original = store.record(actor, undefined, { kind: "result", statement: "Original source for backup reconstruction" })
+    originalID = original.id
     store.observe(actor, undefined, { phase: "finished", status: "error" })
     const result = await learning.automatic.run(actor.session_id, async () => {}, new AbortController().signal)
     if (result.state !== "complete" || !result.batch_id) throw new Error("Stage 3 backup fixture did not complete")
@@ -44,7 +47,7 @@ async function fixture(extension = true) {
     if (extension) {
       const ref = (locator: string) => ({ locator, sha256: "a".repeat(64) })
       const policy = (id: string) => ({ id, revision: "revision-1", sha256: "b".repeat(64) })
-      const manifest = parseEvaluatorMethod({
+      manifest = parseEvaluatorMethod({
         format: "loom-evaluator-method/v1",
         evaluator: { agent: "evaluator", definition: ref("agents/evaluator.md@immutable-1") },
         audit_skill: { skill: "agent-run-audit", definition: ref("skills/agent-run-audit/SKILL.md@immutable-1") },
@@ -54,31 +57,9 @@ async function fixture(extension = true) {
         adapter: { id: "unavailable", version: "1", profile: policy("sealed-profile-unqualified") },
         source_policy: policy("same-owner"), route_policy: policy("disabled"),
       })
-      const method = evaluatorMethod(manifest)
-      const request = {
-        format: "loom-review-request/v1", request_id: requestID,
-        mandate: { question: "Prepare an objective audit without dispatch.", dimensions: [], criteria: [], mode: "retrospective", inclusions: [], exclusions: [] },
-        intended_recipient: { agent: "evaluator", session_id: null },
-        members: [{ member_id: "manifest", work_ref: null, producing_attempt_refs: [],
-          artifact_refs: [{ locator: "loom-evaluation-manifest:" + batchID, version: { kind: "sha256", value: digest({ batch_id: batchID }) }, content_ref: null }],
-          prior_review_request_id: null, membership_source_refs: [], gaps: [] }], rechecks: [],
-      }
-      expect(store.reviews.freeze(actor, request).status).toBe("created")
-      store.reviews.prepareIssue(actor, requestID, { kind: "initial" })
-      issue = store.reviews.readIssue(actor, requestID)
-      // These rows exercise the offline schema consumer, not preparation admission.
-      // Runtime preparation semantics are covered through its own public API tests.
-      derived.exec(`
-        CREATE TABLE learning_evaluator_schema(singleton INTEGER PRIMARY KEY,version INTEGER NOT NULL);
-        CREATE TABLE learning_evaluator_methods(id TEXT PRIMARY KEY,manifest_json TEXT NOT NULL,manifest_sha256 TEXT NOT NULL,instruction_sha256 TEXT NOT NULL);
-        CREATE TABLE learning_evaluator_requests(batch_id TEXT NOT NULL,slot TEXT NOT NULL,method_id TEXT NOT NULL,request_id TEXT NOT NULL UNIQUE,data_json TEXT NOT NULL,sha256 TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(batch_id,slot,method_id));
-        INSERT INTO learning_evaluator_schema VALUES(1,1);
-      `)
-      derived.query("INSERT INTO learning_evaluator_methods VALUES(?,?,?,?)")
-        .run(method.id, canonical(manifest), digest(manifest), method.instruction_sha256)
-      const data = { format: "backup-schema-fixture/v1", requester: actor, request }
-      derived.query("INSERT INTO learning_evaluator_requests VALUES(?,?,?,?,?,?,?)")
-        .run(batchID, "overall", method.id, requestID, canonical(data), digest(data), "2026-11-15T00:00:00.000Z")
+      prepared = learning.evaluator.prepare(actor, batchID, manifest, null)
+      expect(prepared.request.review_request.requester).toEqual(actor)
+      expect(prepared.issue?.attempt).toMatchObject({ state: "prepared", native_outcome: "not-issued", claimant_id: null })
       expected = preparationRows(derived)
     }
   } finally { derived.close(true); action.close(true) }
@@ -91,7 +72,7 @@ async function fixture(extension = true) {
     ...(operation === "backup" ? ["--source-dir", source, "--backup-dir", backup]
       : ["--backup-dir", backup, "--destination-dir", destination]), ...settings],
     { env: { ...process.env, LOOM_WRITERS_STOPPED: "yes" } })
-  return { root, source, backup, destination, batchID, expected, issue, run,
+  return { root, source, backup, destination, batchID, expected, prepared, originalID, manifest, run,
     close: () => rmSync(root, { recursive: true, force: true }) }
 }
 
@@ -111,8 +92,9 @@ function ok(result: ReturnType<Awaited<ReturnType<typeof fixture>>["run"]>) {
 test("paired stopped-state restore preserves exact evaluator preparation rows and the unclaimed canonical issue", async () => {
   const f = await fixture()
   try {
-    if (!f.expected || !f.issue) throw new Error("Evaluator backup fixture omitted preparation state")
-    const original = files(f.source)
+    if (!f.expected || !f.prepared || !f.manifest || !f.originalID) throw new Error("Evaluator backup fixture omitted preparation state")
+    const original = files(f.source), prepared = f.prepared
+    if (!prepared.issue) throw new Error("Evaluator backup fixture omitted canonical issue")
     ok(f.run("backup")); ok(f.run("restore"))
     expect(files(f.source)).toEqual(original)
     expect(files(f.destination)).toEqual(original)
@@ -120,9 +102,29 @@ test("paired stopped-state restore preserves exact evaluator preparation rows an
     try {
       expect(preparationRows(derived)).toEqual(f.expected)
       const store = new Store(action), learning = new Learning(derived, store, action)
-      expect(store.reviews.readIssue(actor, requestID)).toEqual(f.issue)
-      expect(store.reviews.readIssue(actor, requestID).attempt).toMatchObject({ state: "prepared", native_outcome: "not-issued", claimant_id: null })
+      const reconstructed = learning.evaluator.read(actor.session_id, prepared.batch_id)
+      expect(reconstructed).toEqual(prepared)
+      expect(reconstructed.request.review_request.requester).toEqual(actor)
+      expect(reconstructed.manifest_sha256).toBe(prepared.manifest_sha256)
+      expect(reconstructed.request.review_request.members[0]?.artifact_refs[0]?.version).toEqual({ kind: "sha256", value: prepared.manifest_sha256 })
+      expect(store.reviews.readIssue(actor, prepared.request_id)).toEqual(prepared.issue)
+      expect(reconstructed.issue?.attempt).toMatchObject({ state: "prepared", native_outcome: "not-issued", claimant_id: null })
       expect(learning.automatic.history.get(f.batchID, actor.session_id).state).toBe("complete")
+      const page = learning.evaluator.members(actor.session_id, prepared.batch_id, prepared.request_id, prepared.manifest_sha256)
+      const member = page.items.find(item => item.source_refs.some(ref => ref.id === f.originalID))
+      if (!member) throw new Error("Original source missing from restored manifest")
+      const index = member.source_refs.findIndex(ref => ref.id === f.originalID)
+      expect(learning.evaluator.source(actor.session_id, prepared.batch_id, prepared.request_id, prepared.manifest_sha256, member.key, index).value.id).toBe(f.originalID)
+      expect(learning.evaluator.prepare({ ...actor, agent: "recovery-agent" }, f.batchID, f.manifest, null)).toEqual(prepared)
+      const intent = { request_id: prepared.request_id, kind: "initial" as const }
+      const claim = store.reviews.claimIssue(actor, intent, "before-replay")
+      expect(claim.status).toBe("claimed-now")
+      const replay = learning.evaluator.prepare(actor, f.batchID, f.manifest, null)
+      expect(replay.issue?.attempt).toEqual(claim.attempt)
+      expect(store.reviews.claimIssue(actor, intent, "after-replay").status).toBe("existing-state")
+      expect(action.query("SELECT COUNT(*) AS n FROM review_requests").get()).toEqual({ n: 1 })
+      expect(action.query("SELECT COUNT(*) AS n FROM review_issue_intents").get()).toEqual({ n: 1 })
+      expect(derived.query("SELECT COUNT(*) AS n FROM learning_evaluator_requests").get()).toEqual({ n: 1 })
     } finally { derived.close(true); action.close(true) }
     expect(files(f.source)).toEqual(original)
   } finally { f.close() }
@@ -140,11 +142,11 @@ test("stopped-state backup accepts legacy Stage 3 without any evaluator preparat
 
 const damage = [
   ["missing-request-table", "DROP TABLE learning_evaluator_requests", "learning_evaluator_requests"],
-  ["missing-method-table", "DROP TABLE learning_evaluator_methods", "learning_evaluator_methods"],
+  ["missing-method-table", "DELETE FROM learning_evaluator_requests; DROP TABLE learning_evaluator_methods", "learning_evaluator_methods"],
   ["missing-schema-table", "DROP TABLE learning_evaluator_schema", "learning_evaluator_schema"],
   ["missing-marker", "DELETE FROM learning_evaluator_schema", "evaluator preparation schema marker"],
-  ["duplicate-marker", "INSERT INTO learning_evaluator_schema VALUES(2,1)", "evaluator preparation schema marker"],
-  ["future-version", "UPDATE learning_evaluator_schema SET version=2", "evaluator preparation schema version"],
+  ["duplicate-marker", "DROP TABLE learning_evaluator_schema; CREATE TABLE learning_evaluator_schema(singleton INTEGER,version INTEGER); INSERT INTO learning_evaluator_schema VALUES(1,1),(2,1)", "evaluator preparation schema marker"],
+  ["future-version", "DROP TABLE learning_evaluator_schema; CREATE TABLE learning_evaluator_schema(singleton INTEGER,version INTEGER); INSERT INTO learning_evaluator_schema VALUES(1,2)", "evaluator preparation schema version"],
   ["missing-column", "ALTER TABLE learning_evaluator_requests RENAME COLUMN request_id TO lost_request_id", "request_id"],
   ["missing-base-evaluation-schema", "DROP TABLE learning_evaluation_schema", "learning_evaluation_schema"],
 ] as const
