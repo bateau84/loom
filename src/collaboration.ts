@@ -234,20 +234,28 @@ export class Collaboration {
   }
   ask(actor: Actor, focus: Focus | undefined, input: Record<string, unknown>, target: QuestionTarget = {}): LedgerRecord {
     canonical(input, new ProcessingBudget(PROCESSING_LIMITS.recordChars))
-    fields(input, ["question", "to_agent", "recipient", "blocking", "context", "context_attachments", "reference", "answer_type", "choices"])
+    fields(input, ["question", "to_agent", "recipient", "session_id", "action_id", "blocking", "context", "context_attachments", "reference", "answer_type", "choices"])
     const question = text(input.question, "question"), format = questionFormat(input)
-    if ((input.to_agent === undefined) === (input.recipient === undefined))
-      throw new Error("Supply exactly one of to_agent (legacy manual) or recipient")
+    const destination = input.session_id === undefined ? undefined : uid(input.session_id, "destination session_id")
+    if ([input.to_agent, input.recipient, destination].filter(v => v !== undefined).length !== 1)
+      throw new Error("Supply exactly one of to_agent (legacy manual), recipient, or destination session_id")
+    if (destination && target.expected_session !== destination)
+      throw new Error("Explicit destination Session must be verified before recording the question")
+    if (input.action_id !== undefined && input.reference !== undefined)
+      throw new Error("Explicit action_id cannot be combined with reference")
     const to_agent = input.to_agent === undefined ? undefined : text(input.to_agent, "to_agent", 100)
     const recipient = input.recipient === undefined ? undefined : questionRecipient(input.recipient)
-    if (format.answer_type === "multi-choice" && !recipient)
-      throw new Error("multi-choice requires a typed recipient; to_agent supports text questions only")
+    if (format.answer_type === "multi-choice" && !recipient && !destination)
+      throw new Error("multi-choice requires a typed recipient or verified destination Session; to_agent supports text questions only")
     if (typeof input.blocking !== "boolean") throw new Error("blocking must be an explicit Boolean")
     const blocking = input.blocking, context = input.context === undefined ? undefined : text(input.context, "context", 8000)
     const context_attachments = references(input.context_attachments, "context_attachments")
     return this.atomic(true, () => {
       let reference: QuestionReference | undefined
-      if (input.reference !== undefined) {
+      if (input.action_id !== undefined) {
+        const actionID = uid(input.action_id, "action_id")
+        reference = { action_id: actionID, kind: "action", id: actionID }
+      } else if (input.reference !== undefined) {
         const ref = input.reference
         if (!ref || typeof ref !== "object" || Array.isArray(ref)) throw new Error("reference must be an object")
         fields(ref as Record<string, unknown>, ["action_id", "kind", "id"])
@@ -271,8 +279,8 @@ export class Collaboration {
         association = { action_id: action.id, ...(reference.kind !== "action" ? { node_id: reference.id } : {}) }
         revisions = { action_revision: action.revision, plan_revision: plan.revision }
       }
-      return this.store.append({ ...actor, ...association, kind: "question", data: { format: recipient ? "loom-question/v2" : "loom-question/v1",
-        question, ...format, ...(recipient ? { recipient, ...target } : { to_agent }), blocking,
+      return this.store.append({ ...actor, ...association, kind: "question", data: { format: recipient || destination ? "loom-question/v2" : "loom-question/v1",
+        question, ...format, ...(recipient ? { recipient, ...target } : destination ? { expected_session: destination } : { to_agent }), blocking,
         context, context_attachments, reference, ...revisions } })
     })
   }
@@ -425,7 +433,7 @@ export class Collaboration {
     const answerText = latest ? String(latest.data.answer ?? latest.data.statement)
       + (typeof latest.data.reason === "string" && latest.data.status !== "cannot-select" ? `\nReason: ${latest.data.reason}` : "") : ""
     return { question_id: question.id, node_id: question.node_id, asked_by: question.agent, asking_session_id: question.session_id,
-      respondent: question.data.to_agent ?? question.data.respondent ?? question.data.expected_agent ?? (question.data.recipient as QuestionRecipient | undefined)?.kind,
+      respondent: question.data.to_agent ?? question.data.respondent ?? question.data.expected_agent ?? question.data.expected_session ?? (question.data.recipient as QuestionRecipient | undefined)?.kind,
       ...(question.data.recipient ? { recipient: question.data.recipient } : {}),
       ...(question.data.answer_type ? { answer_type: question.data.answer_type } : {}),
       ...(Array.isArray(question.data.choices) ? { choice_count: question.data.choices.length } : {}),
@@ -442,6 +450,25 @@ export class Collaboration {
       const { limit } = page(query.after, query.limit), rows = this.questionRows(query)
       return { items: this.load(rows.slice(0, limit), allowance).map(q => this.briefQuestion(q, allowance)),
         next_after: rows.length > limit ? rows[limit - 1].seq : null, note: semantics + " Excerpts may omit qualifications; query view=thread with question_id for the original and all answers." }
+    })
+  }
+  /** Durable incoming questions for the actual calling Session, across Actions and Session-only scope. */
+  inbox(sessionID: string, state: QuestionQuery["state"] = "open", after = 0, limit = 20) {
+    uid(sessionID, "destination Session")
+    if (!["open", "answered", "all"].includes(state)) throw new Error("Question state must be open, answered or all")
+    const pageRequest = page(after, limit)
+    return this.atomic(false, () => {
+      const allowance = { bytes: 0 }
+      const answerExists = `EXISTS (SELECT 1 FROM ledger a WHERE a.kind='answer' AND
+        a.action_id IS q.action_id AND json_extract(a.data,'$.data.question_id')=q.id)`
+      const stateFilter = state === "all" ? "" : ` AND ${state === "open" ? "NOT " : ""}${answerExists}`
+      const rows = this.candidates(`SELECT q.seq,octet_length(q.data) AS data_bytes FROM ledger q
+        WHERE q.kind='question' AND q.seq>? AND json_extract(q.data,'$.data.format')='loom-question/v2'
+          AND json_extract(q.data,'$.data.expected_session')=?${stateFilter}
+        ORDER BY q.seq ASC LIMIT ?`, [pageRequest.after, sessionID, pageRequest.limit + 1])
+      return { items: this.load(rows.slice(0, pageRequest.limit), allowance).map(q => this.briefQuestion(q, allowance)),
+        next_after: rows.length > pageRequest.limit ? rows[pageRequest.limit - 1].seq : null,
+        note: semantics + " Inbox is scoped to the actual calling Session. Notification is best-effort; retrieve full threads for answers." }
     })
   }
   thread(questionID: string, after = 0, limit = 20, actionID?: string) {
@@ -462,10 +489,11 @@ export class Collaboration {
     const allowed: Record<string, string[]> = {
       complete: ["operation", "work_ref", "statement", "artifact_refs", "action_id", "node_id"],
       reopen: ["operation", "action_id", "node_id", "statement"],
-      ask: ["operation", "question", "to_agent", "recipient", "blocking", "context", "context_attachments", "reference", "answer_type", "choices"],
+      ask: ["operation", "question", "to_agent", "recipient", "session_id", "action_id", "blocking", "context", "context_attachments", "reference", "answer_type", "choices"],
       answer: ["operation", "question_id", "answer", "context_attachments", "choice_id", "reason", "status"],
       "query:progress": ["operation", "view", "action_id", "node_id", "offset", "limit"],
       "query:questions": ["operation", "view", "action_id", "node_id", "respondent", "question_state", "after", "limit"],
+      "query:inbox": ["operation", "view", "question_state", "after", "limit"],
       "query:thread": ["operation", "view", "question_id", "action_id", "after", "limit"],
     }
     if (!allowed[key]) throw new Error("Unknown collaboration operation/view")
@@ -478,6 +506,7 @@ export class Collaboration {
     const { operation: _operation, ...content } = input
     if (operation === "answer") return this.answer(actor, content).record
     if (view === "thread") return this.thread(input.question_id as string, input.after as number | undefined, input.limit as number | undefined, input.action_id as string | undefined)
+    if (view === "inbox") return this.inbox(actor.session_id, input.question_state as QuestionQuery["state"], input.after as number | undefined, input.limit as number | undefined)
     if (operation === "ask") return this.ask(actor, focus, content)
     if (!focus) throw new Error("Provide action_id or select an Action for this operation")
     if (operation === "reopen") return this.reopen(actor, focus, input.statement as string)

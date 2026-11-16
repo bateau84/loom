@@ -103,7 +103,7 @@ const recipientInput = obj({ kind: choice("agent", "role", "dispatcher", "user")
 const choiceIDInput = { type: "string", minLength: 1, maxLength: QUESTION_CHOICE_LIMITS.id, pattern: "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$" }
 const choicesInput = { type: "array", minItems: 2, maxItems: QUESTION_CHOICE_LIMITS.count,
   items: obj({ id: choiceIDInput, answer: { type: "string", minLength: 1, maxLength: QUESTION_CHOICE_LIMITS.answer, pattern: "\\S" } }, ["id", "answer"]) }
-const askInput = { question: str, to_agent: str, recipient: recipientInput, blocking: { type: "boolean" }, context: str, context_attachments: contextAttachments,
+const askInput = { question: str, to_agent: str, recipient: recipientInput, session_id: str, action_id: str, blocking: { type: "boolean" }, context: str, context_attachments: contextAttachments,
   answer_type: choice("text", "multi-choice"), choices: choicesInput,
   reference: obj({ action_id: str, kind: choice("action", "phase", "wave", "task", "subtask"), id: str }, ["action_id", "kind", "id"]), review: reviewRequestInput }
 const answerInput = { question_id: str, answer: str, choice_id: choiceIDInput,
@@ -165,13 +165,21 @@ const specs = [
   { name: "action", description: TOOL_HELP.action, input: obj({ operation: choice("list", "create", "update", "sessions"), action_id: str, title: str, goal: str, state: choice("active", "paused", "completed", "cancelled"), expected_revision: num, offset: num, archived: { type: "boolean" }, cursor: { type: "string", minLength: 1, maxLength: 4096 }, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
   { name: "plan", description: TOOL_HELP.plan, input: obj({ operation: choice("read", "save"), action_id: str, revision: num, expected_revision: num, nodes: { type: "array", maxItems: 300, items: obj({ id: str, kind: choice("phase", "wave", "task", "subtask"), title: str, parent: str, depends_on: list, outcome: str, context: str, criteria: list, roles: list, skills: list, agent: str }, ["id", "kind", "title"]) } }, ["operation", "action_id"]) },
   { name: "context", description: TOOL_HELP.context, input: obj({ action_id: str, node_id: str, clear: { type: "boolean" }, mode: choice("continuation", "independent"), handoff_id: { type: ["string", "null"] } }) },
-  { name: "record", description: TOOL_HELP.record, input: { ...obj({ operation: choice("add", "query", "complete", "reopen", "ask", "answer", "bind-respondent"), view: choice("ledger", "progress", "questions", "thread", "full_thread"), response_format: choice("markdown", "json"), session_id: str, cursor: str, work_ref: workRefInput, ...askInput, ...answerInput, ...bindInput, respondent: str, question_state: choice("open", "answered", "all"), offset: num, action_id: str, node_id: str, kind: choice("claim", "result", "concern", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]),
+  { name: "record", description: TOOL_HELP.record, input: { ...obj({ operation: choice("add", "query", "complete", "reopen", "ask", "answer", "bind-respondent"), view: choice("ledger", "progress", "questions", "inbox", "thread", "full_thread"), response_format: choice("markdown", "json"), session_id: str, cursor: str, work_ref: workRefInput, ...askInput, ...answerInput, ...bindInput, respondent: str, question_state: choice("open", "answered", "all"), offset: num, action_id: str, node_id: str, kind: choice("claim", "result", "concern", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]),
     allOf: [
       { if: { properties: { operation: { const: "ask" } } }, then: {
           ...obj({ operation: { const: "ask" }, ...askInput }, ["operation", "question", "blocking"]),
-          oneOf: [{ required: ["to_agent"], not: { required: ["recipient"] } }, { required: ["recipient"], not: { required: ["to_agent"] } }],
-          allOf: [{ if: { properties: { answer_type: { const: "multi-choice" } }, required: ["answer_type"] },
-            then: { required: ["choices", "recipient"] }, else: { not: { required: ["choices"] } } }],
+          oneOf: [
+            { required: ["to_agent"], not: { anyOf: [{ required: ["recipient"] }, { required: ["session_id"] }] } },
+            { required: ["recipient"], not: { anyOf: [{ required: ["to_agent"] }, { required: ["session_id"] }] } },
+            { required: ["session_id"], not: { anyOf: [{ required: ["to_agent"] }, { required: ["recipient"] }] } },
+          ],
+          allOf: [
+            { not: { required: ["action_id", "reference"] } },
+            { if: { properties: { answer_type: { const: "multi-choice" } }, required: ["answer_type"] },
+              then: { required: ["choices"], anyOf: [{ required: ["recipient"] }, { required: ["session_id"] }] },
+              else: { not: { required: ["choices"] } } },
+          ],
         } },
       { if: { properties: { operation: { const: "answer" } } }, then: {
           ...obj({ operation: { const: "answer" }, ...answerInput }, ["operation", "question_id"]),
@@ -699,7 +707,8 @@ export default Plugin.define({
                   result = renderFullHistory(store.history.read(query))
                   break
                 }
-                if ("session_id" in input || "cursor" in input) throw new Error("session_id and cursor are full_thread query options only")
+                if ((input.session_id !== undefined && input.operation !== "ask") || "cursor" in input)
+                  throw new Error("session_id is an ask destination or full_thread query option; cursor is full_thread only")
                 if (input.session_only && (input.action_id !== undefined || input.node_id !== undefined ||
                     (input.operation !== "query" && input.operation !== "add")))
                   throw new Error("session_only is a query option or Session-scoped add option and cannot be combined with work IDs")
@@ -746,7 +755,7 @@ export default Plugin.define({
                   break
                 }
                 if (input.operation === "ask") {
-                  if (input.recipient === undefined) {
+                  if (input.recipient === undefined && input.session_id === undefined) {
                     if (input.review !== undefined) throw new Error("A review request requires a typed agent or role recipient")
                     result = { ...store.collaboration.execute(actor, input, focus) as object, dispatch: QUESTION_DISPATCH,
                       guidance: input.blocking === true
@@ -754,12 +763,19 @@ export default Plugin.define({
                         : "Recipient not contacted. Manual/native handling is required; continue your work and retrieve answers later." }
                     break
                   }
-                  const recipient = questionRecipient(input.recipient)
+                  const recipient = input.recipient === undefined ? undefined : questionRecipient(input.recipient)
                   const asker = payload(unwrapped(await ctx.session.get({ sessionID: actor.session_id })))
                   if (asker.id !== actor.session_id || !await sessionIsLocal(asker))
                     throw new Error("Cannot route a question from an unverified local Session")
-                  // The native registry carries execution mode; the Loom config carries responsibility.
-                  const all = unwrapped(await ctx.agent.list())
+                  if (input.session_id !== undefined) {
+                    if (recipient || input.to_agent !== undefined)
+                      throw new Error("Explicit session_id cannot be combined with recipient or to_agent")
+                    if (input.session_id === actor.session_id)
+                      throw new Error("Explicit destination must be another native Session")
+                    await checkedSession(String(input.session_id))
+                  }
+                  // Native agent registry is only needed for agent/role resolution.
+                  const all = recipient ? unwrapped(await ctx.agent.list()) : []
                   if (!Array.isArray(all)) throw new Error("OpenCode returned an unsupported agent registry shape")
                   const roster = all.map(raw => {
                     const a = payload(raw)
@@ -778,12 +794,15 @@ export default Plugin.define({
                     (snapshot.config.modelRouting.enabled && routingStatus !== "initial-only")
                   const plannedRoute: QuestionRoute = snapshot.errors.length
                     ? { mode: "manual", reason: "loom-config-unavailable" }
-                    : questionRoute(recipient, snapshot.config, roster, asking)
+                    : input.session_id !== undefined
+                      ? { mode: "notify", reason: "explicit-session",
+                          session: String(input.session_id), expected_session: String(input.session_id) }
+                      : questionRoute(recipient!, snapshot.config, roster, asking)
                   let route: QuestionRoute = routingUnqualified && plannedRoute.mode !== "manual"
                     ? { mode: "manual", reason: "model-routing-host-unqualified" }
                     : plannedRoute
                   if (route.mode === "notify" && route.session && !await owns(route.session))
-                    route = { mode: "manual", reason: "parent-not-local" }
+                    route = { mode: "manual", reason: "target-not-local" }
                   if (input.review !== undefined) {
                     // Explicit structured reviews enter the same production
                     // initiator as other questions, but their private mandate
@@ -812,9 +831,13 @@ export default Plugin.define({
                     break
                   }
                   const { operation: _askOperation, ...askFields } = input
+                  // An explicit destination remains the authorized respondent even when
+                  // a guarded host withholds native delivery. Never reassign author identity.
+                  const verifiedSession = input.session_id === undefined ? undefined : String(input.session_id)
+                  if (verifiedSession) await checkedSession(verifiedSession)
                   const stored = store.collaboration.ask(actor, focus, askFields, {
                     ...(route.expected_agent ? { expected_agent: route.expected_agent } : {}),
-                    ...(route.expected_session ? { expected_session: route.expected_session } : {}),
+                    ...((verifiedSession ?? route.expected_session) ? { expected_session: verifiedSession ?? route.expected_session } : {}),
                     ...(route.expected_parent_session ? { expected_parent_session: route.expected_parent_session } : {}),
                   })
                   const dispatch = await sendQuestion(store, stored, route, {

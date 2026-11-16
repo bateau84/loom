@@ -79,10 +79,12 @@ export async function sendQuestion(store: Store, question: LedgerRecord, route: 
     } else if (route.mode === "notify" && route.session) {
       outcome = { status: "outcome-unknown", reason: "native-parent-notice", target_session_id: route.session,
         ...(route.agent ? { target_agent: route.agent } : {}), attempted: true }
-      const recipient = question.data.recipient as QuestionRecipient
-      const instructions = recipient.kind === "dispatcher"
+      const recipient = question.data.recipient as QuestionRecipient | undefined
+      const instructions = !recipient && question.data.expected_session === route.session
+        ? "This Open Question is addressed to your exact native Session. Read its full thread using loom_record query view=thread and answer with loom_record operation=answer and the question_id. Only your Session is authorized; an ordinary chat response is not a stored answer."
+        : recipient?.kind === "dispatcher"
         ? "This question is addressed to you as dispatcher. Answer it directly with loom_record operation=answer; you may consult a specialist, but remain the respondent yourself. Do not bind a specialist as respondent."
-        : recipient.kind === "user"
+        : recipient?.kind === "user"
           ? "Ask the user directly and relay the actual decision with its source. Answer through the recorded question only when appropriate."
           : `This question is forwarded to specialist ${route.agent}. Delegate natively, then call loom_record bind-respondent with question_id and respondent_session_id from that native subagent result. Only that selected Session may answer.`
       const ack = record(unwrap(await api.synthetic(route.session,
