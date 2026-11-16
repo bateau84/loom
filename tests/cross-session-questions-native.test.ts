@@ -1,4 +1,5 @@
-import { test, expect } from "bun:test"
+import { test, expect, spyOn } from "bun:test"
+import { Store } from "../src/store.js"
 import { writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { registeredLoom } from "./helpers/registered-loom.js"
@@ -185,5 +186,21 @@ test("guarded model routing withholds peer native notice without losing exact an
     expect(f.nativeInputs).toHaveLength(0)
     await expect(f.invoke("record", { operation: "answer", question_id: q.id,
       answer: "Wrong Session" }, "other", "general")).rejects.toThrow("Session")
+  } finally { await f.close() }
+})
+
+test("inbox never reads or changes a broken saved Action selection", async () => {
+  const f = await registeredLoom()
+  try {
+    const q = (await f.invoke("record", { operation: "ask", question: "Recover from selection trouble?",
+      session_id: "peer", blocking: false }, "asker", "general")).result
+    const selected = spyOn(Store.prototype, "selected").mockImplementation(() => {
+      throw new Error("Saved selection is unavailable")
+    })
+    try {
+      const inbox = (await f.invoke("record", { operation: "query", view: "inbox" },
+        "peer", "general")).result
+      expect(inbox.items.map((item: any) => item.question_id)).toEqual([q.id])
+    } finally { selected.mockRestore() }
   } finally { await f.close() }
 })
