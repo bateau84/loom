@@ -206,6 +206,13 @@ def preparation_snapshot(learning: Path, ledger: Path) -> dict:
             db.execute("PRAGMA query_only=ON")
             for table in tables:
                 result[table] = db.execute("SELECT * FROM " + table + " ORDER BY 1").fetchall()
+            if path == learning:
+                scope = ("evaluator-preparation/calling-session",)
+                result["preparation_batches"] = db.execute(
+                    "SELECT * FROM learning_evaluation_batches WHERE scope_key=? ORDER BY id", scope).fetchall()
+                result["preparation_members"] = db.execute(
+                    "SELECT * FROM learning_evaluation_members WHERE batch_id IN "
+                    "(SELECT id FROM learning_evaluation_batches WHERE scope_key=?) ORDER BY batch_id,ordinal", scope).fetchall()
     return result
 
 
@@ -384,7 +391,14 @@ def run(args) -> dict:
                     budgeted_input = {**prepare, "budget_policy": budget_policy}
                     budgeted = scenario.invoke(owner, "review", budgeted_input)
                     assert_unissued(budgeted)
-                    require(identity(scenario.invoke(owner, "review", budgeted_input)) == identity(budgeted),
+                    require(budgeted["request"]["budget_policy"] == budget_policy
+                            and budgeted["budget_reservation"] is None,
+                            "A declared budget reference was dropped or treated as an actual reservation")
+                    require(all(budgeted[field] != stable[field] for field in ("batch_id", "request_id")),
+                            "A changed declared budget boundary reused the null-budget request")
+                    budgeted_replay = scenario.invoke(owner, "review", budgeted_input)
+                    assert_unissued(budgeted_replay)
+                    require(identity(budgeted_replay) == identity(budgeted),
                             "A valid declared budget reference changed preparation identity on replay")
                     before_rejections = preparation_snapshot(learning, ledger)
                     for query in (
@@ -409,7 +423,7 @@ def run(args) -> dict:
                     ):
                         denied(scenario, owner, "review", query)
                     require(preparation_snapshot(learning, ledger) == before_rejections,
-                            "Rejected native inputs changed a method, mapping, review or canonical issue")
+                            "Rejected native inputs changed preparation population, method, mapping, review or canonical issue")
                     check("S4-native-wrong-identity-checksum-and-cursor-denied", negative_controls=12,
                           preparation_stores_unchanged=True, declared_budget_replay=True)
 
