@@ -225,12 +225,17 @@ recipient. For routed questions use `recipient` as described immediately below.
 ```
 
 Required: `question`, explicit Boolean `blocking`, and exactly one of
-`recipient` (new) or `to_agent` (legacy/manual). The recipient is one of
+`recipient`, explicit destination `session_id`, or `to_agent` (legacy/manual).
+An explicit `session_id` names an existing native Session and is verified as a
+local peer in the current project/workspace before the question is stored.
+The recipient is one of
 `{kind:"agent",id:"AGENT_ID"}`, `{kind:"role",id:"ROLE_ID"}`,
 `{kind:"dispatcher"}`, `{kind:"user"}`. Optional `context`,
 `context_attachments`, `reference`. Without reference, selection supplies
-association; without either, it belongs only to the asking Session. Explicit
-Action/node references are validated, never silently changed.
+association; without either, it belongs only to the asking Session. Optional
+`action_id` overrides the selected Action association (but not the calling
+author), and cannot be combined with `reference`. Explicit Action/node
+references are validated, never silently changed.
 
 On OpenCode 2.2.0, a question directed to a single eligible agent/role from a
 primary Session invokes OpenCode's native subagent tool with built-in
@@ -254,6 +259,16 @@ Loom records questions requiring native contact without dispatch
 creating children that cannot run a verified model. A primary Session
 can still ask the user directly. There is no automatic replay after
 a model-routing upgrade.
+Explicit `session_id` questions use the same typed answer checks and native
+synthetic notice facility as parent-addressed questions, but target the
+verified peer Session, including unrelated root Sessions. Native delivery
+is best effort: `dispatch.status:admission-observed` does not prove consumption.
+The recipient can use `loom_record operation=query view=inbox` to discover
+pending questions later without selecting an Action; this is scoped to the
+actual calling Session and spans both Action and Session-only questions.
+`question_state` (open/answered/all), `after`, `limit` and `next_after`
+support bounded traversal. The inbox does not accept a foreign Session ID.
+
 Legacy `to_agent` is still stored with no native contact. For automatic native routing instead, replace `to_agent`
 with `recipient:{"kind":"role","id":"research"}` after discovering an eligible
 role through `loom_agents`.
@@ -286,8 +301,8 @@ work. Both canonical attachment fields are string-reference arrays. `attachments
 is never an alias, alone or alongside the canonical field. Old statement,
 respondent, background and artifact_refs are not ask/answer inputs.
 
-Only the FIRST committed blocking legacy v1 or forwarded typed v2 answer
-qualifies for one best-effort Loom resume of the original asker. Direct typed
+Only the FIRST committed blocking legacy v1, forwarded typed v2 or explicitly
+Session-addressed v2 answer qualifies for one best-effort Loom resume of the original asker. Direct typed
 OQs do not send a Loom answer notice: foreground native execution owns blocking
 continuation, background native completion owns nonblocking wake-up.
 Later/nonblocking answers do not submit Loom resume input. No retries, eligibility
