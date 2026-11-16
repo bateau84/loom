@@ -714,7 +714,7 @@ export default Plugin.define({
                   throw new Error("session_only is a query option or Session-scoped add option and cannot be combined with work IDs")
                 // Explicit work/thread identity must not depend on saved selection.
                 const identityScoped = ["complete", "answer", "bind-respondent"].includes(String(input.operation))
-                  || (input.operation === "query" && input.view === "thread")
+                  || (input.operation === "query" && ["thread", "inbox"].includes(String(input.view)))
                 const focus = identityScoped || input.session_only || (input.operation === "ask" && (input.reference !== undefined || input.review !== undefined)) ? undefined : focusFor(input, actor.session_id)
                 if (input.operation === "bind-respondent") {
                   const question = store.collaboration.thread(String(input.question_id)).question
