@@ -15,7 +15,7 @@ import tempfile
 from pathlib import Path
 
 from installed_host_smoke import PrivateHost, installed_plugin_inventory, isolated_environment, require
-from installed_questions import Scenario, events, idle, request
+from installed_questions import Scenario, events, idle, request, assert_rejected
 
 
 def run(args):
@@ -76,6 +76,51 @@ def run(args):
         s = Scenario(host, root)
         asker, reader = s.session('asker'), s.session('reader')
         choices = [{'id': 'A', 'answer': 'Keep JSON'}, {'id': 'B', 'answer': 'SQLite — original label'}]
+
+        # Same-project unrelated native root Sessions, without creating a child
+        # or changing the question's actual author. The shared Action belongs
+        # to the target; the caller's selection must not be changed.
+        peer_action = s.invoke(reader, 'action', {'operation': 'create',
+            'title': 'Peer action', 'goal': 'Native peer Session question'})
+        before_peer = len(events(root))
+        peer = s.invoke(asker, 'record', {'operation': 'ask',
+            'question': 'Which peer alternative?', 'session_id': reader,
+            'action_id': peer_action['id'], 'answer_type': 'multi-choice',
+            'choices': choices, 'blocking': False})
+        require(peer['session_id'] == asker and peer['action_id'] == peer_action['id']
+                and peer['data']['expected_session'] == reader and
+                peer['dispatch']['target_session_id'] == reader and
+                peer['dispatch']['status'] == 'admission-observed',
+                'Native peer Session notification was not admitted: ' + str(peer.get('dispatch')))
+        idle(host, [asker, reader])
+        peer_notices = [e for e in events(root)[before_peer:]
+            if e['type'] == 'native-event'
+            and e['data']['type'] == 'session.inbox.enqueued'
+            and e['data']['data']['sessionID'] == reader
+            and e['data']['data']['item']['type'] == 'synthetic'
+            and e['data']['data']['item']['payload'].get('metadata', {}).get('question_id') == peer['id']]
+        require(len(peer_notices) == 1, 'No verified native peer Session notice')
+        inbox = s.invoke(reader, 'record', {'operation': 'query', 'view': 'inbox'})
+        require([q['question_id'] for q in inbox['items']] == [peer['id']],
+                'Native peer inbox omitted its Action-linked question')
+        assert_rejected(s, asker, [{'operation': 'answer', 'question_id': peer['id'], 'choice_id': 'B'}])
+        peer_answer = s.invoke(reader, 'record', {'operation': 'answer',
+            'question_id': peer['id'], 'choice_id': 'B'})
+        require(peer_answer['session_id'] == reader and
+                peer_answer['data']['answer'] == choices[1]['answer'] and
+                'resume' not in peer_answer, 'Wrong peer choice authorization or answer semantics')
+        require(s.invoke(reader, 'record', {'operation': 'query', 'view': 'inbox'})['items'] == [],
+                'Answered native peer question remains open')
+        peer_thread = s.invoke(asker, 'record', {'operation': 'query',
+            'view': 'thread', 'question_id': peer['id']})
+        require(len(peer_thread['answers']) == 1 and
+                peer_thread['answers'][0]['id'] == peer_answer['id'],
+                'Peer answer not visible from original question')
+        report['checks'].append({'name': 'native-peer-session-question', 'status': 'PASS',
+            'question': peer['id'], 'answer': peer_answer['id'],
+            'target_session': reader, 'source_session': asker, 'native_notices': len(peer_notices),
+            'qualification': 'Unmodified OpenCode 2.2.6 with local scripted model; no real-model use or user approval'})
+
         q = s.invoke(asker, 'record', {'operation': 'ask', 'question': 'Which store?',
             'answer_type': 'multi-choice', 'choices': choices,
             'recipient': {'kind': 'role', 'id': 'research'}, 'blocking': True})
