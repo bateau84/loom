@@ -13,6 +13,7 @@ export async function registeredLoom(initialSkills: any[] = [], options: { befor
   const nativeInputs: unknown[] = [], sessionReads: string[] = [], nativeListRequests: any[] = []
   const sessionCreates: any[] = [], sessionPrompts: any[] = []
   const nativeSubagent = { depth: 1, failAfterStart: undefined as string | undefined }
+  const nativeSynthetic = { error: undefined as unknown }
   const nativeAgents: any[] = [{ id: "investigator", mode: "subagent", hidden: false },
     { id: "author", mode: "primary", hidden: false }]
   const nativePages = new Map<string, any>()
@@ -95,7 +96,7 @@ export async function registeredLoom(initialSkills: any[] = [], options: { befor
     },
     session: {
       list: async (query: any) => { nativeListRequests.push(query); return nativePages.get(query.cursor ?? "") ?? { data: [], cursor: { next: null, previous: null } } },
-      synthetic: async (r:any) => { nativeInputs.push(r); return {id:r.id ?? (r.metadata?.format === "loom-question-notice/v1" ? "msg_questionnotice" : undefined),sessionID:r.sessionID,type:"synthetic",delivery:r.delivery,payload:{text:r.text,description:r.description,metadata:r.metadata}} },
+      synthetic: async (r:any) => { nativeInputs.push(r); if (nativeSynthetic.error !== undefined) throw nativeSynthetic.error; return {id:r.id ?? (r.metadata?.format === "loom-question-notice/v1" ? "msg_questionnotice" : undefined),sessionID:r.sessionID,type:"synthetic",delivery:r.delivery,payload:{text:r.text,description:r.description,metadata:r.metadata}} },
       create: async (r:any) => {
         sessionCreates.push(r)
         const child = { id: "ses_questionchild_" + sessionCreates.length, parentID: r.parentID, agent: r.agent,
@@ -138,7 +139,7 @@ export async function registeredLoom(initialSkills: any[] = [], options: { befor
     dispose = await (plugin as any).setup(ctx)
     return {
       tools, namespaces, close, directory, hooks, sessions, skills, reloadSkills, nativeInputs, sessionReads, nativeListRequests, nativePages, nativeContexts,
-      nativeAgents, sessionCreates, sessionPrompts, nativeSubagent,
+      nativeAgents, sessionCreates, sessionPrompts, nativeSubagent, nativeSynthetic,
       permission, permissionRequests, skillRequests,
       context: async (sessionID: string, agent: string) => {
         const event = { sessionID, agent, system: [] as Array<{ type: string; text: string }>, messages: [], tools: {}, options: {} }

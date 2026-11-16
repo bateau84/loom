@@ -1,4 +1,6 @@
 import { test, expect } from "bun:test"
+import { writeFile } from "node:fs/promises"
+import { join } from "node:path"
 import { registeredLoom } from "./helpers/registered-loom.js"
 
 test("explicit cross-Session OQ keeps the real author, associates the destination Action and wakes the original asker", async () => {
@@ -72,6 +74,7 @@ test("explicit Session addressing rejects nonexistent, foreign and conflicting d
   try {
     f.sessions.set("foreign", { id: "foreign", agent: "general", projectID: "another-project",
       location: { directory: f.directory } })
+    f.sessions.set("missing", new Error("Session does not exist"))
     f.sessions.set("wrong-directory", { id: "wrong-directory", agent: "general",
       projectID: "tool-help", location: { directory: "/tmp/foreign-project" } })
     const action = (await f.invoke("action", { operation: "create", title: "Valid",
@@ -79,6 +82,8 @@ test("explicit Session addressing rejects nonexistent, foreign and conflicting d
     const base = { operation: "ask", question: "Can we proceed?", blocking: true }
     const forbidden = [
       { ...base, session_id: "foreign" },
+      { ...base, session_id: "missing" },
+      { ...base, session_id: "asker" },
       { ...base, session_id: "wrong-directory" },
       { ...base, session_id: "peer", recipient: { kind: "user" } },
       { ...base, session_id: "peer", to_agent: "general" },
@@ -91,5 +96,94 @@ test("explicit Session addressing rejects nonexistent, foreign and conflicting d
     const ledger = (await f.invoke("record", { operation: "query", session_only: true },
       "asker", "general")).result.items
     expect(ledger.filter((r: any) => r.kind === "question")).toHaveLength(0)
+  } finally { await f.close() }
+})
+
+test("multi-choice cross-Session answers select an original label without spawning a child", async () => {
+  const f = await registeredLoom()
+  try {
+    const q = (await f.invoke("record", {
+      operation: "ask", question: "A or B?", session_id: "peer", blocking: false,
+      answer_type: "multi-choice",
+      choices: [{ id: "A", answer: "Keep stable" }, { id: "B", answer: "Change deliberately" }],
+    }, "asker", "general")).result
+    expect(q.data).toMatchObject({ format: "loom-question/v2", expected_session: "peer",
+      answer_type: "multi-choice" })
+    expect(f.sessionCreates).toHaveLength(0)
+    await expect(f.invoke("record", { operation: "answer", question_id: q.id, choice_id: "B" },
+      "other", "general")).rejects.toThrow("Session")
+    await expect(f.invoke("record", { operation: "answer", question_id: q.id, choice_id: "C" },
+      "peer", "general")).rejects.toThrow("Unknown choice_id")
+    const answer = (await f.invoke("record", { operation: "answer", question_id: q.id, choice_id: "B" },
+      "peer", "general")).result
+    expect(answer.data).toMatchObject({ choice_id: "B", answer: "Change deliberately" })
+    expect(answer.resume).toBeUndefined()
+  } finally { await f.close() }
+})
+
+test("failed native peer delivery preserves the authorized question for inbox recovery, with no retry", async () => {
+  const f = await registeredLoom()
+  try {
+    f.nativeSynthetic.error = new Error("native notice unavailable after initiation")
+    const q = (await f.invoke("record", {
+      operation: "ask", question: "Can peer recover this?", session_id: "peer", blocking: true,
+    }, "asker", "general")).result
+    expect(q.dispatch).toMatchObject({ status: "outcome-unknown",
+      reason: "native-operation-failed-or-unconfirmed", attempted: true })
+    expect(f.nativeInputs).toHaveLength(1)
+    const inbox = (await f.invoke("record", { operation: "query", view: "inbox" },
+      "peer", "general")).result
+    expect(inbox.items.map((item: any) => item.question_id)).toEqual([q.id])
+    f.nativeSynthetic.error = undefined
+    const answer = (await f.invoke("record", { operation: "answer", question_id: q.id,
+      answer: "Recovered through inbox" }, "peer", "general")).result
+    expect(answer.resume).toMatchObject({ asking_session_id: "asker", attempted: true })
+    expect(f.nativeInputs).toHaveLength(2)
+    const all = (await f.invoke("record", { operation: "query", view: "inbox",
+      question_state: "all" }, "peer", "general")).result
+    expect(all.items[0].state).toBe("answered")
+  } finally { await f.close() }
+})
+
+test("explicit Action association works without another Session and does not change selection", async () => {
+  const f = await registeredLoom()
+  try {
+    const first = (await f.invoke("action", { operation: "create", title: "Origin",
+      goal: "Origin scope" }, "asker", "general")).result
+    const second = (await f.invoke("action", { operation: "create", title: "Destination",
+      goal: "Destination scope" }, "peer", "general")).result
+    const q = (await f.invoke("record", { operation: "ask", question: "Is the other Action relevant?",
+      recipient: { kind: "user" }, action_id: second.id, blocking: false },
+      "asker", "general")).result
+    expect(q).toMatchObject({ session_id: "asker", action_id: second.id,
+      data: { format: "loom-question/v2", expected_session: "asker" } })
+    expect((await f.invoke("context", {}, "asker", "general")).result.action.id).toBe(first.id)
+  } finally { await f.close() }
+})
+
+test("guarded model routing withholds peer native notice without losing exact answer ownership", async () => {
+  const f = await registeredLoom()
+  try {
+    await writeFile(join(f.directory, ".loom.yaml"), [
+      "model-routing:",
+      "  enabled: true",
+      "  default-class: verified",
+      "model-classes:",
+      "  verified:",
+      "    models: [sample-model]",
+      "instructions: {enabled: false}",
+      "ledger: {capture: off}",
+      "",
+    ].join("\n"))
+    const q = (await f.invoke("record", {
+      operation: "ask", question: "Does managed routing allow a peer notice?",
+      session_id: "peer", blocking: true,
+    }, "asker", "general")).result
+    expect(q.dispatch).toMatchObject({ status: "not-attempted", attempted: false,
+      reason: "model-routing-host-unqualified" })
+    expect(q.data.expected_session).toBe("peer")
+    expect(f.nativeInputs).toHaveLength(0)
+    await expect(f.invoke("record", { operation: "answer", question_id: q.id,
+      answer: "Wrong Session" }, "other", "general")).rejects.toThrow("Session")
   } finally { await f.close() }
 })
