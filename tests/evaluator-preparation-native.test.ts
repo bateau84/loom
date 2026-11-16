@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Database } from "bun:sqlite"
 import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -200,34 +200,44 @@ test("foreign linked originals remain uninspected metadata in the authorized sou
   } finally { f.close() }
 })
 
-test("501 authored anchors stay complete across bounded pages behind one manifest review member", async () => {
-  const f = fixture()
-  try {
-    const original = f.store.record(actor, undefined, { kind: "result", statement: "One original request with many authored units" })
-    const source = f.learning.objectives.ledgerSource(original.id), objectiveIDs: string[] = []
-    for (let i = 0; i < 501; i++) objectiveIDs.push(f.learning.objectives.create(actor, source, "Work unit " + i, "unit-" + i).id)
-    const batch = await sourceBatch(f), prepared = f.learning.evaluator.prepare(actor, batch, method(), null)
-    expect(prepared.manifest.member_count).toBe(502)
+for (const [count, limit] of [[501, 100], [40, 17]] as const) describe(`${count} authored anchors across bounded pages`, () => {
+  let f: Fixture
+  let original: ReturnType<Fixture["store"]["record"]>
+  let prepared: ReturnType<Fixture["learning"]["evaluator"]["prepare"]>
+  const objectiveIDs: string[] = []
+  beforeAll(async () => {
+    f = fixture()
+    original = f.store.record(actor, undefined, { kind: "result", statement: "One original request with many authored units" })
+    const source = f.learning.objectives.ledgerSource(original.id)
+    for (let i = 0; i < count; i++) objectiveIDs.push(f.learning.objectives.create(actor, source, "Work unit " + i, "unit-" + i).id)
+    const batch = await sourceBatch(f)
+    prepared = f.learning.evaluator.prepare(actor, batch, method(), null)
+  }, 30000)
+  afterAll(() => { f?.close() })
+  test("stays complete behind one manifest review member", () => {
+    expect(prepared.manifest.member_count).toBe(count + 1)
     expect(prepared.request.review_request.members).toHaveLength(1)
     expect(prepared.request.review_request.members[0]?.producing_attempt_refs).toEqual([])
-    const members = [], seen = new Set<number>()
+    const members = [], seen = new Set<number>(), pageSizes: number[] = []
     let after = 0
     for (;;) {
-      const page = f.learning.evaluator.members(actor.session_id, prepared.batch_id, prepared.request_id, prepared.manifest_sha256, after, 17)
+      const page = f.learning.evaluator.members(actor.session_id, prepared.batch_id, prepared.request_id, prepared.manifest_sha256, after, limit)
       expect(page.items.length).toBeGreaterThan(0)
-      expect(page.items.length).toBeLessThanOrEqual(17)
-      for (const item of page.items) { expect(seen.has(item.ordinal)).toBe(false); seen.add(item.ordinal); members.push(item) }
+      expect(page.items.length).toBeLessThanOrEqual(limit)
+      pageSizes.push(page.items.length)
+      for (const item of page.items) { expect(item.ordinal).toBe(members.length + 1); expect(seen.has(item.ordinal)).toBe(false); seen.add(item.ordinal); members.push(item) }
       if (page.next_after === null) break
       expect(page.next_after).toBeGreaterThan(after)
       after = page.next_after
     }
-    expect(members).toHaveLength(502)
+    expect(members).toHaveLength(count + 1)
+    if (limit === 17) expect(pageSizes).toEqual([17, 17, 7])
     expect([...new Set(members.flatMap(member => member.source_refs).filter(ref => ref.kind === "objective").map(ref => ref.id))].sort()).toEqual(objectiveIDs.sort())
     expect(new Set(members.flatMap(member => member.source_refs).filter(ref => ref.kind === "ledger-record").map(ref => ref.id))).toEqual(new Set([original.id]))
     expect(prepared.request.originating_request_independence).toBe("unknown")
     expect(prepared.interpretation).toBeNull()
-  } finally { f.close() }
-}, 30000)
+  }, 30000)
+})
 
 for (const boundary of ["mapping", "review"] as const) test(`failed write after ${boundary} recovers the same mapping and original actor`, async () => {
   const f = fixture()
