@@ -4,6 +4,16 @@ type: Log
 
 # Update Log
 
+## 2026-11-17
+
+**PR #237 bounded remediation:** Retained existing-Session question delivery and
+added native caller/destination permission under the Architect's
+[delivery policy](cross-session-delivery-authorization.md). Inbox lookup now uses
+one additive destination index and the complete existing answer index. Peer
+dispatch reasons are distinct from parent notices; structured questions consistently
+allow typed recipients or verified destinations. Recovery checks cover persisted
+inbox discovery and answer-commit interruption without replay or delivery retries.
+
 ## 2026-11-15
 
 **Stage 4 preparation increment:** Implemented declared method validation,

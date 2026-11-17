@@ -130,19 +130,20 @@ changes the goal, scope, promised behavior or accepted risk, ask its owner;
 do not treat a recorded assumption as authorization. Route scope to dispatcher,
 specialist judgment to role/agent, intent/approval to user. Do not manufacture OQs.
 
-Ask needs `question`, `blocking`, and `recipient` or legacy `to_agent`.
-Recipient kinds: agent/role (needs `id` from `loom_agents`), dispatcher/user (no id).
-No Action/Plan needed; context/context_attachments/reference optional.
-Dispatcher examples need a child Session; primary Sessions use agent/role/user.
-Block dependent work only; continue safe work.
+Ask needs `question`, `blocking`, and one of typed `recipient`, verified
+`session_id`, or legacy `to_agent`. Recipient: agent/role (requires id)
+or dispatcher/user.
+`action_id` associates work without changing selection; never combine with `reference`.
+The caller remains author. Peer delivery needs native `loom.question.deliver` for
+`session:<ID>` under caller policy, honoring native allows. Denial stores nothing;
+answer ownership is separate. Dispatcher needs a child.
 
 ```json
-{"operation":"ask","question":"Which limit applies?","recipient":{"kind":"role","id":"research"},"blocking":false,"context_attachments":["SOURCE_REFERENCE"]}
+{"operation":"ask","question":"Which limit applies?","recipient":{"kind":"role","id":"research"},"blocking":false}
 ```
 
-Legacy recipient is NOT contacted (`policy-capability-unavailable`). Typed asks
-use native depth/permissions and foreground/background continuation.
-No duplicate notice; admission is not execution.
+Legacy recipient is NOT contacted (`policy-capability-unavailable`). Typed routing
+uses native depth, permissions and continuation; admission is not execution.
 For dispatcher targets, answer directly even after consultation, without binding.
 For forwarded agent/role OQs, natively delegate and bind the verified child.
 For user targets, ask the user and cite their actual decision.
@@ -151,14 +152,14 @@ For user targets, ask the user and cite their actual decision.
 {"operation":"answer","question_id":"QUESTION_ID","answer":"Source-backed response.","context_attachments":["SOURCE_REFERENCE"]}
 ```
 
-`answer_type` defaults to `text`. `multi-choice` requires typed `recipient` (not
-`to_agent`) and 2-20 immutable `choices`
-with `id` and `answer`; reply with ONE `choice_id` and optional `reason`,
-not `answer`. Or use `status:"cannot-select"` with a reason; never guess.
-Read `view:thread`; format grants no authority or routing.
-An answer is not necessarily approval or resolution. Conflicting replies remain.
-Only FIRST committed blocking legacy/forwarded answers (including cannot-select)
-attempt exact-asker resume. No retries/replay. 5000ms bounds waiting, not I/O;
+`answer_type` defaults to `text`. `multi-choice` needs typed `recipient` or verified
+`session_id`, never `to_agent`, and 2-20 immutable `{id,answer}` choices.
+Reply with ONE `choice_id` plus optional `reason`, never `answer`;
+or `status:"cannot-select"` with a reason. Read `view:thread`.
+An answer is not necessarily approval or resolution. Conflicts remain.
+`view:inbox` finds your Session's questions after missed notices/restart,
+without selecting work. Only FIRST committed blocking legacy/forwarded/explicit-Session
+answers attempt exact-asker resume. No retries/replay. 5000ms bounds waiting, not I/O;
 the check is not an atomic lease. Do not repeat an
 answer to try delivery. Historical records are readable; assignment/delivery views retired.
 

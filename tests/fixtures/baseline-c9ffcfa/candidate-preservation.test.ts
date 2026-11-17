@@ -27,6 +27,6 @@ test("current Store startup and qualification-sensitive reads preserve populated
       storeID = assertReviewMigration(db, saved, storeID)
       expect(store.reviews.storeID).toBe(storeID)
     }
-    console.log("candidate startup/read x2: original schema and rows unchanged; only empty v2 review tables and stable namespace added; original completion/reopen qualification retained; no host/transport constructed")
+    console.log("candidate startup/read x2: original schema and rows unchanged; only empty v2 review tables, stable namespace and inbox index added; original completion/reopen qualification retained; no host/transport constructed")
   } finally { db.close() }
 })

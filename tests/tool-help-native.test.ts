@@ -135,7 +135,7 @@ test("canonical collaboration help matches conditional schemas and rejects alias
   try {
     const tool = f.tools.get("record")
     for (const [operation, required, allowed] of [
-      ["ask", ["operation", "question", "blocking"], ["operation", "question", "answer_type", "choices", "to_agent", "recipient", "blocking", "context", "context_attachments", "reference", "review"]],
+      ["ask", ["operation", "question", "blocking"], ["operation", "question", "answer_type", "choices", "to_agent", "recipient", "session_id", "action_id", "blocking", "context", "context_attachments", "reference", "review"]],
       ["answer", ["operation", "question_id"], ["operation", "question_id", "answer", "choice_id", "status", "reason", "context_attachments"]],
     ] as const) {
       const schema = tool.input.allOf.find((s: any) => s.if.properties.operation?.const === operation).then
@@ -166,7 +166,7 @@ test("canonical collaboration help matches conditional schemas and rejects alias
     }
     for (const text of ["FIRST committed", "legacy", "single", "No retries", "not an atomic lease", "not perpetual", "No recursive evidence expansion"]) expect(tool.description).toContain(text)
     expect(tool.input.properties.operation.enum).toEqual(["add", "query", "complete", "reopen", "ask", "answer", "bind-respondent"])
-    expect(tool.input.properties.view.enum).toEqual(["ledger", "progress", "questions", "thread", "full_thread"])
+    expect(tool.input.properties.view.enum).toEqual(["ledger", "progress", "questions", "inbox", "thread", "full_thread"])
     const history = (await f.invoke("record", { operation: "query", view: "full_thread", session_id: "asker", limit: 1 })).result
     expect(history.format).toBe("loom-full-thread/v1")
     expect(history.markdown).toContain(question.id)

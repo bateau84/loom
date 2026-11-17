@@ -19,6 +19,7 @@ scan root so the profile is discovered; it declares no mandatory link counts.
 - [Loom tool reference](tools.md) — Tool inputs, scopes and failures
 - [Tool discovery](tool-discovery.md) — How agents find registered help
 - [Structured Open Questions](structured-questions.md) — Choice contract, usage investigation and qualification limits
+- [Cross-session delivery authorization](cross-session-delivery-authorization.md) — Native permission for the actual caller and exact peer destination
 - [Coordination](coordination.md) — Optional agent coordination using OpenCode
 
 ## Agent work and evidence
@@ -65,6 +66,7 @@ scan root so the profile is discovered; it declares no mandatory link counts.
 - [QA-B retrospective acceptance](retrospective-qa-b.md) — Isolated real-model investigation and adversarial acceptance runbook
 - [QA-B control evidence](retrospective-qa-b-controls.md) — Private evidence bundles, safeguards and offline regrading
 - [Testing and CI](testing.md) — Test inventory and qualification scope
+- [Cross-session inbox performance](inbox-performance.md) — Bun query plans, measured scaling and additive index compatibility
 - [Installed-host validation](installed-host-validation.md) — Separates boot evidence from acceptance
 - [Operating policy](operating-policy.md) — Supported alpha behavior and limits
 - [Manual backup and restore](manual-backup-restore.md) — Stopped-writer recovery procedure

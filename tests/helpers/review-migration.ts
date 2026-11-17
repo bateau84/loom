@@ -2,8 +2,8 @@ import { strict as assert } from "node:assert"
 import type { Database } from "bun:sqlite"
 import { snapshot, type Snapshot } from "../fixtures/baseline-c9ffcfa/oracle.js"
 
-// Explicit v2 allowance, independent of production DDL. Every pre-existing SQL
-// declaration and stored row must still match the untouched v1 snapshot.
+// Explicit additive allowances, independent of production DDL. Every pre-existing
+// SQL declaration and stored row must still match the untouched v1 snapshot.
 const columns: Record<string, string[]> = {
   review_store_identity: ["singleton", "store_id"],
   review_requests: ["request_id", "requester_session", "data", "membership_data", "created_at"],
@@ -41,6 +41,7 @@ export function assertReviewMigration(db: Database, original: Snapshot, expected
   const allowed = [
     ...Object.keys(columns).map(name => ({ type: "table", name, tbl_name: name })),
     ...indexes.map(index => ({ type: "index", name: index.name, tbl_name: index.table })),
+    { type: "index", name: "ledger_question_inbox", tbl_name: "ledger" },
   ].sort((a, b) => identity(a).localeCompare(identity(b)))
   assert.deepEqual(extra, allowed, "Migration added unexpected schema objects")
   assert.deepEqual(Object.keys(current.tables).sort(), [...Object.keys(original.tables), ...Object.keys(columns)].sort())
@@ -56,6 +57,9 @@ export function assertReviewMigration(db: Database, original: Snapshot, expected
     const list = db.query('PRAGMA index_list("' + expected.table + '")').all() as Array<{ name: string; unique: number }>
     assert.equal(list.find(index => index.name === expected.name)?.unique, expected.unique)
   }
+  const inbox = current.schema.find(row => row.type === "index" && row.name === "ledger_question_inbox")
+  assert.equal(inbox?.sql?.replace(/\s+/g, " ").trim(),
+    "CREATE INDEX ledger_question_inbox ON ledger(json_extract(data,'$.data.expected_session'),seq) WHERE kind='question' AND json_extract(data,'$.data.format')='loom-question/v2'")
   const rows = db.query("SELECT singleton,store_id FROM review_store_identity").all() as Array<{ singleton: number; store_id: string }>
   assert.equal(rows.length, 1)
   assert.equal(rows[0].singleton, 1)

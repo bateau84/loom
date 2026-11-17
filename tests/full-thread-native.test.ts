@@ -109,7 +109,7 @@ test("registered scope/schema validation rejects retired and unrelated fields wi
   try {
     const action = (await f.invoke("action", { operation: "create", title: "A", goal: "G" })).result
     const schema = f.tools.get("record").input
-    expect(JSON.parse(JSON.stringify(schema)).properties.view.enum).toEqual(["ledger", "progress", "questions", "thread", "full_thread"])
+    expect(JSON.parse(JSON.stringify(schema)).properties.view.enum).toEqual(["ledger", "progress", "questions", "inbox", "thread", "full_thread"])
     const full = schema.allOf.find((s: any) => s.if.properties.view?.const === "full_thread").then
     expect(full.additionalProperties).toBe(false)
     expect(full.properties.operation.const).toBe("query")

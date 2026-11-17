@@ -77,20 +77,23 @@ export async function sendQuestion(store: Store, question: LedgerRecord, route: 
       outcome = { ...outcome, target_session_id: admitted.sessionID, native_status: admitted.status,
         status: "admission-observed", reason: "native-subagent-admitted" }
     } else if (route.mode === "notify" && route.session) {
-      outcome = { status: "outcome-unknown", reason: "native-parent-notice", target_session_id: route.session,
+      const notice = route.reason === "explicit-session" ? "peer" : "parent"
+      outcome = { status: "outcome-unknown", reason: `native-${notice}-notice`, target_session_id: route.session,
         ...(route.agent ? { target_agent: route.agent } : {}), attempted: true }
-      const recipient = question.data.recipient as QuestionRecipient
-      const instructions = recipient.kind === "dispatcher"
+      const recipient = question.data.recipient as QuestionRecipient | undefined
+      const instructions = !recipient && question.data.expected_session === route.session
+        ? "This Open Question is addressed to your exact native Session. Read its full thread using loom_record query view=thread and answer with loom_record operation=answer and the question_id. Only your Session is authorized; an ordinary chat response is not a stored answer."
+        : recipient?.kind === "dispatcher"
         ? "This question is addressed to you as dispatcher. Answer it directly with loom_record operation=answer; you may consult a specialist, but remain the respondent yourself. Do not bind a specialist as respondent."
-        : recipient.kind === "user"
+        : recipient?.kind === "user"
           ? "Ask the user directly and relay the actual decision with its source. Answer through the recorded question only when appropriate."
           : `This question is forwarded to specialist ${route.agent}. Delegate natively, then call loom_record bind-respondent with question_id and respondent_session_id from that native subagent result. Only that selected Session may answer.`
       const ack = record(unwrap(await api.synthetic(route.session,
         `Loom Open Question ${question.id}. Retrieve its full thread with loom_record. ${instructions} Do not answer outside your authority. The question is recorded, not resolved.`,
         { format: "loom-question-notice/v1", question_id: question.id })))
       if (ack.type !== "synthetic" || ack.sessionID !== route.session || typeof ack.id !== "string")
-        throw new Error("Native parent notice admission could not be confirmed")
-      outcome = { ...outcome, status: "admission-observed", reason: "native-parent-notice-admitted" }
+        throw new Error(`Native ${notice} notice admission could not be confirmed`)
+      outcome = { ...outcome, status: "admission-observed", reason: `native-${notice}-notice-admitted` }
     }
   } catch (error) {
     // Denials verified as pre-creation in the pinned native contract are safe
