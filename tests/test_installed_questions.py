@@ -492,7 +492,9 @@ class QuestionHarnessTest(unittest.TestCase):
             verify_provider_inputs([{'type': 'provider-inputs', 'data': {'notices': event['data']['notices'] * 2}}])
 
     def test_exact_native_admission_rejects_duplicate_retarget_or_changed_notice(self):
-        good = {'data': {'sessionID': 'asker', 'item': {'payload': {'metadata': {'answer_id': 'answer'}}, 'delivery': 'steer'}}}
+        good = {'data': {'sessionID': 'asker', 'item': {'type': 'synthetic', 'payload': {
+            'metadata': {'format': 'loom-answer-notice/v1', 'question_id': 'question', 'answer_id': 'answer'}},
+            'delivery': 'steer'}}}
         verify_single_admission([good], 'asker', 'answer')
         for inputs, target, answer in [([], 'asker', 'answer'), ([good, good], 'asker', 'answer'), ([good], 'other', 'answer'), ([good], 'asker', 'other')]:
             with self.subTest(inputs=inputs, target=target, answer=answer), self.assertRaises(RuntimeError):
@@ -513,12 +515,28 @@ class QuestionHarnessTest(unittest.TestCase):
     def test_raw_request_and_admission_counts_ignore_scripted_write_guards(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            admission = {'type': 'native-event', 'data': {'type': 'session.inbox.enqueued', 'data': {'sessionID': 'asker', 'item': {'type': 'synthetic'}}}}
+            admission = {'type': 'native-event', 'data': {'type': 'session.inbox.enqueued',
+                'data': {'sessionID': 'asker', 'item': {'type': 'synthetic', 'payload': {
+                    'metadata': {'format': 'loom-answer-notice/v1', 'question_id': 'q', 'answer_id': 'a'}}}}}}
+            background = {'type': 'native-event', 'data': {'type': 'session.inbox.enqueued',
+                'data': {'sessionID': 'asker', 'item': {'type': 'synthetic', 'payload': {
+                    'metadata': {'source': 'subagent', 'childID': 'child-1', 'state': 'completed'}}}}}}
             request = {'type': 'model-request', 'data': {'sessionID': 'asker'}}
-            (root / 'audit.ndjson').write_text('\n'.join(json.dumps(e) for e in [admission, request, admission, request]))
+            (root / 'audit.ndjson').write_text('\n'.join(json.dumps(e) for e in
+                [admission, request, background, admission, request]))
             self.assertEqual(len(synthetic_events(root)), 2)
             self.assertEqual(len(target_requests(root, 'asker')), 2)
             self.assertEqual(len(target_requests(root, 'other')), 0)
+            bad = json.loads(json.dumps(admission))
+            bad['data']['data']['item']['payload']['metadata'].pop('answer_id')
+            (root / 'audit.ndjson').write_text(json.dumps(bad))
+            with self.assertRaisesRegex(RuntimeError, 'Malformed Loom answer notice'):
+                synthetic_events(root)
+            spoofed = json.loads(json.dumps(admission))
+            spoofed['data']['data']['item']['payload']['metadata']['format'] = 'not-a-Loom-answer'
+            (root / 'audit.ndjson').write_text(json.dumps(spoofed))
+            with self.assertRaisesRegex(RuntimeError, 'Unrecognized synthetic claimed'):
+                synthetic_events(root)
 
     def test_frozen_old_prerequisite_hydrates_and_detects_changed_raw_bytes(self):
         saved = fixture_snapshot(Path(__file__).resolve().parents[1])
