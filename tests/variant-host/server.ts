@@ -40,6 +40,8 @@ export default Plugin.define({
             kind: event.type, sessionID: payload?.sessionID ?? null,
             inboxID: payload?.inboxID ?? null, item: payload?.item?.type ?? null,
             delivery: payload?.item?.delivery ?? null,
+            childID: payload?.item?.payload?.metadata?.childID ?? null,
+            source: payload?.item?.payload?.metadata?.source ?? null,
           })
         }
       } catch (error) { if (!stop.signal.aborted) audit("lifecycle-observer-failure", { message: String(error).slice(0,200) }) }
