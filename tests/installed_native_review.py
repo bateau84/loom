@@ -1,4 +1,4 @@
-"""Qualify native review evidence boundaries on isolated OpenCode 2.2.6.
+"""Qualify native review evidence boundaries on isolated OpenCode 2.3.0.
 
 Only the external model is scripted. Native dispatch, admission, reads, policies,
 Loom tools/observer and persistence are real. No production review-admission or
@@ -24,8 +24,8 @@ from installed_instruction_variants import verify_host_version
 from installed_questions import Scenario, audit_session, events, final_events, idle, request
 from native_review_oracle import call_key, dispatch_receipts, source_basis
 
-HOST = "2.2.6"
-SOURCE_REVISION = "dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06"
+HOST = "2.3.0"
+SOURCE_REVISION = "a6b15d33daf6ab7d35569f6d711fdb630b9f04e7"
 SCENARIOS = {"Q1": "parent-child identity", "Q2": "concurrent and reused children",
              "Q3": "original mandate", "Q4": "effective evidence basis",
              "Q5": "recipient authorization", "Q6": "ambiguous observations",
@@ -171,7 +171,7 @@ def run(args) -> dict:
             try:
                 verify_host_version(version)
             except RuntimeError:
-                report["unqualified_reason"] = "CLI differs from inspected 2.2.6 profile; requalification required"
+                report["unqualified_reason"] = "CLI differs from inspected 2.3.0 profile; requalification required"
                 return report
             permissions = [{"action": "*", "resource": "*", "effect": "allow"}]
             config = {"plugins": ["*", str(args.plugin.resolve()), str(repo / "tests/question-host")],
