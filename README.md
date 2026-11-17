@@ -64,22 +64,24 @@ interrupt an OpenCode session or certify successful delivery.
 
 ## Loading the plugin
 
-Upgrade candidate: **OpenCode 2.2.6**, with `@opencode/plugin@2.2.6`
-pinned in `package.json` and `bun.lock`. The isolated installed boot,
-scripted-question, native Session discovery and compaction CI runs now target
-the exact 2.2.6 CLI/SDK pairing. **The version bump is a compatibility
-candidate, not a claim of passing installed-host qualification.** Only
-successful evidence from the reviewed PR head qualifies it.
+Upgrade candidate: **OpenCode 2.3.0**, with `@opencode/plugin@2.3.0`
+pinned in `package.json` and `bun.lock`. Isolated native installation,
+scripted-provider, question, routing guard, recovery and Stage 3/4 CI
+target the exact 2.3.0 CLI/SDK pair. **The bump is a compatibility
+candidate, not permission to enable new host capabilities.** Qualification
+requires terminal checks against the exact released candidate.
 
-The previous 2.2.0 qualification is historical (see
-[2.2.0 migration record](docs/opencode-2.2.0.md)); evidence from 2.2.0,
-2.1.1 or 2.0.32 cannot qualify 2.2.6. The separate Code Mode search fixture
-remains 2.0.29 and is not an installed-host qualification.
-This change does not upgrade a developer's CLI or local configuration.
-See [2.2.6 compatibility plan](docs/opencode-2.2.6.md) and
+Older results for OpenCode 2.2.6 and earlier remain historical; the
+2.2.6-only offline experiment recovery scanner still rejects newer native
+databases until separately qualified. Its existing 2.2.6 negative controls
+run on an isolated legacy host, not as claimed 2.3.0 scanner support.
+The Code Mode search fixture stays pinned to 2.0.29.
+This change does not upgrade a developer's installed CLI or configuration.
+See [2.3.0 host qualification](docs/opencode-2.3.0.md),
+[historical 2.2.6 compatibility plan](docs/opencode-2.2.6.md) and
 [installed-host validation](docs/installed-host-validation.md).
 
-**Model-routing boundary:** SDK/CLI 2.2.6 remains unqualified for
+**Model-routing boundary:** SDK/CLI 2.3.0 remains unqualified for
 managed-subscription initial routing. The production adapter stays
 `not-connected`, and the early `model.request` guard continues to deny
 opt-in routing with `LOOM_MODEL_ROUTING_HOST_UNQUALIFIED`.
