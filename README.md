@@ -262,8 +262,12 @@ changed after dispatch. Fully automatic native handoff remains future work.
 
 Ask uses `question`, explicit Boolean `blocking`, and exactly one of
 `recipient:{kind:"agent"|"role"|"dispatcher"|"user",id?:string}` (preferred)
-or legacy `to_agent` (manual). Provide `id` for agent/role, not for dispatcher/user.
-Optional `context`, `context_attachments`, `reference:{action_id,kind,id}`.
+or legacy `to_agent` (manual), or a verified existing destination `session_id`.
+Provide `id` for agent/role, not for dispatcher/user. Explicit Session delivery
+requires native `loom.question.deliver` permission for `session:<destination ID>`
+evaluated for the actual caller. See [the delivery policy](docs/cross-session-delivery-authorization.md).
+Optional `context`, `context_attachments`, `reference:{action_id,kind,id}`, or
+explicit `action_id` association without a `reference`.
 Answer uses `question_id`, `answer`, optional `context_attachments`;
 `attachments` is not an alias. The native caller determines author/Session;
 Action association is optional and unchanged by answering.
@@ -284,7 +288,8 @@ asker's. Legacy `to_agent` questions
 stay fail-closed and manual. Dispatch admission is not execution, answer,
 or approval; no automatic retry is promised. Blocking is advisory, not a gate.
 
-Only the FIRST committed blocking legacy v1 or forwarded typed v2 answer
+Only the FIRST committed blocking legacy v1, forwarded typed v2, or explicitly
+Session-addressed v2 answer
 qualifies for best-effort Loom resumption of the exact asking Session.
 Direct typed OQs use native continuation. Later/nonblocking answers
 do not submit separate Loom resume input. No retries, transfers, recovery replay

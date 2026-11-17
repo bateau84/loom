@@ -125,6 +125,18 @@ An explicit `session_id` addresses an existing native Session, not an agent name
 The actual calling Session remains the ledger author; it cannot be overridden.
 The target is verified in the same project/workspace/canonical directory before
 storage and again before dispatch, and becomes the exact authorized respondent.
+Live delivery additionally requires native `loom.question.deliver` permission
+for resource `session:<destination ID>`, evaluated for the actual calling Session
+and agent. OpenCode 2.2.6's stock agent policy contains a wildcard allow, so an
+unconfigured host permits peer delivery without prompting. Configure a dedicated
+native ASK or DENY rule when that broader grant is unsuitable. Effective native
+denial or rejection stores no question and sends no notice. Loom does not offer
+a persistent permission grant or imply target-owner consent.
+Location, Action association and answer ownership do not grant delivery authority.
+The existing model/configuration guard still withholds delivery without requesting
+permission and may preserve the exact-addressed question for inbox discovery.
+See [delivery authorization](cross-session-delivery-authorization.md) for the
+policy, return-notice invitation and native permission configuration.
 Unrelated General Sessions may exchange questions without creating a subagent;
 the recipient receives a qualified native notice with retrieval instructions,
 not an injected answer. The destination may answer even without selecting the
@@ -141,6 +153,10 @@ Session-only records; `question_state` defaults to `open`, with `answered` and
 work. This is durable recovery/discovery, not a delivery retry, permission to
 read private native Session context or evidence that the Session consumed a
 notice. The original `query view=thread` remains authoritative.
+The inbox uses an additive partial destination/sequence index and the existing
+Action/question answer index. Startup adds the inbox index without converting
+tables, rewriting records or changing the database version. Existing historical
+schema and row-preservation checks cover this explicit addition.
 
 For new agent/role recipients, exactly one enabled, visible, available,
 subagent-capable target must match. Loom invokes OpenCode 2.2.0's native
@@ -177,7 +193,8 @@ Blocking is collaboration intent, never a forced wait or execution gate.
 ## Structured answer formats
 
 Omitted `answer_type` or `text` preserves free-text answers. `multi-choice` stores
-2–20 immutable `{id,answer}` choices, requires typed `recipient` (not `to_agent`),
+2–20 immutable `{id,answer}` choices, requires a typed `recipient` or verified
+destination `session_id` (never `to_agent`),
 and accepts one `choice_id`, optionally with
 `reason`, or `status:"cannot-select"` with a required reason. The original label
 is resolved by Loom, not supplied by the respondent. Text and choice forms cannot

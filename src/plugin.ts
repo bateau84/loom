@@ -834,7 +834,33 @@ export default Plugin.define({
                   // An explicit destination remains the authorized respondent even when
                   // a guarded host withholds native delivery. Never reassign author identity.
                   const verifiedSession = input.session_id === undefined ? undefined : String(input.session_id)
-                  if (verifiedSession) await checkedSession(verifiedSession)
+                  if (verifiedSession) {
+                    await checkedSession(verifiedSession)
+                    if (route.mode === "notify") {
+                      // Locality identifies the destination; only native policy may
+                      // authorize this caller to inject input and wake that Session.
+                      // Do not offer saved grants: OpenCode persists those project-wide.
+                      await ctx.permission.assert({ action: "loom.question.deliver",
+                        resources: [`session:${verifiedSession}`],
+                        sessionID: toolContext.sessionID, agent: toolContext.agent,
+                        source: { type: "tool", messageID: toolContext.messageID, id: toolContext.id },
+                        metadata: { destination_session_id: verifiedSession } })
+                      lifetime.signal.throwIfAborted()
+                      toolContext.signal.throwIfAborted()
+                      // Native approval can wait for human input. Recheck both
+                      // locations and the dispatch guard before committing any work.
+                      const current = await getConfig(toolContext.signal)
+                      await checkedSession(actor.session_id)
+                      await checkedSession(verifiedSession)
+                      lifetime.signal.throwIfAborted()
+                      toolContext.signal.throwIfAborted()
+                      if (current.errors.length) route = { mode: "manual", reason: "loom-config-unavailable" }
+                      else if ((startupGuard !== undefined && startupDispatch === "deny") ||
+                          routingStatus === "blocked-config" ||
+                          (current.config.modelRouting.enabled && routingStatus !== "initial-only"))
+                        route = { mode: "manual", reason: "model-routing-host-unqualified" }
+                    }
+                  }
                   const stored = store.collaboration.ask(actor, focus, askFields, {
                     ...(route.expected_agent ? { expected_agent: route.expected_agent } : {}),
                     ...((verifiedSession ?? route.expected_session) ? { expected_session: verifiedSession ?? route.expected_session } : {}),

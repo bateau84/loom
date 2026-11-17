@@ -53,11 +53,15 @@ Omitted `answer_type`, or explicit `text`, keeps existing text questions and
 questions reject free-text `answer` submissions and mixtures of answer forms.
 `context_attachments` remains available on all response forms.
 
-New multiple-choice questions require a typed `recipient`; `to_agent` remains
-manual-only for text questions. This keeps every new selection on the existing
+New multiple-choice questions require either a typed `recipient` or a verified
+destination `session_id`; `to_agent` remains manual-only for text questions.
+Explicit Session delivery also requires the native target-specific permission
+described in [the delivery policy](cross-session-delivery-authorization.md).
+This keeps every new selection on the existing
 respondent-identity checks without adding authority to legacy addressing. Earlier
 draft v1 multiple-choice records and their answers remain readable and unchanged,
-but reject new replies: recreate the question with a typed recipient and a new ID.
+but reject new replies: recreate the question with a typed recipient or verified
+destination Session and a new ID.
 Historical manual responses are not retroactively verified. Typed identity still
 does not certify that a relayed user decision actually came from the user.
 
@@ -81,9 +85,11 @@ all options/replies; bounded context shows type, choice count and selected ID or
 cannot-select status, with ordinary excerpt/omission notices. `full_thread`
 retains the complete stored objects through its existing escaped renderer.
 
-No schema migration is needed. Old text rows remain unchanged. New structured
-rows use the existing question/answer record formats and always retain readable
-answer text. Older binaries do not support creating/selecting these questions;
+No record or table format conversion is needed. Old text rows remain unchanged.
+Cross-session inbox lookup adds one partial destination/sequence index at Store
+startup; existing rows, schema declarations and database version are preserved.
+New structured rows use the existing question/answer record formats and always
+retain readable answer text. Older binaries do not support creating/selecting these questions;
 use the installed tool schema rather than assuming an old writer understands them.
 
 ## Why questions may appear to have disappeared

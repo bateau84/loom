@@ -161,6 +161,8 @@ export class Collaboration {
         WHERE kind IN ('completion','reopen');
       CREATE INDEX IF NOT EXISTS ledger_questions ON ledger(action_id,seq) WHERE kind='question';
       CREATE INDEX IF NOT EXISTS ledger_answers ON ledger(action_id,json_extract(data,'$.data.question_id'),seq) WHERE kind='answer';
+      CREATE INDEX IF NOT EXISTS ledger_question_inbox ON ledger(json_extract(data,'$.data.expected_session'),seq)
+        WHERE kind='question' AND json_extract(data,'$.data.format')='loom-question/v2';
 `)
 
   }
@@ -314,7 +316,7 @@ export class Collaboration {
       // Earlier draft writers allowed unverified v1 selections. Keep that history
       // readable, but require a new typed question rather than inheriting its authority gap.
       if (question.data.answer_type === "multi-choice" && question.data.format !== "loom-question/v2")
-        throw new Error("Legacy multi-choice question is read-only; ask a new question with a typed recipient")
+        throw new Error("Legacy multi-choice question is read-only; ask a new question with a typed recipient or verified destination session_id")
       if (question.data.format === "loom-question/v2") {
         const expectedAgent = question.data.expected_agent
         let expectedSession = question.data.expected_session
@@ -459,8 +461,10 @@ export class Collaboration {
     const pageRequest = page(after, limit)
     return this.atomic(false, () => {
       const allowance = { bytes: 0 }
+      // IN keeps the outer TEXT column's affinity from disabling the existing
+      // question-id expression index. Persisted question IDs are strings.
       const answerExists = `EXISTS (SELECT 1 FROM ledger a WHERE a.kind='answer' AND
-        a.action_id IS q.action_id AND json_extract(a.data,'$.data.question_id')=q.id)`
+        a.action_id IS q.action_id AND json_extract(a.data,'$.data.question_id') IN (q.id))`
       const stateFilter = state === "all" ? "" : ` AND ${state === "open" ? "NOT " : ""}${answerExists}`
       const rows = this.candidates(`SELECT q.seq,octet_length(q.data) AS data_bytes FROM ledger q
         WHERE q.kind='question' AND q.seq>? AND json_extract(q.data,'$.data.format')='loom-question/v2'
