@@ -1161,9 +1161,33 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
                          and n['data']['item']['payload']['metadata']['question_id'] == typed_q['id']],
                     'Direct typed delegation emitted an unauthorized separate Loom answer notice')
             asker_request_delta = target_requests(root, typed_asker)[asker_requests_before:]
-            require(len(asker_request_delta) == 2,
-                    'Expected one asking-model turn plus one host native background-result continuation, got '
-                    + str(len(asker_request_delta)))
+            # Actual 2.3.0 source/installed audit shows three distinct parent
+            # requests: the initial ask, the native tool-handle continuation,
+            # then a new turn after the one subagent-completion synthetic
+            # admission. None of these is a second Loom answer notification.
+            typed_observed = events(root)[typed_start:]
+            parent_requests = [i for i, e in enumerate(typed_observed)
+                if e['type'] == 'model-request' and e['data'].get('sessionID') == typed_asker]
+            completion_receipts = [i for i, e in enumerate(typed_observed)
+                if e['type'] == 'native-event'
+                and e['data'].get('type') == 'session.inbox.enqueued'
+                and e['data']['data'].get('sessionID') == typed_asker
+                and e['data']['data'].get('item', {}).get('type') == 'synthetic'
+                and e['data']['data']['item'].get('payload', {}).get('metadata', {}).get('source') == 'subagent'
+                and e['data']['data']['item']['payload']['metadata'].get('childID') == child_id]
+            caller_provider_requests = [e for e in typed_observed
+                if e['type'] == 'provider-request' and
+                e['data'].get('headers', {}).get('x-opencode-session-id') == typed_asker]
+            require(len(completion_receipts) == 1 and len(asker_request_delta) == len(parent_requests) == 3
+                    and len(caller_provider_requests) == 3
+                    and sum(index < completion_receipts[0] for index in parent_requests) == 2
+                    and sum(index > completion_receipts[0] for index in parent_requests) == 1,
+                    'Native background request/notice ordering or provider receipt count changed: '
+                    + str({'model_requests': len(parent_requests),
+                           'provider_requests': len(caller_provider_requests),
+                           'native_completion_notices': len(completion_receipts),
+                           'pre_notice': sum(index < completion_receipts[0] for index in parent_requests)
+                               if completion_receipts else None}))
             require(typed_answers[0]['data']['format'] == 'loom-answer/v2',
                     'Native completion did not accompany a durable authorized answer')
             unrelated = request(host, 'POST', '/api/session', {'agent': 'question-specialist',
