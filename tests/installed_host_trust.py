@@ -70,7 +70,7 @@ def run(args) -> dict:
                                           text=True, timeout=15).strip()
         verify_host_version(version)
         report["observed_host"] = version
-        report["upstream_revision"] = "dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06"
+        report["upstream_revision"] = "a6b15d33daf6ab7d35569f6d711fdb630b9f04e7"
         with tempfile.TemporaryDirectory(prefix="loom-host-trust-") as temporary:
             root = Path(temporary).resolve()
             project = root / "project"

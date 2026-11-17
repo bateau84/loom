@@ -316,7 +316,7 @@ def run(args) -> dict:
                                           text=True, timeout=15).strip()
         verify_host_version(version)
         report["observed_host"] = version
-        report["upstream_tag"] = "anomalyco/opencode@dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06"
+        report["upstream_tag"] = "anomalyco/opencode@a6b15d33daf6ab7d35569f6d711fdb630b9f04e7"
         report["loom_base"] = "edab7a96e7c5a9172ceb98b8518c47c48a1d7c09"
         report["candidate_sha256"] = sha(CANDIDATE)
         with tempfile.TemporaryDirectory(prefix="loom-variants-") as temporary:
