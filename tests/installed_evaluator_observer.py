@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 from installed_host_smoke import PrivateHost, installed_plugin_inventory, isolated_environment, require
 from installed_questions import Scenario, audit_session, events, final_events, idle, request, result_value
@@ -149,8 +150,42 @@ return result.id;
                 require(len(writes) == 1, 'Native Evaluator did not write exactly one public result')
                 result = result_value(writes[0])
                 query = {'operation': 'query', 'action_id': result['action_id'], 'record_id': result['id']}
+                def settle_child_notification(before, label):
+                    # A native direct prompt to an already delegated 2.3.0
+                    # child creates a new background completion period. Its
+                    # synthetic notice wakes General *after* the child is idle.
+                    # Do not take an observer-isolation snapshot until this
+                    # host-owned parent work has actually settled.
+                    deadline = time.monotonic() + 25
+                    while time.monotonic() < deadline:
+                        seen = events(root)[before:]
+                        notices = [(i, e) for i, e in enumerate(seen)
+                            if e['type'] == 'native-event'
+                            and e['data'].get('type') == 'session.inbox.enqueued'
+                            and e['data']['data'].get('sessionID') == general
+                            and e['data']['data'].get('item', {}).get('type') == 'synthetic'
+                            and e['data']['data']['item'].get('payload', {}).get('metadata', {}).get('source') == 'subagent'
+                            and e['data']['data']['item']['payload']['metadata'].get('childID') == child]
+                        last_notice = max((i for i, _ in notices), default=-1)
+                        settled = bool(notices) and any(i > last_notice
+                            and e['type'] == 'native-event'
+                            and e['data'].get('type') == 'session.execution.succeeded'
+                            and e['data']['data'].get('sessionID') == general
+                            for i, e in enumerate(seen))
+                        if settled and not any(sid in request(host, 'GET', '/api/session/active')
+                                               for sid in (general, child)):
+                            report.setdefault('native_completion_periods', []).append({
+                                'label': label, 'notices': len(notices),
+                                'parent_settled': True, 'child_session_id': child,
+                            })
+                            return
+                        time.sleep(0.05)
+                    raise RuntimeError('Native child notification did not settle before ' + label)
+
+                before_initial_read = len(events(root))
                 initial = scenario.invoke(child, 'record', query)['items']
                 require(len(initial) == 1 and {key: value for key, value in initial[0].items() if key != 'sequence'} == result, 'Initial public read changed immutable record')
+                settle_child_notification(before_initial_read, 'ordinary-scope-isolation')
                 audit_file = next(receipts.glob('*.ndjson'))
                 observed = audit_file.read_text()
                 require('PRIVATE_NATIVE_SENTINEL' not in observed and 'PRIVATE_NATIVE_SKILL_SENTINEL' not in observed and 'fixture://' not in observed, 'Observer leaked source, skill or statement')
@@ -158,7 +193,9 @@ return result.id;
                 require(audit_file.read_text() == observed, 'Unrelated ordinary Session was observed')
                 report['checks'].append({'name': 'native-scoped-private-public-record-receipt', 'status': 'PASS'})
                 (project / '.loom.yaml').write_text('instructions: {enabled: false}\nledger: {capture: off}\n')
+                before_opt_out = len(events(root))
                 scenario.invoke(child, 'record', query)
+                settle_child_notification(before_opt_out, 'capture-opt-out')
                 require(audit_file.read_text() == observed, 'Capture opt-out did not suppress native receipts')
                 report['checks'].append({'name': 'native-capture-opt-out', 'status': 'PASS'})
                 (project / '.loom.yaml').write_text('instructions: {enabled: false}\nledger: {capture: automatic}\n')
