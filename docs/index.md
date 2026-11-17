@@ -57,7 +57,8 @@ scan root so the profile is discovered; it declares no mandatory link counts.
 - [V2 model dispatch investigation](model-routing-v2-dispatch.md) — 2.1.1 blocker and 2.1.4 initial-routing update
 - [OpenCode Go subscription eligibility](opencode-go-eligibility.md) — Missing native no-paid-overage guarantee; Go remains unverified
 - [Safe native fallback proposal](opencode-v2-safe-live-fallback.md) — OpenCode host changes required before live switching
-- [OpenCode 2.2.6 upgrade](opencode-2.2.6.md) — Current exact SDK/CLI candidate, qualification and safety boundaries
+- [OpenCode 2.3.0 compatibility qualification](opencode-2.3.0.md) — Exact SDK/CLI candidate, installed regression gates, changed subagent semantics and deferred feature adoption
+- [OpenCode 2.2.6 upgrade](opencode-2.2.6.md) — Historical SDK/CLI compatibility and safety boundaries
 - [OpenCode 2.2.0 upgrade](opencode-2.2.0.md) — Historical matched SDK/CLI host compatibility and limits
 - [OpenCode 2.1.1 compatibility](opencode-2.1.1.md) — Historical native host audit
 
