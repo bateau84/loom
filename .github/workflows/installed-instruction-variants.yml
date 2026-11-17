@@ -40,7 +40,7 @@ jobs:
           ARTIFACT=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))[0].filename)' "$RUNNER_TEMP/loom-variant-artifacts/pack.json")
           npm install --prefix "$RUNNER_TEMP/loom-variant-plugin" --no-audit --no-fund "$RUNNER_TEMP/loom-variant-artifacts/$ARTIFACT"
       - name: Install unmodified exact external CLI
-        run: npm install --prefix "$RUNNER_TEMP/loom-variant-host" --no-audit --no-fund @opencode/cli@2.2.6
+        run: npm install --prefix "$RUNNER_TEMP/loom-variant-host" --no-audit --no-fund @opencode/cli@2.3.0
       - name: Exercise three independent native-host isolation runs
         run: |
           for iteration in 1 2 3; do
