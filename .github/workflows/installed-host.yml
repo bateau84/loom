@@ -48,10 +48,12 @@ jobs:
           --opencode "$RUNNER_TEMP/loom-opencode-host/node_modules/.bin/opencode"
           --repository "$GITHUB_WORKSPACE"
           --report-directory "$RUNNER_TEMP/loom-host-trust-report"
+      - name: Install legacy 2.2.6 host for version-bound recovery scanner
+        run: npm install --prefix "$RUNNER_TEMP/loom-recovery-legacy-host" --no-audit --no-fund @opencode/cli@2.2.6
       - name: Inspect native orphan treatment and withdrawal history; no model requests
         run: >-
           python3 tests/installed_experiment_recovery.py
-          --opencode "$RUNNER_TEMP/loom-opencode-host/node_modules/.bin/opencode"
+          --opencode "$RUNNER_TEMP/loom-recovery-legacy-host/node_modules/.bin/opencode"
           --report-directory "$RUNNER_TEMP/loom-experiment-recovery-report"
       - uses: actions/upload-artifact@v4
         if: always()
