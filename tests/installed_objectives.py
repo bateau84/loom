@@ -1,4 +1,4 @@
-"""Installed OpenCode 2.2.6 objective-source qualification, without paid inference.
+"""Installed OpenCode 2.3.0 objective-source qualification, without paid inference.
 
 This is a scripted-provider/native-host mechanical exercise, NOT a real Coder
 reasoning trial, human acceptance or independent effectiveness judgment.
@@ -231,20 +231,20 @@ def run(args):
     output = args.report_directory.resolve()
     output.mkdir(parents=True, exist_ok=False)
     report = {"status": "UNPROVEN", "kind": "installed-objective-mechanics",
-              "scope": "Exact OpenCode 2.2.6 + installed Loom artifact + local scripted model",
+              "scope": "Exact OpenCode 2.3.0 + installed Loom artifact + local scripted model",
               "limitations": ["Fixture-driven native edits, not model reasoning or a real engineering work audit.",
                               "Actual Python runtime checks, but their QA records are authored interpretations.",
                               "Sanitized native exports are not cryptographic proofs of complete Session history."]}
     try:
         report["candidate"] = installed_plugin_inventory(args.artifact.resolve(), args.plugin.resolve(),
-                                                         args.expect_plugin_version, "2.2.6")
+                                                         args.expect_plugin_version, "2.3.0")
         report["source_sha256"] = {str(path): hashlib.sha256((args.repository / path).read_bytes()).hexdigest()
                                    for path in (Path("tests/installed_objectives.py"),
                                                 Path("tests/question-host/server.ts"),
                                                 Path("src/objectives.ts"))}
         version = subprocess.check_output([str(args.opencode.resolve()), "--version"],
                                           text=True, timeout=15).strip()
-        require(version in ("2.2.6", "opencode v2.2.6"), "Unexpected exact OpenCode host: " + version)
+        require(version in ("2.3.0", "opencode v2.3.0"), "Unexpected exact OpenCode host: " + version)
         report["host_version"] = version
         with (tempfile.TemporaryDirectory(prefix="loom-objectives-") as private,
               audit_session(Path(private).resolve()) as audit):
@@ -271,7 +271,7 @@ def run(args):
                 def start(label):
                     host = PrivateHost(str(args.opencode.resolve()), project, env, output, label)
                     try:
-                        require(json.loads(host.get("/api/info", "info"))["version"] == "2.2.6",
+                        require(json.loads(host.get("/api/info", "info"))["version"] == "2.3.0",
                                 "Wrong installed host version")
                         host.wait_roster("/api/plugin", "plugins", lambda xs:
                             all(any(p["id"] == name and p.get("state", {}).get("status") == "active"
