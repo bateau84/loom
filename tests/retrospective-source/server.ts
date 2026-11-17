@@ -30,7 +30,7 @@ export function createScriptedSourceModel() {
   let awaitingContinuation: string | undefined
   const diagnostic = (data: Record<string, unknown>) => {
     const root = process.env.LOOM_QAB_ROOT
-    if (root) appendFileSync(resolve(root, "source-model-attempts.ndjson"), JSON.stringify(data) + "\\n")
+    if (root) appendFileSync(resolve(root, "source-model-attempts.ndjson"), JSON.stringify(data) + "\n")
   }
   const prose: Record<string, string> = {
     coordinator: "Assigned settings update; telemetry must stay disabled.",
