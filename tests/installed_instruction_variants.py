@@ -403,8 +403,21 @@ def run(args) -> dict:
             probe.set_barrier(False)
             try:
                 probe.prompt(treatment, "treatment-interrupted")
-                await_events(root, lambda e: e["type"] == "provider-request" and
-                             e["data"].get("testCase") == "treatment-interrupted", 1)
+                try:
+                    await_events(root, lambda e: e["type"] == "provider-request" and
+                                 e["data"].get("testCase") == "treatment-interrupted", 1)
+                except RuntimeError:
+                    # Preserve a bounded native state snapshot rather than
+                    # guessing why 2.3.0 did not resume the owned Session.
+                    report["interrupt_admission_diagnostic"] = {
+                        "session": request(host, "GET", "/api/session/" + treatment).get("id"),
+                        "active": treatment in request(host, "GET", "/api/session/active"),
+                        "native_requests": sum(e["type"] == "native-request"
+                            and e["data"].get("sessionID") == treatment for e in events(root)),
+                        "provider_cases": [e["data"].get("testCase") for e in events(root)
+                            if e["type"] == "provider-request"][-12:],
+                    }
+                    raise
                 interruption = request(host, "POST",
                                        "/api/session/" + treatment + "/interrupt")
                 require(isinstance(interruption, dict) and interruption.get("interrupted") is True,
