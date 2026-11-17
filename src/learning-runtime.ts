@@ -12,7 +12,8 @@ type Options = {
   checkedSession: (id: string) => Promise<Record<string, unknown>>;
   warn: (error: unknown) => void;
 }
-export const EVALUATION_READS = ["evaluation-status", "evaluations", "evaluation", "evaluation-members", "evaluation-sources", "evaluation-observations"] as const
+export const EVALUATION_READS = ["evaluation-status", "evaluations", "evaluation", "evaluation-members", "evaluation-sources", "evaluation-observations",
+  "evaluation-preparation", "evaluation-preparation-members", "evaluation-preparation-source"] as const
 
 const PUBLIC_READ_CHARS = 262144
 /** A failed fit test must never consume a cursor or silently drop an observation. */
@@ -190,6 +191,19 @@ export async function registerAutomaticLearning(ctx: Plugin.Context, options: Op
     read(input: Record<string, unknown>, session: string, captureEnabled: boolean): unknown {
       if (!engine) throw new Error("LOOM_LEARNING_UNAVAILABLE: original Action history remains available")
       const operation = input.operation
+      if (typeof operation === "string" && operation.startsWith("evaluation-preparation")) {
+        const allowed = operation === "evaluation-preparation" ? ["operation", "batch_id"]
+          : operation === "evaluation-preparation-members" ? ["operation", "batch_id", "request_id", "manifest_sha256", "after", "limit"]
+          : operation === "evaluation-preparation-source" ? ["operation", "batch_id", "request_id", "manifest_sha256", "member_key", "source_index"] : []
+        if (!allowed.length || Object.keys(input).some(key => !allowed.includes(key)) || typeof input.batch_id !== "string")
+          throw new Error("Invalid evaluator preparation read fields")
+        const evaluator = options.learning!.evaluator
+        const result = operation === "evaluation-preparation" ? evaluator.read(session, input.batch_id)
+          : operation === "evaluation-preparation-members" ? evaluator.members(session, input.batch_id, input.request_id, input.manifest_sha256, input.after, input.limit)
+          : evaluator.source(session, input.batch_id, input.request_id, input.manifest_sha256, input.member_key, input.source_index)
+        canonical(result, new ProcessingBudget(PUBLIC_READ_CHARS))
+        return result
+      }
       const allowed = operation === "evaluation-status" ? ["operation"]
         : operation === "evaluations" ? ["operation", "before", "limit"]
         : operation === "evaluation" ? ["operation", "batch_id", "member_key"]
@@ -201,9 +215,12 @@ export async function registerAutomaticLearning(ctx: Plugin.Context, options: Op
       if (operation === "evaluation-status") result = { enabled: captureEnabled, scope: "calling-session", queued: dirty.has(session) || rescan, opportunity: engine.history.opportunity(session),
         processing: "deterministic-descriptions-only", genuine_evaluator: EVALUATOR_BLOCK, automatic_model_calls: false,
         Q4: "partial", Q5: "unqualified-transfer-withheld", E11: "unqualified" }
-      else if (operation === "evaluations") result = engine.history.list(session, { before: input.before as number | undefined, limit: input.limit as number | undefined ?? 5 })
+      else if (operation === "evaluations") result = engine.history.list(session, { before: input.before as number | undefined,
+        limit: input.limit as number | undefined ?? 5, exclude_scope: "evaluator-preparation/calling-session" })
       else {
         if (typeof input.batch_id !== "string") throw new Error("Evaluation batch_id is required")
+        if (engine.history.get(input.batch_id, session).scope_key === "evaluator-preparation/calling-session")
+          throw new Error("Evaluation unavailable")
         if (operation === "evaluation-members") {
           const page = engine.history.reports(input.batch_id, session, { after: input.after as number | undefined, limit: input.limit as number | undefined ?? 10 })
           const items: Array<ReturnType<typeof compactMember>> = []

@@ -5,6 +5,7 @@ import { ObjectiveIndex } from "./objectives.js"
 import { ObjectiveTrends } from "./objective-trends.js"
 import { HistoricalFindings } from "./learning-findings.js"
 import { AutomaticLearning } from "./automatic-learning.js"
+import { EvaluatorPreparation } from "./evaluator-preparation.js"
 
 // Learning proposals live in a separate project-local SQLite database.
 // Ledger evidence is queried read-only from the authoritative Action database.
@@ -59,6 +60,7 @@ export class Learning {
   readonly trends: ObjectiveTrends
   readonly findings: HistoricalFindings
   readonly automatic: AutomaticLearning
+  readonly evaluator: EvaluatorPreparation
   constructor(private db: SQL, private store: Store, private actionDB: SQL) {
     db.exec("PRAGMA busy_timeout=2000; PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
     db.exec("CREATE TABLE IF NOT EXISTS learning_candidates (id TEXT PRIMARY KEY, created_at TEXT NOT NULL, author_session TEXT NOT NULL, author_agent TEXT NOT NULL, target_kind TEXT NOT NULL, target_id TEXT NOT NULL, base_sha256 TEXT NOT NULL, candidate_sha256 TEXT NOT NULL, content TEXT NOT NULL, hypothesis TEXT NOT NULL, evidence_refs TEXT NOT NULL, status TEXT NOT NULL, revised_from TEXT);")
@@ -72,6 +74,7 @@ export class Learning {
     this.trends = new ObjectiveTrends(db, actionDB)
     this.findings = new HistoricalFindings(db, this.trends)
     this.automatic = new AutomaticLearning(db, store, actionDB)
+    this.evaluator = new EvaluatorPreparation(this.automatic, store)
   }
 
   private transaction<T>(run: () => T): T {

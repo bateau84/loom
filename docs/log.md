@@ -16,6 +16,26 @@ inbox discovery and answer-commit interruption without replay or delivery retrie
 
 ## 2026-11-15
 
+**Stage 4 preparation increment:** Implemented declared method validation,
+complete authorized source manifests, durable evaluation-to-review linkage and
+bounded native readers. Preparation remains explicitly blocked before recipient
+creation, model effects, budget reservation and interpretation publication.
+Recovery fences missing committed mappings and preserves consumed canonical
+issues. Generated preparation reviews are excluded from engineering source
+populations. See the [implementation boundary and operations](learning-stage4-preparation.md).
+
+**Stage 4 architecture and host qualification:** Added the proposed
+[whole-objective learning contract](learning-stage4-contract.md) and its
+[fresh evidence record](learning-stage4-host-evidence.json). Inspected OpenCode
+2.2.6, released 2.3.0 and development snapshot `d432a06`; reran the unchanged
+installed 2.2.6 native review probe against clean merged Stage 3 `e1c6a66`.
+Eight mechanical checks and 19 oracle tests pass; Q4 stays unqualified and the
+Q5 inline-transfer counterexample still fails the transfer property. The contract
+specifies host-owned causal receipts, a sealed protected review profile, reuse of
+existing stores, distinct effect admission and processing leases, and real-reasoning
+acceptance. Stage 3 is now recorded as merged through #233. No production/upstream
+code, dependencies, capture policy or real-model dispatch changed.
+
 **Bounded Stage 3 final qualification:** Independently installed and executed production
 source `4cf442510c29aa1387b1ce7e2de6716d926f5452` with OpenCode 2.2.6. All eleven
 Stage 3 mechanics and six supplemental reader/source-loss checks pass, together
