@@ -1081,9 +1081,42 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             dispatch = typed_q['dispatch']
             require(dispatch['status'] == 'admission-observed' and
                     dispatch['reason'] == 'native-subagent-admitted' and
-                    dispatch['native_status'] == 'completed' and
-                    dispatch['target_agent'] == 'question-specialist', 'Typed OQ dispatch not admitted: ' + str(dispatch))
+                    dispatch['native_status'] == 'running' and
+                    dispatch['target_agent'] == 'question-specialist', 'Typed OQ background dispatch not admitted: ' + str(dispatch))
             child_id = dispatch['target_session_id']
+            # The 2.3.0 native subagent tool returns immediately. Verify the
+            # actual child answer, not the parent's successful tool handle.
+            s.await_event(lambda e: e['type'] == 'tool-after'
+                and e['data'].get('sessionID') == child_id
+                and e['data'].get('tool') in ('loom_record', 'loom.record')
+                and e['data'].get('input', {}).get('operation') == 'answer'
+                and e['data']['input'].get('question_id') == typed_q['id']
+                and e['data'].get('status') == 'completed')
+            # The host then enqueues a *subagent* completion notice to General.
+            # It must not be conflated with Loom's separate answer-resume notice.
+            s.await_event(lambda e: e['type'] == 'native-event'
+                and e['data'].get('type') == 'session.inbox.enqueued'
+                and e['data']['data'].get('sessionID') == typed_asker
+                and e['data']['data'].get('item', {}).get('type') == 'synthetic'
+                and e['data']['data']['item'].get('payload', {}).get('metadata', {}).get('source') == 'subagent'
+                and e['data']['data']['item']['payload']['metadata'].get('childID') == child_id)
+            # Requiring the parent to become idle after a verified notice is
+            # insufficient by itself: a wake can be queued but not yet active.
+            # Observe its actual native terminal after the notice first.
+            def parent_completed_after_native_notice():
+                observed = events(root)[typed_start:]
+                notices = [(i, e) for i, e in enumerate(observed)
+                    if e['type'] == 'native-event'
+                    and e['data'].get('type') == 'session.inbox.enqueued'
+                    and e['data']['data'].get('sessionID') == typed_asker
+                    and e['data']['data'].get('item', {}).get('type') == 'synthetic'
+                    and e['data']['data']['item'].get('payload', {}).get('metadata', {}).get('childID') == child_id]
+                return bool(notices) and any(i > notices[-1][0]
+                    and e['type'] == 'native-event'
+                    and e['data'].get('type') == 'session.execution.succeeded'
+                    and e['data']['data'].get('sessionID') == typed_asker
+                    for i, e in enumerate(observed))
+            s.await_event(lambda _e: parent_completed_after_native_notice())
             idle(host, [typed_asker, child_id])
             child = request(host, 'GET', f'/api/session/{child_id}')
             require(child['parentID'] == typed_asker and child['agent'] == 'question-specialist',
@@ -1110,15 +1143,22 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
                              and e['data']['type'] == 'session.inbox.enqueued'
                              and e['data']['data']['item']['type'] == 'synthetic'
                              and e['data']['data']['sessionID'] == typed_asker]
-            # Blocking OQ runs as one native foreground subagent call. Its
-            # returned result owns continuation; no native synthetic wake from
-            # background completion and no separate Loom answer notice.
-            require(not typed_notices,
-                    'Blocking OQ submitted an unexpected synthetic continuation: ' + str(
-                        [(n['data']['item']['payload'].get('metadata')) for n in typed_notices]))
+            # One native child completion must wake its real parent on 2.3.0;
+            # direct typed OQs still must not emit a *second*, Loom-authored
+            # answer notice, or multiply the authoritative answer.
+            native_subagent_notices = [n for n in typed_notices
+                if n['data']['item']['payload'].get('metadata', {}).get('source') == 'subagent'
+                and n['data']['item']['payload']['metadata'].get('childID') == child_id]
+            require(len(typed_notices) == len(native_subagent_notices) == 1,
+                    'Expected exactly one host-owned child completion notice, no duplicate Loom answer wake: ' + str(
+                        [n['data']['item']['payload'].get('metadata') for n in typed_notices]))
+            require(not [n for n in synthetic_events(root)
+                         if n['data']['sessionID'] == typed_asker
+                         and n['data']['item']['payload']['metadata']['question_id'] == typed_q['id']],
+                    'Direct typed delegation emitted an unauthorized separate Loom answer notice')
             asker_request_delta = target_requests(root, typed_asker)[asker_requests_before:]
             require(len(asker_request_delta) == 2,
-                    'Expected one asking-model turn for ask and one native foreground-result continuation, got '
+                    'Expected one asking-model turn plus one host native background-result continuation, got '
                     + str(len(asker_request_delta)))
             require(typed_answers[0]['data']['format'] == 'loom-answer/v2',
                     'Native completion did not accompany a durable authorized answer')
@@ -1134,7 +1174,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
                                      'question': typed_q['id'], 'child_session': child_id,
                                      'answer': typed_answers[0]['id'], 'native_admissions': len(typed_notices),
                                      'asker_model_requests': len(asker_request_delta),
-                                     'qualification': 'Installed OpenCode 2.3.0 scripted-model foreground run; no duplicate native/Loom wake'})
+                                     'qualification': 'Installed OpenCode 2.3.0 scripted-model background child, one host-owned completion notice, no duplicate Loom answer resume'})
 
             # Delegated work can ask its actual dispatcher or request a user
             # decision. Verify durable native parent notices, not invented approval.
