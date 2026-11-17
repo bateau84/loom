@@ -22,10 +22,10 @@ def source(session, parent=None):
             'messages': [{'type': 'user', 'id': 'message_' + session, 'text': 'PRIVATE original source'}]}
 
 
-def rows(instance, recovery=None):
+def rows(instance, recovery=None, host='2.3.0'):
     return [{'format': qualification.FORMAT, 'instance': instance, 'sequence': 1, 'type': 'ready',
              'data': {'audit_session_id': 'general_1', 'recovery_session_id': recovery,
-                      'host_version': '2.2.6', 'bun_version': '1.4.2', 'scope': 'one-audit-and-recovery'}}]
+                      'host_version': host, 'bun_version': '1.4.2', 'scope': 'one-audit-and-recovery'}}]
 
 
 def event(log, kind, data):
@@ -103,6 +103,24 @@ class EvaluatorQualificationTests(unittest.TestCase):
         self.assertIn('full-host-restart', report['unproven'])
         self.assertNotIn('PRIVATE', json.dumps(report))
         self.assertTrue(all(report['observations'].values()))
+
+    def test_exact_legacy_and_current_host_profiles_do_not_manufacture_acceptance(self):
+        for host in ('2.2.6', '2.3.0'):
+            with self.subTest(host=host):
+                audit, recovery = consistent_receipts()
+                audit[0]['data']['host_version'] = host
+                recovery[0]['data']['host_version'] = host
+                report = self.collect(audit, recovery)
+                self.assertEqual(report['receipt_consistency'], 'COMPLETE')
+                self.assertEqual(report['native_evaluator'], 'UNPROVEN')
+                self.assertNotIn('unsupported-host-version', report['blockers'])
+
+    def test_mixed_host_profiles_cannot_claim_one_consistent_audit(self):
+        audit, recovery = consistent_receipts()
+        recovery[0]['data']['host_version'] = '2.2.6'
+        report = self.collect(audit, recovery)
+        self.assertEqual(report['receipt_consistency'], 'INCOMPLETE')
+        self.assertIn('unsupported-host-version', report['blockers'])
 
     def test_forged_model_pass_summary_cannot_replace_observed_receipts(self):
         path = self.save('pass.json', {'status': 'PASS', 'native_evaluator': 'PASS', 'human_approved': True})
