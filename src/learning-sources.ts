@@ -6,6 +6,9 @@ export type LearningSource = { ref: EvaluationSourceRef; value: Record<string, u
 export const SOURCE_LIMIT = 20000
 const snapshotBudget = () => new ProcessingBudget(8 * 1024 * 1024, 1000000)
 const guarded = `CASE WHEN typeof(data)='text' AND octet_length(data)<=${PROCESSING_LIMITS.recordChars * 3} THEN data END AS data`
+// Preparation metadata is audit material, not another engineering objective.
+// Exclusion also withholds dependencies on such rows in historical reports.
+const engineeringReview = (column: string) => `CASE WHEN typeof(${column})='text' AND octet_length(${column})<=${PROCESSING_LIMITS.recordChars * 3} AND json_valid(${column}) THEN json_extract(${column},'$.extensions.classification') END IS NOT 'evaluator-preparation'`
 
 /** Read originals, never copies in the derived store. The caller supplies native read authority. */
 export class LearningSources {
@@ -19,7 +22,7 @@ export class LearningSources {
       .all(after, limit) as Array<{ session_id: string }>).map(row => row.session_id)
     const objectives = (this.learningDB.prepare("SELECT DISTINCT author_session FROM learning_objectives WHERE author_session>? ORDER BY author_session LIMIT ?")
       .all(after, limit) as Array<{ author_session: string }>).map(row => row.author_session)
-    const reviews = (this.actionDB.prepare("SELECT DISTINCT requester_session FROM review_requests WHERE requester_session>? ORDER BY requester_session LIMIT ?")
+    const reviews = (this.actionDB.prepare(`SELECT DISTINCT requester_session FROM review_requests WHERE requester_session>? AND ${engineeringReview("data")} ORDER BY requester_session LIMIT ?`)
       .all(after, limit) as Array<{ requester_session: string }>).map(row => row.requester_session)
     return [...new Set([...ledger, ...objectives, ...reviews])].sort().slice(0, limit)
   }
@@ -55,8 +58,8 @@ export class LearningSources {
 
   private reviewSource(session: string, kind: "review-request" | "review-relationship", id: string): LearningSource | null {
     const row = (kind === "review-request"
-      ? this.actionDB.prepare("SELECT rowid AS sequence,request_id FROM review_requests WHERE request_id=? AND requester_session=?").get(id, session)
-      : this.actionDB.prepare("SELECT r.sequence,r.request_id FROM review_relationships r JOIN review_requests q ON q.request_id=r.request_id WHERE r.id=? AND q.requester_session=?").get(id, session)) as { sequence: number; request_id: string } | undefined
+      ? this.actionDB.prepare(`SELECT rowid AS sequence,request_id FROM review_requests WHERE request_id=? AND requester_session=? AND ${engineeringReview("data")}`).get(id, session)
+      : this.actionDB.prepare(`SELECT r.sequence,r.request_id FROM review_relationships r JOIN review_requests q ON q.request_id=r.request_id WHERE r.id=? AND q.requester_session=? AND ${engineeringReview("q.data")}`).get(id, session)) as { sequence: number; request_id: string } | undefined
     if (!row) return null
     const value = this.store.reviews.evaluationSource({ session_id: session, agent: "learning-source-reader" }, row.request_id, kind === "review-relationship" ? id : undefined)
     return { ref: { kind, id, session_id: session, revision: String(row.sequence), sha256: digest(value, snapshotBudget()), required: true }, value, sequence: row.sequence }
@@ -100,7 +103,7 @@ export class LearningSources {
         }
         group("objective:" + objective.id, "objective", refs)
       }
-      const reviews = this.actionDB.prepare("SELECT rowid AS sequence,request_id FROM review_requests WHERE requester_session=? ORDER BY rowid LIMIT ?")
+      const reviews = this.actionDB.prepare(`SELECT rowid AS sequence,request_id FROM review_requests WHERE requester_session=? AND ${engineeringReview("data")} ORDER BY rowid LIMIT ?`)
         .all(session, SOURCE_LIMIT + 1) as Array<{ request_id: string; sequence: number }>
       let relationshipBoundary = 0
       for (const review of reviews) {
