@@ -424,7 +424,35 @@ def invoke_model(host, root, session, text, model, timeout):
         time.sleep(0.05)
     else:
         raise RuntimeError("Accepted prompt never produced a real primary model request")
-    wait_idle(host, session, max(1, deadline - time.monotonic()))
+    try:
+        wait_idle(host, session, max(1, deadline - time.monotonic()))
+    except RuntimeError:
+        # Only diagnostic metadata, never provider inputs, tool arguments,
+        # prompt text, credentials, or model output. Do not infer success
+        # from a model.request event when the actual native turn is stalled.
+        observed_wait = audit_events(root)[before:]
+        activity = [e for e in observed_wait if e.get("type") in
+                    ("model-request", "tool-before", "tool-after")]
+        diagnostic = {
+            "session_active": session in api(host, "GET", "/api/session/active"),
+            "model_request_count": sum(e.get("type") == "model-request"
+                                       and e.get("data", {}).get("sessionID") == session
+                                       for e in observed_wait),
+            "recent_tool_activity": [
+                {"type": e["type"], "tool": e.get("data", {}).get("tool"),
+                 "status": e.get("data", {}).get("status")}
+                for e in activity[-12:]],
+            "assistant_states": [{
+                "finish": bool(item.get("finish")),
+                "error_type": (item.get("error") or {}).get("type")
+                    if isinstance(item.get("error"), dict) else None,
+                "completed": (item.get("time") or {}).get("completed")
+                    if isinstance(item.get("time"), dict) else None,
+            } for item in session_messages(host, session)[:8]
+                if isinstance(item, dict) and item.get("type") == "assistant"],
+        }
+        raise RuntimeError("Native Session did not become idle within explicit bound; "
+                           "bounded diagnostics=" + json.dumps(diagnostic))
     observed = audit_events(root)[before:]
     primary = [event for event in observed if event.get("type") == "model-request"
                and event.get("data", {}).get("sessionID") == session
