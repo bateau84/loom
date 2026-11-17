@@ -203,7 +203,7 @@ Retain the failed whole-step-stop probe and its raw evidence. Qualification must
 report the accepted delivery-denial result separately from the failed host
 step-termination claim. Do not turn that failure into PASS because the delivery
 gate works. This boundary does not require Loom to interrupt the caller or own
-its execution loop: [the product ownership contract](design.md#product-and-ownership)
+its execution loop: [the product ownership contract](design.md)
 leaves execution with OpenCode. A future requirement that plain rejection stop
 all caller processing needs separate host qualification or an upstream fix.
 
