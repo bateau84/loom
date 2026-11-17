@@ -1,4 +1,4 @@
-"""Qualify Stage 2 request persistence through packed Loom and real OpenCode 2.2.6.
+"""Qualify Stage 2 request persistence through packed Loom and real OpenCode 2.3.0.
 
 Only the external provider is scripted. Production registration, native caller
 identity, permission checks, SQLite persistence and process reopen are real.
@@ -20,7 +20,7 @@ from installed_host_smoke import PrivateHost, installed_plugin_inventory, isolat
 from installed_instruction_variants import verify_host_version
 from installed_questions import Scenario, audit_session, events, final_events, idle, request, result_value
 
-HOST = "2.2.6"
+HOST = "2.3.0"
 REQUIRED_CHECKS = {
     "S2-automatic-review-request-and-canonical-preparation",
     "S2-complete-public-membership",
