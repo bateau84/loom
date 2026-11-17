@@ -28,7 +28,7 @@ def run(args):
     report = {'status': 'UNPROVEN', 'native_evaluator': 'UNPROVEN', 'checks': [],
               'qualification': 'Actual native General-to-Evaluator delegation, skill/trace/public-record/restart observer mechanics with a local scripted provider and fixture source history. No real-model reasoning or original-work audit.'}
     host = None
-    report['candidate'] = installed_plugin_inventory(args.artifact.resolve(), args.plugin.resolve(), args.expect_plugin_version, '2.2.6')
+    report['candidate'] = installed_plugin_inventory(args.artifact.resolve(), args.plugin.resolve(), args.expect_plugin_version, '2.3.0')
     report['observer_sha256'] = hashlib.sha256((repo / 'tools/evaluator-observer/server.ts').read_bytes()).hexdigest()
     try:
         with (tempfile.TemporaryDirectory(prefix='loom-evaluator-observer-installed-') as temporary,
@@ -46,7 +46,7 @@ def run(args):
                     report['filewatcher'] = 'Disabled only on owned disposable host; watcher behavior not qualified'
                 report['versions'] = {name: subprocess.check_output(command, text=True, env=env, timeout=15).strip()
                                       for name, command in [('host', [str(args.opencode.resolve()), '--version']), ('bun', ['bun', '--version'])]}
-                require(report['versions']['host'] in ('2.2.6', 'opencode v2.2.6'), 'Exact host 2.2.6 required')
+                require(report['versions']['host'] in ('2.3.0', 'opencode v2.3.0'), 'Exact host 2.3.0 required')
                 subprocess.run(['git', 'init', '-q', str(project)], check=True, env=env, timeout=10)
                 config = {'plugins': ['*', str(args.plugin.resolve()), str(repo / 'tests/question-host'), str(repo / 'tools/evaluator-observer')],
                           'agents': {agent: {'description': 'observer fixture', 'mode': mode, 'model': 'question-fixture/reader',
