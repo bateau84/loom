@@ -416,6 +416,11 @@ def run(args) -> dict:
                             and e["data"].get("sessionID") == treatment for e in events(root)),
                         "provider_cases": [e["data"].get("testCase") for e in events(root)
                             if e["type"] == "provider-request"][-12:],
+                        "native_lifecycle": [e["data"] for e in events(root)
+                            if e["type"] == "native-lifecycle"
+                            and e["data"].get("sessionID") in (treatment, child, sibling)][-50:],
+                        "observer_failures": [e["data"] for e in events(root)
+                            if e["type"] == "lifecycle-observer-failure"][-3:],
                     }
                     raise
                 interruption = request(host, "POST",
