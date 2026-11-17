@@ -395,8 +395,8 @@ class QuestionHarnessTest(unittest.TestCase):
 
                 root = Path(temp)
                 output = root / 'report'
-                with patch('installed_questions.installed_plugin_inventory', return_value={'sdk_version': '2.2.6'}), \
-                        patch('installed_questions.subprocess.check_output', return_value='2.2.6'), \
+                with patch('installed_questions.installed_plugin_inventory', return_value={'sdk_version': '2.3.0'}), \
+                        patch('installed_questions.subprocess.check_output', return_value='2.3.0'), \
                         patch('installed_questions.PrivateHost', side_effect=start):
                     report = run('/unused-host', repo, output, root / 'artifact.tgz', root / 'plugin', '2.0.0-alpha.1')
 
@@ -422,18 +422,18 @@ class QuestionHarnessTest(unittest.TestCase):
 
     def test_plan4_applicability_is_neither_an_executed_pass_nor_a_general_waiver(self):
         checks = [{'name': name, 'status': 'PASS'} for name in REQUIRED_INSTALLED_CHECKS] + [dict(READ_DENIAL_APPLICABILITY)]
-        self.assertEqual(qualification_status(checks, '2.2.6'), 'PASS')
+        self.assertEqual(qualification_status(checks, '2.3.0'), 'PASS')
         self.assertEqual(checks[-1]['status'], 'NOT APPLICABLE')
         self.assertFalse(checks[-1]['executed'])
         self.assertEqual(qualification_status(checks, '2.0.29'), 'UNPROVEN')
         self.assertEqual(qualification_status(checks, '2.0.33'), 'UNPROVEN')
-        self.assertEqual(qualification_status(checks[1:], '2.2.6'), 'UNPROVEN')
+        self.assertEqual(qualification_status(checks[1:], '2.3.0'), 'UNPROVEN')
         for replacement in [{'name': READ_DENIAL_APPLICABILITY['name'], 'status': 'PASS'},
                             {**READ_DENIAL_APPLICABILITY, 'executed': True},
                             {**READ_DENIAL_APPLICABILITY, 'sources': []},
                             {**READ_DENIAL_APPLICABILITY, 'rationale': 'permission.assert enforces session reads'}]:
-            self.assertEqual(qualification_status(checks[:-1] + [replacement], '2.2.6'), 'UNPROVEN')
-        self.assertEqual(READ_DENIAL_APPLICABILITY['host_version'], '2.2.6')
+            self.assertEqual(qualification_status(checks[:-1] + [replacement], '2.3.0'), 'UNPROVEN')
+        self.assertEqual(READ_DENIAL_APPLICABILITY['host_version'], '2.3.0')
         self.assertIn('packages/core/src/session/session.ts', READ_DENIAL_APPLICABILITY['sources'][-1])
 
     def test_finishing_a_command_does_not_count_another_running_sessions_tool(self):
