@@ -1116,7 +1116,11 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
                     and e['data'].get('type') == 'session.execution.succeeded'
                     and e['data']['data'].get('sessionID') == typed_asker
                     for i, e in enumerate(observed))
-            s.await_event(lambda _e: parent_completed_after_native_notice())
+            deadline = time.monotonic() + 20
+            while not parent_completed_after_native_notice():
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('Native typed-OQ parent completion notice did not settle')
+                time.sleep(.05)
             idle(host, [typed_asker, child_id])
             child = request(host, 'GET', f'/api/session/{child_id}')
             require(child['parentID'] == typed_asker and child['agent'] == 'question-specialist',
