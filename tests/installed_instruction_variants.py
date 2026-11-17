@@ -1,4 +1,4 @@
-"""Installed 2.2.6 Session instruction-entry qualification, NOT production activation.
+"""Installed 2.3.0 Session instruction-entry qualification, NOT production activation.
 
 Requires an exact packed Loom, an unmodified external CLI, and an isolated local
 scripted provider. No user configuration, global skill definitions, accounts or
@@ -23,7 +23,7 @@ from installed_host_smoke import (
     PrivateHost, installed_plugin_inventory, isolated_environment, require,
 )
 
-HOST = "2.2.6"
+HOST = "2.3.0"
 KEY = "loom.variant.test"
 MARKER = "LOOM_VARIANT_TEST_ONLY_V1"
 CANDIDATE = MARKER + "\nThis is a transport marker, not behavior guidance."
