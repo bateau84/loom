@@ -1,0 +1,30 @@
+name: Temporary OpenCode 2.3 lockfile generation
+on:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  lockfile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - name: Resolve exact updated Bun lockfile
+        run: bun install --lockfile-only
+      - name: Emit lockfile for trusted connector reconstruction
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data = Path("bun.lock").read_text()
+          for index in range(0, len(data), 1000):
+              print(f"LOCK_SEGMENT_{index//1000:04d}=" + json.dumps(data[index:index+1000], ensure_ascii=True))
+          print("LOCK_SEGMENTS_END=" + str((len(data)+999)//1000))
+          PY
