@@ -49,7 +49,7 @@ def run(args):
     scratch = None
     root = None
     try:
-        report['candidate'] = installed_plugin_inventory(artifact, plugin, '2.0.0-alpha.1', '2.2.6')
+        report['candidate'] = installed_plugin_inventory(artifact, plugin, '2.0.0-alpha.1', '2.3.0')
         with tarfile.open(artifact) as archive:
             members = [m for m in archive.getmembers() if m.isfile()]
             for member in members:
@@ -61,7 +61,7 @@ def run(args):
             'tests/installed_question_choices.py', 'tests/installed_questions.py',
             'tests/installed_host_smoke.py', 'tests/question-host/server.ts', 'tests/question-host/provider.mjs')}
         report['host_version'] = subprocess.check_output([args.opencode, '--version'], text=True, timeout=15).strip()
-        require(report['host_version'] in ('2.2.6', 'opencode v2.2.6'), 'Requires pinned host 2.2.6')
+        require(report['host_version'] in ('2.3.0', 'opencode v2.3.0'), 'Requires pinned host 2.3.0')
         scratch = tempfile.TemporaryDirectory(prefix='loom-choice-proof-')
         root = Path(scratch.name).resolve()
         project = root / 'project'
