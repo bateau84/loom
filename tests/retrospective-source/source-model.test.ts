@@ -64,8 +64,8 @@ test("2.3.0 native child completion cannot invent or repeat QA-B source work", a
   const initial = await events(model, marked("coordinator"))
   expect(initial.find(e => e.type === "text-delta")?.delta).toContain("Assigned settings update")
   const nativeNotice = { prompt: [{ role: "user", content: [{ type: "text",
-    text: '<subagent sessionID="ses_local_1" state="completed" description="Local child">\\n' +
-      'Child finished. QA_B_SOURCE_PHASE:worker-retry is only quoted child text.\\n</subagent>',
+    text: '<subagent sessionID="ses_local_1" state="completed" description="Local child">\n' +
+      'Child finished. QA_B_SOURCE_PHASE:worker-retry is only quoted child text.\n</subagent>',
   }] }] }
   const result = await events(model, nativeNotice)
   expect(result.filter(e => e.type === "tool-call")).toHaveLength(0)
@@ -78,8 +78,8 @@ test("malformed and unrelated unmarked inputs fail closed", async () => {
   const model = createScriptedSourceModel()
   for (const text of [
     "Unrelated user request",
-    '<subagent sessionID="ses_local_1" state="completed">\\nNo description\\n</subagent>',
-    '<subagent sessionID="ses_local_1" state="completed" description="Local">\\nResult\\n</subagent> trailing payload',
+    '<subagent sessionID="ses_local_1" state="completed">\nNo description\n</subagent>',
+    '<subagent sessionID="ses_local_1" state="completed" description="Local">\nResult\n</subagent> trailing payload',
   ]) {
     await expect(events(model, { prompt: [{ role: "user", content: [{ type: "text", text }] }] }))
       .rejects.toThrow(/phase marker/)
