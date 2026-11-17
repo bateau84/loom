@@ -1,4 +1,4 @@
-"""Exercise OpenCode 2.2.6's current trust boundary without inference or live treatments.
+"""Exercise OpenCode 2.3.0's current trust boundary without inference or live treatments.
 
 PASS means the counterexamples and native identity/permission mechanics were
 observed. It never certifies a human, independent originating request, or consent.
@@ -17,7 +17,7 @@ from urllib.error import HTTPError
 from installed_host_smoke import PrivateHost, isolated_environment, require
 from installed_instruction_variants import request, verify_host_version
 
-HOST = "2.2.6"
+HOST = "2.3.0"
 FIXTURE_ID = "loom.host-trust.qualification.fixture"
 
 
