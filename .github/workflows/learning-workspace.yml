@@ -20,7 +20,7 @@ jobs:
           bun-version-file: .bun-version
       - run: bun install --frozen-lockfile
       - name: Install exact standalone verification tools
-        run: npm install --prefix "$RUNNER_TEMP/qualification-tools" --no-audit --no-fund @opencode/cli@2.2.6 @opencode/codemode@2.0.29
+        run: npm install --prefix "$RUNNER_TEMP/qualification-tools" --no-audit --no-fund @opencode/cli@2.3.0 @opencode/codemode@2.0.29
       - name: Package source and pinned dependencies only
         shell: bash
         run: |
