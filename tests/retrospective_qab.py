@@ -433,7 +433,11 @@ def invoke_model(host, root, session, text, model, timeout):
         observed_wait = audit_events(root)[before:]
         activity = [e for e in observed_wait if e.get("type") in
                     ("model-request", "tool-before", "tool-after")]
+        phase_path = root / "source-model-attempts.ndjson"
+        phase_attempts = ([json.loads(line) for line in phase_path.read_text().splitlines()[-8:]]
+                          if phase_path.exists() else [])
         diagnostic = {
+            "source_phase_attempts": phase_attempts,
             "session_active": session in api(host, "GET", "/api/session/active"),
             "model_request_count": sum(e.get("type") == "model-request"
                                        and e.get("data", {}).get("sessionID") == session
