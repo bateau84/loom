@@ -29,8 +29,8 @@ jobs:
           npm pack --json --pack-destination "$RUNNER_TEMP/loom-stage3-package" > "$RUNNER_TEMP/loom-stage3-package/pack.json"
           ARTIFACT=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))[0].filename)' "$RUNNER_TEMP/loom-stage3-package/pack.json")
           npm install --prefix "$RUNNER_TEMP/loom-stage3-install" --no-audit --no-fund "$RUNNER_TEMP/loom-stage3-package/$ARTIFACT"
-      - name: Install unmodified pinned OpenCode 2.2.6
-        run: npm install --prefix "$RUNNER_TEMP/loom-stage3-host" --no-audit --no-fund @opencode/cli@2.2.6
+      - name: Install unmodified pinned OpenCode 2.3.0
+        run: npm install --prefix "$RUNNER_TEMP/loom-stage3-host" --no-audit --no-fund @opencode/cli@2.3.0
       - name: Verify installed automatic learning through real native product path
         run: >-
           python3 tests/installed_learning_stage3.py
