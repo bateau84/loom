@@ -123,13 +123,29 @@ return result.id;
                 start_offset = len(events(root))
                 request(host, 'POST', f'/api/session/{general}/prompt', {'text': 'LOOM_HARNESS_JOB:' + parent_job})
                 scenario.await_event(lambda event: event['type'] == 'model-request' and event['data']['sessionID'] == general)
-                idle(host, [general])
+                # OpenCode 2.3.0 dispatch returns a running background child. The
+                # parent becoming idle is not evidence of child execution or a
+                # public result. Resolve the child from the native dispatch tool,
+                # then wait for its *actual* registered write before reading it.
+                delegation = scenario.await_event(lambda event: event['type'] == 'tool-after'
+                    and event['data']['sessionID'] == general and event['data']['tool'] == 'subagent')
+                require(delegation['data']['status'] == 'completed', 'Native subagent dispatch did not return a handle')
+                child = delegation['data']['result']['output']['sessionID']
+                scenario.await_event(lambda event: event['type'] == 'tool-after'
+                    and event['data']['sessionID'] == child and event['data']['tool'] in ('loom_record', 'loom.record')
+                    and event['data'].get('input', {}).get('operation') == 'add'
+                    and event['data']['status'] == 'completed')
+                idle(host, [general, child])
                 observed_calls = [event for event in events(root)[start_offset:] if event['type'] == 'tool-after']
                 report['fixture_tool_statuses'] = [{'tool': event['data']['tool'], 'status': event['data']['status']} for event in observed_calls]
                 delegations = [event['data'] for event in observed_calls if event['data']['sessionID'] == general and event['data']['tool'] == 'subagent']
-                require(len(delegations) == 1 and delegations[0]['status'] == 'completed', 'Native General-to-Evaluator dispatch did not complete')
-                child = delegations[0]['result']['output']['sessionID']
-                writes = [event for event in observed_calls if event['data']['sessionID'] == child and event['data']['tool'] in ('loom_record', 'loom.record') and event['data'].get('input', {}).get('operation') == 'add' and event['data']['status'] == 'completed']
+                require(len(delegations) == 1 and delegations[0]['status'] == 'completed'
+                        and delegations[0]['result']['output']['sessionID'] == child,
+                        'Native General-to-Evaluator dispatch did not retain one child identity')
+                writes = [event for event in observed_calls if event['data']['sessionID'] == child
+                          and event['data']['tool'] in ('loom_record', 'loom.record')
+                          and event['data'].get('input', {}).get('operation') == 'add'
+                          and event['data']['status'] == 'completed']
                 require(len(writes) == 1, 'Native Evaluator did not write exactly one public result')
                 result = result_value(writes[0])
                 query = {'operation': 'query', 'action_id': result['action_id'], 'record_id': result['id']}
