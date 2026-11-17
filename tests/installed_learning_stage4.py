@@ -26,7 +26,7 @@ from installed_learning_stage3 import make_session, report_result, until
 from installed_questions import Scenario, audit_session, events, final_events, request
 
 
-HOST = "2.2.6"
+HOST = "2.3.0"
 CHECKS = {
     "S4-native-authored-whole-objective-source-preparation",
     "S4-native-stable-request-review-and-issue-replay",
