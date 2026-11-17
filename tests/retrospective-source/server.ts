@@ -47,13 +47,13 @@ export function createScriptedSourceModel() {
       const messages = Array.isArray(input.prompt) ? input.prompt : []
       const user = [...messages].reverse().find((m: any) => m.role === "user")
       const userText = toText(user?.content)
-      const explicit = /QA_B_SOURCE_PHASE:([a-z-]+)/.exec(userText)?.[1]
+      const childNotice = /^<subagent sessionID="[A-Za-z0-9_.:-]+" state="(?:completed|error|cancelled|running)" description="[^"\n]*">\n[\s\S]*\n<\/subagent>\s*$/.test(userText.trim())
+      const explicit = childNotice ? undefined : /QA_B_SOURCE_PHASE:([a-z-]+)/.exec(userText)?.[1]
       // 2.3.0 reports a completed child to its parent through an actual
       // synthetic user input. This is not a new QA-B source task and must not
       // reuse a completed source phase or trigger an unbounded retry storm.
       // Only the exact host-origin completion envelope is eligible for a
       // fixture-local no-op; arbitrary unmarked prompts still fail closed.
-      const childNotice = /^<subagent sessionID="[A-Za-z0-9_.:-]+" state="(?:completed|error|cancelled|running)" description="[^"\\n]*">\\n[\\s\\S]*\\n<\\/subagent>\\s*$/.test(userText.trim())
       // Fixture-local state trace: enumerated phase/count only. Never store
       // prompt text, provider credentials, raw tool inputs, or generated output.
       diagnostic({ event: "attempt", explicit: explicit ?? null,
