@@ -395,9 +395,58 @@ def run(args) -> dict:
             sibling = create_session(host, project, agent="variant-child", parent=treatment)
             probe.assign(child, parent=treatment)
             require(entry_list(host, sibling) == [], "Unassigned sibling inherited variant")
+            child_phase_start = len(events(root))
             probe.pair([(child, "child-explicit", True),
                         (sibling, "child-unassigned", False)])
             report["checks"].append("explicit-child-not-ancestry")
+            # In 2.3.0, finishing these real child Sessions admits synthetic
+            # completion notices to the parent and starts another parent model
+            # turn. A new prompt sent while that turn is still running stays
+            # behind it; lowering the external provider barrier at that point
+            # blocks the old turn and makes the new prompt appear missing.
+            # Verify the actual native notices and their settlement first.
+            # This is not an assumption that a child tool returned its result.
+            deadline = time.monotonic() + 25
+            while True:
+                child_events = events(root)[child_phase_start:]
+                notices = [(i, e["data"]) for i, e in enumerate(child_events)
+                           if e["type"] == "native-lifecycle"
+                           and e["data"].get("kind") == "session.inbox.enqueued"
+                           and e["data"].get("sessionID") == treatment
+                           and e["data"].get("item") == "synthetic"
+                           and e["data"].get("source") == "subagent"
+                           and e["data"].get("childID") in (child, sibling)]
+                child_ids = {notice["childID"] for _, notice in notices}
+                last_notice = max((i for i, _ in notices), default=-1)
+                settled = any(i > last_notice and e["type"] == "native-lifecycle"
+                              and e["data"].get("kind") == "session.execution.succeeded"
+                              and e["data"].get("sessionID") == treatment
+                              for i, e in enumerate(child_events))
+                if len(notices) == 2 and child_ids == {child, sibling} and settled:
+                    if treatment not in request(host, "GET", "/api/session/active"):
+                        break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("RECEIPT_MISSING: parent did not settle two native child completion notices")
+                time.sleep(0.05)
+            # Any additional model requests are part of observed native
+            # background notification processing, not independent trials.
+            # Check every actual provider arrival for instruction exposure.
+            extra_arrivals = [e["data"] for e in child_events if e["type"] == "provider-arrival"
+                              and e["data"].get("testCase") == "treatment-continuation"]
+            extra_receipts = [e["data"] for e in child_events if e["type"] == "provider-request"
+                              and e["data"].get("testCase") == "treatment-continuation"]
+            if extra_arrivals or extra_receipts:
+                verify_attempt_receipts(extra_arrivals, extra_receipts,
+                                        expected_candidate=True, candidate_sha=sha(CANDIDATE))
+            report["background_child_notifications"] = {
+                "actual_child_ids": sorted(child_ids),
+                "native_notices": len(notices),
+                "parent_execution_settled": True,
+                "parent_provider_attempts": len(extra_arrivals),
+                "provider_receipt_coverage": "complete",
+                "cost_limit": "Native child notifications can wake the parent; no live billing proof",
+            }
+            report["checks"].append("background-notification-parent-settlement-and-exposure")
             # Interruption is accepted by the real Session coordinator while a
             # native provider request is held; it never undoes exposure.
             probe.set_barrier(False)
