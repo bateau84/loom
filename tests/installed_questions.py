@@ -321,16 +321,43 @@ def no_contact(observed):
 
 
 def synthetic_events(root):
-    # Count actual native inbox admission events, not session.synthetic aliases.
-    # Count real input events before any provider terminal/write guard.
-    return [e['data'] for e in events(root) if e['type'] == 'native-event' and e['data']['type'] == 'session.inbox.enqueued'
-            and e['data']['data']['item']['type'] == 'synthetic']
+    """Only *Loom answer* inbox receipts count as answer resumes.
+
+    OpenCode 2.3.0 also admits native subagent-completion synthetic messages.
+    They are real host activity, but cannot count as a Loom answer, hide a
+    duplicate answer, or supply authority for one. Other no-contact checks
+    still inspect every synthetic message, including host-generated ones.
+    """
+    answer_notices = []
+    for event in events(root):
+        if event['type'] != 'native-event' or event['data']['type'] != 'session.inbox.enqueued':
+            continue
+        admitted = event['data']
+        item = admitted['data'].get('item', {})
+        if item.get('type') != 'synthetic':
+            continue
+        metadata = item.get('payload', {}).get('metadata', {})
+        require(isinstance(metadata, dict), 'Malformed native synthetic metadata')
+        if metadata.get('format') == 'loom-answer-notice/v1':
+            require(isinstance(metadata.get('question_id'), str) and metadata['question_id']
+                    and isinstance(metadata.get('answer_id'), str) and metadata['answer_id'],
+                    'Malformed Loom answer notice must not be silently skipped')
+            answer_notices.append(admitted)
+        else:
+            require('answer_id' not in metadata and 'question_id' not in metadata,
+                    'Unrecognized synthetic claimed a Loom answer identity')
+    return answer_notices
 
 
 def verify_single_admission(admitted, target, answer_id):
     require(len(admitted) == 1 and admitted[0]['data']['sessionID'] == target, 'Wrong/duplicate native synthetic target')
-    require(admitted[0]['data']['item']['payload']['metadata']['answer_id'] == answer_id, 'Native notice lost exact saved answer')
-    require(admitted[0]['data']['item']['delivery'] == 'steer', 'Native notice changed delivery semantics')
+    item = admitted[0]['data']['item']
+    metadata = item.get('payload', {}).get('metadata', {})
+    require(item.get('type') == 'synthetic' and isinstance(metadata, dict)
+            and metadata.get('format') == 'loom-answer-notice/v1'
+            and metadata.get('answer_id') == answer_id and isinstance(metadata.get('question_id'), str)
+            and metadata['question_id'], 'Native notice lost exact saved answer')
+    require(item['delivery'] == 'steer', 'Native notice changed delivery semantics')
 
 
 def verify_provider_inputs(observed):
