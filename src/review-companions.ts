@@ -18,6 +18,7 @@ const filenames = { assessment: "ASSESSMENT.md", qa: "QA.md" } as const
 
 export function companionHelp(lens: ReviewLens): string {
   const file = filenames[lens]
+  const label = lens === "assessment" ? "Assessment" : "QA"
   return [
     `Load an installed skill's ${file} review lens; requires the configured ${lens} role.`,
     `Usage: {"skill":"software-engineering"}. At review start, choose relevant current skills from the task and artifacts, independently of producer pointers. ${lens === "assessment" ? "Assess conformance and obligations." : "Challenge plausible failures, regressions and shared assumptions."} Use the exact native skill ID. The enabled caller needs ${lens} in .loom.yaml. Load practitioner guidance natively when useful. No prior receipt, Action or Plan is required.`,
@@ -30,7 +31,7 @@ export function companionHelp(lens: ReviewLens): string {
     "```javascript",
     'const skills = ["SKILL_ID_1", "SKILL_ID_2"];',
     `const settled = await Promise.allSettled(skills.map(skill => tools.loom.${lens}({ skill })));`,
-    `return settled.map((r, i) => r.status === "fulfilled" ? r.value : "# ${lens.toUpperCase()} lens failed: " + skills[i] + "\\n\\n" + String(r.reason)).join("\\n\\n---\\n\\n");`,
+    `return settled.map((r, i) => r.status === "fulfilled" ? r.value : "# ${label} lens failed: " + skills[i] + "\\n\\n" + String(r.reason)).join("\\n\\n---\\n\\n");`,
     "```",
     'Await writes before using IDs or ending Code Mode. For independent calls use Promise.allSettled and inspect every outcome; sequence dependent calls.',
   ].join("\n")
