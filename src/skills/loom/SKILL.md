@@ -25,7 +25,7 @@ Loom retains intent/history, not a scheduler. Roles restrict companion loaders.
 
 Tool search supplies syntax. JSON outputs contain `result` and optional `config_errors`.
 Assessment/QA and `full_thread` return Markdown; parse only JSON.
-Code Mode: join lens outputs into one string (arrays escape newlines); inspect allSettled failures. Await writes.
+Code Mode: join lenses into one string (arrays escape newlines); inspect Promise.allSettled failures. Await writes.
 
 ## Start or resume work
 
