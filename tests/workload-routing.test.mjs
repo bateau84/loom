@@ -248,23 +248,26 @@ test("F-01: workload routing refuses unknown reasoning support even for preferre
 
 test("F-04: complete decision record including ID never exceeds its 4096-byte UTF-8 bound", () => {
   const c = configured()
-  let lastAccepted = 0
+  let lastAcceptedBytes = 0
   let rejected = false
-  for (let size = 3600; size <= 4100; size++) {
+  for (let size = 3000; size <= 4100; size++) {
     try {
       const value = planWorkloadRoutes(c, "architect", [
         route("p".repeat(size), "fast"),
       ], assignment("record-boundary"))
       assert.equal(value.status, "ready")
-      assert.ok(Buffer.byteLength(JSON.stringify(value.decision), "utf8") <= 4096)
-      lastAccepted = size
+      const bytes = Buffer.byteLength(JSON.stringify(value.decision), "utf8")
+      assert.ok(bytes <= 4096)
+      lastAcceptedBytes = bytes
     } catch (error) {
       assert.match(String(error), /LOOM_WORKLOAD_LIMIT/)
       rejected = true
       break
     }
   }
-  assert.ok(lastAccepted >= 3600)
+  // Every extra ASCII byte grows the serialized record by exactly one.
+  // The boundary test must reach a complete 4,096-byte record and reject 4,097.
+  assert.equal(lastAcceptedBytes, 4096)
   assert.equal(rejected, true)
 })
 
