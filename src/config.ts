@@ -7,8 +7,13 @@ import { homedir } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
 
 export type Reasoning = "low" | "medium" | "high"
-export type AgentConfig = { roles: string[]; description?: string; enabled: boolean; modelClass?: string; reasoning?: Reasoning }
-export type RoleConfig = { description?: string; instructions?: string; modelClass?: string; reasoning?: Reasoning }
+export type WorkloadTier = "standard" | "advanced" | "frontier"
+export type WorkloadTierPolicy = { modelClass: string; reasoning: Reasoning }
+export type WorkloadTierOverrides = Partial<Record<"advanced" | "frontier", WorkloadTierPolicy>>
+export type AgentConfig = { roles: string[]; description?: string; enabled: boolean; modelClass?: string; reasoning?: Reasoning;
+  minimumTier?: WorkloadTier; workloadTiers?: WorkloadTierOverrides }
+export type RoleConfig = { description?: string; instructions?: string; modelClass?: string; reasoning?: Reasoning;
+  minimumTier?: WorkloadTier; workloadTiers?: WorkloadTierOverrides }
 export type ModelClassConfig = { models: string[] }
 export type ModelRoutingConfig = { enabled: boolean; defaultClass?: string; defaultReasoning: Reasoning; paidFallback: boolean; providerOrder: string[] }
 export type Config = {
@@ -59,6 +64,33 @@ function reasoning(value: unknown, path: string): Reasoning {
   if (value !== "low" && value !== "medium" && value !== "high") throw new Error(`${path} must be low, medium or high`)
   return value
 }
+function workloadTier(value: unknown, path: string): WorkloadTier {
+  if (value !== "standard" && value !== "advanced" && value !== "frontier")
+    throw new Error(`${path} must be standard, advanced or frontier`)
+  return value
+}
+
+/** Each advanced tier is complete; null removes an override without disabling inherited roles. */
+function mergeWorkloadTiers(
+  previous: WorkloadTierOverrides | undefined, raw: unknown, path: string,
+): WorkloadTierOverrides {
+  const mapping = object(raw, path)
+  keys(mapping, ["advanced", "frontier"], path)
+  const next = { ...previous }
+  for (const [tier, value] of Object.entries(mapping)) {
+    if (value === null) { delete next[tier as keyof WorkloadTierOverrides]; continue }
+    const item = object(value, `${path}.${tier}`)
+    keys(item, ["model-class", "reasoning"], `${path}.${tier}`)
+    if (item["model-class"] === undefined || item.reasoning === undefined)
+      throw new Error(`${path}.${tier} requires model-class and reasoning`)
+    next[tier as keyof WorkloadTierOverrides] = {
+      modelClass: name(text(item["model-class"], `${path}.${tier}.model-class`, 100), "model-class"),
+      reasoning: reasoning(item.reasoning, `${path}.${tier}.reasoning`),
+    }
+  }
+  return next
+}
+
 function modelID(value: unknown, path: string): string {
   const id = text(value, path, 160)
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_.:/@+-]*$/.test(id) || forbidden.has(id)) throw new Error(`Invalid model ID at ${path}`)
@@ -83,7 +115,7 @@ export function mergeConfig(base: Config, input: unknown): Config {
       name(id, "agents")
       if (raw === null) { delete out.agents[id]; continue }
       const a = object(raw, `agents.${id}`)
-      keys(a, ["roles", "description", "enabled", "model-class", "reasoning"], `agents.${id}`)
+      keys(a, ["roles", "description", "enabled", "model-class", "reasoning", "minimum-tier", "workload-tiers"], `agents.${id}`)
       const old = out.agents[id] ?? { roles: [], enabled: true }
       let roles = old.roles
       if (a.roles !== undefined) {
@@ -96,6 +128,8 @@ export function mergeConfig(base: Config, input: unknown): Config {
         ...(a.enabled === undefined ? {} : { enabled: bool(a.enabled, "enabled") }),
         ...(a["model-class"] === undefined ? {} : { modelClass: name(text(a["model-class"], "model-class", 100), "model-class") }),
         ...(a.reasoning === undefined ? {} : { reasoning: reasoning(a.reasoning, `agents.${id}.reasoning`) }),
+        ...(a["minimum-tier"] === undefined ? {} : { minimumTier: workloadTier(a["minimum-tier"], `agents.${id}.minimum-tier`) }),
+        ...(a["workload-tiers"] === undefined ? {} : { workloadTiers: mergeWorkloadTiers(old.workloadTiers, a["workload-tiers"], `agents.${id}.workload-tiers`) }),
       }
     }
   }
@@ -106,7 +140,7 @@ export function mergeConfig(base: Config, input: unknown): Config {
       name(id, "roles")
       if (raw === null) { delete out.roles[id]; continue }
       const r = object(raw, `roles.${id}`)
-      keys(r, ["description", "instructions", "model-class", "reasoning"], `roles.${id}`)
+      keys(r, ["description", "instructions", "model-class", "reasoning", "minimum-tier", "workload-tiers"], `roles.${id}`)
       const previous = out.roles[id] ?? {}
       out.roles[id] = {
         ...previous,
@@ -114,6 +148,8 @@ export function mergeConfig(base: Config, input: unknown): Config {
         ...(r.instructions === undefined ? {} : { instructions: text(r.instructions, "role instructions") }),
         ...(r["model-class"] === undefined ? {} : { modelClass: name(text(r["model-class"], "model-class", 100), "model-class") }),
         ...(r.reasoning === undefined ? {} : { reasoning: reasoning(r.reasoning, `roles.${id}.reasoning`) }),
+        ...(r["minimum-tier"] === undefined ? {} : { minimumTier: workloadTier(r["minimum-tier"], `roles.${id}.minimum-tier`) }),
+        ...(r["workload-tiers"] === undefined ? {} : { workloadTiers: mergeWorkloadTiers(previous.workloadTiers, r["workload-tiers"], `roles.${id}.workload-tiers`) }),
       }
     }
   }
