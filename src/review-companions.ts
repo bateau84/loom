@@ -32,7 +32,7 @@ export function companionHelp(lens: ReviewLens): string {
     `const settled = await Promise.allSettled(skills.map(skill => tools.loom.${lens}({ skill })));`,
     `return settled.map((r, i) => r.status === "fulfilled" ? r.value : "# ${lens.toUpperCase()} lens failed: " + skills[i] + "\\n\\n" + String(r.reason)).join("\\n\\n---\\n\\n");`,
     "```",
-    'Await writes before using IDs or ending Code Mode; sequence dependent calls.',
+    'Await writes before using IDs or ending Code Mode. For independent calls use Promise.allSettled and inspect every outcome; sequence dependent calls.',
   ].join("\n")
 }
 
