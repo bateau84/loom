@@ -63,7 +63,7 @@ visible. For example, with the discovered `tools.loom.qa` path:
 ```javascript
 const skills = ["SKILL_ID_1", "SKILL_ID_2"];
 const settled = await Promise.allSettled(skills.map(skill => tools.loom.qa({ skill })));
-return settled.map((r, i) => r.status === "fulfilled" ? r.value : "# QA lens failed: " + skills[i] + "\\n\\n" + String(r.reason)).join("\\n\\n---\\n\\n");
+return settled.map((r, i) => r.status === "fulfilled" ? r.value : "# QA lens failed: " + skills[i] + "\n\n" + String(r.reason)).join("\n\n---\n\n");
 ```
 
 Use `tools.loom.assessment` for Assessment. A single string improves the displayed
