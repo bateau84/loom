@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test"
 import { createRequire } from "node:module"
-import { readFile } from "node:fs/promises"
+import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 import { registeredLoom } from "./helpers/registered-loom.js"
@@ -145,6 +145,62 @@ test("actual Code Mode allSettled preserves an independent write and exposes the
     expect(saved).toHaveLength(1)
     expect(saved[0].id).toBe(result.value[1].record_id)
     expect(saved[0].data.statement).toBe(good.statement)
+  } finally { await f.close() }
+})
+
+
+test("documented Code Mode companion example preserves Markdown and reports partial failures", async () => {
+  const f = await registeredLoom()
+  try {
+    await writeFile(join(f.directory, ".loom.yaml"), JSON.stringify({
+      agents: { critic: { roles: ["qa"] }, reviewer: { roles: ["assessment"] } },
+      instructions: { enabled: false }, ledger: { capture: "off" },
+    }))
+    for (const id of ["one", "two"]) {
+      const directory = join(f.directory, id)
+      await mkdir(directory)
+      await writeFile(join(directory, "SKILL.md"), "# Skill\n")
+      await writeFile(join(directory, "QA.md"), "# QA " + id + "\n\nChallenge " + id + ".\n")
+      await writeFile(join(directory, "ASSESSMENT.md"), "# Assessment " + id + "\n\nAssess " + id + ".\n")
+      f.skills.set(id, { id, path: join(directory, "SKILL.md") })
+    }
+    for (const [lens, agent] of [["qa", "critic"], ["assessment", "reviewer"]] as const) {
+      const registration = f.tools.get(lens)
+      const example = registration.description.match(/```javascript\n([\s\S]*?)\n```/)?.[1]
+      expect(example).toBeDefined()
+      const code = example!.replace('["SKILL_ID_1", "SKILL_ID_2"]', '["one", "missing", "two"]')
+      expect(code).not.toBe(example)
+      const runtime = CodeMode.make({ tools: { loom: Namespace.make({
+        description: f.namespaces.get("loom").description,
+        tools: { [lens]: Tool.make({
+          description: registration.description, input: registration.input, output: { type: "string" },
+          execute: (input: unknown) => Effect.tryPromise({
+            try: async () => (await registration.execute(input, {
+              sessionID: "review-session", agent, id: "tool-call", messageID: "message",
+              signal: new AbortController().signal,
+            })).content,
+            catch: (error: unknown) => toolError(error instanceof Error ? error.message : String(error)),
+          }),
+        }) },
+      }) } })
+      const result = await Effect.runPromise(runtime.execute(code))
+      expect(result.ok).toBe(true)
+      expect(result.truncated).not.toBe(true)
+      expect(typeof result.value).toBe("string")
+      const output = result.value as string
+      const label = lens === "qa" ? "QA" : "Assessment"
+      expect(output).toContain("# " + label + " lens\n")
+      expect(output).toContain("**Skill:** `one`")
+      expect(output).toContain("**Skill:** `two`")
+      expect(output).toContain("**SHA-256:**")
+      expect(output).toContain("# " + label + " lens failed: missing")
+      expect(output).toContain("Expected one registered native skill with ID missing; found 0")
+      expect(output.indexOf("**Skill:** `one`")).toBeLessThan(output.indexOf("# " + label + " lens failed: missing"))
+      expect(output.indexOf("# " + label + " lens failed: missing")).toBeLessThan(output.indexOf("**Skill:** `two`"))
+      expect(output).not.toContain("\\n")
+      expect(() => JSON.parse(output)).toThrow()
+      expect(f.sessionCreates).toHaveLength(0)
+    }
   } finally { await f.close() }
 })
 
