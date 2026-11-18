@@ -512,6 +512,26 @@ class QuestionHarnessTest(unittest.TestCase):
             with self.subTest(event=event), self.assertRaises(RuntimeError):
                 no_contact([event])
 
+    def test_question_notices_are_valid_but_not_answer_resumes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            def notice(metadata):
+                return {'type': 'native-event', 'data': {'type': 'session.inbox.enqueued',
+                    'data': {'sessionID': 'asker', 'item': {'type': 'synthetic', 'payload': {'metadata': metadata}}}}}
+            question = notice({'format': 'loom-question-notice/v1', 'question_id': 'q'})
+            answer = notice({'format': 'loom-answer-notice/v1', 'question_id': 'q', 'answer_id': 'a'})
+            native = notice({'source': 'subagent', 'childID': 'child', 'state': 'completed'})
+            (root / 'audit.ndjson').write_text('\n'.join(json.dumps(row) for row in [question, native, answer]))
+            self.assertEqual(synthetic_events(root), [answer['data']])
+            for metadata in [
+                {'format': 'loom-question-notice/v1', 'question_id': ''},
+                {'format': 'loom-question-notice/v1', 'question_id': 'q', 'answer_id': 'a'},
+            ]:
+                with self.subTest(metadata=metadata):
+                    (root / 'audit.ndjson').write_text(json.dumps(notice(metadata)))
+                    with self.assertRaisesRegex(RuntimeError, 'Malformed Loom question notice'):
+                        synthetic_events(root)
+
     def test_raw_request_and_admission_counts_ignore_scripted_write_guards(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

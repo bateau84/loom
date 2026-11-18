@@ -343,6 +343,9 @@ def synthetic_events(root):
                     and isinstance(metadata.get('answer_id'), str) and metadata['answer_id'],
                     'Malformed Loom answer notice must not be silently skipped')
             answer_notices.append(admitted)
+        elif metadata.get('format') == 'loom-question-notice/v1':
+            require(isinstance(metadata.get('question_id'), str) and metadata['question_id']
+                    and 'answer_id' not in metadata, 'Malformed Loom question notice')
         else:
             require('answer_id' not in metadata and 'question_id' not in metadata,
                     'Unrecognized synthetic claimed a Loom answer identity')

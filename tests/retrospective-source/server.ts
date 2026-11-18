@@ -47,19 +47,28 @@ export function createScriptedSourceModel() {
       const messages = Array.isArray(input.prompt) ? input.prompt : []
       const user = [...messages].reverse().find((m: any) => m.role === "user")
       const userText = toText(user?.content)
-      const childNotice = /^<subagent sessionID="[A-Za-z0-9_.:-]+" state="(?:completed|error|cancelled|running)" description="[^"\n]*">\n[\s\S]*\n<\/subagent>\s*$/.test(userText.trim())
+      const childNotice = /^<subagent sessionID="[A-Za-z0-9_.:-]+" state="(completed|error|cancelled|running)" description="[^"\n]*">\n[\s\S]*\n<\/subagent>\s*$/.exec(userText.trim())
       const explicit = childNotice ? undefined : /QA_B_SOURCE_PHASE:([a-z-]+)/.exec(userText)?.[1]
-      // 2.3.0 reports a completed child to its parent through an actual
-      // synthetic user input. This is not a new QA-B source task and must not
-      // reuse a completed source phase or trigger an unbounded retry storm.
-      // Only the exact host-origin completion envelope is eligible for a
-      // fixture-local no-op; arbitrary unmarked prompts still fail closed.
+      // 2.3.0 reports terminal child states to the parent through a
+      // synthetic user input. No child envelope can create QA-B source work.
+      // Only a syntactically exact *completed* envelope gets a fixture-local
+      // no-op; this parser does not authenticate the notification's origin.
+      // Errors, cancellation and still-running notices fail closed.
       // Fixture-local state trace: enumerated phase/count only. Never store
       // prompt text, provider credentials, raw tool inputs, or generated output.
       diagnostic({ event: "attempt", explicit: explicit ?? null,
-        awaiting: awaitingContinuation ?? null, native_child_notice: childNotice })
-      if (!explicit && !awaitingContinuation && childNotice) {
-        diagnostic({ event: "ignored-native-child-notice" })
+        awaiting: awaitingContinuation ?? null, native_child_notice: Boolean(childNotice),
+        native_child_state: childNotice?.[1] ?? null })
+      if (childNotice) {
+        if (awaitingContinuation) {
+          diagnostic({ event: "reject", reason: "native-child-during-continuation", state: childNotice[1] })
+          throw new Error("QA-B native child notice arrived during a pending tool continuation")
+        }
+        if (childNotice[1] !== "completed") {
+          diagnostic({ event: "reject", reason: "noncompleted-native-child", state: childNotice[1] })
+          throw new Error("QA-B source native child did not complete successfully: " + childNotice[1])
+        }
+        diagnostic({ event: "ignored-native-child-notice", state: childNotice[1] })
         const stream: any[] = [
           { type: "stream-start", warnings: [] },
           { type: "text-start", id: "background-notice" },

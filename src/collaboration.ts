@@ -356,10 +356,10 @@ export class Collaboration {
     if (!first || question.data.blocking !== true ||
         (question.data.format !== "loom-question/v1" && question.data.format !== "loom-question/v2"))
       return { record }
-    // Direct typed OQs use native subagent execution. Blocking ones are
-    // foreground, so the parent gets the result within its original tool
-    // call; native-background fallback also owns its own completion.
-    // A second Loom synthetic input would duplicate the parent's turn.
+    // Direct typed OQs use OpenCode's native subagent continuation. On 2.3.0,
+    // even blocking dispatch returns a running child handle; native completion
+    // later notifies the parent and may start another model turn. A separate
+    // Loom answer notice would duplicate that continuation.
     if (question.data.format === "loom-question/v2" && typeof question.data.expected_agent === "string" &&
         question.data.expected_parent_session === undefined && question.data.expected_session === undefined)
       return { record, continuation: { owner: "native-subagent-execution", question_id: question.id,
