@@ -46,7 +46,10 @@ const inventory = [
   route("go", "astra"), route("openai", "astra"),
 ]
 const assignment = (id, other = {}) => ({
-  assignmentId: id, objectiveId: "objective-1", boundary: "new-assignment", riskFactors: [], ...other,
+  assignmentId: id, objectiveId: "objective-1", boundary: "new-assignment",
+  riskFactors: [], assessment: { status: "assessed", confidence: "high", sourceRef: "reviewed-work" },
+  quality: { minimumTier: "standard", minimumReasoning: "low", independence: "not-required" },
+  spending: "included-only", ...other,
 })
 
 test("regular work reuses the agent policy and existing model-first route planner", () => {
@@ -177,6 +180,57 @@ test("invalid tier declarations, malformed inputs and unsupported boundaries fai
   }))
   assert.equal(unsafe.status, "unavailable")
   assert.equal(unsafe.reason, "unsafe-boundary")
+})
+
+test("F-02: missing or uncertain assessment never silently becomes assessed low risk", () => {
+  const c = configured()
+  const absent = assignment("unassessed")
+  delete absent.assessment
+  const unknown = assignment("uncertain", { assessment: { status: "uncertain", confidence: "low", sourceRef: "open" } })
+  assert.deepEqual(planWorkloadRoutes(c, "architect", inventory, absent), {
+    status: "unavailable", reason: "assessment-unverified",
+  })
+  assert.equal(planWorkloadRoutes(c, "architect", inventory, unknown).status, "unavailable")
+  assert.equal(planWorkloadRoutes(c, "architect", inventory, assignment("assessed-low")).status, "ready")
+})
+
+test("F-02: requested reasoning can increase effort without changing the model class", () => {
+  const result = planWorkloadRoutes(configured(), "architect", [
+    route("go", "fast", { reasoning: ["medium", "high"] }),
+  ], assignment("same-class-high", { requestedReasoning: "high" }))
+  assert.equal(result.status, "ready")
+  assert.equal(result.decision.tier, "standard")
+  assert.equal(result.plan.selected.logicalModel, "fast")
+  assert.equal(result.plan.selected.reasoning, "high")
+  assert.equal(result.decision.requestedReasoning, "high")
+})
+
+test("F-02: binding quality minimums and declared independent review cannot be downgraded", () => {
+  const out = planWorkloadRoutes(configured(), "architect", inventory, assignment("independent", {
+    requestedTier: "standard", requestedReasoning: "low",
+    quality: { minimumTier: "advanced", minimumReasoning: "high", independence: "required" },
+  }))
+  assert.equal(out.status, "ready")
+  assert.equal(out.decision.tier, "advanced")
+  assert.equal(out.plan.selected.reasoning, "high")
+  assert.equal(out.decision.quality.independence, "required")
+  assert.equal(out.decision.quality.minimumTier, "advanced")
+  const missingQuality = assignment("missing-quality"); delete missingQuality.quality
+  assert.equal(planWorkloadRoutes(configured(), "architect", inventory, missingQuality).status, "unavailable")
+})
+
+test("F-03: selected account identity participates in a distinct decision fingerprint", () => {
+  const a = planWorkloadRoutes(configured(), "architect", [
+    route("go", "fast", { accountID: "account-A" }),
+  ], assignment("account-bound"))
+  const b = planWorkloadRoutes(configured(), "architect", [
+    route("go", "fast", { accountID: "account-B" }),
+  ], assignment("account-bound"))
+  assert.equal(a.status, "ready")
+  assert.equal(b.status, "ready")
+  assert.notEqual(a.decision.id, b.decision.id)
+  assert.equal(a.decision.route.accountID, "account-A")
+  assert.equal(b.decision.route.accountID, "account-B")
 })
 
 test("F-01: workload routing refuses unknown reasoning support even for preferred frontier model", () => {
