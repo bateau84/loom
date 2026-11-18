@@ -11,14 +11,32 @@ import {
 export type WorkloadRisk = "complex" | "authority" | "containment" | "credentials"
   | "concurrency" | "persistence" | "recovery"
 export type WorkloadBoundary = "new-assignment" | "safe-next-phase" | "continuation"
+export type WorkloadAssessment = {
+  /** Explicitly assessed low risk differs from absent or uncertain assessment. */
+  status: "assessed" | "uncertain"
+  confidence: "high" | "medium" | "low"
+  /** Source correlation only. Model-authored text is not proof of authority. */
+  sourceRef: string
+}
+export type WorkloadQuality = {
+  minimumTier: WorkloadTier
+  minimumReasoning: "low" | "medium" | "high"
+  /** This obligation is carried, NOT fulfilled by choosing a different model. */
+  independence: "required" | "not-required"
+}
 export type WorkloadAssignment = {
   assignmentId: string
   /** Correlates corrective attempts; separate assignment IDs do not prove independent objectives. */
   objectiveId: string
   boundary: WorkloadBoundary
   riskFactors: readonly WorkloadRisk[]
-  /** A preference, not billing or model permission authority. */
+  assessment?: WorkloadAssessment
+  quality?: WorkloadQuality
+  /** This policy-only milestone accepts included-only routing, never paid authorization. */
+  spending: "included-only"
+  /** Preferences may raise reasoning; they cannot lower accepted quality floors. */
   requestedTier?: WorkloadTier
+  requestedReasoning?: "low" | "medium" | "high"
 }
 
 export type WorkloadDecision = {
@@ -29,11 +47,16 @@ export type WorkloadDecision = {
   agentId: string
   boundary: WorkloadBoundary
   requestedTier: WorkloadTier
+  requestedReasoning: "low" | "medium" | "high" | null
   tier: WorkloadTier
+  assessment: WorkloadAssessment
+  quality: WorkloadQuality
+  spending: "included-only"
   riskFactors: WorkloadRisk[]
   reasons: string[]
+  policyVersion: string
   policy: ModelPolicy | null
-  route: { providerID: string; modelID: string; reasoning: string; billing: "included" | "metered" } | null
+  route: { providerID: string; modelID: string; accountID?: string; reasoning: string; billing: "included" | "metered" } | null
 }
 export type WorkloadResult =
   | { status: "disabled" }
@@ -51,6 +74,16 @@ const risks: Record<WorkloadRisk, WorkloadTier> = {
   credentials: "frontier",
 }
 const ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}$/
+const effortRank = { low: 0, medium: 1, high: 2 } as const
+type Effort = keyof typeof effortRank
+function reasoning(value: unknown, label: string): Effort {
+  if (value !== "low" && value !== "medium" && value !== "high")
+    throw new Error(`LOOM_WORKLOAD_INVALID: ${label} must be low, medium or high`)
+  return value
+}
+function stronger(first: Effort, second: Effort): Effort {
+  return effortRank[first] >= effortRank[second] ? first : second
+}
 
 function tier(value: unknown, label: string): WorkloadTier {
   if (value !== "standard" && value !== "advanced" && value !== "frontier")
@@ -74,6 +107,24 @@ function validate(assignment: WorkloadAssignment): { requested: WorkloadTier; ri
   for (const factor of assignment.riskFactors)
     if (typeof factor !== "string" || !Object.hasOwn(risks, factor))
       throw new Error("LOOM_WORKLOAD_INVALID: unsupported risk factor")
+  if (assignment.spending !== "included-only")
+    throw new Error("LOOM_WORKLOAD_INVALID: spending must be included-only")
+  if (assignment.requestedReasoning !== undefined)
+    reasoning(assignment.requestedReasoning, "requestedReasoning")
+  const assessment = assignment.assessment
+  if (assessment !== undefined) {
+    if (!assessment || (assessment.status !== "assessed" && assessment.status !== "uncertain")
+      || !["low", "medium", "high"].includes(assessment.confidence)
+      || typeof assessment.sourceRef !== "string" || !ID.test(assessment.sourceRef))
+      throw new Error("LOOM_WORKLOAD_INVALID: assessment requires status, confidence and a bounded sourceRef")
+  }
+  const quality = assignment.quality
+  if (quality !== undefined) {
+    if (!quality || (quality.independence !== "required" && quality.independence !== "not-required"))
+      throw new Error("LOOM_WORKLOAD_INVALID: quality independence must be declared")
+    tier(quality.minimumTier, "quality.minimumTier")
+    reasoning(quality.minimumReasoning, "quality.minimumReasoning")
+  }
   const requested = tier(assignment.requestedTier ?? "standard", "requestedTier")
   return { requested, riskFactors: [...new Set(assignment.riskFactors)].sort() as WorkloadRisk[] }
 }
@@ -81,11 +132,12 @@ function validate(assignment: WorkloadAssignment): { requested: WorkloadTier; ri
 function decision(
   assignment: WorkloadAssignment, agentId: string, requestedTier: WorkloadTier,
   selected: WorkloadTier, factors: WorkloadRisk[], reasons: string[],
-  policy: ModelPolicy | undefined, plan?: ModelPlan,
+  policy: ModelPolicy | undefined, policyVersion: string, plan?: ModelPlan,
 ): WorkloadDecision {
   const route = plan?.status === "ready" ? {
     providerID: plan.selected.providerID,
     modelID: plan.selected.modelID,
+    ...(plan.selected.accountID ? { accountID: plan.selected.accountID } : {}),
     reasoning: plan.selected.reasoning,
     billing: plan.selected.billing,
   } : null
@@ -96,9 +148,14 @@ function decision(
     agentId,
     boundary: assignment.boundary,
     requestedTier,
+    requestedReasoning: assignment.requestedReasoning ?? null,
     tier: selected,
+    assessment: assignment.assessment!,
+    quality: assignment.quality!,
+    spending: "included-only" as const,
     riskFactors: factors,
     reasons,
+    policyVersion,
     policy: policy ?? null,
     route,
   }
@@ -125,25 +182,42 @@ export function planWorkloadRoutes(
   const agent = config.agents[agentId]
   if (!agent || !agent.enabled)
     return { status: "unavailable", reason: "agent-unavailable" }
-
+  // Absent and low-confidence assessments are NOT assessed low risk. A caller
+  // can claim a sourceRef here, but the native host must authenticate it later.
+  if (!assignment.assessment || assignment.assessment.status !== "assessed"
+    || assignment.assessment.confidence !== "high")
+    return { status: "unavailable", reason: "assessment-unverified" }
+  if (!assignment.quality) return { status: "unavailable", reason: "quality-constraints-missing" }
+  const policyVersion = digest({
+    routing: config.modelRouting, modelClasses: config.modelClasses,
+    modelAliases: config.modelAliases, agent, roles: agent.roles.map(id => [id, config.roles[id]]),
+  })
   let floor: WorkloadTier = "standard"
   for (const roleID of agent.roles) floor = greater(floor, config.roles[roleID]?.minimumTier ?? "standard")
   floor = greater(floor, agent.minimumTier ?? "standard")
   for (const factor of riskFactors) floor = greater(floor, risks[factor])
+  floor = greater(floor, assignment.quality.minimumTier)
   const selected = greater(requested, floor)
   const reasons = [
     ...riskFactors.map(factor => `risk:${factor}`),
     ...(floor !== "standard" ? [`minimum:${floor}`] : []),
     ...(requested !== "standard" ? [`requested:${requested}`] : []),
+    ...(assignment.quality.independence === "required" ? ["independent-review-required"] : []),
   ]
 
   if (assignment.boundary === "continuation") return {
     status: "unavailable",
     reason: "unsafe-boundary",
-    decision: decision(assignment, agentId, requested, selected, riskFactors, reasons, undefined),
+    decision: decision(assignment, agentId, requested, selected, riskFactors, reasons, undefined, policyVersion),
   }
 
-  const policy = resolveWorkloadTierPolicy(config, agentId, selected)
+  const selectedPolicy = resolveWorkloadTierPolicy(config, agentId, selected)
+  const policy = selectedPolicy ? {
+    ...selectedPolicy,
+    reasoning: stronger(
+      stronger(selectedPolicy.reasoning, assignment.quality.minimumReasoning),
+      assignment.requestedReasoning ?? "low"),
+  } : undefined
   if (!policy) return {
     status: "unavailable",
     reason: "tier-unconfigured",
@@ -160,7 +234,7 @@ export function planWorkloadRoutes(
   const proven = inventory.filter(candidate =>
     Array.isArray(candidate.reasoning) && candidate.reasoning.includes(policy.reasoning))
   const plan = planModelRoutes(includedOnly, agentId, proven, policy)
-  const record = decision(assignment, agentId, requested, selected, riskFactors, reasons, policy, plan)
+  const record = decision(assignment, agentId, requested, selected, riskFactors, reasons, policy, policyVersion, plan)
   if (plan.status !== "ready") return {
     status: "unavailable", reason: "route-unavailable", decision: record, plan,
   }
