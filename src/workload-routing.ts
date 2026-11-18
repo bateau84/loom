@@ -104,11 +104,12 @@ function decision(
   }
   // Bound the emitted record independently of opaque native inventory strings.
   // The receipt is deliberately small enough for review and later persistence.
-  if (Buffer.byteLength(JSON.stringify(payload), "utf8") > 4096)
-    throw new Error("LOOM_WORKLOAD_LIMIT: decision exceeds 4096 bytes")
   // Stable for the same exact inputs and route. A digest is correlation, NOT a
   // host-attested decision, trusted origin, account guarantee, or retained receipt.
-  return { id: digest(payload), ...payload }
+  const record = { id: digest(payload), ...payload }
+  if (Buffer.byteLength(JSON.stringify(record), "utf8") > 4096)
+    throw new Error("LOOM_WORKLOAD_LIMIT: decision exceeds 4096 bytes")
+  return record
 }
 
 /**
@@ -154,7 +155,11 @@ export function planWorkloadRoutes(
   // metered candidates; real billing admission is separately BLOCKED (#206).
   const includedOnly = config.modelRouting.paidFallback
     ? { ...config, modelRouting: { ...config.modelRouting, paidFallback: false } } : config
-  const plan = planModelRoutes(includedOnly, agentId, inventory, policy)
+  // The legacy agent-only router tolerates absent variant evidence. Workload
+  // selection does not: an explicit capability tier requires proven reasoning.
+  const proven = inventory.filter(candidate =>
+    Array.isArray(candidate.reasoning) && candidate.reasoning.includes(policy.reasoning))
+  const plan = planModelRoutes(includedOnly, agentId, proven, policy)
   const record = decision(assignment, agentId, requested, selected, riskFactors, reasons, policy, plan)
   if (plan.status !== "ready") return {
     status: "unavailable", reason: "route-unavailable", decision: record, plan,
