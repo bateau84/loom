@@ -179,6 +179,41 @@ test("invalid tier declarations, malformed inputs and unsupported boundaries fai
   assert.equal(unsafe.reason, "unsafe-boundary")
 })
 
+test("F-01: workload routing refuses unknown reasoning support even for preferred frontier model", () => {
+  const c = configured()
+  const missing = planWorkloadRoutes(c, "architect", [
+    route("go", "astra", { reasoning: undefined }),
+  ], assignment("missing-reasoning", { riskFactors: ["authority"] }))
+  assert.equal(missing.status, "unavailable")
+  assert.equal(missing.plan.status, "unavailable")
+  // Legacy agent-only planner remains permissive until its own contract is revised.
+  assert.equal(planModelRoutes(c, "architect", [
+    route("go", "fast", { reasoning: undefined }),
+  ]).status, "ready")
+})
+
+test("F-04: complete decision record including ID never exceeds its 4096-byte UTF-8 bound", () => {
+  const c = configured()
+  let lastAccepted = 0
+  let rejected = false
+  for (let size = 3600; size <= 4100; size++) {
+    try {
+      const value = planWorkloadRoutes(c, "architect", [
+        route("p".repeat(size), "fast"),
+      ], assignment("record-boundary"))
+      assert.equal(value.status, "ready")
+      assert.ok(Buffer.byteLength(JSON.stringify(value.decision), "utf8") <= 4096)
+      lastAccepted = size
+    } catch (error) {
+      assert.match(String(error), /LOOM_WORKLOAD_LIMIT/)
+      rejected = true
+      break
+    }
+  }
+  assert.ok(lastAccepted >= 3600)
+  assert.equal(rejected, true)
+})
+
 test("decision is bounded and reproducible after serializing its work identity", () => {
   const c = configured()
   const first = planWorkloadRoutes(c, "architect", inventory, assignment("stable-1", {
