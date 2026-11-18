@@ -37,7 +37,9 @@ The Assessment/QA loaders and `loom_record` `view:full_thread` return
 **Markdown by default**, because they contain readable documents or history.
 Use `response_format:"json"` on those calls for the original JSON envelope,
 including exact metadata and cursors. In Code Mode, JSON.parse only JSON
-responses. Await writes before using IDs or ending the script. Sequence dependent
+responses. Join multiple Markdown lens responses into one string rather than
+returning an array (which Code Mode JSON-escapes), and surface each failed call.
+Direct tool calls already return Markdown. Await writes before using IDs or ending the script. Sequence dependent
 calls. Use `Promise.allSettled` for independent calls and inspect every outcome;
 this is not an atomic multi-write transaction. Use the exact callable search path.
 
