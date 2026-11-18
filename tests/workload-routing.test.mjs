@@ -161,10 +161,10 @@ test("role tier conflicts fail closed unless the agent provides an explicit over
 test("invalid tier declarations, malformed inputs and unsupported boundaries fail closed", () => {
   assert.throws(() => mergeConfig(defaults(), { roles: { architecture: {
     "workload-tiers": { unknown: { "model-class": "x", reasoning: "high" } },
-  } }), /Unknown setting|invalid/)
+  } } }), /Unknown setting|invalid/)
   assert.throws(() => mergeConfig(defaults(), { roles: { architecture: {
     "workload-tiers": { advanced: { "model-class": "x", reasoning: "none" } },
-  } }), /reasoning/)
+  } } }), /reasoning/)
   const c = configured()
   assert.throws(() => planWorkloadRoutes(c, "architect", inventory, assignment("bad", {
     riskFactors: ["unrecognized"],
