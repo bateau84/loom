@@ -8,6 +8,7 @@ import { sqliteConnection } from "../src/sqlite-connection.js"
 import { WorkloadDecisionJournal } from "../src/workload-admission.js"
 import { defaults, mergeConfig } from "../src/config.js"
 import type { WorkloadAssignment } from "../src/workload-routing.js"
+import type { RouteInventory } from "../src/model-routing.js"
 
 const config = () => mergeConfig(defaults(), {
   "model-routing": { enabled: true, "default-class": "standard",
@@ -19,7 +20,7 @@ const config = () => mergeConfig(defaults(), {
     "workload-tiers": { frontier: { "model-class": "frontier", reasoning: "high" } },
   } },
 })
-const inventory = [
+const inventory: RouteInventory[] = [
   { providerID: "go", modelID: "fast", billing: "included", quota: "unknown", enabled: true,
     tools: true, reasoning: ["medium", "high"] as const, accountID: "account-A" },
   { providerID: "go", modelID: "premium", billing: "included", quota: "unknown", enabled: true,

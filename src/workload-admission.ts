@@ -1,4 +1,4 @@
-import { canonical, digest, uid } from "./model.js"
+import { digest, uid } from "./model.js"
 import type { SQL, Store } from "./store.js"
 import type { Config } from "./config.js"
 import { planWorkloadRoutes, type WorkloadAssignment, type WorkloadDecision } from "./workload-routing.js"
@@ -35,10 +35,9 @@ function version(value: unknown): number {
   if (!Number.isSafeInteger(value) || Number(value) < 1) fail("STALE")
   return Number(value)
 }
-function consistent(a: unknown, b: unknown): boolean { return canonical(a) === canonical(b) }
-function safeRecord(row: unknown): WorkloadCandidateRecord {
+ function safeRecord(row: unknown): WorkloadCandidateRecord {
   if (!row || typeof row !== "object") fail("INTEGRITY")
-  const value = row as { bytes?: unknown; content_json?: unknown; record_id?: unknown }
+  const value = row as { bytes?: unknown; content_json?: unknown; record_id?: unknown; assignment_id?: unknown; owner_session?: unknown; work_key?: unknown }
   if (!Number.isSafeInteger(value.bytes) || Number(value.bytes) > MAX_RECORD_BYTES
     || Number(value.bytes) <= 0 || typeof value.content_json !== "string") fail("INTEGRITY")
   let parsed: unknown
@@ -50,7 +49,11 @@ function safeRecord(row: unknown): WorkloadCandidateRecord {
     || typeof record.source?.ownerSessionID !== "string"
     || typeof record.decision?.id !== "string" || record.decision.assignmentId !== record.assignmentId
     || record.decision.objectiveId !== record.objectiveId || record.decision.agentId !== record.agentId
-    || !consistent(record.source.actionID, record.source.actionID)) fail("INTEGRITY")
+    || value.assignment_id !== record.assignmentId || value.owner_session !== record.source.ownerSessionID
+    || typeof record.sourceDigest !== "string"
+    || value.work_key !== digest([record.source.ownerSessionID, record.source.actionID,
+      record.source.nodeID, record.source.actionRevision, record.source.planRevision, record.agentId]))
+    fail("INTEGRITY")
   const { id, ...payload } = record
   const { id: decisionID, ...decisionPayload } = record.decision
   if (id !== value.record_id || id !== digest(payload) || decisionID !== digest(decisionPayload))
@@ -102,7 +105,7 @@ export class WorkloadDecisionJournal {
     }
   }
   /** Local Action selection is an identity fence, never execution authority. */
-  private source(input: WorkloadWorkSource): {source: WorkloadWorkSource;sourceDigest: string;workKey: string} {
+  private source(input: WorkloadWorkSource, agentId: string): {source: WorkloadWorkSource;sourceDigest: string;workKey: string} {
     const source: WorkloadWorkSource = {
       ownerSessionID: uid(input.ownerSessionID, "ownerSessionID"),
       actionID: uid(input.actionID, "actionID"),
@@ -122,7 +125,7 @@ export class WorkloadDecisionJournal {
       source,
       sourceDigest: digest({ action, node, planRevision: plan.revision }),
       workKey: digest([source.ownerSessionID, source.actionID, source.nodeID,
-        source.actionRevision, source.planRevision]),
+        source.actionRevision, source.planRevision, uid(agentId, "agentId")]),
     }
   }
   /** Records candidate evidence once. Does not authorize dispatch or accept an in-flight/phase switch. */
@@ -134,9 +137,9 @@ export class WorkloadDecisionJournal {
     const planned = planWorkloadRoutes(config, agentId, inventory, assignment)
     if (planned.status !== "ready") fail("UNAVAILABLE")
     return this.transaction(() => {
-      const {source,sourceDigest,workKey} = this.source(ref)
+      const {source,sourceDigest,workKey} = this.source(ref, agentId)
       const existing = this.db.prepare(
-        "SELECT record_id,content_json,length(CAST(content_json AS BLOB)) AS bytes FROM loom_workload_records WHERE assignment_id=? OR work_key=? LIMIT 2",
+        "SELECT assignment_id,owner_session,work_key,record_id,content_json,length(CAST(content_json AS BLOB)) AS bytes FROM loom_workload_records WHERE assignment_id=? OR work_key=? LIMIT 2",
       ).all(assignment.assignmentId, workKey) as unknown[]
       const payload = {
         schema: "loom.workload-candidate/v1" as const,
@@ -164,7 +167,7 @@ export class WorkloadDecisionJournal {
   get(assignmentId: string, ownerSessionID: string): WorkloadCandidateRecord | null {
     const id = uid(assignmentId,"assignmentId"), owner = uid(ownerSessionID,"ownerSessionID")
     const row = this.db.prepare(
-      "SELECT record_id,content_json,length(CAST(content_json AS BLOB)) AS bytes FROM loom_workload_records WHERE assignment_id=? AND owner_session=?",
+      "SELECT assignment_id,owner_session,work_key,record_id,content_json,length(CAST(content_json AS BLOB)) AS bytes FROM loom_workload_records WHERE assignment_id=? AND owner_session=?",
     ).get(id,owner)
     return row ? safeRecord(row) : null
   }

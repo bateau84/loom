@@ -221,7 +221,7 @@ export function planWorkloadRoutes(
   if (!policy) return {
     status: "unavailable",
     reason: "tier-unconfigured",
-    decision: decision(assignment, agentId, requested, selected, riskFactors, reasons, undefined),
+    decision: decision(assignment, agentId, requested, selected, riskFactors, reasons, undefined, policyVersion),
   }
 
   // A workload assessment is never an explicit authorization to spend. Keep
