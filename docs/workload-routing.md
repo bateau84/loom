@@ -61,7 +61,7 @@ These are illustrative names, not a current OpenCode model catalog or pricing re
 
 The selected tier is the maximum of the request, risk floor, and all configured agent/role minimums. A cheap requested tier cannot lower a mandatory floor. Later independent assignments may choose a cheaper tier, but a `continuation` is **not** a safe new selection boundary and returns `unsafe-boundary`. These fixed risk classifications are conservative policy defaults for this prototype, **not** independently verified claims that a particular file touches an authority boundary. An eventual trusted work-admission boundary must supply real source and scope evidence rather than accepting a model's claims as authority.
 
-The decision record includes assignment/objective/agent, normalized risk factors, requested/resolved tier, reasons, selected class/effort, and the planned route if eligible. It carries a deterministic digest and has bounded source fields. **It is reproducible after serialization, not persisted by this implementation and not host-attested.** A second attempt ID does not prove an independent user objective; `objectiveId` is correlation data, not provenance.
+The decision record includes assignment/objective/agent, normalized risk factors, requested/resolved tier, reasons, selected class/effort, and the planned route if eligible. It carries a deterministic digest and enforces a **4,096-byte UTF-8 decision-record bound**, including opaque route identifiers. **It is reproducible after serialization, not persisted by this implementation and not host-attested.** A second attempt ID does not prove an independent user objective; `objectiveId` is correlation data, not provenance.
 
 ## Known boundaries and remaining work
 

@@ -194,6 +194,12 @@ test("decision is bounded and reproducible after serializing its work identity",
   assert.deepEqual(JSON.parse(JSON.stringify(first.decision)), first.decision)
 })
 
+test("opaque inventory identifiers cannot inflate a routing decision beyond its bound", () => {
+  assert.throws(() => planWorkloadRoutes(configured(), "architect",
+    [route("provider-" + "p".repeat(5000), "fast")], assignment("large-route")),
+  /LOOM_WORKLOAD_LIMIT: decision exceeds 4096 bytes/)
+})
+
 test("routing-disabled and unknown agents leave previous behavior unchanged", () => {
   const disabled = planWorkloadRoutes(defaults(), "architect", inventory, assignment("disabled"))
   assert.equal(disabled.status, "disabled")

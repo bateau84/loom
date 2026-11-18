@@ -102,6 +102,10 @@ function decision(
     policy: policy ?? null,
     route,
   }
+  // Bound the emitted record independently of opaque native inventory strings.
+  // The receipt is deliberately small enough for review and later persistence.
+  if (Buffer.byteLength(JSON.stringify(payload), "utf8") > 4096)
+    throw new Error("LOOM_WORKLOAD_LIMIT: decision exceeds 4096 bytes")
   // Stable for the same exact inputs and route. A digest is correlation, NOT a
   // host-attested decision, trusted origin, account guarantee, or retained receipt.
   return { id: digest(payload), ...payload }
