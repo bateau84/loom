@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 from installed_host_smoke import PrivateHost, installed_plugin_inventory, isolated_environment, require
 from installed_questions import Scenario, audit_session, events, final_events, idle, request, result_value
@@ -28,7 +29,7 @@ def run(args):
     report = {'status': 'UNPROVEN', 'native_evaluator': 'UNPROVEN', 'checks': [],
               'qualification': 'Actual native General-to-Evaluator delegation, skill/trace/public-record/restart observer mechanics with a local scripted provider and fixture source history. No real-model reasoning or original-work audit.'}
     host = None
-    report['candidate'] = installed_plugin_inventory(args.artifact.resolve(), args.plugin.resolve(), args.expect_plugin_version, '2.2.6')
+    report['candidate'] = installed_plugin_inventory(args.artifact.resolve(), args.plugin.resolve(), args.expect_plugin_version, '2.3.0')
     report['observer_sha256'] = hashlib.sha256((repo / 'tools/evaluator-observer/server.ts').read_bytes()).hexdigest()
     try:
         with (tempfile.TemporaryDirectory(prefix='loom-evaluator-observer-installed-') as temporary,
@@ -46,7 +47,7 @@ def run(args):
                     report['filewatcher'] = 'Disabled only on owned disposable host; watcher behavior not qualified'
                 report['versions'] = {name: subprocess.check_output(command, text=True, env=env, timeout=15).strip()
                                       for name, command in [('host', [str(args.opencode.resolve()), '--version']), ('bun', ['bun', '--version'])]}
-                require(report['versions']['host'] in ('2.2.6', 'opencode v2.2.6'), 'Exact host 2.2.6 required')
+                require(report['versions']['host'] in ('2.3.0', 'opencode v2.3.0'), 'Exact host 2.3.0 required')
                 subprocess.run(['git', 'init', '-q', str(project)], check=True, env=env, timeout=10)
                 config = {'plugins': ['*', str(args.plugin.resolve()), str(repo / 'tests/question-host'), str(repo / 'tools/evaluator-observer')],
                           'agents': {agent: {'description': 'observer fixture', 'mode': mode, 'model': 'question-fixture/reader',
@@ -123,18 +124,68 @@ return result.id;
                 start_offset = len(events(root))
                 request(host, 'POST', f'/api/session/{general}/prompt', {'text': 'LOOM_HARNESS_JOB:' + parent_job})
                 scenario.await_event(lambda event: event['type'] == 'model-request' and event['data']['sessionID'] == general)
-                idle(host, [general])
+                # OpenCode 2.3.0 dispatch returns a running background child. The
+                # parent becoming idle is not evidence of child execution or a
+                # public result. Resolve the child from the native dispatch tool,
+                # then wait for its *actual* registered write before reading it.
+                delegation = scenario.await_event(lambda event: event['type'] == 'tool-after'
+                    and event['data']['sessionID'] == general and event['data']['tool'] == 'subagent')
+                require(delegation['data']['status'] == 'completed', 'Native subagent dispatch did not return a handle')
+                child = delegation['data']['result']['output']['sessionID']
+                scenario.await_event(lambda event: event['type'] == 'tool-after'
+                    and event['data']['sessionID'] == child and event['data']['tool'] in ('loom_record', 'loom.record')
+                    and event['data'].get('input', {}).get('operation') == 'add'
+                    and event['data']['status'] == 'completed')
+                idle(host, [general, child])
                 observed_calls = [event for event in events(root)[start_offset:] if event['type'] == 'tool-after']
                 report['fixture_tool_statuses'] = [{'tool': event['data']['tool'], 'status': event['data']['status']} for event in observed_calls]
                 delegations = [event['data'] for event in observed_calls if event['data']['sessionID'] == general and event['data']['tool'] == 'subagent']
-                require(len(delegations) == 1 and delegations[0]['status'] == 'completed', 'Native General-to-Evaluator dispatch did not complete')
-                child = delegations[0]['result']['output']['sessionID']
-                writes = [event for event in observed_calls if event['data']['sessionID'] == child and event['data']['tool'] in ('loom_record', 'loom.record') and event['data'].get('input', {}).get('operation') == 'add' and event['data']['status'] == 'completed']
+                require(len(delegations) == 1 and delegations[0]['status'] == 'completed'
+                        and delegations[0]['result']['output']['sessionID'] == child,
+                        'Native General-to-Evaluator dispatch did not retain one child identity')
+                writes = [event for event in observed_calls if event['data']['sessionID'] == child
+                          and event['data']['tool'] in ('loom_record', 'loom.record')
+                          and event['data'].get('input', {}).get('operation') == 'add'
+                          and event['data']['status'] == 'completed']
                 require(len(writes) == 1, 'Native Evaluator did not write exactly one public result')
                 result = result_value(writes[0])
                 query = {'operation': 'query', 'action_id': result['action_id'], 'record_id': result['id']}
+                def settle_child_notification(before, label):
+                    # A native direct prompt to an already delegated 2.3.0
+                    # child creates a new background completion period. Its
+                    # synthetic notice wakes General *after* the child is idle.
+                    # Do not take an observer-isolation snapshot until this
+                    # host-owned parent work has actually settled.
+                    deadline = time.monotonic() + 25
+                    while time.monotonic() < deadline:
+                        seen = events(root)[before:]
+                        notices = [(i, e) for i, e in enumerate(seen)
+                            if e['type'] == 'native-event'
+                            and e['data'].get('type') == 'session.inbox.enqueued'
+                            and e['data']['data'].get('sessionID') == general
+                            and e['data']['data'].get('item', {}).get('type') == 'synthetic'
+                            and e['data']['data']['item'].get('payload', {}).get('metadata', {}).get('source') == 'subagent'
+                            and e['data']['data']['item']['payload']['metadata'].get('childID') == child]
+                        last_notice = max((i for i, _ in notices), default=-1)
+                        settled = bool(notices) and any(i > last_notice
+                            and e['type'] == 'native-event'
+                            and e['data'].get('type') == 'session.execution.succeeded'
+                            and e['data']['data'].get('sessionID') == general
+                            for i, e in enumerate(seen))
+                        if settled and not any(sid in request(host, 'GET', '/api/session/active')
+                                               for sid in (general, child)):
+                            report.setdefault('native_completion_periods', []).append({
+                                'label': label, 'notices': len(notices),
+                                'parent_settled': True, 'child_session_id': child,
+                            })
+                            return
+                        time.sleep(0.05)
+                    raise RuntimeError('Native child notification did not settle before ' + label)
+
+                before_initial_read = len(events(root))
                 initial = scenario.invoke(child, 'record', query)['items']
                 require(len(initial) == 1 and {key: value for key, value in initial[0].items() if key != 'sequence'} == result, 'Initial public read changed immutable record')
+                settle_child_notification(before_initial_read, 'ordinary-scope-isolation')
                 audit_file = next(receipts.glob('*.ndjson'))
                 observed = audit_file.read_text()
                 require('PRIVATE_NATIVE_SENTINEL' not in observed and 'PRIVATE_NATIVE_SKILL_SENTINEL' not in observed and 'fixture://' not in observed, 'Observer leaked source, skill or statement')
@@ -142,7 +193,9 @@ return result.id;
                 require(audit_file.read_text() == observed, 'Unrelated ordinary Session was observed')
                 report['checks'].append({'name': 'native-scoped-private-public-record-receipt', 'status': 'PASS'})
                 (project / '.loom.yaml').write_text('instructions: {enabled: false}\nledger: {capture: off}\n')
+                before_opt_out = len(events(root))
                 scenario.invoke(child, 'record', query)
+                settle_child_notification(before_opt_out, 'capture-opt-out')
                 require(audit_file.read_text() == observed, 'Capture opt-out did not suppress native receipts')
                 report['checks'].append({'name': 'native-capture-opt-out', 'status': 'PASS'})
                 (project / '.loom.yaml').write_text('instructions: {enabled: false}\nledger: {capture: automatic}\n')

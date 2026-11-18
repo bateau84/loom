@@ -1,4 +1,4 @@
-"""Exact installed OpenCode 2.2.6 transform replay and plugin-group lifecycle proof.
+"""Exact installed OpenCode 2.3.0 transform replay and plugin-group lifecycle proof.
 
 Loads the npm-packed Loom server through a fault-injection wrapper inside
 an UNMODIFIED native host. Only isolated local in-memory providers are used.

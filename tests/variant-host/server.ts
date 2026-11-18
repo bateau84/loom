@@ -27,6 +27,25 @@ export default Plugin.define({
       // A failed receipt is an error, never a clean provider delivery.
       appendFileSync(join(root, "variant-events.ndjson"), JSON.stringify({ type, data }) + "\n")
     }
+    // Observe host-owned lifecycle boundaries without retaining prompt contents.
+    // These diagnostic receipts cannot stand in for final provider evidence.
+    const stop = new AbortController()
+    const observer = (async () => {
+      try {
+        for await (const event of ctx.event.subscribe({ signal: stop.signal })) {
+          if (!event.type.startsWith("session.inbox.") && !event.type.startsWith("session.execution.")
+            && !event.type.startsWith("session.step.")) continue
+          const payload = event.data as Record<string, any>
+          audit("native-lifecycle", {
+            kind: event.type, sessionID: payload?.sessionID ?? null,
+            inboxID: payload?.inboxID ?? null, item: payload?.item?.type ?? null,
+            delivery: payload?.item?.delivery ?? null,
+            childID: payload?.item?.payload?.metadata?.childID ?? null,
+            source: payload?.item?.payload?.metadata?.source ?? null,
+          })
+        }
+      } catch (error) { if (!stop.signal.aborted) audit("lifecycle-observer-failure", { message: String(error).slice(0,200) }) }
+    })()
     const model = (id: string) => ({
       specificationVersion: "v3",
       provider: providerID,
@@ -131,9 +150,15 @@ export default Plugin.define({
       }))
       audit("fixture-ready", { host: ctx.app.version, providerID, key })
     } catch (error) {
+      stop.abort()
+      await observer
       await Promise.allSettled(disposers.map(disposer => disposer.dispose()))
       throw error
     }
-    return async () => { await Promise.allSettled(disposers.map(disposer => disposer.dispose())) }
+    return async () => {
+      stop.abort()
+      await observer
+      await Promise.allSettled(disposers.map(disposer => disposer.dispose()))
+    }
   },
 })

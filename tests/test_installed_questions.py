@@ -395,8 +395,8 @@ class QuestionHarnessTest(unittest.TestCase):
 
                 root = Path(temp)
                 output = root / 'report'
-                with patch('installed_questions.installed_plugin_inventory', return_value={'sdk_version': '2.2.6'}), \
-                        patch('installed_questions.subprocess.check_output', return_value='2.2.6'), \
+                with patch('installed_questions.installed_plugin_inventory', return_value={'sdk_version': '2.3.0'}), \
+                        patch('installed_questions.subprocess.check_output', return_value='2.3.0'), \
                         patch('installed_questions.PrivateHost', side_effect=start):
                     report = run('/unused-host', repo, output, root / 'artifact.tgz', root / 'plugin', '2.0.0-alpha.1')
 
@@ -422,18 +422,18 @@ class QuestionHarnessTest(unittest.TestCase):
 
     def test_plan4_applicability_is_neither_an_executed_pass_nor_a_general_waiver(self):
         checks = [{'name': name, 'status': 'PASS'} for name in REQUIRED_INSTALLED_CHECKS] + [dict(READ_DENIAL_APPLICABILITY)]
-        self.assertEqual(qualification_status(checks, '2.2.6'), 'PASS')
+        self.assertEqual(qualification_status(checks, '2.3.0'), 'PASS')
         self.assertEqual(checks[-1]['status'], 'NOT APPLICABLE')
         self.assertFalse(checks[-1]['executed'])
         self.assertEqual(qualification_status(checks, '2.0.29'), 'UNPROVEN')
         self.assertEqual(qualification_status(checks, '2.0.33'), 'UNPROVEN')
-        self.assertEqual(qualification_status(checks[1:], '2.2.6'), 'UNPROVEN')
+        self.assertEqual(qualification_status(checks[1:], '2.3.0'), 'UNPROVEN')
         for replacement in [{'name': READ_DENIAL_APPLICABILITY['name'], 'status': 'PASS'},
                             {**READ_DENIAL_APPLICABILITY, 'executed': True},
                             {**READ_DENIAL_APPLICABILITY, 'sources': []},
                             {**READ_DENIAL_APPLICABILITY, 'rationale': 'permission.assert enforces session reads'}]:
-            self.assertEqual(qualification_status(checks[:-1] + [replacement], '2.2.6'), 'UNPROVEN')
-        self.assertEqual(READ_DENIAL_APPLICABILITY['host_version'], '2.2.6')
+            self.assertEqual(qualification_status(checks[:-1] + [replacement], '2.3.0'), 'UNPROVEN')
+        self.assertEqual(READ_DENIAL_APPLICABILITY['host_version'], '2.3.0')
         self.assertIn('packages/core/src/session/session.ts', READ_DENIAL_APPLICABILITY['sources'][-1])
 
     def test_finishing_a_command_does_not_count_another_running_sessions_tool(self):
@@ -492,7 +492,9 @@ class QuestionHarnessTest(unittest.TestCase):
             verify_provider_inputs([{'type': 'provider-inputs', 'data': {'notices': event['data']['notices'] * 2}}])
 
     def test_exact_native_admission_rejects_duplicate_retarget_or_changed_notice(self):
-        good = {'data': {'sessionID': 'asker', 'item': {'payload': {'metadata': {'answer_id': 'answer'}}, 'delivery': 'steer'}}}
+        good = {'data': {'sessionID': 'asker', 'item': {'type': 'synthetic', 'payload': {
+            'metadata': {'format': 'loom-answer-notice/v1', 'question_id': 'question', 'answer_id': 'answer'}},
+            'delivery': 'steer'}}}
         verify_single_admission([good], 'asker', 'answer')
         for inputs, target, answer in [([], 'asker', 'answer'), ([good, good], 'asker', 'answer'), ([good], 'other', 'answer'), ([good], 'asker', 'other')]:
             with self.subTest(inputs=inputs, target=target, answer=answer), self.assertRaises(RuntimeError):
@@ -510,15 +512,51 @@ class QuestionHarnessTest(unittest.TestCase):
             with self.subTest(event=event), self.assertRaises(RuntimeError):
                 no_contact([event])
 
+    def test_question_notices_are_valid_but_not_answer_resumes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            def notice(metadata):
+                return {'type': 'native-event', 'data': {'type': 'session.inbox.enqueued',
+                    'data': {'sessionID': 'asker', 'item': {'type': 'synthetic', 'payload': {'metadata': metadata}}}}}
+            question = notice({'format': 'loom-question-notice/v1', 'question_id': 'q'})
+            answer = notice({'format': 'loom-answer-notice/v1', 'question_id': 'q', 'answer_id': 'a'})
+            native = notice({'source': 'subagent', 'childID': 'child', 'state': 'completed'})
+            (root / 'audit.ndjson').write_text('\n'.join(json.dumps(row) for row in [question, native, answer]))
+            self.assertEqual(synthetic_events(root), [answer['data']])
+            for metadata in [
+                {'format': 'loom-question-notice/v1', 'question_id': ''},
+                {'format': 'loom-question-notice/v1', 'question_id': 'q', 'answer_id': 'a'},
+            ]:
+                with self.subTest(metadata=metadata):
+                    (root / 'audit.ndjson').write_text(json.dumps(notice(metadata)))
+                    with self.assertRaisesRegex(RuntimeError, 'Malformed Loom question notice'):
+                        synthetic_events(root)
+
     def test_raw_request_and_admission_counts_ignore_scripted_write_guards(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            admission = {'type': 'native-event', 'data': {'type': 'session.inbox.enqueued', 'data': {'sessionID': 'asker', 'item': {'type': 'synthetic'}}}}
+            admission = {'type': 'native-event', 'data': {'type': 'session.inbox.enqueued',
+                'data': {'sessionID': 'asker', 'item': {'type': 'synthetic', 'payload': {
+                    'metadata': {'format': 'loom-answer-notice/v1', 'question_id': 'q', 'answer_id': 'a'}}}}}}
+            background = {'type': 'native-event', 'data': {'type': 'session.inbox.enqueued',
+                'data': {'sessionID': 'asker', 'item': {'type': 'synthetic', 'payload': {
+                    'metadata': {'source': 'subagent', 'childID': 'child-1', 'state': 'completed'}}}}}}
             request = {'type': 'model-request', 'data': {'sessionID': 'asker'}}
-            (root / 'audit.ndjson').write_text('\n'.join(json.dumps(e) for e in [admission, request, admission, request]))
+            (root / 'audit.ndjson').write_text('\n'.join(json.dumps(e) for e in
+                [admission, request, background, admission, request]))
             self.assertEqual(len(synthetic_events(root)), 2)
             self.assertEqual(len(target_requests(root, 'asker')), 2)
             self.assertEqual(len(target_requests(root, 'other')), 0)
+            bad = json.loads(json.dumps(admission))
+            bad['data']['data']['item']['payload']['metadata'].pop('answer_id')
+            (root / 'audit.ndjson').write_text(json.dumps(bad))
+            with self.assertRaisesRegex(RuntimeError, 'Malformed Loom answer notice'):
+                synthetic_events(root)
+            spoofed = json.loads(json.dumps(admission))
+            spoofed['data']['data']['item']['payload']['metadata']['format'] = 'not-a-Loom-answer'
+            (root / 'audit.ndjson').write_text(json.dumps(spoofed))
+            with self.assertRaisesRegex(RuntimeError, 'Unrecognized synthetic claimed'):
+                synthetic_events(root)
 
     def test_frozen_old_prerequisite_hydrates_and_detects_changed_raw_bytes(self):
         saved = fixture_snapshot(Path(__file__).resolve().parents[1])

@@ -135,7 +135,11 @@ def collect(log_paths: list[Path], parent_export: Path, child_exports: list[Path
         blockers.append('observer-scope-mismatch')
     if any(rows[-1]['type'] != 'closed' for rows, _ in logs):
         blockers.append('observer-closure-missing')
-    if any(scope['host_version'] != '2.2.6' for scope in scopes.values()):
+    # This collector only checks version-labelled local receipts. Accept the
+    # two source-inspected host profiles without turning either into proof of
+    # installed capabilities, and refuse a mixed-version audit/recovery pair.
+    versions = {scope['host_version'] for scope in scopes.values()}
+    if len(versions) != 1 or not versions <= {'2.2.6', '2.3.0'}:
         blockers.append('unsupported-host-version')
     if any(row['type'] in ('limit', 'observation-gap') for row in entries):
         blockers.append('observer-coverage-gap')

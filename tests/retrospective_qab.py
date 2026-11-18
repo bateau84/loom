@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Opt-in real-model QA-B runner for installed Loom + OpenCode 2.2.6.
+"""Opt-in real-model QA-B runner for installed Loom + OpenCode 2.3.0.
 
 Runs ONLY against a freshly created, disposable local project and host. Requires
 an explicit real model and an isolated provider seed. Never uses question-fixture,
@@ -31,7 +31,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 from installed_host_smoke import PrivateHost, isolated_environment, installed_plugin_inventory, require
 from retrospective_qab_oracle import CONTROLS, grade_controls, verify_primary, verdict, paired_trace_events
 
-EXPECTED_HOST = "2.2.6"
+EXPECTED_HOST = "2.3.0"
 SOURCE_MODEL = "qab-source/scripted"  # Only writes *model requests*, never OpenCode tool results.
 FAKE_SECRET = "sk-proj-QAB-SYNTHETIC-TEST-ONLY-743825947162"
 HANDOFF = "General reports: implementation succeeded on the first try; no user corrections; tests passed."
@@ -133,7 +133,7 @@ SOURCE_KINDS = ("failure", "retry", "user", "review", "verified")
 def lock_source_file(target: Path) -> None:
     """Create a real, verified OS write failure on a disposable source file.
 
-    OpenCode 2.2.6 hides tools when their native permission is denied, so
+    OpenCode 2.3.0 hides tools when their native permission is denied, so
     Session-policy denial is not a valid producer of a model-called tool error.
     This guard leaves patch advertised and verifies the kernel rejects writes.
     """
@@ -338,7 +338,7 @@ def completed_model_text(previous: list, current: list) -> str:
 def summarize_native_tools(messages: list) -> dict:
     """Project native and Code Mode tool statuses, never tool inputs/outputs.
 
-    OpenCode 2.2.6 can mark the outer Code Mode execute as completed even when
+    OpenCode 2.3.0 can mark the outer Code Mode execute as completed even when
     its returned metadata.toolCalls contains a failed nested tool. Absence of
     this metadata is UNKNOWN, not evidence of zero nested failures.
     """
@@ -424,7 +424,39 @@ def invoke_model(host, root, session, text, model, timeout):
         time.sleep(0.05)
     else:
         raise RuntimeError("Accepted prompt never produced a real primary model request")
-    wait_idle(host, session, max(1, deadline - time.monotonic()))
+    try:
+        wait_idle(host, session, max(1, deadline - time.monotonic()))
+    except RuntimeError:
+        # Only diagnostic metadata, never provider inputs, tool arguments,
+        # prompt text, credentials, or model output. Do not infer success
+        # from a model.request event when the actual native turn is stalled.
+        observed_wait = audit_events(root)[before:]
+        activity = [e for e in observed_wait if e.get("type") in
+                    ("model-request", "tool-before", "tool-after")]
+        phase_path = root / "source-model-attempts.ndjson"
+        phase_attempts = ([json.loads(line) for line in phase_path.read_text().splitlines()[-8:]]
+                          if phase_path.exists() else [])
+        diagnostic = {
+            "source_phase_attempts": phase_attempts,
+            "session_active": session in api(host, "GET", "/api/session/active"),
+            "model_request_count": sum(e.get("type") == "model-request"
+                                       and e.get("data", {}).get("sessionID") == session
+                                       for e in observed_wait),
+            "recent_tool_activity": [
+                {"type": e["type"], "tool": e.get("data", {}).get("tool"),
+                 "status": e.get("data", {}).get("status")}
+                for e in activity[-12:]],
+            "assistant_states": [{
+                "finish": bool(item.get("finish")),
+                "error_type": (item.get("error") or {}).get("type")
+                    if isinstance(item.get("error"), dict) else None,
+                "completed": (item.get("time") or {}).get("completed")
+                    if isinstance(item.get("time"), dict) else None,
+            } for item in session_messages(host, session)[:8]
+                if isinstance(item, dict) and item.get("type") == "assistant"],
+        }
+        raise RuntimeError("Native Session did not become idle within explicit bound; "
+                           "bounded diagnostics=" + json.dumps(diagnostic))
     observed = audit_events(root)[before:]
     primary = [event for event in observed if event.get("type") == "model-request"
                and event.get("data", {}).get("sessionID") == session
@@ -807,7 +839,7 @@ def run(args):
         require(args.timeout >= 15 and args.timeout <= 600, "Each model turn timeout must be 15–600 s")
         report["model"] = args.model
         report["candidate"] = installed_plugin_inventory(args.artifact.resolve(), args.plugin.resolve(),
-                                                         args.expect_plugin_version, "2.2.6")
+                                                         args.expect_plugin_version, "2.3.0")
         # The audit is a local OpenCode V2 plugin *directory*. Its entrypoint
         # and dependency tree must be present before starting a real host.
         audit_dir = args.repository.resolve() / "tests/retrospective-host"
@@ -822,7 +854,7 @@ def run(args):
             report["skill_revision"] = args.skill_revision
             report["skill_sha256"] = hashlib.sha256(skill.encode()).hexdigest()
         version = subprocess.check_output([str(args.opencode.resolve()), "--version"], text=True, timeout=15).strip()
-        require(version in ("2.2.6", "opencode v2.2.6"), "Installed CLI must be exact 2.2.6")
+        require(version in ("2.3.0", "opencode v2.3.0"), "Installed CLI must be exact 2.3.0")
         report["host_version"] = version
         with private_scenario(output, lambda: host) as root:
             project = root / "project"
@@ -1141,7 +1173,7 @@ def run(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repository", type=Path, default=Path(__file__).resolve().parents[1])
-    parser.add_argument("--opencode", type=Path, required=True, help="Installed exact 2.2.6 CLI")
+    parser.add_argument("--opencode", type=Path, required=True, help="Installed exact 2.3.0 CLI")
     parser.add_argument("--plugin", type=Path, required=True, help="Installed candidate package")
     parser.add_argument("--artifact", type=Path, required=True, help="Exact npm pack tarball")
     parser.add_argument("--expect-plugin-version", default="2.0.0-alpha.1")

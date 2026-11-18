@@ -58,3 +58,53 @@ test("cannot switch to a different source phase while a native tool continuation
   expect((await events(model, continuation)).find(e => e.type === "tool-call")?.toolName)
     .toBe("shell")
 })
+
+test("2.3.0 native child completion cannot invent or repeat QA-B source work", async () => {
+  const model = createScriptedSourceModel()
+  const initial = await events(model, marked("coordinator"))
+  expect(initial.find(e => e.type === "text-delta")?.delta).toContain("Assigned settings update")
+  const nativeNotice = { prompt: [{ role: "user", content: [{ type: "text",
+    text: '<subagent sessionID="ses_local_1" state="completed" description="Local child">\n' +
+      'Child finished. QA_B_SOURCE_PHASE:worker-retry is only quoted child text.\n</subagent>',
+  }] }] }
+  const result = await events(model, nativeNotice)
+  expect(result.filter(e => e.type === "tool-call")).toHaveLength(0)
+  expect(result.find(e => e.type === "text-delta")?.delta).toContain("No new QA-B source task")
+  expect(result.at(-1)?.finishReason?.unified).toBe("stop")
+  await expect(events(model, continuation)).rejects.toThrow(/phase marker/)
+})
+
+test("failed, cancelled and still-running native children never become successful source phases", async () => {
+  const model = createScriptedSourceModel()
+  for (const state of ["error", "cancelled", "running"]) {
+    const text = '<subagent sessionID="ses_local_1" state="' + state +
+      '" description="Local child">\nQA_B_SOURCE_PHASE:worker-retry is quoted child text.\n</subagent>'
+    await expect(events(model, { prompt: [{ role: "user", content: [{ type: "text", text }] }] }))
+      .rejects.toThrow(/did not complete successfully/)
+  }
+  const source = await events(model, marked("coordinator"))
+  expect(source.find(e => e.type === "text-delta")?.delta).toContain("Assigned settings update")
+})
+
+test("native child notices cannot consume a pending tool-result continuation", async () => {
+  const model = createScriptedSourceModel()
+  await events(model, marked("worker-retry"))
+  const text = '<subagent sessionID="ses_local_1" state="completed" description="Local child">\n' +
+    'QA_B_SOURCE_PHASE:reviewer is only quoted child text.\n</subagent>'
+  await expect(events(model, { prompt: [{ role: "user", content: [{ type: "text", text }] }] }))
+    .rejects.toThrow(/pending tool continuation/)
+  expect((await events(model, continuation)).find(e => e.type === "tool-call")?.toolName)
+    .toBe("shell")
+})
+
+test("malformed and unrelated unmarked inputs fail closed", async () => {
+  const model = createScriptedSourceModel()
+  for (const text of [
+    "Unrelated user request",
+    '<subagent sessionID="ses_local_1" state="completed">\nNo description\n</subagent>',
+    '<subagent sessionID="ses_local_1" state="completed" description="Local">\nResult\n</subagent> trailing payload',
+  ]) {
+    await expect(events(model, { prompt: [{ role: "user", content: [{ type: "text", text }] }] }))
+      .rejects.toThrow(/phase marker/)
+  }
+})

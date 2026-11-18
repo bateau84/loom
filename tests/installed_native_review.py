@@ -1,4 +1,4 @@
-"""Qualify native review evidence boundaries on isolated OpenCode 2.2.6.
+"""Qualify native review evidence boundaries on isolated OpenCode 2.3.0.
 
 Only the external model is scripted. Native dispatch, admission, reads, policies,
 Loom tools/observer and persistence are real. No production review-admission or
@@ -24,8 +24,8 @@ from installed_instruction_variants import verify_host_version
 from installed_questions import Scenario, audit_session, events, final_events, idle, request
 from native_review_oracle import call_key, dispatch_receipts, source_basis
 
-HOST = "2.2.6"
-SOURCE_REVISION = "dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06"
+HOST = "2.3.0"
+SOURCE_REVISION = "a6b15d33daf6ab7d35569f6d711fdb630b9f04e7"
 SCENARIOS = {"Q1": "parent-child identity", "Q2": "concurrent and reused children",
              "Q3": "original mandate", "Q4": "effective evidence basis",
              "Q5": "recipient authorization", "Q6": "ambiguous observations",
@@ -118,6 +118,14 @@ class ReviewScenario(Scenario):
                 and terminal["data"]["data"].get("executed") is False, "Durable native terminal disagrees with direct tool receipt")
         receipt["terminal_event_id"] = terminal["data"]["id"]
         receipt["return_status"] = terminal["data"]["data"]["metadata"]["status"]
+        if not background:
+            # OpenCode 2.3.0 returns a background handle immediately. The parent
+            # tool success is not child completion or proof of source retrieval.
+            wait_for(self.root, lambda e: e["type"] == "native-event"
+                     and e["data"].get("type") == "session.execution.succeeded"
+                     and e["data"]["data"].get("sessionID") == receipt["child_session_id"],
+                     offset=start)
+            idle(self.host, [receipt["child_session_id"]])
         return receipt
 
 
@@ -171,7 +179,7 @@ def run(args) -> dict:
             try:
                 verify_host_version(version)
             except RuntimeError:
-                report["unqualified_reason"] = "CLI differs from inspected 2.2.6 profile; requalification required"
+                report["unqualified_reason"] = "CLI differs from inspected 2.3.0 profile; requalification required"
                 return report
             permissions = [{"action": "*", "resource": "*", "effect": "allow"}]
             config = {"plugins": ["*", str(args.plugin.resolve()), str(repo / "tests/question-host")],
@@ -240,14 +248,26 @@ def run(args) -> dict:
                 require(len(started) == 2 and len({call_key(e) for e in started}) == 2, "Concurrent native call IDs collided")
                 fast_key = call_key(next(e for e in started if e["input"]["prompt"] == "LOOM_HARNESS_JOB:" + fast))
                 slow_key = call_key(next(e for e in started if e["input"]["prompt"] == "LOOM_HARNESS_JOB:" + slow))
+                # Parent tool returns are immediate on 2.3.0; they cannot serve
+                # as evidence of reverse child completion. Match each parent
+                # native call to its observed child and check that child's real
+                # execution terminal after releasing its provider barrier.
+                concurrent = [r for r in dispatch_receipts(events(root)) if r["before_receipt"] > overlap_start]
+                mapped = {tuple(r["parent"]): r["child_session_id"] for r in concurrent if r["binding"] == "observed"}
+                require(len(concurrent) == 2 and fast_key in mapped and slow_key in mapped,
+                        "Concurrent background dispatch did not retain both native child identities")
+                fast_child, slow_child = mapped[fast_key], mapped[slow_key]
+                def completed(sid):
+                    return any(e["type"] == "native-event" and e["data"].get("type") == "session.execution.succeeded"
+                               and e["data"]["data"].get("sessionID") == sid for e in events(root)[overlap_start:])
                 scenario.release(fast)
-                wait_for(root, lambda e: e["type"] == "tool-after" and e["data"].get("tool") == "subagent"
-                         and call_key(e["data"]) == fast_key, offset=overlap_start)
-                require(not any(e["type"] == "tool-after" and e["data"].get("tool") == "subagent"
-                                and call_key(e["data"]) == slow_key for e in events(root)[overlap_start:]),
-                        "Slow native child completed before its explicit provider barrier was released")
+                wait_for(root, lambda e: e["type"] == "native-event" and e["data"].get("type") == "session.execution.succeeded"
+                         and e["data"]["data"].get("sessionID") == fast_child, offset=overlap_start)
+                require(not completed(slow_child), "Slow native child completed before its provider barrier was released")
                 scenario.release(slow)
-                idle(host, [parent])
+                wait_for(root, lambda e: e["type"] == "native-event" and e["data"].get("type") == "session.execution.succeeded"
+                         and e["data"]["data"].get("sessionID") == slow_child, offset=overlap_start)
+                idle(host, [parent, fast_child, slow_child])
                 concurrent = [r for r in dispatch_receipts(events(root)) if r["before_receipt"] > overlap_start]
                 require(len(concurrent) == 2 and all(r["binding"] == "observed" for r in concurrent)
                         and len({r["child_session_id"] for r in concurrent}) == 2, "Concurrent children were conflated")
@@ -336,8 +356,17 @@ def run(args) -> dict:
                                              "MANIFEST_POINTER:fixture://manifest-r1; requested evidence-a.txt sha256=" + subjects[0]["artifact"]["sha256"])
                 negative_basis = source_basis(events(root), negative["child_session_id"], "evidence-a.txt", sources["evidence-a.txt"])
                 require(not negative_basis["supplied"] and not negative_basis["retrieved"], "Pointer or citation manufactured source access")
-                returned = events(root)[negative["after_receipts"][0] - 1]["data"]["result"]
-                require("I inspected all task evidence" in json.dumps(returned), "Negative reviewer claim never traversed native return")
+                # On 2.3.0, the initial subagent tool result is a running
+                # handle. The substantive text must be observed in the host's
+                # native synthetic completion notice to the actual parent.
+                returned = wait_for(root, lambda e: e["type"] == "native-event"
+                    and e["data"].get("type") == "session.inbox.enqueued"
+                    and e["data"]["data"].get("sessionID") == parent
+                    and e["data"]["data"].get("item", {}).get("type") == "synthetic"
+                    and e["data"]["data"]["item"].get("payload", {}).get("metadata", {}).get("childID") == negative["child_session_id"]
+                    and "I inspected all task evidence" in e["data"]["data"]["item"]["payload"].get("text", ""))
+                require(returned["data"]["data"]["item"]["payload"]["metadata"]["source"] == "subagent",
+                        "Negative reviewer claim was not a native child completion notice")
                 check("Q4-supplied-retrieved-and-citation-only", retrieved=positive_basis, inline=inline_basis, pointer_only=negative_basis,
                       positive_admission_id=positive_admissions[0]["data"]["inboxID"],
                       cited_and_claimed_inspected="observed reviewer-authored return, not access proof")

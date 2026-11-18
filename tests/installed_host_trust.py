@@ -1,4 +1,4 @@
-"""Exercise OpenCode 2.2.6's current trust boundary without inference or live treatments.
+"""Exercise OpenCode 2.3.0's current trust boundary without inference or live treatments.
 
 PASS means the counterexamples and native identity/permission mechanics were
 observed. It never certifies a human, independent originating request, or consent.
@@ -17,7 +17,7 @@ from urllib.error import HTTPError
 from installed_host_smoke import PrivateHost, isolated_environment, require
 from installed_instruction_variants import request, verify_host_version
 
-HOST = "2.2.6"
+HOST = "2.3.0"
 FIXTURE_ID = "loom.host-trust.qualification.fixture"
 
 
@@ -70,7 +70,7 @@ def run(args) -> dict:
                                           text=True, timeout=15).strip()
         verify_host_version(version)
         report["observed_host"] = version
-        report["upstream_revision"] = "dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06"
+        report["upstream_revision"] = "a6b15d33daf6ab7d35569f6d711fdb630b9f04e7"
         with tempfile.TemporaryDirectory(prefix="loom-host-trust-") as temporary:
             root = Path(temporary).resolve()
             project = root / "project"

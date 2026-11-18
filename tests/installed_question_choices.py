@@ -13,6 +13,7 @@ import sqlite3
 import subprocess
 import tarfile
 import tempfile
+import time
 from contextlib import closing
 from pathlib import Path
 
@@ -43,13 +44,13 @@ def run(args):
         'status_scope': 'Required Loom delivery authorization, persistence and answer-ownership checks; host control-flow observations are separate.',
         'checks': [], 'host_observations': [], 'limits': [
         'Local scripted provider only; not model reasoning, human consent or spontaneous tool use.',
-        'Native permission behavior qualified on OpenCode 2.2.6 only; operator replies are scripted.',
+        'Native permission behavior retested on OpenCode 2.3.0; operator replies are scripted.',
         'Native admission is not processing or resolution. No automatic delivery retry is promised.']}
     host = None
     scratch = None
     root = None
     try:
-        report['candidate'] = installed_plugin_inventory(artifact, plugin, '2.0.0-alpha.1', '2.2.6')
+        report['candidate'] = installed_plugin_inventory(artifact, plugin, '2.0.0-alpha.1', '2.3.0')
         with tarfile.open(artifact) as archive:
             members = [m for m in archive.getmembers() if m.isfile()]
             for member in members:
@@ -61,7 +62,7 @@ def run(args):
             'tests/installed_question_choices.py', 'tests/installed_questions.py',
             'tests/installed_host_smoke.py', 'tests/question-host/server.ts', 'tests/question-host/provider.mjs')}
         report['host_version'] = subprocess.check_output([args.opencode, '--version'], text=True, timeout=15).strip()
-        require(report['host_version'] in ('2.2.6', 'opencode v2.2.6'), 'Requires pinned host 2.2.6')
+        require(report['host_version'] in ('2.3.0', 'opencode v2.3.0'), 'Requires pinned host 2.3.0')
         scratch = tempfile.TemporaryDirectory(prefix='loom-choice-proof-')
         root = Path(scratch.name).resolve()
         project = root / 'project'
@@ -315,14 +316,52 @@ def run(args):
             'target_session': reader, 'source_session': asker, 'native_notices': len(notices),
             'permission_rule': rules[0], 'restart_before_discovery_and_answer': True,
             'question_unchanged_across_restart': True, 'replayed_notices': 0,
-            'qualification': 'Unmodified OpenCode 2.2.6, real process restart, local scripted model; no human approval claim'})
+            'qualification': 'Unmodified OpenCode 2.3.0, real process restart, local scripted model; no human approval claim'})
 
+        choice_start = len(events(root))
         q = s.invoke(asker, 'record', {'operation': 'ask', 'question': 'Which store?',
             'answer_type': 'multi-choice', 'choices': choices,
             'recipient': {'kind': 'role', 'id': 'research'}, 'blocking': True})
         dispatch = q['dispatch']
-        require(dispatch['status'] == 'admission-observed' and dispatch['native_status'] == 'completed', 'No native completed dispatch')
+        require(dispatch['status'] == 'admission-observed' and dispatch['native_status'] == 'running',
+                'Native background dispatch was not admitted: ' + str(dispatch))
         child = dispatch['target_session_id']
+        # OpenCode 2.3.0 returns a background child handle, not the answer.
+        # Require the real specialist write and one host-owned synthetic
+        # completion notice before claiming the selected choice was delivered.
+        s.await_event(lambda e: e['type'] == 'tool-after'
+            and e['data'].get('sessionID') == child
+            and e['data'].get('tool') in ('loom_record', 'loom.record')
+            and e['data'].get('input', {}).get('operation') == 'answer'
+            and e['data']['input'].get('question_id') == q['id']
+            and e['data'].get('status') == 'completed')
+        s.await_event(lambda e: e['type'] == 'native-event'
+            and e['data'].get('type') == 'session.inbox.enqueued'
+            and e['data']['data'].get('sessionID') == asker
+            and e['data']['data'].get('item', {}).get('type') == 'synthetic'
+            and e['data']['data']['item'].get('payload', {}).get('metadata', {}).get('source') == 'subagent'
+            and e['data']['data']['item']['payload']['metadata'].get('childID') == child)
+        deadline = time.monotonic() + 20
+        while True:
+            current = events(root)[choice_start:]
+            notices = [i for i, e in enumerate(current) if e['type'] == 'native-event'
+                and e['data'].get('type') == 'session.inbox.enqueued'
+                and e['data']['data'].get('sessionID') == asker
+                and e['data']['data'].get('item', {}).get('type') == 'synthetic'
+                and e['data']['data']['item'].get('payload', {}).get('metadata', {}).get('source') == 'subagent'
+                and e['data']['data']['item']['payload']['metadata'].get('childID') == child]
+            require(len(notices) <= 1, 'Duplicate native specialist completion notice')
+            settled = len(notices) == 1 and any(i > notices[0]
+                and e['type'] == 'native-event'
+                and e['data'].get('type') == 'session.execution.succeeded'
+                and e['data']['data'].get('sessionID') == asker
+                for i, e in enumerate(current))
+            if settled and not any(sid in request(host, 'GET', '/api/session/active')
+                                   for sid in (asker, child)):
+                break
+            if time.monotonic() >= deadline:
+                raise RuntimeError('Native specialist completion did not settle with its parent')
+            time.sleep(.05)
         idle(host, [asker, child])
         native = request(host, 'GET', '/api/session/' + child)
         require(native['parentID'] == asker and native['agent'] == 'question-specialist', 'Wrong native child')

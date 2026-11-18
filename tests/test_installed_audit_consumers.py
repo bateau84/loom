@@ -36,7 +36,7 @@ class HostIO:
         host.label, host.closed = label, False
         host.proc.pid = 1000 + len(self.hosts)
         host.proc.poll.side_effect = lambda: 0 if host.closed else None
-        host.get.return_value = json.dumps({'version': '2.2.6'})
+        host.get.return_value = json.dumps({'version': '2.3.0'})
         host.wait_roster.return_value = ([], 0)
         self.hosts.append(host)
         if not (self.omit_ready is True or self.omit_ready == label):
@@ -123,8 +123,8 @@ class InstalledAuditConsumerTest(unittest.TestCase):
             patches.enter_context(patch.object(module, 'request', side_effect=io.request))
             patches.enter_context(patch.object(questions, 'request', side_effect=io.request))
             patches.enter_context(patch.object(module, 'installed_plugin_inventory',
-                                               return_value={'sdk_version': '2.2.6'}))
-            patches.enter_context(patch.object(module.subprocess, 'check_output', return_value='2.2.6'))
+                                               return_value={'sdk_version': '2.3.0'}))
+            patches.enter_context(patch.object(module.subprocess, 'check_output', return_value='2.3.0'))
             caught = None
             try:
                 if module is routing:

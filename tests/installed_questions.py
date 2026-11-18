@@ -1,4 +1,4 @@
-"""Real packed OpenCode 2.2.6 candidate + local scripted model.
+"""Real packed OpenCode 2.3.0 candidate + local scripted model.
 
 No replacement tool registration, ToolContext, permission identity, dispatch or
 resume implementation. Final assembled-candidate acceptance is a separate run.
@@ -33,13 +33,13 @@ from installed_host_smoke import (
 
 READ_DENIAL_APPLICABILITY = {
     'name': 'E2-selective-session-read-policy-denial', 'status': 'NOT APPLICABLE',
-    'qualification': 'NOT APPLICABLE ON PINNED HOST 2.2.6; reassess on host/API change',
-    'host_version': '2.2.6', 'executed': False, 'evidence_kind': 'tagged source/version analysis, not installed execution',
-    'sources': ['v2.2.6 packages/plugin/src/promise/adapter.ts: context2.session.get adapts host.session.get',
-                'v2.2.6 packages/core/src/session.ts: get delegates to sessions.forSession(sessionID).get()',
-                'v2.2.6 packages/core/src/session/session.ts: Session.get calls store.get and returns NotFoundError when absent'],
-    'rationale': 'In tagged v2.2.6, session.get delegates to direct lookup by ID and returns an existing Session or not-found; that path has no selective session-read ACL. permission.assert is a separate API and is not evidence that session.get enforces a read policy. This says nothing about synthetic execution permission.',
-    'authority': 'Tagged v2.2.6 source inspection for this upgrade; PR #182 only qualifies the historical 2.0.32 host. This is not installed execution or permission.assert evidence.',
+    'qualification': 'NOT APPLICABLE ON PINNED HOST 2.3.0; reassess on host/API change',
+    'host_version': '2.3.0', 'executed': False, 'evidence_kind': 'tagged source/version analysis, not installed execution',
+    'sources': ['v2.3.0 packages/plugin/src/promise/adapter.ts: context2.session.get adapts host.session.get',
+                'v2.3.0 packages/core/src/session.ts: get delegates to sessions.forSession(sessionID).get()',
+                'v2.3.0 packages/core/src/session/session.ts: Session.get calls store.get and returns NotFoundError when absent'],
+    'rationale': 'In tagged v2.3.0, session.get delegates to direct lookup by ID and returns an existing Session or not-found; that path has no selective session-read ACL. permission.assert is a separate API and is not evidence that session.get enforces a read policy. This says nothing about synthetic execution permission.',
+    'authority': 'Tagged v2.3.0 source inspection for this upgrade; PR #182 only qualifies the historical 2.0.32 host. This is not installed execution or permission.assert evidence.',
 }
 REQUIRED_INSTALLED_CHECKS = {
     'E1-no-plan-manual-question', 'E1-storage-failure-zero-contact', 'E6-typed-role-native-dispatch',
@@ -64,7 +64,7 @@ def qualification_status(checks, version):
     if any(by_name[name]['status'] != 'PASS' for name in REQUIRED_INSTALLED_CHECKS):
         return 'UNPROVEN'
     applicability = by_name.get(READ_DENIAL_APPLICABILITY['name'])
-    if version != '2.2.6' or applicability != READ_DENIAL_APPLICABILITY:
+    if version != '2.3.0' or applicability != READ_DENIAL_APPLICABILITY:
         return 'UNPROVEN'
     return 'PASS' if all(row['status'] == 'PASS' or row == applicability for row in checks) else 'UNPROVEN'
 
@@ -321,16 +321,46 @@ def no_contact(observed):
 
 
 def synthetic_events(root):
-    # Count actual native inbox admission events, not session.synthetic aliases.
-    # Count real input events before any provider terminal/write guard.
-    return [e['data'] for e in events(root) if e['type'] == 'native-event' and e['data']['type'] == 'session.inbox.enqueued'
-            and e['data']['data']['item']['type'] == 'synthetic']
+    """Only *Loom answer* inbox receipts count as answer resumes.
+
+    OpenCode 2.3.0 also admits native subagent-completion synthetic messages.
+    They are real host activity, but cannot count as a Loom answer, hide a
+    duplicate answer, or supply authority for one. Other no-contact checks
+    still inspect every synthetic message, including host-generated ones.
+    """
+    answer_notices = []
+    for event in events(root):
+        if event['type'] != 'native-event' or event['data']['type'] != 'session.inbox.enqueued':
+            continue
+        admitted = event['data']
+        item = admitted['data'].get('item', {})
+        if item.get('type') != 'synthetic':
+            continue
+        metadata = item.get('payload', {}).get('metadata', {})
+        require(isinstance(metadata, dict), 'Malformed native synthetic metadata')
+        if metadata.get('format') == 'loom-answer-notice/v1':
+            require(isinstance(metadata.get('question_id'), str) and metadata['question_id']
+                    and isinstance(metadata.get('answer_id'), str) and metadata['answer_id'],
+                    'Malformed Loom answer notice must not be silently skipped')
+            answer_notices.append(admitted)
+        elif metadata.get('format') == 'loom-question-notice/v1':
+            require(isinstance(metadata.get('question_id'), str) and metadata['question_id']
+                    and 'answer_id' not in metadata, 'Malformed Loom question notice')
+        else:
+            require('answer_id' not in metadata and 'question_id' not in metadata,
+                    'Unrecognized synthetic claimed a Loom answer identity')
+    return answer_notices
 
 
 def verify_single_admission(admitted, target, answer_id):
     require(len(admitted) == 1 and admitted[0]['data']['sessionID'] == target, 'Wrong/duplicate native synthetic target')
-    require(admitted[0]['data']['item']['payload']['metadata']['answer_id'] == answer_id, 'Native notice lost exact saved answer')
-    require(admitted[0]['data']['item']['delivery'] == 'steer', 'Native notice changed delivery semantics')
+    item = admitted[0]['data']['item']
+    metadata = item.get('payload', {}).get('metadata', {})
+    require(item.get('type') == 'synthetic' and isinstance(metadata, dict)
+            and metadata.get('format') == 'loom-answer-notice/v1'
+            and metadata.get('answer_id') == answer_id and isinstance(metadata.get('question_id'), str)
+            and metadata['question_id'], 'Native notice lost exact saved answer')
+    require(item['delivery'] == 'steer', 'Native notice changed delivery semantics')
 
 
 def verify_provider_inputs(observed):
@@ -430,7 +460,7 @@ def unchanged_rows(path, saved):
                 require(row in current, f'Historical raw row changed: {table}: {row}')
 
 
-def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sdk='2.2.6',
+def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sdk='2.3.0',
         disable_watcher=False, duplicate_control=False):
     output.mkdir(parents=True, exist_ok=False)
     report = {'status': 'UNPROVEN', 'kind': 'installed-question-production-path', 'checks': [],
@@ -449,13 +479,13 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
     report['harness_sha256'] = {name: hashlib.sha256((repo / name).read_bytes()).hexdigest()
                                for name in ['server.ts', 'tests/installed_questions.py', 'tests/installed_host_smoke.py',
                                             'tests/question-host/server.ts', 'tests/question-host/provider.mjs']}
-    report['expected_versions'] = {'sdk': expected_sdk, 'host': '2.2.6'}
+    report['expected_versions'] = {'sdk': expected_sdk, 'host': '2.3.0'}
     report['observed_versions'] = {
         'sdk': report['candidate_artifact']['sdk_version'],
         'host': subprocess.check_output([executable, '--version'], text=True, timeout=15).strip(),
     }
     report['sdk_version'] = report['observed_versions']['sdk']
-    host_ok = report['observed_versions']['host'] in ('2.2.6', 'opencode v2.2.6')
+    host_ok = report['observed_versions']['host'] in ('2.3.0', 'opencode v2.3.0')
     if report['observed_versions']['sdk'] != report['expected_versions']['sdk'] or not host_ok:
         report['status'] = 'FAIL'
         report['error'] = ('Version profile mismatch: '
@@ -480,7 +510,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
         report['private_root'] = str(root)
         report['versions'] = {name: subprocess.check_output(cmd, env=env, text=True, timeout=15).strip()
                               for name, cmd in [('host', [executable, '--version']), ('bun', ['bun', '--version']), ('node', ['node', '--version'])]}
-        require(report['versions']['host'] in ('2.2.6', 'opencode v2.2.6'), 'Requires exact unmodified host 2.2.6')
+        require(report['versions']['host'] in ('2.3.0', 'opencode v2.3.0'), 'Requires exact unmodified host 2.3.0')
         subprocess.run(['git', 'init', '-q', str(project)], env=env, check=True)
         roles = ['asker', 'respondent', 'reader', 'switched']
         agents = {'question-' + role: {'description': role + ' fixture', 'mode': 'primary', 'model': 'question-fixture/' + role,
@@ -501,7 +531,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
                 owned_hosts.append(owned)
                 report['owned_hosts'].append({'pid': owned.proc.pid, 'label': label, 'url': owned.url})
                 try:
-                    require(json.loads(owned.get('/api/info', 'info'))['version'] == '2.2.6', 'Wrong actual server')
+                    require(json.loads(owned.get('/api/info', 'info'))['version'] == '2.3.0', 'Wrong actual server')
                     owned.wait_roster('/api/plugin', 'plugins', lambda xs: all(any(p['id'] == name and p.get('state', {}).get('status') == 'active' for p in xs)
                                      for name in ['loom', 'loom.question.fixture']))
                     return owned
@@ -559,7 +589,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
                     and gate_file.read_text() == 'mode=safe\n',
                     'Real OpenCode native edit did not recover on writable file')
             report['checks'].append({'name': 'E6-native-filesystem-write-denial', 'status': 'PASS',
-                                     'qualification': 'Scripted provider calling real installed OpenCode 2.2.6 direct edit tool against a kernel read-only file then retry; proves OS fault injection only, not real-model QA-B acceptance',
+                                     'qualification': 'Scripted provider calling real installed OpenCode 2.3.0 direct edit tool against a kernel read-only file then retry; proves OS fault injection only, not real-model QA-B acceptance',
                                      'session': gate, 'failed_tool_message': failed[0]['messageID'],
                                      'recovered_tool_message': allowed[0]['messageID']})
             # Execute the real installed plugin's trace against native host messages,
@@ -758,7 +788,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             allowed_catalogs = [e['data'].get('tools', []) for e in events(root) if e['type'] == 'provider-request' and e['data']['role'] == 'asker']
             denied_requests = [e['data'] for e in events(root) if e['type'] == 'provider-request' and e['data']['role'] == 'switched']
             require(any(any(t['name'] == 'shell' for t in catalog) for catalog in allowed_catalogs), 'Countercheck used an unknown native tool')
-            # OpenCode 2.2.6 keeps its built-in skill tool visible to a deny-all agent,
+            # OpenCode 2.3.0 keeps its built-in skill tool visible to a deny-all agent,
             # but it must still reject actual skill execution via Permission.assert.
             # Never treat mere visibility as permission, or relax the shell absence oracle.
             require(denied_requests and all({t['name'] for t in e.get('tools', [])} == {'skill'} for e in denied_requests),
@@ -893,7 +923,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             unchanged_rows(ledger, saved)
             report['checks'].append({'name': 'E3-populated-startup-raw-preservation', 'status': 'PASS'})
             verify_provider_inputs(events(root))
-            # Assembled OpenCode 2.2.6 context/compaction regression using the
+            # Assembled OpenCode 2.3.0 context/compaction regression using the
             # real native runner and real tool observer; only the model is scripted.
             # Earlier E1-E3 ran capture=off; the observer correctly remembers that
             # uncertainty for this process lifetime. Start a fresh owned host
@@ -956,7 +986,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             compaction_events = [e for e in events(root)[compact_from:]
                                  if e['type'] == 'native-event' and e['data']['type'] == 'session.compaction.ended'
                                  and e['data']['data']['sessionID'] == compaction_session]
-            require(compaction_events, 'Native compaction did not complete on the installed 2.2.6 host')
+            require(compaction_events, 'Native compaction did not complete on the installed 2.3.0 host')
             s.invoke(compaction_session, 'record', {'operation': 'add', 'kind': 'result',
                                                     'statement': 'Postcompaction native tool completed'})
             after_compaction = [e for e in events(root)[compact_from:]
@@ -1054,9 +1084,46 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             dispatch = typed_q['dispatch']
             require(dispatch['status'] == 'admission-observed' and
                     dispatch['reason'] == 'native-subagent-admitted' and
-                    dispatch['native_status'] == 'completed' and
-                    dispatch['target_agent'] == 'question-specialist', 'Typed OQ dispatch not admitted: ' + str(dispatch))
+                    dispatch['native_status'] == 'running' and
+                    dispatch['target_agent'] == 'question-specialist', 'Typed OQ background dispatch not admitted: ' + str(dispatch))
             child_id = dispatch['target_session_id']
+            # The 2.3.0 native subagent tool returns immediately. Verify the
+            # actual child answer, not the parent's successful tool handle.
+            s.await_event(lambda e: e['type'] == 'tool-after'
+                and e['data'].get('sessionID') == child_id
+                and e['data'].get('tool') in ('loom_record', 'loom.record')
+                and e['data'].get('input', {}).get('operation') == 'answer'
+                and e['data']['input'].get('question_id') == typed_q['id']
+                and e['data'].get('status') == 'completed')
+            # The host then enqueues a *subagent* completion notice to General.
+            # It must not be conflated with Loom's separate answer-resume notice.
+            s.await_event(lambda e: e['type'] == 'native-event'
+                and e['data'].get('type') == 'session.inbox.enqueued'
+                and e['data']['data'].get('sessionID') == typed_asker
+                and e['data']['data'].get('item', {}).get('type') == 'synthetic'
+                and e['data']['data']['item'].get('payload', {}).get('metadata', {}).get('source') == 'subagent'
+                and e['data']['data']['item']['payload']['metadata'].get('childID') == child_id)
+            # Requiring the parent to become idle after a verified notice is
+            # insufficient by itself: a wake can be queued but not yet active.
+            # Observe its actual native terminal after the notice first.
+            def parent_completed_after_native_notice():
+                observed = events(root)[typed_start:]
+                notices = [(i, e) for i, e in enumerate(observed)
+                    if e['type'] == 'native-event'
+                    and e['data'].get('type') == 'session.inbox.enqueued'
+                    and e['data']['data'].get('sessionID') == typed_asker
+                    and e['data']['data'].get('item', {}).get('type') == 'synthetic'
+                    and e['data']['data']['item'].get('payload', {}).get('metadata', {}).get('childID') == child_id]
+                return bool(notices) and any(i > notices[-1][0]
+                    and e['type'] == 'native-event'
+                    and e['data'].get('type') == 'session.execution.succeeded'
+                    and e['data']['data'].get('sessionID') == typed_asker
+                    for i, e in enumerate(observed))
+            deadline = time.monotonic() + 20
+            while not parent_completed_after_native_notice():
+                if time.monotonic() >= deadline:
+                    raise RuntimeError('Native typed-OQ parent completion notice did not settle')
+                time.sleep(.05)
             idle(host, [typed_asker, child_id])
             child = request(host, 'GET', f'/api/session/{child_id}')
             require(child['parentID'] == typed_asker and child['agent'] == 'question-specialist',
@@ -1083,16 +1150,47 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
                              and e['data']['type'] == 'session.inbox.enqueued'
                              and e['data']['data']['item']['type'] == 'synthetic'
                              and e['data']['data']['sessionID'] == typed_asker]
-            # Blocking OQ runs as one native foreground subagent call. Its
-            # returned result owns continuation; no native synthetic wake from
-            # background completion and no separate Loom answer notice.
-            require(not typed_notices,
-                    'Blocking OQ submitted an unexpected synthetic continuation: ' + str(
-                        [(n['data']['item']['payload'].get('metadata')) for n in typed_notices]))
+            # One native child completion must wake its real parent on 2.3.0;
+            # direct typed OQs still must not emit a *second*, Loom-authored
+            # answer notice, or multiply the authoritative answer.
+            native_subagent_notices = [n for n in typed_notices
+                if n['data']['item']['payload'].get('metadata', {}).get('source') == 'subagent'
+                and n['data']['item']['payload']['metadata'].get('childID') == child_id]
+            require(len(typed_notices) == len(native_subagent_notices) == 1,
+                    'Expected exactly one host-owned child completion notice, no duplicate Loom answer wake: ' + str(
+                        [n['data']['item']['payload'].get('metadata') for n in typed_notices]))
+            require(not [n for n in synthetic_events(root)
+                         if n['data']['sessionID'] == typed_asker
+                         and n['data']['item']['payload']['metadata']['question_id'] == typed_q['id']],
+                    'Direct typed delegation emitted an unauthorized separate Loom answer notice')
             asker_request_delta = target_requests(root, typed_asker)[asker_requests_before:]
-            require(len(asker_request_delta) == 2,
-                    'Expected one asking-model turn for ask and one native foreground-result continuation, got '
-                    + str(len(asker_request_delta)))
+            # Actual 2.3.0 source/installed audit shows three distinct parent
+            # requests: the initial ask, the native tool-handle continuation,
+            # then a new turn after the one subagent-completion synthetic
+            # admission. None of these is a second Loom answer notification.
+            typed_observed = events(root)[typed_start:]
+            parent_requests = [i for i, e in enumerate(typed_observed)
+                if e['type'] == 'model-request' and e['data'].get('sessionID') == typed_asker]
+            completion_receipts = [i for i, e in enumerate(typed_observed)
+                if e['type'] == 'native-event'
+                and e['data'].get('type') == 'session.inbox.enqueued'
+                and e['data']['data'].get('sessionID') == typed_asker
+                and e['data']['data'].get('item', {}).get('type') == 'synthetic'
+                and e['data']['data']['item'].get('payload', {}).get('metadata', {}).get('source') == 'subagent'
+                and e['data']['data']['item']['payload']['metadata'].get('childID') == child_id]
+            caller_provider_requests = [e for e in typed_observed
+                if e['type'] == 'provider-request' and
+                e['data'].get('headers', {}).get('x-opencode-session-id') == typed_asker]
+            require(len(completion_receipts) == 1 and len(asker_request_delta) == len(parent_requests) == 3
+                    and len(caller_provider_requests) == 3
+                    and sum(index < completion_receipts[0] for index in parent_requests) == 2
+                    and sum(index > completion_receipts[0] for index in parent_requests) == 1,
+                    'Native background request/notice ordering or provider receipt count changed: '
+                    + str({'model_requests': len(parent_requests),
+                           'provider_requests': len(caller_provider_requests),
+                           'native_completion_notices': len(completion_receipts),
+                           'pre_notice': sum(index < completion_receipts[0] for index in parent_requests)
+                               if completion_receipts else None}))
             require(typed_answers[0]['data']['format'] == 'loom-answer/v2',
                     'Native completion did not accompany a durable authorized answer')
             unrelated = request(host, 'POST', '/api/session', {'agent': 'question-specialist',
@@ -1107,7 +1205,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
                                      'question': typed_q['id'], 'child_session': child_id,
                                      'answer': typed_answers[0]['id'], 'native_admissions': len(typed_notices),
                                      'asker_model_requests': len(asker_request_delta),
-                                     'qualification': 'Installed OpenCode 2.2.6 scripted-model foreground run; no duplicate native/Loom wake'})
+                                     'qualification': 'Installed OpenCode 2.3.0 scripted-model background child, one host-owned completion notice, no duplicate Loom answer resume'})
 
             # Delegated work can ask its actual dispatcher or request a user
             # decision. Verify durable native parent notices, not invented approval.
@@ -1220,14 +1318,14 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             require(not untouched['answers'], 'Depth-zero OQ gained an unauthorized answer')
             report['checks'].append({'name': 'E6-zero-depth-native-denial', 'status': 'PASS',
                                      'question': depth_q['id'], 'observed_dispatch': depth_q['dispatch'],
-                                     'qualification': 'Native 2.2.6 host uses configured subagent_depth=0'})
+                                     'qualification': 'Native 2.3.0 host uses configured subagent_depth=0'})
 
             require(not any(e['type'] == 'observer-failure' for e in events(root)), 'Passive native admission observation failed; zero-event claims invalid')
             report['checks'].append(dict(READ_DENIAL_APPLICABILITY))
             report['component_obligation'] = {'status': 'SEPARATE COMPONENT PROOF REQUIRED',
                                              'command': 'bun test tests/question-host/get-rejection.test.ts',
                                              'boundary': 'SDK session.get rejection through production registered answer/adapter after actual commit; never installed PASS evidence'}
-            report['status'] = qualification_status(report['checks'], '2.2.6')
+            report['status'] = qualification_status(report['checks'], '2.3.0')
         except Exception as error:  # noqa: BLE001 -- persist any failed qualification scenario in its report.
             report['status'] = 'FAIL'
             report['error'] = f'{type(error).__name__}: {error}'
@@ -1264,7 +1362,7 @@ def main():
     parser.add_argument('--artifact', type=Path, required=True, help='Exact npm candidate tarball installed at --plugin')
     parser.add_argument('--plugin', type=Path, required=True, help='Installed candidate plugin directory')
     parser.add_argument('--expect-plugin-version', required=True)
-    parser.add_argument('--expect-sdk-version', default='2.2.6')
+    parser.add_argument('--expect-sdk-version', default='2.3.0')
     parser.add_argument('--disable-filewatcher', action='store_true', help='Owned disposable host only; watcher behavior not qualified')
     parser.add_argument('--duplicate-input-control', action='store_true', help='Inject one real extra native input and require the normal oracle to reject it')
     args = parser.parse_args()

@@ -17,7 +17,7 @@ Blocking is stored collaboration intent, not a workflow gate or forced wait.
 
 Questions and answers are durable and attributed to the actual calling agent and
 Session. No Action, Plan or assignment is required. Legacy `to_agent` dispatch
-is fail-closed; new typed recipients on OpenCode 2.2.0 request native delivery.
+is fail-closed; new typed recipients on OpenCode 2.3.0 request native delivery.
 Native permission remains authoritative. Installed-host boot evidence is separate
 from installed-question qualification.
 Only the first committed answer to a new-format blocking question qualifies for
@@ -159,16 +159,17 @@ tables, rewriting records or changing the database version. Existing historical
 schema and row-preservation checks cover this explicit addition.
 
 For new agent/role recipients, exactly one enabled, visible, available,
-subagent-capable target must match. Loom invokes OpenCode 2.2.0's native
+subagent-capable target must match. Loom invokes OpenCode 2.3.0's native
 subagent tool, which enforces its effective depth and permission rules and
 selects the specialist or asking Session model. A scoped prompt hook checks
 parent and agent and binds the native child before input admission.
 With `subagent_depth=0`, OpenCode refuses delegation without creating a child.
-Direct blocking OQs use native foreground subagents: the original tool call
-returns its result, with no separate Loom answer notice or background-completion
-wake. Direct nonblocking OQs remain background and may later send OpenCode's
-completion notice. `dispatch.native_status` describes the native job result
-(`running` or `completed`), not proof the OQ is correctly answered.
+On the pinned 2.3.0 host, direct typed OQs return a running child handle for
+both blocking and nonblocking requests. Child execution and answer persistence
+happen later. The host enqueues a native subagent-completion notice to the
+parent, which may trigger another parent model request. Loom does not send a
+second answer notice for direct typed OQs. `dispatch.native_status` describes
+the native job admission/status, not proof the OQ has been answered.
 When the asker is a child, Loom notifies the parent, which answers directly when
 the recipient is the dispatcher—even if it consults a specialist. Forwarded
 agent/role recipients require the parent to delegate natively and bind the
@@ -178,8 +179,9 @@ which asks the user and cites their actual decision, or require native user
 interaction in a primary Session. A failed/missing/ambiguous
 target stays recorded without invented receipt. The dispatch result is
 a separate SYSTEM record. Native policy failures cannot claim successful
-contact. The stored question remains available. A background subagent can
-notify its parent later, but a blocking foreground OQ does not create that wake.
+contact. The stored question remains available. Native completion may
+wake the parent for either blocking or nonblocking direct OQs, without an
+additional Loom-authored answer notification.
 Native pre-creation depth/permission denials report `not-attempted` with a
 bounded diagnostic; unknown partial results retain `outcome-unknown`.
 
@@ -209,8 +211,9 @@ none silently overwrites an earlier reply. Read the full thread before acting.
 
 In one `BEGIN IMMEDIATE` transaction, answer checks for ANY previous answer
 and commits the response. Direct typed OQs never submit an additional Loom
-answer notice. Blocking direct OQs continue through their native foreground
-subagent result; nonblocking direct OQs can receive native background completion.
+answer notice. On OpenCode 2.3.0, native direct subagent execution can return
+a running child handle and later deliver a host-owned completion notice that
+wakes the parent. `blocking` is stored intent, not a forced wait.
 A blocking answer may expose `continuation.owner:native-subagent-execution`,
 identifying the native owner, not an extra action.
 

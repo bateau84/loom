@@ -1,6 +1,6 @@
 """Independent bounded installed Stage 3 mechanics qualification.
 
-Uses the packed plugin, unmodified OpenCode 2.2.6, real native Session/Code
+Uses the packed plugin, unmodified OpenCode 2.3.0, real native Session/Code
 Mode/Loom tool calls, the production source notification and scheduler, actual
 SQLite files, and later public Loom report readers. Only the external provider
 is scripted, with a private isolated project. Never calls AutomaticLearning.run,
@@ -33,7 +33,7 @@ from installed_host_smoke import (PrivateHost, installed_plugin_inventory, isola
 from installed_instruction_variants import verify_host_version
 from installed_questions import Scenario, audit_session, events, final_events, idle, request
 
-HOST = "2.2.6"
+HOST = "2.3.0"
 CHECKS = {
     "S3-installed-native-source-to-automatic-report",
     "S3-owner-only-public-source-linked-readback",

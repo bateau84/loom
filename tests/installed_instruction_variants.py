@@ -1,4 +1,4 @@
-"""Installed 2.2.6 Session instruction-entry qualification, NOT production activation.
+"""Installed 2.3.0 Session instruction-entry qualification, NOT production activation.
 
 Requires an exact packed Loom, an unmodified external CLI, and an isolated local
 scripted provider. No user configuration, global skill definitions, accounts or
@@ -23,7 +23,7 @@ from installed_host_smoke import (
     PrivateHost, installed_plugin_inventory, isolated_environment, require,
 )
 
-HOST = "2.2.6"
+HOST = "2.3.0"
 KEY = "loom.variant.test"
 MARKER = "LOOM_VARIANT_TEST_ONLY_V1"
 CANDIDATE = MARKER + "\nThis is a transport marker, not behavior guidance."
@@ -316,7 +316,7 @@ def run(args) -> dict:
                                           text=True, timeout=15).strip()
         verify_host_version(version)
         report["observed_host"] = version
-        report["upstream_tag"] = "anomalyco/opencode@dc2ffcf8bf26f9e669b6aa22b95f50e12be15e06"
+        report["upstream_tag"] = "anomalyco/opencode@a6b15d33daf6ab7d35569f6d711fdb630b9f04e7"
         report["loom_base"] = "edab7a96e7c5a9172ceb98b8518c47c48a1d7c09"
         report["candidate_sha256"] = sha(CANDIDATE)
         with tempfile.TemporaryDirectory(prefix="loom-variants-") as temporary:
@@ -395,16 +395,83 @@ def run(args) -> dict:
             sibling = create_session(host, project, agent="variant-child", parent=treatment)
             probe.assign(child, parent=treatment)
             require(entry_list(host, sibling) == [], "Unassigned sibling inherited variant")
+            child_phase_start = len(events(root))
             probe.pair([(child, "child-explicit", True),
                         (sibling, "child-unassigned", False)])
             report["checks"].append("explicit-child-not-ancestry")
+            # In 2.3.0, finishing these real child Sessions admits synthetic
+            # completion notices to the parent and starts another parent model
+            # turn. A new prompt sent while that turn is still running stays
+            # behind it; lowering the external provider barrier at that point
+            # blocks the old turn and makes the new prompt appear missing.
+            # Verify the actual native notices and their settlement first.
+            # This is not an assumption that a child tool returned its result.
+            deadline = time.monotonic() + 25
+            while True:
+                child_events = events(root)[child_phase_start:]
+                notices = [(i, e["data"]) for i, e in enumerate(child_events)
+                           if e["type"] == "native-lifecycle"
+                           and e["data"].get("kind") == "session.inbox.enqueued"
+                           and e["data"].get("sessionID") == treatment
+                           and e["data"].get("item") == "synthetic"
+                           and e["data"].get("source") == "subagent"
+                           and e["data"].get("childID") in (child, sibling)]
+                child_ids = {notice["childID"] for _, notice in notices}
+                last_notice = max((i for i, _ in notices), default=-1)
+                settled = any(i > last_notice and e["type"] == "native-lifecycle"
+                              and e["data"].get("kind") == "session.execution.succeeded"
+                              and e["data"].get("sessionID") == treatment
+                              for i, e in enumerate(child_events))
+                if len(notices) == 2 and child_ids == {child, sibling} and settled:
+                    if treatment not in request(host, "GET", "/api/session/active"):
+                        break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("RECEIPT_MISSING: parent did not settle two native child completion notices")
+                time.sleep(0.05)
+            # Any additional model requests are part of observed native
+            # background notification processing, not independent trials.
+            # Check every actual provider arrival for instruction exposure.
+            extra_arrivals = [e["data"] for e in child_events if e["type"] == "provider-arrival"
+                              and e["data"].get("testCase") == "treatment-continuation"]
+            extra_receipts = [e["data"] for e in child_events if e["type"] == "provider-request"
+                              and e["data"].get("testCase") == "treatment-continuation"]
+            if extra_arrivals or extra_receipts:
+                verify_attempt_receipts(extra_arrivals, extra_receipts,
+                                        expected_candidate=True, candidate_sha=sha(CANDIDATE))
+            report["background_child_notifications"] = {
+                "actual_child_ids": sorted(child_ids),
+                "native_notices": len(notices),
+                "parent_execution_settled": True,
+                "parent_provider_attempts": len(extra_arrivals),
+                "provider_receipt_coverage": "complete",
+                "cost_limit": "Native child notifications can wake the parent; no live billing proof",
+            }
+            report["checks"].append("background-notification-parent-settlement-and-exposure")
             # Interruption is accepted by the real Session coordinator while a
             # native provider request is held; it never undoes exposure.
             probe.set_barrier(False)
             try:
                 probe.prompt(treatment, "treatment-interrupted")
-                await_events(root, lambda e: e["type"] == "provider-request" and
-                             e["data"].get("testCase") == "treatment-interrupted", 1)
+                try:
+                    await_events(root, lambda e: e["type"] == "provider-request" and
+                                 e["data"].get("testCase") == "treatment-interrupted", 1)
+                except RuntimeError:
+                    # Preserve a bounded native state snapshot rather than
+                    # guessing why 2.3.0 did not resume the owned Session.
+                    report["interrupt_admission_diagnostic"] = {
+                        "session": request(host, "GET", "/api/session/" + treatment).get("id"),
+                        "active": treatment in request(host, "GET", "/api/session/active"),
+                        "native_requests": sum(e["type"] == "native-request"
+                            and e["data"].get("sessionID") == treatment for e in events(root)),
+                        "provider_cases": [e["data"].get("testCase") for e in events(root)
+                            if e["type"] == "provider-request"][-12:],
+                        "native_lifecycle": [e["data"] for e in events(root)
+                            if e["type"] == "native-lifecycle"
+                            and e["data"].get("sessionID") in (treatment, child, sibling)][-50:],
+                        "observer_failures": [e["data"] for e in events(root)
+                            if e["type"] == "lifecycle-observer-failure"][-3:],
+                    }
+                    raise
                 interruption = request(host, "POST",
                                        "/api/session/" + treatment + "/interrupt")
                 require(isinstance(interruption, dict) and interruption.get("interrupted") is True,

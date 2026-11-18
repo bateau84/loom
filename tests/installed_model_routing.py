@@ -1,6 +1,6 @@
-"""Isolated OpenCode 2.2.6 model-routing negative control.
+"""Isolated OpenCode 2.3.0 model-routing negative control.
 
-Actual packed Loom plugin and unmodified native 2.2.6 host. A separate,
+Actual packed Loom plugin and unmodified native 2.3.0 host. A separate,
 local-only provider script proves unqualified managed routing never reaches doStream.
 This does not prove real ChatGPT OAuth, real quotas, or live failover.
 """
@@ -19,14 +19,14 @@ from installed_questions import audit_session, request, idle, events, final_even
 
 def run(cli: Path, repo: Path, plugin: Path, artifact: Path, output: Path, version: str) -> dict:
     output.mkdir(parents=True, exist_ok=True)
-    report = {'status': 'UNPROVEN', 'kind': 'installed-routing-negative', 'host': '2.2.6',
-              'sdk': '2.2.6', 'checks': [], 'limits': [
+    report = {'status': 'UNPROVEN', 'kind': 'installed-routing-negative', 'host': '2.3.0',
+              'sdk': '2.3.0', 'checks': [], 'limits': [
                   'No live subscription or genuine billing attestation',
                   'No real same-model provider fallback or tool-side-effect replay acceptance',
                   'Only host-unqualified pre-dispatch refusal is tested, not individual billing policy decisions',
               ]}
     try:
-        report['candidate'] = installed_plugin_inventory(artifact, plugin, version, '2.2.6')
+        report['candidate'] = installed_plugin_inventory(artifact, plugin, version, '2.3.0')
         with (tempfile.TemporaryDirectory(prefix='loom-model-route-v220-') as temp,
               audit_session(Path(temp).resolve()) as audit):
             try:
@@ -37,7 +37,7 @@ def run(cli: Path, repo: Path, plugin: Path, artifact: Path, output: Path, versi
                 env['LOOM_QUESTION_FIXTURE'] = str(root)
                 subprocess.run(['git', 'init', '-q', str(project)], env=env, check=True)
                 observed = subprocess.check_output([str(cli), '--version'], env=env, text=True, timeout=20).strip()
-                require(observed in ('2.2.6', 'opencode v2.2.6'), f'Wrong host version: {observed}')
+                require(observed in ('2.3.0', 'opencode v2.3.0'), f'Wrong host version: {observed}')
                 config = {'plugins': ['*', str(plugin), str(repo / 'tests/question-host')],
                           'agents': {'question-reader': {
                               'description': 'Native model routing fixture', 'mode': 'primary',
@@ -56,8 +56,8 @@ def run(cli: Path, repo: Path, plugin: Path, artifact: Path, output: Path, versi
                     start = len(events(root))
                     host = PrivateHost(str(cli), project, env, output, name)
                     try:
-                        require(json.loads(host.get('/api/info', 'info'))['version'] == '2.2.6',
-                                'Private native host not 2.2.6')
+                        require(json.loads(host.get('/api/info', 'info'))['version'] == '2.3.0',
+                                'Private native host not 2.3.0')
                         host.wait_roster('/api/plugin', 'plugins',
                             lambda plugins: all(any(p['id'] == x and p.get('state', {}).get('status') == 'active'
                                 for p in plugins) for x in ('loom', 'loom.question.fixture')))

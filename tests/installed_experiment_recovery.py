@@ -13,7 +13,7 @@ import subprocess
 import tempfile
 
 from installed_host_smoke import PrivateHost, isolated_environment, require
-from installed_instruction_variants import create_session, request, verify_host_version
+from installed_instruction_variants import create_session, request
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location("experiment_recovery", ROOT / "tools/inspect_experiment_recovery.py")
@@ -23,7 +23,7 @@ spec.loader.exec_module(scanner)
 
 def run(opencode: Path, output: Path) -> dict:
     version = subprocess.check_output([str(opencode), "--version"], text=True, timeout=15).strip()
-    verify_host_version(version)
+    require(version in ('2.2.6', 'opencode v2.2.6'), 'Legacy scanner storage probe requires exact 2.2.6')
     report = {"host": version, "status": "UNPROVEN", "checks": [],
               "limits": "Native storage/recovery inspection only. No inference, human consent, trial, or exposure proof."}
     output.mkdir(mode=0o700)
