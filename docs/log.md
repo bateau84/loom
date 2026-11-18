@@ -4,6 +4,17 @@ type: Log
 
 # Update Log
 
+## 2026-11-18
+
+**Workload-aware model routing, Milestone A (#239; draft PR #240):**
+Added pure assignment-scoped model-tier selection for the existing router,
+with bounded conservative risk floors, layered role/agent tier policies,
+provider-free plan tests, exact unknown/unavailable behavior and stable
+decision fingerprints. This does not register a native OpenCode model hook,
+persist authoritative routing receipts, qualify billing or enable live managed
+routing. All #205/#206 and independent acceptance gates remain open. See
+[the candidate policy and limits](workload-routing.md).
+
 ## 2026-11-17
 
 **PR #237 bounded remediation:** Retained existing-Session question delivery and

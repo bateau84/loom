@@ -66,3 +66,29 @@ model-classes:
 #   gpt-6.1-sol:
 #     opencode-go: gpt-6.1-sol
 #     openai: gpt-6.1-sol
+
+# Provider-free workload-tier configuration (Milestone A of #239).
+# STANDARD is the existing agent/role model-class + reasoning.
+# ADVANCED / FRONTIER are optional role- or agent-specific overrides.
+# No runtime uses these tiers to dispatch models yet, and they do NOT
+# authorize paid usage, native model switches or bypass #205/#206.
+# Example only (replace illustrative model IDs after catalog verification):
+#
+# model-classes:
+#   frontier:
+#     models: [gpt-6.2-astra, fable-5.2]
+# roles:
+#   architecture:
+#     minimum-tier: standard
+#     workload-tiers:
+#       advanced: { model-class: strong, reasoning: high }
+#       frontier: { model-class: frontier, reasoning: high }
+#   acceptance:
+#     minimum-tier: advanced
+#     workload-tiers:
+#       advanced: { model-class: strong, reasoning: high }
+#       frontier: { model-class: frontier, reasoning: high }
+# agents:
+#   architect:
+#     workload-tiers:
+#       frontier: { model-class: frontier, reasoning: high }
