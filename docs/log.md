@@ -9,10 +9,15 @@ type: Log
 **Workload-aware model routing, Milestone A (#239; draft PR #240):**
 Added pure assignment-scoped model-tier selection for the existing router,
 with bounded conservative risk floors, layered role/agent tier policies,
-provider-free plan tests, exact unknown/unavailable behavior and stable
-decision fingerprints. This does not register a native OpenCode model hook,
-persist authoritative routing receipts, qualify billing or enable live managed
-routing. All #205/#206 and independent acceptance gates remain open. See
+provider-free plan tests, explicit assessment/quality/reasoning/independence
+inputs, and account-sensitive deterministic decision fingerprints. Independent
+review found missing reasoning evidence acceptance and an off-by-digest-size
+bound; the corrected path now rejects missing variants and measures the full
+serialized record. An optional additive SQLite journal stores **candidate-only**
+work decisions bound to existing current saved Action/plan selection, and refuses
+conflicting/unsafe reuse after restart. This does not register a native model
+hook, attest safe native work admission, persist authoritative routing receipts,
+qualify billing or enable live managed routing. All #205/#206 and independent acceptance gates remain open. See
 [the candidate policy and limits](workload-routing.md).
 
 ## 2026-11-17
