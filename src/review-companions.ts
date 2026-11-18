@@ -25,8 +25,14 @@ export function companionHelp(lens: ReviewLens): string {
     "Caution: Reads the current native skill registry, not GitHub or a fixed skills directory. Native skill permissions still apply, including ask/deny. Unknown skills, invalid configuration, missing roles, unreadable/oversized/non-UTF-8 files and cancellation fail visibly. A registered SKILL.md uses companions beside it; a registered <skill-id>.md uses a separate <skill-id>/ directory next to that entry. Shared-root companion files are never borrowed by flat skills. Companion files must be regular, non-symlink UTF-8, at most 64 KiB. Symlinked installation directories are supported. No dispatch, workflow stage, completion, verdict or proof of independence is created. Use loom_record separately for actual findings.",
     'Examples (JSON inputs, not shell commands):',
     '{"skill":"software-engineering"}',
-    'In Code Mode, use the exact callable path returned by search. Request response_format:json and JSON.parse once only when structured fields are needed; default output is Markdown.',
-    'Await writes before using IDs or ending Code Mode. For independent calls use Promise.allSettled and inspect every outcome; sequence dependent calls.',
+    'In Code Mode, use the exact callable path returned by search. Default output is Markdown: do not JSON.parse it. Use response_format:json only when structured fields are needed.',
+    `If loading multiple independent ${file} companions, return one joined Markdown string, NOT an array or object (Code Mode JSON-escapes those). Use Promise.allSettled and report every failure. Example (replace skill IDs and use the discovered callable path):`,
+    "```javascript",
+    'const skills = ["SKILL_ID_1", "SKILL_ID_2"];',
+    `const settled = await Promise.allSettled(skills.map(skill => tools.loom.${lens}({ skill })));`,
+    `return settled.map((r, i) => r.status === "fulfilled" ? r.value : "# ${lens.toUpperCase()} lens failed: " + skills[i] + "\\n\\n" + String(r.reason)).join("\\n\\n---\\n\\n");`,
+    "```",
+    'Await writes before using IDs or ending Code Mode; sequence dependent calls.',
   ].join("\n")
 }
 
