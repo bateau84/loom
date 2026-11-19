@@ -54,7 +54,8 @@ scan root so the profile is discovered; it declares no mandatory link counts.
 - [Initial routing qualification #206 (2.3.0)](initial-routing-qualification-206.md) — Request-local selection candidate, native guard evidence, and remaining provider/account gates
 - [Account-bound billing qualification](subscription-billing-qualification.md) — 2026-11-01 evidence, provider blockers and required no-paid attestation
 - [Shared subscription quota](shared-subscription-quota.md) — Cross-process SQLite quota state, atomic reservation, recovery and evidence limits
-- [Native request identity](native-request-identity.md) — OpenCode 2.2.0 account/attempt attribution source audit and upstream acceptance contract
+- [Native attempt/account qualification #205 (2.3.0)](native-attempt-qualification-205.md) — Current host/source evidence, prepared-retry counterexamples, and proposed protected send-time identity contract
+- [Historical native identity investigation (2.2.0)](native-request-identity.md) — Previous source-modelled account/attempt counterexamples
 - [V2 model dispatch investigation](model-routing-v2-dispatch.md) — 2.1.1 blocker and 2.1.4 initial-routing update
 - [OpenCode Go subscription eligibility](opencode-go-eligibility.md) — Missing native no-paid-overage guarantee; Go remains unverified
 - [Safe native fallback proposal](opencode-v2-safe-live-fallback.md) — OpenCode host changes required before live switching
