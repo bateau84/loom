@@ -8,6 +8,13 @@ timestamp: 2026-11-01T00:00:00Z
 
 # Native request identity and account-bound quota attribution
 
+> **Historical source-modeled baseline (OpenCode 2.2.0).** Loom now pins OpenCode **2.3.0**.
+> Read [the current 2.3.0 host/attempt-account qualification](native-attempt-qualification-205.md)
+> first. The older setup/version statements and source-modeled witnesses below are historical,
+> not a claim about the currently installed host. The current verdict remains BLOCKED
+> for verified attempt/account identity and provider-enforced included-only admission.
+
+
 **Issue:** [#205](https://github.com/bateau84/loom/issues/205); tracked under [#203](https://github.com/bateau84/loom/issues/203).  
 **Verdict: BLOCKED for exact account-bound quota attribution.** Existing OpenCode hooks identify *some* aspects of a request, but do not reliably link the native account and transport attempt to later failures and completions. This is an **investigation**, not authorization to re-enable managed routing or submit upstream code.
 

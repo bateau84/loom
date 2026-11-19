@@ -1,0 +1,1280 @@
+{
+  "kind": "native-request-identity-qualification-v230",
+  "schema_version": 1,
+  "audit_date": "2026-11-19",
+  "verdict": "BLOCKED",
+  "production_routing_activated": false,
+  "real_account_billing_status": "UNPROVEN",
+  "scope": "Targeted source/interface audit and reinspection of prior installed local-provider evidence; not an exhaustive provider audit or new installed account qualification.",
+  "authority": {
+    "requirements": "Existing Loom issue #205 account/attempt requirements; included-only billing separately owned by #204/#206.",
+    "api_shape": "Illustrative proposal, not accepted or implemented by OpenCode.",
+    "source_change": "Documentation/evidence only; no upstream submission or production adapter change."
+  },
+  "upstream": {
+    "repository": "anomalyco/opencode",
+    "tag": "v2.3.0",
+    "commit": "a6b15d33daf6ab7d35569f6d711fdb630b9f04e7",
+    "tag_ref_url": "https://api.github.com/repos/anomalyco/opencode/git/ref/tags/v2.3.0",
+    "retrieval_date": "2026-11-19",
+    "files": [
+      {
+        "path": "packages/plugin/src/promise/session.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/plugin/src/promise/session.ts",
+        "sha256": "3cc1a007438f1fd085a62174f2591a13e9ecd9830208d87674522179f7bf41c8",
+        "bytes": 8343,
+        "lines": 239,
+        "relevant_ranges": [
+          [
+            67,
+            168
+          ]
+        ]
+      },
+      {
+        "path": "packages/plugin/src/effect/session.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/plugin/src/effect/session.ts",
+        "sha256": "01690dfdd9565eba46ebfd0ce22109665bea2790ea78a4bde5cc43f60970988a",
+        "bytes": 8360,
+        "lines": 239,
+        "relevant_ranges": [
+          [
+            67,
+            168
+          ]
+        ]
+      },
+      {
+        "path": "packages/plugin/src/promise/aisdk.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/plugin/src/promise/aisdk.ts",
+        "sha256": "120000541b1ef008787bc3a7883f2b0fb9102476bf826502aa3bf1c9fdc02efb",
+        "bytes": 540,
+        "lines": 22,
+        "relevant_ranges": [
+          [
+            1,
+            22
+          ]
+        ]
+      },
+      {
+        "path": "packages/core/src/session/model-request.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/core/src/session/model-request.ts",
+        "sha256": "2a7b1730cb7b222347bec4b3bfbd7143574f1960ccec68ca3dff736ab36321ab",
+        "bytes": 21947,
+        "lines": 480,
+        "relevant_ranges": [
+          [
+            273,
+            440
+          ],
+          [
+            463,
+            471
+          ]
+        ]
+      },
+      {
+        "path": "packages/core/src/model-resolver.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/core/src/model-resolver.ts",
+        "sha256": "65424cc372f85ff0de66c974dec8024692a7f389bbf663ef32982061273f0fa3",
+        "bytes": 25102,
+        "lines": 624,
+        "relevant_ranges": [
+          [
+            478,
+            516
+          ]
+        ]
+      },
+      {
+        "path": "packages/core/src/integration.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/core/src/integration.ts",
+        "sha256": "0f1f3db2541b39d558682825572e626cbf299800c8744718d2681ad4d5109a22",
+        "bytes": 35447,
+        "lines": 850,
+        "relevant_ranges": [
+          [
+            225,
+            257
+          ],
+          [
+            694,
+            714
+          ]
+        ]
+      },
+      {
+        "path": "packages/core/src/session/generate.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/core/src/session/generate.ts",
+        "sha256": "b102dc1dff0321fc9ca65dab2e553ee93f7c19fa26c22d6907d99c97025cb84e",
+        "bytes": 3147,
+        "lines": 78,
+        "relevant_ranges": [
+          [
+            43,
+            76
+          ]
+        ]
+      },
+      {
+        "path": "packages/core/src/session/compaction.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/core/src/session/compaction.ts",
+        "sha256": "b5d8d43a4c0b00a74ae6b0779d38908eee5156be8bb2ce402aa861b9af98df8e",
+        "bytes": 61389,
+        "lines": 1274,
+        "relevant_ranges": [
+          [
+            267,
+            345
+          ],
+          [
+            618,
+            705
+          ]
+        ]
+      },
+      {
+        "path": "packages/core/src/session/runner/model.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/core/src/session/runner/model.ts",
+        "sha256": "d60af414540a66e52e0f918a2bed2809fe77d59f7b3b1b7ca7ae5afb48e790c8",
+        "bytes": 5559,
+        "lines": 130,
+        "relevant_ranges": [
+          [
+            81,
+            120
+          ]
+        ]
+      },
+      {
+        "path": "packages/core/src/session/runner/llm.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/core/src/session/runner/llm.ts",
+        "sha256": "04be4f888e90189a3e54ef0b85f7e80cd166842bf7c2f1018b971dc2b3bd44fe",
+        "bytes": 20713,
+        "lines": 470,
+        "relevant_ranges": [
+          [
+            227,
+            344
+          ]
+        ]
+      },
+      {
+        "path": "packages/core/src/session/runner/retry.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/core/src/session/runner/retry.ts",
+        "sha256": "7d810092f26a00672b41b6279227a81ab58785dec0d5d031b4de5d68532f8df6",
+        "bytes": 2798,
+        "lines": 78,
+        "relevant_ranges": [
+          [
+            32,
+            75
+          ]
+        ]
+      },
+      {
+        "path": "packages/core/src/model-retry.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/core/src/model-retry.ts",
+        "sha256": "346b6116cea6aaa0d3aaf569e054f0f2dba2fd10351741820d76921fa0ab6ad9",
+        "bytes": 6280,
+        "lines": 134,
+        "relevant_ranges": [
+          [
+            67,
+            102
+          ]
+        ]
+      },
+      {
+        "path": "packages/schema/src/session-event.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/schema/src/session-event.ts",
+        "sha256": "a9e47b7d8071c2da806c3c15c6c9abbf516935b5fe44de9925419698279f794c",
+        "bytes": 19619,
+        "lines": 739,
+        "relevant_ranges": [
+          [
+            160,
+            168
+          ],
+          [
+            244,
+            263
+          ],
+          [
+            333,
+            395
+          ],
+          [
+            585,
+            596
+          ],
+          [
+            720,
+            725
+          ]
+        ]
+      },
+      {
+        "path": "packages/schema/src/connection.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/schema/src/connection.ts",
+        "sha256": "b8bec346b315e6ef36174945c6b62ac467465c2777d0666e103c90b9e55adbf8",
+        "bytes": 1524,
+        "lines": 38,
+        "relevant_ranges": [
+          [
+            18,
+            38
+          ]
+        ]
+      },
+      {
+        "path": "packages/core/src/session/execution.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/core/src/session/execution.ts",
+        "sha256": "5abca2e8da8e65dea2f382cc8e7db0956ae12ab35ad3f9221d3c3058e4651d86",
+        "bytes": 11279,
+        "lines": 235,
+        "relevant_ranges": [
+          [
+            132,
+            170
+          ]
+        ]
+      },
+      {
+        "path": "packages/core/src/session/model-transport.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/core/src/session/model-transport.ts",
+        "sha256": "bce11c20d70c6f335fa8f52eebef04b054c37f19a625ba2cfb3b900767c4684d",
+        "bytes": 22827,
+        "lines": 571,
+        "relevant_ranges": [
+          [
+            59,
+            82
+          ],
+          [
+            300,
+            405
+          ],
+          [
+            425,
+            506
+          ]
+        ]
+      },
+      {
+        "path": "packages/core/src/integration/connection.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/core/src/integration/connection.ts",
+        "sha256": "9702297e0be5fdd09249076e6f6ab7cdeea0fb117ad461abfa38c2a83620c8d6",
+        "bytes": 877,
+        "lines": 26,
+        "relevant_ranges": [
+          [
+            1,
+            26
+          ]
+        ]
+      },
+      {
+        "path": "packages/core/src/credential.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/core/src/credential.ts",
+        "sha256": "9e9236cef8c4e63b6fe34f6692cfc974435122accb1831ea4d4323c31726d887",
+        "bytes": 15510,
+        "lines": 350,
+        "relevant_ranges": [
+          [
+            160,
+            183
+          ],
+          [
+            263,
+            281
+          ]
+        ]
+      },
+      {
+        "path": "packages/plugin/src/promise/integration.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/plugin/src/promise/integration.ts",
+        "sha256": "dab1c871bafcd80a28b0b5bf874ca39353e69694128160a5e7e386a81362f71a",
+        "bytes": 3770,
+        "lines": 112,
+        "relevant_ranges": [
+          [
+            99,
+            111
+          ]
+        ]
+      },
+      {
+        "path": "packages/core/src/session/context.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/core/src/session/context.ts",
+        "sha256": "4b02e439fe766018c78c292b1530d45ee641c413333b758a5c6e51641567f0b8",
+        "bytes": 9870,
+        "lines": 235,
+        "relevant_ranges": [
+          [
+            99,
+            133
+          ]
+        ]
+      },
+      {
+        "path": "packages/core/src/session/title.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/core/src/session/title.ts",
+        "sha256": "09c91cac842eaf3dcc6f07b6496a005613a1b6d4a4e1860985051b0ffb0d4c7b",
+        "bytes": 7656,
+        "lines": 172,
+        "relevant_ranges": [
+          [
+            65,
+            111
+          ]
+        ]
+      },
+      {
+        "path": "packages/core/src/session/runner/step.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/core/src/session/runner/step.ts",
+        "sha256": "0a0cc4ee22b0c732e8810ad79dd03cdce3f637e5a7d05e6ae41e0f6d69bb7462",
+        "bytes": 18798,
+        "lines": 401,
+        "relevant_ranges": [
+          [
+            73,
+            151
+          ]
+        ]
+      },
+      {
+        "path": "packages/plugin/src/promise/model.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/plugin/src/promise/model.ts",
+        "sha256": "13d04aada05e588b08158c389b43a1256ab4b34d9651cc197e5b5ef553f793e7",
+        "bytes": 1259,
+        "lines": 28,
+        "relevant_ranges": [
+          [
+            25,
+            28
+          ]
+        ]
+      },
+      {
+        "path": "packages/core/src/generate.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/core/src/generate.ts",
+        "sha256": "61e57f5d2b21278d260b450528527cbe4058c5f821d28be2f8d28008185f92d3",
+        "bytes": 11694,
+        "lines": 281,
+        "relevant_ranges": [
+          [
+            92,
+            127
+          ]
+        ]
+      },
+      {
+        "path": "packages/schema/src/credential.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/schema/src/credential.ts",
+        "sha256": "1c321f9982cd47f4dc82689d3dd4001796255e4b4325c77db5043c110dab8b3b",
+        "bytes": 2833,
+        "lines": 78,
+        "relevant_ranges": [
+          [
+            17,
+            78
+          ]
+        ]
+      },
+      {
+        "path": "packages/core/src/plugin/provider/chatgpt.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/core/src/plugin/provider/chatgpt.ts",
+        "sha256": "9db7b536cfdce03d777569bf530f6c2f7bfd490f28e0840d04c8f787a061ca3c",
+        "bytes": 23192,
+        "lines": 550,
+        "relevant_ranges": [
+          [
+            277,
+            290
+          ]
+        ]
+      },
+      {
+        "path": "packages/core/src/plugin/provider/github-copilot.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/core/src/plugin/provider/github-copilot.ts",
+        "sha256": "7fc9510a94d424557aea5eb83f8c31de8be0427a66c9a87e13cb68f019937e7b",
+        "bytes": 28655,
+        "lines": 640,
+        "relevant_ranges": [
+          [
+            393,
+            430
+          ],
+          [
+            509,
+            555
+          ]
+        ]
+      },
+      {
+        "path": "packages/core/src/plugin/provider/opencode.ts",
+        "url": "https://github.com/anomalyco/opencode/blob/a6b15d33daf6ab7d35569f6d711fdb630b9f04e7/packages/core/src/plugin/provider/opencode.ts",
+        "sha256": "eaa39c9b07a7bea909a6d3a44ebbe3133d740514351cc20e1dde0f83f119f75d",
+        "bytes": 40769,
+        "lines": 879,
+        "relevant_ranges": [
+          [
+            821,
+            850
+          ]
+        ]
+      }
+    ]
+  },
+  "local_package_versions_checked": {
+    "@opencode/plugin": "2.3.0",
+    "@opencode/cli": "2.3.0"
+  },
+  "evidence_levels": {
+    "S": "Pinned primary-source inspection; not installed acceptance.",
+    "N": "Prior corrected-head PR243 installed native host with local in-memory provider; no real billing identity.",
+    "M": "Existing deterministic source-modeled witnesses, rerun here; not captured native account interleavings."
+  },
+  "prior_installed_evidence": {
+    "repository": "bateau84/loom",
+    "pull_request": 243,
+    "source_head": "217a80088239c13d0e115087f99b510afa73f57e",
+    "tested_merge_head": "81e9de2a7cc0dd1897b30980827a905bff07cba7",
+    "source_dirty": false,
+    "merged_commit": "35d5e8532944c8a674a82b865ef3c2d1ff64b612",
+    "source_and_tested_and_merged_tree": "1abc84f202b47f0179f11dedfe4451713318cfd3",
+    "workflow_run_id": 44569443361,
+    "job_id": 135720158088,
+    "job_url": "https://github.com/bateau84/loom/actions/runs/44569443361/job/135720158088",
+    "actions_artifact_id": 14554291953,
+    "actions_artifact_zip_sha256": "fc46eb04893fa7066149ee9f40e979102a682a05eefcf82b91efe8a3c3ff4b88",
+    "report_filename": "request-local-report.json",
+    "report_sha256": "0c02f2d4ef2cfe0c3b9f46340978b52806fb8871f33a3328be28aba63b0d21be",
+    "trace_filename": "request-local-events.ndjson",
+    "trace_sha256": "7b10670e032afc2951cced929f2e8aaf97823295ef9a3b1c68726ecb3b3b533e",
+    "package_artifact_sha256": "96a21ea29022f4a11bf6bcef7c1c8d0335190f11ab801c65cf5775d8d08c730c",
+    "runtime_files_matching_archive_install_source": 42,
+    "candidate_source_sha256": "6cfbf5134137986caeed2bed81306bafb187b6f6e96285cebfb6637e34b3e05e",
+    "fixture_sha256": {
+      "tests/request-local-host/server.ts": "044ba86023a07203ec2edb8b148f4cb7174981a12e5cbc72533866103582327c",
+      "tests/request-local-host/provider.mjs": "14c812a208a136048adc88c54f00058515b8d3241edcb7d1f40e5feb1bcc85e7",
+      "tests/installed_request_local_routing.py": "f6e438dfead21317f661ccf30e4075adf485dfe7634a8d27ff1ee7e69a4abe15"
+    },
+    "cases_passed": 19,
+    "all_case_final_traces_revalidated": true,
+    "request_kinds_observed": [
+      "compaction",
+      "generate",
+      "primary",
+      "title"
+    ],
+    "oracle_mutations_rejected": [
+      "missing-transport",
+      "missing-approval",
+      "wrong-transport-model",
+      "wrong-transport-variant",
+      "wrong-provider"
+    ],
+    "not_exercised_in_this_prior_run": [
+      "title preferred/fallback dual-candidate path",
+      "automatic compaction model reuse",
+      "compaction prepared retries",
+      "cancellation and fresh-child dispatch"
+    ],
+    "no_real_provider_credentials_used": true,
+    "real_account_billing_status": "UNPROVEN",
+    "excerpt_note": "Exact parsed events from sanitized CI trace; sessionID values are fixture-normalized case names. Counts are local provider SDK invocations, not network billing attempts. Excerpts preserve event order, not wall-clock timing. Full artifact retention is limited; hashes and minimal evidence remain in git.",
+    "retry_excerpts": [
+      {
+        "case": "native-primary-retry",
+        "source_trace_line_numbers": [
+          70,
+          71,
+          72,
+          73,
+          74,
+          75,
+          76,
+          77,
+          78,
+          79,
+          80,
+          81
+        ],
+        "source_lines_sha256": "42b17799150a7609e31abf7f8010d849220a1258b2491aa2dac24aee90fac943",
+        "counts": {
+          "resolve": 2,
+          "model_request": 2,
+          "provider_sdk_invocations": 2,
+          "session_retry_hook": 1
+        },
+        "recorded_case": {
+          "name": "native-primary-retry",
+          "status": "PASS",
+          "evidence_kind": "installed-native-local-provider",
+          "outcome": "succeeded",
+          "expected_model": "fast",
+          "expected_variant": "medium",
+          "resolve_count": 2,
+          "request_count": 2,
+          "transport_count": 2,
+          "transport_kinds": [
+            "primary"
+          ],
+          "native_tool_count": 0,
+          "persisted_model": null,
+          "final_trace_revalidated": true
+        },
+        "events": [
+          {
+            "source_line": 70,
+            "event": {
+              "data": {
+                "agent": "architect",
+                "kind": "primary",
+                "modelID": "default",
+                "providerID": "request-local",
+                "sessionID": "native-primary-retry",
+                "variant": "medium"
+              },
+              "type": "resolve-input"
+            }
+          },
+          {
+            "source_line": 71,
+            "event": {
+              "data": {
+                "agent": "architect",
+                "kind": "primary",
+                "modelID": "fast",
+                "providerID": "request-local",
+                "sessionID": "native-primary-retry",
+                "variant": "medium"
+              },
+              "type": "resolve-output"
+            }
+          },
+          {
+            "source_line": 72,
+            "event": {
+              "data": {
+                "agent": "architect",
+                "kind": "primary",
+                "modelID": "fast",
+                "providerID": "request-local",
+                "sessionID": "native-primary-retry",
+                "variant": "medium"
+              },
+              "type": "request-input"
+            }
+          },
+          {
+            "source_line": 73,
+            "event": {
+              "data": {
+                "agent": "architect",
+                "kind": "primary",
+                "modelID": "fast",
+                "providerID": "request-local",
+                "sessionID": "native-primary-retry",
+                "variant": "medium"
+              },
+              "type": "request-approved"
+            }
+          },
+          {
+            "source_line": 74,
+            "event": {
+              "data": {
+                "afterTool": false,
+                "kind": "primary",
+                "mode": "stream",
+                "modelID": "fast",
+                "providerID": "request-local",
+                "sessionID": "native-primary-retry",
+                "variant": "medium"
+              },
+              "type": "transport"
+            }
+          },
+          {
+            "source_line": 75,
+            "event": {
+              "data": {
+                "kind": "primary",
+                "modelID": "fast",
+                "sessionID": "native-primary-retry"
+              },
+              "type": "transport-failure"
+            }
+          },
+          {
+            "source_line": 76,
+            "event": {
+              "data": {
+                "agent": "architect",
+                "attempt": 2,
+                "modelID": "fast",
+                "providerID": "request-local",
+                "sessionID": "native-primary-retry"
+              },
+              "type": "retry"
+            }
+          },
+          {
+            "source_line": 77,
+            "event": {
+              "data": {
+                "agent": "architect",
+                "kind": "primary",
+                "modelID": "default",
+                "providerID": "request-local",
+                "sessionID": "native-primary-retry",
+                "variant": "medium"
+              },
+              "type": "resolve-input"
+            }
+          },
+          {
+            "source_line": 78,
+            "event": {
+              "data": {
+                "agent": "architect",
+                "kind": "primary",
+                "modelID": "fast",
+                "providerID": "request-local",
+                "sessionID": "native-primary-retry",
+                "variant": "medium"
+              },
+              "type": "resolve-output"
+            }
+          },
+          {
+            "source_line": 79,
+            "event": {
+              "data": {
+                "agent": "architect",
+                "kind": "primary",
+                "modelID": "fast",
+                "providerID": "request-local",
+                "sessionID": "native-primary-retry",
+                "variant": "medium"
+              },
+              "type": "request-input"
+            }
+          },
+          {
+            "source_line": 80,
+            "event": {
+              "data": {
+                "agent": "architect",
+                "kind": "primary",
+                "modelID": "fast",
+                "providerID": "request-local",
+                "sessionID": "native-primary-retry",
+                "variant": "medium"
+              },
+              "type": "request-approved"
+            }
+          },
+          {
+            "source_line": 81,
+            "event": {
+              "data": {
+                "afterTool": false,
+                "kind": "primary",
+                "mode": "stream",
+                "modelID": "fast",
+                "providerID": "request-local",
+                "sessionID": "native-primary-retry",
+                "variant": "medium"
+              },
+              "type": "transport"
+            }
+          }
+        ]
+      },
+      {
+        "case": "native-generate-prepared-retry",
+        "source_trace_line_numbers": [
+          82,
+          83,
+          84,
+          85,
+          86,
+          87,
+          88
+        ],
+        "source_lines_sha256": "5e9d44aed745ccc746347a4bf89c0803397e93992f3d11a90edad98964bfa30a",
+        "counts": {
+          "resolve": 1,
+          "model_request": 1,
+          "provider_sdk_invocations": 2,
+          "session_retry_hook": 0
+        },
+        "recorded_case": {
+          "name": "native-generate-prepared-retry",
+          "status": "PASS",
+          "evidence_kind": "installed-native-local-provider",
+          "outcome": null,
+          "expected_model": "fast",
+          "expected_variant": "medium",
+          "resolve_count": 1,
+          "request_count": 1,
+          "transport_count": 2,
+          "transport_kinds": [
+            "generate"
+          ],
+          "native_tool_count": 0,
+          "persisted_model": null,
+          "retry_reprepared": false,
+          "per_transport_guard_proven": false,
+          "final_trace_revalidated": true
+        },
+        "events": [
+          {
+            "source_line": 82,
+            "event": {
+              "data": {
+                "agent": "architect",
+                "kind": "generate",
+                "modelID": "default",
+                "providerID": "request-local",
+                "sessionID": "native-generate-prepared-retry",
+                "variant": "medium"
+              },
+              "type": "resolve-input"
+            }
+          },
+          {
+            "source_line": 83,
+            "event": {
+              "data": {
+                "agent": "architect",
+                "kind": "generate",
+                "modelID": "fast",
+                "providerID": "request-local",
+                "sessionID": "native-generate-prepared-retry",
+                "variant": "medium"
+              },
+              "type": "resolve-output"
+            }
+          },
+          {
+            "source_line": 84,
+            "event": {
+              "data": {
+                "agent": "architect",
+                "kind": "generate",
+                "modelID": "fast",
+                "providerID": "request-local",
+                "sessionID": "native-generate-prepared-retry",
+                "variant": "medium"
+              },
+              "type": "request-input"
+            }
+          },
+          {
+            "source_line": 85,
+            "event": {
+              "data": {
+                "agent": "architect",
+                "kind": "generate",
+                "modelID": "fast",
+                "providerID": "request-local",
+                "sessionID": "native-generate-prepared-retry",
+                "variant": "medium"
+              },
+              "type": "request-approved"
+            }
+          },
+          {
+            "source_line": 86,
+            "event": {
+              "data": {
+                "afterTool": false,
+                "kind": "generate",
+                "mode": "stream",
+                "modelID": "fast",
+                "providerID": "request-local",
+                "sessionID": "native-generate-prepared-retry",
+                "variant": "medium"
+              },
+              "type": "transport"
+            }
+          },
+          {
+            "source_line": 87,
+            "event": {
+              "data": {
+                "kind": "generate",
+                "modelID": "fast",
+                "sessionID": "native-generate-prepared-retry"
+              },
+              "type": "transport-failure"
+            }
+          },
+          {
+            "source_line": 88,
+            "event": {
+              "data": {
+                "afterTool": false,
+                "kind": "generate",
+                "mode": "stream",
+                "modelID": "fast",
+                "providerID": "request-local",
+                "sessionID": "native-generate-prepared-retry",
+                "variant": "medium"
+              },
+              "type": "transport"
+            }
+          }
+        ]
+      }
+    ],
+    "production_controls": {
+      "report_filename": "report.json",
+      "report_sha256": "ac736ed5cb6935d0bb44caa67872522da5e30d9f6c5ce4c001a5ab6919c50c8f",
+      "overall_status": "UNPROVEN",
+      "protection_controls_status": "PASS",
+      "live_provider_status": "UNPROVEN",
+      "scope": "Same prior installed CI artifact; loaded production guard and disabled-routing controls, not a real account/no-paid qualification.",
+      "cases": [
+        {
+          "report_case": {
+            "name": "disabled-primary",
+            "status": "PASS",
+            "evidence_kind": "installed-local-provider",
+            "trace_file": "disabled-primary.routing-events.ndjson",
+            "quota_database_opened": null,
+            "routing_enabled": false,
+            "agent": "architect",
+            "session_outcome": "succeeded",
+            "transport_routes": [
+              "route-primary/sol"
+            ],
+            "native_model_request_count": 1,
+            "native_tool_before": 0,
+            "native_tool_after": 0,
+            "scenario": "text",
+            "native_interrupt_applied": null
+          },
+          "trace_sha256": "499eb01b0878602c795e8670d4f90b73ebf455a600050175bd6c34e438101a40",
+          "provider_invocations_recomputed": 1,
+          "exact_trace": [
+            {
+              "data": {
+                "providerIDs": [
+                  "route-primary",
+                  "route-secondary",
+                  "route-metered"
+                ]
+              },
+              "type": "fixture-ready"
+            },
+            {
+              "data": {
+                "agent": "architect",
+                "kind": "primary",
+                "modelID": "sol",
+                "providerID": "route-primary",
+                "reasoning": null,
+                "sessionID": "fixture-session"
+              },
+              "type": "model-request"
+            },
+            {
+              "data": {
+                "afterTool": false,
+                "kind": "text",
+                "modelID": "sol",
+                "providerID": "route-primary"
+              },
+              "type": "provider-request"
+            }
+          ]
+        },
+        {
+          "report_case": {
+            "name": "enabled-no-metered-fallback",
+            "status": "PASS",
+            "evidence_kind": "installed-local-provider",
+            "trace_file": "enabled-no-metered-fallback.routing-events.ndjson",
+            "guard_code": "LOOM_MODEL_ROUTING_HOST_UNQUALIFIED",
+            "quota_database_opened": false,
+            "routing_enabled": true,
+            "agent": "architect",
+            "session_outcome": "failed",
+            "transport_routes": [],
+            "native_model_request_count": 0,
+            "native_tool_before": 0,
+            "native_tool_after": 0,
+            "scenario": "text",
+            "native_interrupt_applied": null
+          },
+          "trace_sha256": "e2461dd1ce713deff7477d6bf051b6201835f3b87b05812b4bd861d3d35df3ca",
+          "provider_invocations_recomputed": 0,
+          "exact_trace": [
+            {
+              "data": {
+                "providerIDs": [
+                  "route-primary",
+                  "route-secondary",
+                  "route-metered"
+                ]
+              },
+              "type": "fixture-ready"
+            }
+          ]
+        },
+        {
+          "report_case": {
+            "name": "enabled-guard-after-restart",
+            "status": "PASS",
+            "evidence_kind": "installed-local-provider",
+            "trace_file": "enabled-guard-after-restart.routing-events.ndjson",
+            "guard_code": "LOOM_MODEL_ROUTING_HOST_UNQUALIFIED",
+            "quota_database_opened": false,
+            "routing_enabled": true,
+            "agent": "architect",
+            "session_outcome": "failed",
+            "transport_routes": [],
+            "native_model_request_count": 0,
+            "native_tool_before": 0,
+            "native_tool_after": 0,
+            "scenario": "text",
+            "native_interrupt_applied": null
+          },
+          "trace_sha256": "e2461dd1ce713deff7477d6bf051b6201835f3b87b05812b4bd861d3d35df3ca",
+          "provider_invocations_recomputed": 0,
+          "exact_trace": [
+            {
+              "data": {
+                "providerIDs": [
+                  "route-primary",
+                  "route-secondary",
+                  "route-metered"
+                ]
+              },
+              "type": "fixture-ready"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "acceptance_cases": [
+    {
+      "id": "I-01",
+      "name": "Primary send",
+      "progress": "PARTIAL",
+      "account_bound_acceptance": "UNQUALIFIED",
+      "evidence_levels": [
+        "S",
+        "N"
+      ],
+      "gap": "Selected route reaches local provider; no native attempt/effective-account/completed-stream join.",
+      "prior_native_cases": [
+        "same-provider-default"
+      ]
+    },
+    {
+      "id": "I-02",
+      "name": "429 retry",
+      "progress": "PARTIAL",
+      "account_bound_acceptance": "UNQUALIFIED",
+      "evidence_levels": [
+        "S",
+        "N"
+      ],
+      "gap": "Prior native counterexample uses retryable 503, not 429. New ID/account per send, revocation before resend and quota ownership remain unqualified.",
+      "prior_native_cases": [
+        "native-primary-retry",
+        "native-generate-prepared-retry"
+      ]
+    },
+    {
+      "id": "I-03",
+      "name": "Delayed compaction B after primary A",
+      "progress": "BLOCKED",
+      "account_bound_acceptance": "UNQUALIFIED",
+      "evidence_levels": [
+        "S",
+        "M"
+      ],
+      "gap": "Modeled ambiguous callback pair; no installed overlapping A/B-account capture.",
+      "prior_native_cases": []
+    },
+    {
+      "id": "I-04",
+      "name": "Concurrent auxiliary/primary",
+      "progress": "PARTIAL",
+      "account_bound_acceptance": "UNQUALIFIED",
+      "evidence_levels": [
+        "S",
+        "N"
+      ],
+      "gap": "All four kinds and separate concurrent workloads observed; same-Session interleaved account settlement and provider-owned auxiliary I/O unqualified.",
+      "prior_native_cases": [
+        "concurrent-standard",
+        "concurrent-frontier",
+        "native-title",
+        "native-generate",
+        "native-compaction-after-tool"
+      ]
+    },
+    {
+      "id": "I-05",
+      "name": "Tool continuation",
+      "progress": "PARTIAL",
+      "account_bound_acceptance": "UNQUALIFIED",
+      "evidence_levels": [
+        "N"
+      ],
+      "gap": "One native tool and two sends observed; no distinct account-bound attempt settlement.",
+      "prior_native_cases": [
+        "native-tool-continuation"
+      ]
+    },
+    {
+      "id": "I-06",
+      "name": "Credential switch before send",
+      "progress": "BLOCKED",
+      "account_bound_acceptance": "UNQUALIFIED",
+      "evidence_levels": [
+        "S"
+      ],
+      "gap": "Credential activation/resolution available, no final-send principal/generation receipt or installed account change proof.",
+      "prior_native_cases": []
+    },
+    {
+      "id": "I-07",
+      "name": "OAuth refresh/method migration",
+      "progress": "BLOCKED",
+      "account_bound_acceptance": "UNQUALIFIED",
+      "evidence_levels": [
+        "S"
+      ],
+      "gap": "Credential value can change under same record ID; no published reverified send account/generation.",
+      "prior_native_cases": []
+    },
+    {
+      "id": "I-08",
+      "name": "HTTP 200 then stream error",
+      "progress": "BLOCKED",
+      "account_bound_acceptance": "UNQUALIFIED",
+      "evidence_levels": [
+        "S",
+        "M"
+      ],
+      "gap": "Header/stream boundary distinction and modeled witnesses only; no installed account-bound failed stream.",
+      "prior_native_cases": []
+    },
+    {
+      "id": "I-09",
+      "name": "WebSocket reuse/fallback",
+      "progress": "PARTIAL",
+      "account_bound_acceptance": "UNQUALIFIED",
+      "evidence_levels": [
+        "S"
+      ],
+      "gap": "Internal socket/frame/delivery mechanics inspected; no installed WS account/attempt settlement proof.",
+      "prior_native_cases": []
+    },
+    {
+      "id": "I-10",
+      "name": "Cancellation/restart",
+      "progress": "PARTIAL",
+      "account_bound_acceptance": "UNQUALIFIED",
+      "evidence_levels": [
+        "S",
+        "N",
+        "M"
+      ],
+      "gap": "Native selection restart observed; installed cancellation and durable send/account recovery not exercised by the retained run.",
+      "prior_native_cases": [
+        "native-restart-revalidation"
+      ]
+    },
+    {
+      "id": "I-11",
+      "name": "Duplicate/out-of-order outcomes",
+      "progress": "BLOCKED",
+      "account_bound_acceptance": "UNQUALIFIED",
+      "evidence_levels": [
+        "M"
+      ],
+      "gap": "Modeled ambiguity and conservative local quota fences do not provide native settlement ownership.",
+      "prior_native_cases": []
+    },
+    {
+      "id": "I-12",
+      "name": "Existing plugins/unknown capability",
+      "progress": "PARTIAL",
+      "account_bound_acceptance": "UNQUALIFIED",
+      "evidence_levels": [
+        "S",
+        "N"
+      ],
+      "gap": "Loaded production guard denial and disabled-native control observed; no account/no-paid guarantee when plugin absent/unloaded.",
+      "prior_native_cases": [],
+      "production_control_cases": [
+        "disabled-primary",
+        "enabled-no-metered-fallback",
+        "enabled-guard-after-restart"
+      ]
+    }
+  ],
+  "related_upstream": [
+    {
+      "number": 60468,
+      "title": "[FEATURE]: Per-request provider transport timing in debug logs (request ID, headers, first event, stream end)",
+      "state": "open",
+      "updated_at": "2026-10-30T04:40:19Z",
+      "url": "https://github.com/anomalyco/opencode/issues/60468"
+    },
+    {
+      "number": 55985,
+      "title": "[FEATURE]: Public per-call completion events for title and compaction model calls",
+      "state": "open",
+      "updated_at": "2026-10-16T06:56:23Z",
+      "url": "https://github.com/anomalyco/opencode/issues/55985"
+    },
+    {
+      "number": 62096,
+      "title": "Plugin request hooks don't run for experimental.generate.text",
+      "state": "open",
+      "updated_at": "2026-11-05T15:29:42Z",
+      "url": "https://github.com/anomalyco/opencode/issues/62096"
+    },
+    {
+      "number": 62820,
+      "title": "feat(plugin): add experimental model HTTP hooks",
+      "state": "open",
+      "updated_at": "2026-11-17T20:42:22Z",
+      "url": "https://github.com/anomalyco/opencode/pull/62820"
+    },
+    {
+      "number": 64438,
+      "title": "feat(core): expose assistantMessageID in the model.request hook",
+      "state": "open",
+      "updated_at": "2026-11-17T13:52:04Z",
+      "url": "https://github.com/anomalyco/opencode/pull/64438"
+    },
+    {
+      "number": 20105,
+      "state": "closed",
+      "merged": false,
+      "url": "https://github.com/anomalyco/opencode/pull/20105"
+    },
+    {
+      "number": 47846,
+      "state": "closed",
+      "merged": false,
+      "url": "https://github.com/anomalyco/opencode/pull/47846"
+    },
+    {
+      "number": 60018,
+      "title": "[FEATURE]: Safe model selection at V2 session admission",
+      "state": "open",
+      "updated_at": "2026-10-28T20:52:21Z",
+      "url": "https://github.com/anomalyco/opencode/issues/60018"
+    },
+    {
+      "number": 61645,
+      "title": "[FEATURE]: Plugin API: race-safe, single-use permission admission",
+      "state": "open",
+      "updated_at": "2026-11-04T12:26:18Z",
+      "url": "https://github.com/anomalyco/opencode/issues/61645"
+    },
+    {
+      "number": 62712,
+      "title": "[FEATURE]: Plugin API: seal a session and await its owned jobs",
+      "state": "open",
+      "updated_at": "2026-11-08T07:33:35Z",
+      "url": "https://github.com/anomalyco/opencode/issues/62712"
+    }
+  ],
+  "upstream_search_scope": {
+    "date": "2026-11-19",
+    "queries": [
+      {
+        "query": "repo:anomalyco/opencode is:issue \"attempt\" \"billing\"",
+        "url": "https://api.github.com/search/issues?q=repo%3Aanomalyco%2Fopencode%20is%3Aissue%20%22attempt%22%20%22billing%22&per_page=30",
+        "total_count": 190,
+        "results_inspected": "first page and selected relevant bodies"
+      },
+      {
+        "query": "repo:anomalyco/opencode is:pull-request \"attempt\" \"billing\"",
+        "url": "https://api.github.com/search/issues?q=repo%3Aanomalyco%2Fopencode%20is%3Apull-request%20%22attempt%22%20%22billing%22&per_page=30",
+        "total_count": 179,
+        "results_inspected": "first page and selected relevant bodies"
+      },
+      {
+        "query": "repo:anomalyco/opencode is:issue \"model.request\"",
+        "url": "https://api.github.com/search/issues?q=repo%3Aanomalyco%2Fopencode%20is%3Aissue%20%22model.request%22&per_page=30",
+        "total_count": 17,
+        "results_inspected": "first page and selected relevant bodies"
+      },
+      {
+        "query": "repo:anomalyco/opencode is:pull-request \"model.request\"",
+        "url": "https://api.github.com/search/issues?q=repo%3Aanomalyco%2Fopencode%20is%3Apull-request%20%22model.request%22&per_page=30",
+        "total_count": 28,
+        "results_inspected": "first page and selected relevant bodies"
+      },
+      {
+        "query": "repo:anomalyco/opencode is:issue \"effective\" \"account\"",
+        "url": "https://api.github.com/search/issues?q=repo%3Aanomalyco%2Fopencode%20is%3Aissue%20%22effective%22%20%22account%22&per_page=30",
+        "total_count": 75,
+        "results_inspected": "first page and selected relevant bodies"
+      },
+      {
+        "query": "repo:anomalyco/opencode is:pull-request \"effective\" \"account\"",
+        "url": "https://api.github.com/search/issues?q=repo%3Aanomalyco%2Fopencode%20is%3Apull-request%20%22effective%22%20%22account%22&per_page=30",
+        "total_count": 18,
+        "results_inspected": "first page and selected relevant bodies"
+      }
+    ],
+    "exhaustive": false,
+    "external_submission_made": false
+  },
+  "validation": {
+    "source_modeled_witnesses": {
+      "command": "python3 -m unittest discover -s tests -p 'test_native_request_identity.py'",
+      "passed": 8,
+      "failed": 0,
+      "file_sha256": "266bb6d22f9897ccd8d34d50d1ed8d8d664b3056cb2b1c4f63be4d93ac119abf",
+      "evidence_level": "M"
+    },
+    "prior_report_trace_hashes_verified": true,
+    "retry_counts_recomputed_from_trace": true,
+    "new_installed_account_tests_run": false,
+    "live_credentials_used": false,
+    "additional_identity_checks": {
+      "path": "../tests/test_native_request_identity_230.py",
+      "checks": [
+        {
+          "evidence_level": "M",
+          "count": 5,
+          "kind": "source-modeled public-field ambiguity witnesses"
+        },
+        {
+          "evidence_level": "N",
+          "count": 1,
+          "kind": "retained PR243 generate trace hash/count replay; no new host execution"
+        },
+        {
+          "evidence_level": "S",
+          "count": 1,
+          "kind": "modeled hook fields compared with exact installed plugin2.3.0 SDK declarations"
+        }
+      ],
+      "result": "7 PASS; combined with historical eight witnesses:15 PASS",
+      "live_account_evidence": false
+    }
+  },
+  "report": "native-attempt-qualification-205.md",
+  "historical_report": "native-request-identity.md"
+}
