@@ -6,6 +6,17 @@ type: Log
 
 ## 2026-11-19
 
+**Native routing host contract refresh (#205):** Source-inspected the pinned
+OpenCode 2.3.0 model-resolution, request-preparation, retry, HTTP/WS and
+credential-resolution code against merged #243's installed local-provider
+attempt counts. Added a version-pinned qualification report and seven
+source-modelled public-callback ambiguity witnesses. Host mechanics are
+PARTIAL, but effective provider billing principal, per-send admission,
+transport-attempt identity and final settlement remain BLOCKED. No real
+provider billing calls, new production hooks or no-paid authorization.
+
+
+
 **PR #243 review correction (MINOR-01):** The request-local candidate now
 rechecks its lifetime after awaited route evaluation in both native callbacks.
 Deterministic microtask regressions reject disposal and abort at that boundary,
