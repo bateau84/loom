@@ -10,7 +10,7 @@ timestamp: 2026-11-19T00:00:00Z
 
 **Status:** The user accepted this **provider-free foundation** as a separately mergeable milestone on 2026-11-19, following independent review of [PR #240](https://github.com/bateau84/loom/pull/240) at `e393132beba4286cb13c13156cf06a5257aff0f0` (F-01, F-02 in provider-free scope, F-03A and F-04 PASS; six CI workflows PASS). This does **not** accept F-03B as proven or authorize production model routing. The production adapter stays disabled/unqualified. [#205](https://github.com/bateau84/loom/issues/205) and [#206](https://github.com/bateau84/loom/issues/206) remain blockers to live included-only dispatch. The separately tracked [#242](https://github.com/bateau84/loom/issues/242) covers protected native assignment-level admission if a future design requires such a guarantee.
 
-**Follow-up:** an internal request-local bridge now connects this planner to the 2.3.0 hooks **only in an isolated qualification fixture**. All 19 installed local-provider mechanics cases pass on exact CLI/SDK 2.3.0. It does not activate production routing or make the fixture's supplied assessment/inventory authoritative; see the [request-local qualification boundary](initial-routing-qualification-206.md).
+**Follow-up:** an internal request-local bridge now connects this planner to the 2.3.0 hooks **only in an isolated qualification fixture**. All 27 installed local-provider mechanics cases pass on exact CLI/SDK 2.3.0, including a prepared-compaction retry that demonstrates a missing per-send guard after fixture eligibility is revoked. It does not activate production routing or make the fixture's supplied assessment/inventory authoritative; see the [request-local qualification boundary](initial-routing-qualification-206.md).
 
 ## Intent
 
@@ -136,9 +136,10 @@ The provider-free suite in `tests/workload-routing.test.mjs` checks ordinary/com
 
 The new `tests/installed_request_local_routing.py` suite separately targets
 request-local mechanics on a packed candidate and exact CLI/SDK 2.3.0 with a
-scripted local provider. Its 19 mechanics cases pass, with complete stopped-host
-trace revalidation and archive/install/source byte equality. The observed
-generate retry uses two provider attempts after one request guard. These results
+scripted local provider. Its 27 mechanics cases pass, with complete stopped-host
+trace revalidation and archive/install/source byte equality. Observed generate
+and compaction retries each use two provider attempts after one request guard;
+the compaction resend even proceeds after fixture eligibility is revoked. These results
 do not qualify an included-only account, trusted workload source, every
 physical retry, or production allowlisting under #205/#206.
 
