@@ -6,6 +6,17 @@ type: Log
 
 ## 2026-11-19
 
+**Accepted routing scope separation (#239/#240):** Product-owner approval on
+2026-11-19 separates the reviewed provider-free policy foundation from
+host-qualified model dispatch. A model chosen for an individual request by
+OpenCode's 2.3.0 `experimental.model.resolve` is selected before request
+construction without changing the Session model; F-03B's stronger protected
+work-epoch guarantee applies only to assignment-wide/in-place transitions or
+claims of exactly-once new-work admission (#242). The foundation can merge
+independently after exact-head checks; no live routing, billing entitlement,
+provider switching or authorization guarantee is activated. #205/#206 stay
+required for native managed routing.
+
 **F-03A independent re-review remediation (#240):** Fixed the journal's
 revision-scoped uniqueness by separating stable Action/node/agent work identity
 from mutable Action/Plan revision checks. Added real Bun SQLite regressions for
