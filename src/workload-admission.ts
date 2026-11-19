@@ -51,8 +51,7 @@ function version(value: unknown): number {
     || record.decision.objectiveId !== record.objectiveId || record.decision.agentId !== record.agentId
     || value.assignment_id !== record.assignmentId || value.owner_session !== record.source.ownerSessionID
     || typeof record.sourceDigest !== "string"
-    || value.work_key !== digest([record.source.ownerSessionID, record.source.actionID,
-      record.source.nodeID, record.source.actionRevision, record.source.planRevision, record.agentId]))
+    || value.work_key !== digest([record.source.actionID, record.source.nodeID, record.agentId]))
     fail("INTEGRITY")
   const { id, ...payload } = record
   const { id: decisionID, ...decisionPayload } = record.decision
@@ -71,7 +70,7 @@ export class WorkloadDecisionJournal {
         db.exec(`
           CREATE TABLE loom_workload_schema(
             singleton INTEGER PRIMARY KEY CHECK(singleton=1),
-            version INTEGER NOT NULL CHECK(version=1)
+            version INTEGER NOT NULL CHECK(version=2)
           );
           CREATE TABLE loom_workload_records(
             assignment_id TEXT PRIMARY KEY,
@@ -80,7 +79,7 @@ export class WorkloadDecisionJournal {
             record_id TEXT NOT NULL,
             content_json TEXT NOT NULL
           );
-          INSERT INTO loom_workload_schema VALUES(1,1);
+          INSERT INTO loom_workload_schema VALUES(1,2);
         `)
         return
       }
@@ -89,7 +88,10 @@ export class WorkloadDecisionJournal {
         .get() as {version: number} | undefined
       const cols = db.prepare("PRAGMA table_info(loom_workload_records)")
         .all() as Array<{ name: string }>
-      if (ver?.version !== 1 || cols.map(c => c.name).join(",") !==
+      // Earlier draft-only schema v1 keyed work by mutable revisions. Never
+      // interpret those records under a new identity rule or auto-migrate
+      // potentially conflicting candidates without an explicit recovery plan.
+      if (ver?.version !== 2 || cols.map(c => c.name).join(",") !==
         "assignment_id,owner_session,work_key,record_id,content_json") fail("SCHEMA")
     })
   }
@@ -124,8 +126,10 @@ export class WorkloadDecisionJournal {
     return {
       source,
       sourceDigest: digest({ action, node, planRevision: plan.revision }),
-      workKey: digest([source.ownerSessionID, source.actionID, source.nodeID,
-        source.actionRevision, source.planRevision, uid(agentId, "agentId")]),
+      // The logical work key deliberately excludes mutable Action/Plan revisions
+      // and Session/assessment-supplied identity. A new boundary epoch requires
+      // native host proof; changing metadata never creates another candidate.
+      workKey: digest([source.actionID, source.nodeID, uid(agentId, "agentId")]),
     }
   }
   /** Records candidate evidence once. Does not authorize dispatch or accept an in-flight/phase switch. */
