@@ -25,6 +25,11 @@ type Case = {
   /** Fixture-only eligibility change between native transport attempts. */
   exhaustAfterFirstTransport?: boolean
   concurrent?: boolean
+  titleSelection?: "preferred" | "fallback"
+  automaticCompaction?: boolean
+  exhaustOnRetry?: boolean
+  sourceGate?: boolean
+  gateOpen?: boolean
 }
 const providerID = "request-local"
 const providerPackage = "aisdk:" + new URL("./provider.mjs", import.meta.url).href
@@ -56,6 +61,10 @@ export default Plugin.define({
     const failedOnce = new Set<string>()
     const retryAllowed = new Set<string>()
     const titleResolves = new Map<string, number>()
+    const titleResolutions = new Map<string, number>()
+    const titleFailed = new Set<string>()
+    const contextPressureReported = new Set<string>()
+    const sourcePaused = new Set<string>()
     const overlap: Array<() => void> = []
     const rendezvous = () => new Promise<void>((done, fail) => {
       const timer = setTimeout(() => fail(new Error("REQUEST_LOCAL_FIXTURE_NO_CONCURRENT_TRANSPORT")), 5000)
@@ -67,6 +76,21 @@ export default Plugin.define({
     })
     const regs: Array<{ dispose(): Promise<void> }> = []
     const lifetime = new AbortController()
+    // Passive native lifecycle observations. No Session state or events are
+    // injected; in particular, the auto-compaction reason comes from the host.
+    const observer = (async () => {
+      try {
+        for await (const event of ctx.event.subscribe({ signal: lifetime.signal })) {
+          if (!event.type.startsWith("session.compaction.") && !event.type.startsWith("session.execution.")) continue
+          const data = event.data as Record<string, any>
+          audit("native-lifecycle", { sessionID: data.sessionID, eventType: event.type,
+            ...(event.type.startsWith("session.compaction.") ? { kind: "compaction" } : {}),
+            reason: data.reason ?? null, model: data.model ?? null })
+        }
+      } catch (error) {
+        if (!lifetime.signal.aborted) audit("lifecycle-observer-failure", { message: String(error).slice(0, 200) })
+      }
+    })()
     const eventRef = (event: { sessionID: string; agent: string; kind: string; model: { providerID: string; id: string; variant?: string } }) => ({
       sessionID: event.sessionID, agent: event.agent, kind: event.kind,
       providerID: event.model.providerID, modelID: event.model.id, variant: event.model.variant ?? null,
@@ -80,7 +104,14 @@ export default Plugin.define({
       const afterTool = input.prompt.some((item: any) => item.role === "tool" ||
         (Array.isArray(item.content) && item.content.some((part: any) => part.type === "tool-result")))
       audit("transport", { sessionID, kind, providerID, modelID: id, mode,
-        variant: headers.get("x-loom-fixture-variant"), afterTool })
+        variant: headers.get("x-loom-fixture-variant"), afterTool,
+        fixtureQuota: exhausted.has(sessionID) ? "exhausted" : "unknown" })
+      if (kind === "title" && c.titleSelection === "fallback" && !titleFailed.has(sessionID)) {
+        titleFailed.add(sessionID)
+        audit("title-preferred-failure", { sessionID, kind, modelID: id, nextFixturePolicy: "fallback" })
+        throw new APICallError({ message: "REQUEST_LOCAL_FIXTURE_TITLE_PREFERRED_FAILURE",
+          url: "http://127.0.0.1/never-sent", requestBodyValues: {}, statusCode: 503, isRetryable: false })
+      }
       if (c.retryKind === kind && !failedOnce.has(sessionID + ":" + kind)) {
         failedOnce.add(sessionID + ":" + kind)
         audit("transport-failure", { sessionID, kind, modelID: id })
@@ -93,7 +124,7 @@ export default Plugin.define({
         throw new APICallError({ message: "REQUEST_LOCAL_FIXTURE_RETRY", url: "http://127.0.0.1/never-sent",
           requestBodyValues: {}, statusCode: 503, isRetryable: true })
       }
-      return { c, kind, afterTool }
+      return { c, kind, afterTool, sessionID }
     }
     const language = (id: string) => ({
       specificationVersion: "v3", provider: providerID, modelId: id, supportedUrls: {},
@@ -103,7 +134,7 @@ export default Plugin.define({
           finishReason: { unified: "stop", raw: "stop" }, usage, warnings: [] }
       },
       doStream: async (input: any) => {
-        const { c, kind, afterTool } = transport(id, input, "stream")
+        const { c, kind, afterTool, sessionID } = transport(id, input, "stream")
         if (c.concurrent && kind === "primary") await rendezvous()
         const tool = c.scenario === "tool" && kind === "primary" && !afterTool
         const events: any[] = [{ type: "stream-start", warnings: [] }]
@@ -117,8 +148,14 @@ export default Plugin.define({
           events.push({ type: "text-start", id: "message" }, { type: "text-delta", id: "message", delta: text },
             { type: "text-end", id: "message" })
         }
+        let reportedUsage = usage
+        if (c.automaticCompaction && kind === "primary" && !contextPressureReported.has(sessionID)) {
+          contextPressureReported.add(sessionID)
+          reportedUsage = { ...usage, inputTokens: { total: 180000, noCache: 180000, cacheRead: 0, cacheWrite: 0 } }
+          audit("fixture-context-pressure", { sessionID, kind, reportedInputTokens: 180000 })
+        }
         events.push({ type: "finish", finishReason: { unified: tool ? "tool-calls" : "stop",
-          raw: tool ? "tool_calls" : "stop" }, usage })
+          raw: tool ? "tool_calls" : "stop" }, usage: reportedUsage })
         return { stream: new ReadableStream({ start(controller) {
           for (const event of events) controller.enqueue(event)
           controller.close()
@@ -146,7 +183,10 @@ export default Plugin.define({
         if (event.model.providerID !== providerID) throw new Error("REQUEST_LOCAL_FIXTURE_REFUSED_NONLOCAL_PROVIDER")
         event.sdk = { languageModel: language }
       }))
-      regs.push(await ctx.session.hook("experimental.model.resolve", event => audit("resolve-input", eventRef(event))))
+      regs.push(await ctx.session.hook("experimental.model.resolve", event => {
+        audit("resolve-input", eventRef(event))
+        if (event.kind === "title") titleResolutions.set(event.sessionID, (titleResolutions.get(event.sessionID) ?? 0) + 1)
+      }))
       regs.push(await ctx.session.hook("model.request", event => {
         audit("request-input", eventRef(event))
         event.headers["x-loom-fixture-session"] = event.sessionID
@@ -154,6 +194,25 @@ export default Plugin.define({
       }))
       await registerRequestLocalModelSelectionCandidate(ctx, async (input: { sessionID: string; agent: string; kind: string }) => {
         const c = one(input.sessionID)
+        if (c.sourceGate && !sourcePaused.has(input.sessionID)) {
+          sourcePaused.add(input.sessionID)
+          audit("source-paused", { ...input })
+          const deadline = Date.now() + 15000
+          while (!one(input.sessionID).gateOpen) {
+            if (Date.now() >= deadline) throw new Error("REQUEST_LOCAL_FIXTURE_GATE_TIMEOUT")
+            await new Promise(done => setTimeout(done, 10))
+          }
+          audit("source-released", { ...input })
+        }
+        // Explicitly staged fixture policies keep the two native speculative
+        // title candidates distinct. These phases use only scenario state and
+        // resolution count, never event.model. They are not policy authority.
+        const titlePhase = input.kind !== "title" || !c.titleSelection ? undefined
+          : titleFailed.has(input.sessionID) ? "fallback"
+          : (titleResolutions.get(input.sessionID) ?? 0) >= 2 ? "preferred" : "primary"
+        const tier = titlePhase === "preferred" ? "advanced" : c.tier ?? "standard"
+        audit("fixture-policy-read", { ...input, titlePhase: titlePhase ?? null,
+          tier, quota: exhausted.has(input.sessionID) ? "exhausted" : "unknown" })
         const chosenProvider = c.provider ?? providerID
         const config = mergeConfig(defaults(), {
           "model-routing": { enabled: true, "default-class": "standard", "default-reasoning": "medium", "paid-fallback": false },
@@ -176,7 +235,7 @@ export default Plugin.define({
             boundary: "new-assignment", riskFactors: [],
             assessment: { status: c.uncertain ? "uncertain" : "assessed", confidence: "high", sourceRef: "private-fixture" },
             quality: { minimumTier: "standard", minimumReasoning: "medium", independence: "not-required" },
-            spending: "included-only", requestedTier: c.tier ?? "standard" } }
+            spending: "included-only", requestedTier: tier } }
       }, regs, lifetime.signal)
       regs.push(await ctx.session.hook("experimental.model.resolve", event => {
         const c = one(event.sessionID)
@@ -209,7 +268,13 @@ export default Plugin.define({
         // The first host retry advertises next-attempt ordinal 2. Count one
         // fixture retry decision; never reinterpret that ordinal as identity.
         const permit = Boolean(one(event.sessionID).retryKind) && !retryAllowed.has(event.sessionID)
-        if (permit) retryAllowed.add(event.sessionID)
+        if (permit) {
+          retryAllowed.add(event.sessionID)
+          if (one(event.sessionID).exhaustOnRetry) {
+            exhausted.add(event.sessionID)
+            audit("fixture-policy-revoked", { sessionID: event.sessionID, quota: "exhausted", boundary: "native-retry-hook" })
+          }
+        }
         event.decision = permit ? { retry: true, delay: 1 } : { retry: false }
       }))
       regs.push(await ctx.tool.hook("execute.before", event => {
@@ -222,11 +287,13 @@ export default Plugin.define({
     } catch (error) {
       lifetime.abort()
       await Promise.allSettled(regs.map(r => r.dispose()))
+      await observer
       throw error
     }
     return async () => {
       lifetime.abort()
       await Promise.allSettled(regs.map(r => r.dispose()))
+      await observer
     }
   },
 })

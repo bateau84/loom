@@ -6,6 +6,16 @@ type: Log
 
 ## 2026-11-19
 
+**Request-local lifecycle qualification (#206):** Extended the packed,
+installed OpenCode 2.3.0 suite from 19 to 27 cases: preferred/fallback native
+title selection (resolution rejection and provider failure), automatic compaction
+model reuse, prepared compaction retries with transport-side and retry-hook
+eligibility revocation, and controlled native pre-dispatch
+cancellation with an uncancelled release control. Nine corrupted-trace controls
+exercise the new final oracles. The prepared compaction resend bypasses fresh
+validation even after revocation; this is an observed host gap, not admission
+or billing qualification. Production routing remains inactive.
+
 **PR #243 review correction (MINOR-01):** The request-local candidate now
 rechecks its lifetime after awaited route evaluation in both native callbacks.
 Deterministic microtask regressions reject disposal and abort at that boundary,

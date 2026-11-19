@@ -19,7 +19,7 @@ Issue [#206](https://github.com/bateau84/loom/issues/206) remains **open**.
 
 | Pair | Evidence | Managed included-only initial routing |
 | --- | --- | --- |
-| `@opencode/plugin@2.3.0` and installed `@opencode/cli@2.3.0` | Current locked SDK/CLI from merged #238; compatibility, negative routing guard and disabled-native controls. The separate request-local mechanics suite passes 19 local-provider cases below | **BLOCKED / zero qualified positive accounts** |
+| `@opencode/plugin@2.3.0` and installed `@opencode/cli@2.3.0` | Current locked SDK/CLI from merged #238; compatibility, negative routing guard and disabled-native controls. The separate request-local mechanics suite passes 27 local-provider cases below | **BLOCKED / zero qualified positive accounts** |
 | `@opencode/plugin@2.2.6` and installed `@opencode/cli@2.2.6` | Historical #226 packed installed host optional-replay failure discriminator, negative guard and disabled-native fallback | **Historical only; positive UNPROVEN** |
 | `@opencode/plugin@2.2.0` and installed `@opencode/cli@2.2.0` | Historical PR #190 installed negative controls; superseded by current paired host | **Historical only; positive UNPROVEN** |
 | SDK/CLI `2.2.5` | Upstream tagged **source inspection only** (tag `9bbb8ce18c80f099e0e448775f59d965ead40a21`). No Loom SDK upgrade, host installation or positive subscription test | **UNQUALIFIED; not installed-tested** |
@@ -99,34 +99,24 @@ eligibility and policy enforcement at those sends remains part of #205/#206.
 The candidate neither attributes retries to billing accounts nor reserves
 quota during speculative resolution.
 
-`tests/installed_request_local_routing.py` passed **19 base installed mechanics
+`tests/installed_request_local_routing.py` passed **27 installed mechanics
 cases** on 2026-11-19 with exact CLI/SDK 2.3.0, a packed candidate and an
-in-memory native provider. A follow-up #245 adds two more installed cases
-(**21 total**, after its exact-head qualification) for preferred-title
-fallback and compaction prepared-retry behavior. The actual model ID and native variant header reach
+in-memory native provider. The actual model ID and native variant header reach
 the provider, while stored Session choices and agent defaults remain unchanged.
 The suite covers explicit-choice precedence, wrong-provider/model/variant
 refusal, uncertain assessment, unknown billing labels, stale eligibility,
 late resolver mutation, concurrent workloads of one agent, a single native
 tool with continuation, all four request kinds, and process restart.
-The follow-up fixture qualification in [PR #245](https://github.com/bateau84/loom/pull/245)
-also exercises **two title-resolution paths (preferred and failed-preferred fallback)**
-and a **prepared compaction retry after fixture eligibility changes**. The
-installed host resolves two title candidates, sends one title request, and
-falls back after the second candidate is deliberately rejected. It also
-makes two compaction provider sends after only one model resolution and
-one `model.request` validation, even when the fixture marks the route exhausted
-after the first send. These are local scripted-provider mechanics only.
 
 | Installed retry discriminator | Resolver calls | `model.request` validations | Provider attempts |
 | --- | ---: | ---: | ---: |
 | Primary retry | 2 | 2 | 2 |
 | Generate retry of a prepared request | 1 | 1 | 2 |
-| Compaction retry after synthetic eligibility exhaustion | 1 | 1 | 2 |
+| Manual compaction prepared retry after fixture eligibility revocation | 1 | 1 | 2 |
 
 The harness compares all 42 runtime files across archive, installed package
 and source; requires the specific denial and native Session identity; rejects
-five corrupt oracle inputs; and revalidates every case against the complete
+five corrupt selection-oracle inputs and nine lifecycle-oracle mutations; and revalidates every case against the complete
 trace after both host processes stop. The local run identifies working-tree
 bytes by hashes and records `source_dirty: true`; its base `source_head` is
 not a claim of final-commit qualification. The existing installed routing
@@ -134,11 +124,41 @@ control separately passes enabled-denied (zero sends) and disabled-native
 (one successful send). CI reruns both controls and the new mechanics suite
 on each PR in the existing installed-routing workflow.
 
-Automatic compaction model reuse, installed cancellation and fresh-child
-dispatch remain **unexercised** by this suite. The title dual-candidate and
-manual prepared-compaction retry cases have installed-host evidence in #245. Cancellation/disposal and failed
-hook registration have separate mocked callback tests. Native Session reads
-do not authenticate the fixture's workload assessment or turn synthetic
+### Additional native lifecycle evidence
+
+Eight scenarios extend the original 19-case suite. Their final validators require
+the native branch-specific observations below, rather than inferring coverage
+from the presence of a request hook.
+
+| Scenario | Installed observation and precise scope |
+| --- | --- |
+| Preferred title selection | Native `selectTitle()` resolves the primary and configured preferred candidates; one preferred title request is validated and sent |
+| Title fallback after preferred provider failure | Both candidates are resolved, the actual preferred provider call fails, and native title generation separately prepares, validates and sends the fallback |
+| Title fallback after preferred resolution rejection | The second speculative resolution is rejected before transport; native title selection sends the first resolved choice through one validation |
+| Automatic compaction reuse | A scripted provider reports 180,000 input tokens against the 200,000-token fixture window; the next ordinary prompt causes native `reason: auto` compaction, with zero compaction resolver callbacks and one validation/send |
+| Prepared compaction retry after transport-side revocation | The advanced `sol/high` request is sent twice after one validation; the fixture revokes eligibility while reporting the first provider failure |
+| Prepared compaction retry after retry-hook revocation | The native retry hook revokes fixture eligibility between attempts. The already prepared request is still sent a second time without another resolution or validation. A subsequent fresh generate request is denied by the same revoked source |
+| Pre-dispatch cancellation | The fixture holds the candidate's awaited policy source, the harness calls the real Session interrupt API and observes the native interruption, then releases the source. The complete stopped-host trace contains zero request approvals, provider sends or tool effects |
+| Cancellation release control | Releasing the same held source without native interruption produces one validated provider request, establishing that the interrupted case reached executable work |
+
+The title tests use **explicitly staged fixture policies**: the first speculative
+resolution selects `fast/medium`, the native configured preferred input is `limited/medium`, which the preferred fixture policy maps to `sol/high`,
+and a preferred provider failure moves the fixture policy back to the fallback.
+The stages use the named scenario and resolution count, never the mutable model
+reference. This keeps the native candidates distinguishable; it does not prove
+authenticated policy revisions, quota reservation or production authorization.
+Native Session selection remains unchanged throughout.
+
+The compaction retry result is an **observed host enforcement gap**, not a
+successful per-send guard. The fresh denial is checked against the actual
+native error and Session URL, as well as zero fresh provider sends. This
+extends the prepared-generate counterexample and keeps #205/#206 blocked.
+
+Cancellation coverage is limited to the controlled **pre-dispatch policy-read
+boundary**. In-flight stream cancellation, billing settlement, installed plugin
+disposal and fresh-child dispatch remain unqualified. Callback disposal and
+failed hook registration retain their separate mocked tests. Native Session
+reads do not authenticate fixture workload assessments or turn synthetic
 inventory into billing proof. Production activation and all real-provider
 acceptance remain blocked.
 
@@ -163,7 +183,7 @@ The workflow artifact retains `request-local-report.json` and the sanitized
 | Ordered model classes, model aliases, per-agent reasoning and paid-fallback default | Loom `src/model-routing.ts`, `src/model-routing-runtime.ts`, configuration | **Implemented (pure policy)** |
 | Shared cross-process quota, conservative reservations and failure fencing | Loom `src/quota-state.ts`, `src/model-routing-shared-quota.ts` | **Implemented (state only)**; no certified live account outcomes |
 | Exact agent native model/variant transform, initial-route mismatch guard | Loom historical `registerModelRoutingCandidate()` | **Internal test candidate, inactive** |
-| Same-provider request-local model/variant replacement and exact request guard | Loom `src/request-local-model-routing.ts`, isolated fixture only | **19 base cases PASS** (#243); **2 additional cases PASS** (#245: title fallback, prepared compaction retry), no production caller |
+| Same-provider request-local model/variant replacement and exact request guard | Loom `src/request-local-model-routing.ts`, isolated fixture only | **27 installed mechanics cases PASS**, including an observed prepared-retry enforcement gap; no production caller |
 | Host-unqualified native pre-transport denial and disabled routing compatibility | Loom `src/plugin.ts` / `registerModelRouting()`, current installed 2.3.0 checks | **Implemented for a loaded, versioned host** |
 | Server entrypoint guard before optional skill/review transforms | Loom `server.ts`, `tests/server-startup-native.test.ts` | **Merged**; historical 2.2.6 guard/replay evidence retained, suite carried forward to 2.3.0 |
 | Exact effective **provider billing principal** bound to native credential generation and send attempt | OpenCode + native provider integration | **Missing supported API** |
@@ -251,8 +271,8 @@ proof. No personal OpenCode configuration should be read or modified.
 
 ## Decision and next actionable change
 
-**No production routing activation.** Qualify the internal request-local
-candidate on the exact 2.3.0 host as a separately bounded mechanics step.
+**No production routing activation.** The internal request-local candidate has
+bounded selection/lifecycle mechanics evidence on the exact 2.3.0 host.
 It does not require #242's assignment-wide work-epoch receipt, because it
 does not switch a persisted Session or assert a new protected work epoch.
 For live activation, separately agree and demonstrate the host/provider
