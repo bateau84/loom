@@ -3,12 +3,14 @@ type: Architecture
 title: Workload-aware model routing — provider-free foundation
 description: Assignment-scoped tier decisions, conservative security floors, model-class reuse, and exact limits before native dispatch qualification.
 tags: [loom, model-routing, workload, policy, safety]
-timestamp: 2026-11-18T00:00:00Z
+timestamp: 2026-11-19T00:00:00Z
 ---
 
 # Workload-aware model routing — provider-free foundation (#239)
 
 **Status:** The user accepted this **provider-free foundation** as a separately mergeable milestone on 2026-11-19, following independent review of [PR #240](https://github.com/bateau84/loom/pull/240) at `e393132beba4286cb13c13156cf06a5257aff0f0` (F-01, F-02 in provider-free scope, F-03A and F-04 PASS; six CI workflows PASS). This does **not** accept F-03B as proven or authorize production model routing. The production adapter stays disabled/unqualified. [#205](https://github.com/bateau84/loom/issues/205) and [#206](https://github.com/bateau84/loom/issues/206) remain blockers to live included-only dispatch. The separately tracked [#242](https://github.com/bateau84/loom/issues/242) covers protected native assignment-level admission if a future design requires such a guarantee.
+
+**Follow-up:** an internal request-local bridge now connects this planner to the 2.3.0 hooks **only in an isolated qualification fixture**. All 19 installed local-provider mechanics cases pass on exact CLI/SDK 2.3.0. It does not activate production routing or make the fixture's supplied assessment/inventory authoritative; see the [request-local qualification boundary](initial-routing-qualification-206.md).
 
 ## Intent
 
@@ -81,6 +83,31 @@ Independent file-backed SQLite connections and process reopen retain the first c
 - The SQLite schema is additive, opt-in and versioned separately. Partial schema, corrupted records, stale work revisions, wrong Session selection and conflicting reassessment fail visibly.
 - The journal's work identity is stable across process restarts but **not proof of a human-originating independent objective**, protected Session admission, native side-effect safety, or account-backed entitlement. The saved Action focus remains a navigation fact, never a native authorization grant. All stored results have `status: candidate-only`.
 
+### Internal request-local host candidate (mechanics qualified)
+
+`src/request-local-model-routing.ts` reuses the pure workload planner through
+`experimental.model.resolve` and checks the resulting native model at
+`model.request`. Its only caller is an isolated fixture supplying configuration,
+inventory and assignment evidence. The production adapter and candidate
+journal remain separate and inactive for this path.
+
+Before each callback's decision, the bridge reads the native Session to
+establish its owner and stored model selection. A compatible explicit choice
+is preserved; a conflicting explicit choice is denied, not silently replaced.
+A same-provider choice replaces the hook's full model reference with the
+planned exact model/variant. The request guard re-evaluates supplied policy
+and validates the actual route; it does not consume a receipt keyed by
+Session or request kind. This accommodates speculative title selection and
+compaction's reuse of an already resolved model.
+
+The existing assignment inputs remain **policy evidence**, not proof that
+each native continuation is a fresh assignment. No protected work epoch,
+assignment-wide model affinity, provider-account authority, quota settlement,
+or live spending permission is added. In particular, [native generate](https://github.com/anomalyco/opencode/blob/v2.3.0/packages/core/src/session/generate.ts#L56-L73)
+and [compaction retries](https://github.com/anomalyco/opencode/blob/v2.3.0/packages/core/src/session/compaction.ts#L618-L705)
+can resend a prepared request without invoking `model.request` again. This
+candidate cannot establish fresh admission for every physical send.
+
 ### F-03B: protected native work admission — future assignment-level boundary (#242)
 
 **Scoped decision, accepted 2026-11-19:** the OpenCode 2.3.0 `experimental.model.resolve` hook chooses a model for a **single new request before request construction** and does **not** change the Session's stored model. This is a narrower, already host-ordered boundary; no separate assignment-wide execution-epoch receipt is needed merely to select a same-provider model/variant for that one request. A fresh native subagent can also begin with a model chosen at **creation**. Neither case should silently be represented as permission to reassign an active child or repeat completed tool effects.
@@ -91,7 +118,7 @@ To qualify **assignment-wide transitions** (not request-local selection), the mi
 
 **Required acceptance counterexamples for any future assignment-wide transition:** Action rename, plan re-save, same-task different Session, fabricated user text, a still-running background child, interruption after tool effects, ambiguous provider outcome, duplicated/cancelled admission, credential change, restart, and same-origin corrective attempts. Unknown/missing native evidence must deny model escalation or reassignment; it cannot be represented as a fresh safe boundary by changing the ID.
 
-This boundary is **not present in PR #240** and is not required to merge the **approved provider-free foundation**. It remains a required, **unsatisfied guarantee** for any future assignment-wide/in-place model switching or claims of protected new-work epochs, tracked in [#242](https://github.com/bateau84/loom/issues/242). A future request-local same-provider routing adapter must instead prove correct per-request selection, its pre-transport guard, explicit model/user authorization and the #205/#206 billing gates. A new-child cross-provider route must also demonstrate model-specific authorization at native dispatch; OpenCode's agent-name permission alone is insufficient. Neither approach is implemented or enabled by this PR.
+This boundary is **not present in PR #240** and is not required to merge the **approved provider-free foundation**. It remains a required, **unsatisfied guarantee** for any future assignment-wide/in-place model switching or claims of protected new-work epochs, tracked in [#242](https://github.com/bateau84/loom/issues/242). A request-local same-provider routing adapter must instead prove correct per-request selection, its pre-transport guard, explicit model/user authorization and the #205/#206 billing gates. A new-child cross-provider route must also demonstrate model-specific authorization at native dispatch; OpenCode's agent-name permission alone is insufficient. PR #240 implemented neither approach; the follow-up request-local candidate is fixture-only and does not enable live routing.
 
 A real native route cannot be created or resumed from the journal. Native boundary authentication, installed-host propagation and request-level identity belong to the separate #205/#206 qualification and #239 Milestone B; do not promote these candidates into execution authority.
 
@@ -106,5 +133,13 @@ A plain plugin hook, self-declared risk label, model catalog, route hash or synt
 ## Verification boundary
 
 The provider-free suite in `tests/workload-routing.test.mjs` checks ordinary/complex/security-critical tier selection, same-agent concurrent plans, assessed versus missing/uncertain inputs, requested reasoning/quality floors, independence, unknown/paid billing, absent reasoning capability, agent/role conflicts, account-sensitive fingerprints and the exact complete-record size boundary. `tests/workload-admission-native.test.ts` exercises **real Bun SQLite** writes/reads, reopened files, two connections, conflicting reassessments, stale source/selection refusal and schema corruption. These checks do **not** establish native dispatch, protected host provenance or live-model acceptance.
+
+The new `tests/installed_request_local_routing.py` suite separately targets
+request-local mechanics on a packed candidate and exact CLI/SDK 2.3.0 with a
+scripted local provider. Its 19 mechanics cases pass, with complete stopped-host
+trace revalidation and archive/install/source byte equality. The observed
+generate retry uses two provider attempts after one request guard. These results
+do not qualify an included-only account, trusted workload source, every
+physical retry, or production allowlisting under #205/#206.
 
 See the [existing routing contract](model-routing.md), [initial-route qualification](initial-routing-qualification-206.md), [native request identity](native-request-identity.md) and [OpenCode 2.3.0 compatibility](opencode-2.3.0.md).
