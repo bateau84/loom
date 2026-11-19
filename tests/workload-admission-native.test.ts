@@ -109,6 +109,52 @@ test("F-03A: distinct task nodes can retain separate candidate identity after a 
     expect(db.query("SELECT COUNT(*) AS n FROM loom_workload_records").get()).toEqual({ n: 2 })
   }))
 
+test("F-03A: file-reopen and a later Action revision still cannot mint a new logical candidate", () => {
+  const root = mkdtempSync(join(tmpdir(), "loom-workload-revision-"))
+  const path = join(root, "actions.sqlite")
+  let db = new Database(path)
+  try {
+    let sql = sqliteConnection(db), store = new Store(sql)
+    const action = store.create("Work", "Do bounded task", { session_id: "session-A", agent: "architect" })
+    store.savePlan(action.id, 0, [{ id: "node-A", kind: "task", title: "Task" }])
+    store.select("session-A", { action_id: action.id, node_id: "node-A" })
+    new WorkloadDecisionJournal(sql, store).record(source(action.id), config(),
+      "architect", inventory, work("first"))
+    db.close()
+    db = new Database(path)
+    sql = sqliteConnection(db)
+    store = new Store(sql)
+    const journal = new WorkloadDecisionJournal(sql, store)
+    store.update(action.id, 1, { title: "Renamed after recovery" })
+    expect(() => journal.record({ ...source(action.id), actionRevision: 2 },
+      config(), "architect", inventory, work("second", ["containment"]))).toThrow("CONFLICT")
+    expect(db.query("SELECT COUNT(*) AS n FROM loom_workload_records").get()).toEqual({ n: 1 })
+    expect(journal.get("first", "session-A")?.status).toBe("candidate-only")
+  } finally {
+    db.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("F-03A: legacy revision-key schema is rejected intact, not reinterpreted as a stable identity", () => {
+  const db = new Database(":memory:")
+  try {
+    const sql = sqliteConnection(db), store = new Store(sql)
+    db.exec(`
+      CREATE TABLE loom_workload_schema(singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+        version INTEGER NOT NULL CHECK(version=1));
+      CREATE TABLE loom_workload_records(assignment_id TEXT PRIMARY KEY,
+        owner_session TEXT NOT NULL, work_key TEXT NOT NULL UNIQUE,
+        record_id TEXT NOT NULL, content_json TEXT NOT NULL);
+      INSERT INTO loom_workload_schema VALUES(1,1);
+      INSERT INTO loom_workload_records VALUES('prior','session-A','old-key','old-hash','{}');
+    `)
+    expect(() => new WorkloadDecisionJournal(sql, store)).toThrow("SCHEMA")
+    expect(db.query("SELECT version FROM loom_workload_schema").get()).toEqual({ version: 1 })
+    expect(db.query("SELECT COUNT(*) AS n FROM loom_workload_records").get()).toEqual({ n: 1 })
+  } finally { db.close() }
+})
+
 test("F-03: stale plan, wrong selection, and made-up safe phase cannot admit a new decision", () => withFixture(({ journal, store, actionId, db }) => {
   const ref = source(actionId)
   expect(() => journal.record({ ...ref, planRevision: 0 }, config(), "architect", inventory, work())).toThrow("STALE")

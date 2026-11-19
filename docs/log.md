@@ -4,6 +4,17 @@ type: Log
 
 # Update Log
 
+## 2026-11-19
+
+**F-03A independent re-review remediation (#240):** Fixed the journal's
+revision-scoped uniqueness by separating stable Action/node/agent work identity
+from mutable Action/Plan revision checks. Added real Bun SQLite regressions for
+Action rename, plan update, cross-Session selection, separate node, process
+reopen and rejection of the earlier draft schema without data mutation.
+Protected native admission (F-03B) remains **BLOCKED** and is not inferred from
+saved Action identity, a new assignment ID or a journal receipt. PR #240 stays
+draft pending exact-head CI and independent assessment.
+
 ## 2026-11-18
 
 **Workload-aware model routing, Milestone A (#239; draft PR #240):**
