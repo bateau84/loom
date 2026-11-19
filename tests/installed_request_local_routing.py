@@ -228,6 +228,12 @@ def finalize_cases(cases: list[dict], captured: list[dict]) -> None:
     primary = by_name["native-primary-retry"]
     require(primary["resolve_count"] == primary["request_count"] == primary["transport_count"] == 2,
             "Final primary retry counts differ from native observation")
+    compaction = by_name["native-compaction-prepared-retry"]
+    require(compaction["request_count"] == 1 and compaction["transport_count"] == 2
+            and compaction["native_tool_count"] == 0,
+            "Final prepared-compaction retry counts or tool effects changed")
+    require(len(rows(captured, "eligibility-changed", kind="compaction")) == 1,
+            "Final trace lost the compaction policy-change witness")
     generated = by_name["native-generate-prepared-retry"]
     require(generated["resolve_count"] == generated["request_count"] == 1 and generated["transport_count"] == 2,
             "Final generate retry counts differ from native observation")
@@ -393,6 +399,35 @@ def run(cli: Path, repo: Path, plugin: Path, artifact: Path, output: Path, expec
                 require(retry_after.get("model") == retry_before.get("model"), "Prepared retry changed Session model")
                 report["cases"].append({**s.summary(generate_retry, repeated, retry_after, "fast", "medium"),
                                         "retry_reprepared": False, "per_transport_guard_proven": False})
+                # Deliberately change fixture eligibility after a failed native
+                # compaction transport. A reused Prepared request does not
+                # re-enter the candidate's model.request validation. This is
+                # not a real billing test, just an installed-host counterexample.
+                comp_retry = s.create("native-compaction-prepared-retry",
+                                      retryKind="compaction", exhaustAfterFirstTransport=True,
+                                      tier="advanced")
+                baseline = s.positive(comp_retry, "sol", "high")
+                require(baseline["outcome"] == "succeeded", "Native compaction fixture setup failed")
+                comp_start = len(events(root))
+                comp_before = request(host, "GET", f"/api/session/{comp_retry}")
+                request(host, "POST", f"/api/session/{comp_retry}/compact", {})
+                idle(host, [comp_retry])
+                comp_events = s.trace(comp_retry, comp_start)
+                selected(comp_events, "sol", "high", "compaction")
+                require(len(rows(comp_events, "request-approved", kind="compaction")) == 1
+                        and len(rows(comp_events, "transport", kind="compaction")) == 2,
+                        "Native prepared compaction retry did not expose the per-send guard gap")
+                require(len(rows(comp_events, "eligibility-changed", kind="compaction")) == 1,
+                        "Fixture eligibility did not change between compaction transport attempts")
+                require(not rows(comp_events, "tool-before") and not rows(comp_events, "tool-after"),
+                        "Compaction retry replayed a native tool")
+                comp_after = request(host, "GET", f"/api/session/{comp_retry}")
+                require(comp_after.get("model") == comp_before.get("model"),
+                        "Prepared compaction retry mutated the persisted model")
+                report["cases"].append({**s.summary(comp_retry, comp_events, comp_after, "sol", "high"),
+                                         "name": "native-compaction-prepared-retry",
+                                         "retry_reprepared": False, "per_transport_guard_proven": False,
+                                         "fixture_eligibility_changed": True})
                 require(agent_model(host) == original_agent_model, "Request-local selection mutated native agent default")
                 saved = ordinary
             finally:
