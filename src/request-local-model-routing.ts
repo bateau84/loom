@@ -83,6 +83,8 @@ export async function registerRequestLocalModelSelectionCandidate(
   // guard remains not-ready until the caller disposes its registrations.
   disposers.push(await ctx.session.hook("model.request", async event => {
     const plan = await current(event)
+    // Disposal/abort can run after current() settles but before this continuation.
+    active()
     // Independently validate the actual native ref. A later resolver hook may
     // replace our selection, and the source may now deny an exhausted route.
     // Source inputs intentionally cannot depend on this mutable model ref.
@@ -90,6 +92,7 @@ export async function registerRequestLocalModelSelectionCandidate(
   }))
   disposers.push(await ctx.session.hook("experimental.model.resolve", async event => {
     const plan = await current(event)
+    active()
     if (event.model.providerID !== plan.selected.providerID)
       throw new Error("LOOM_REQUEST_LOCAL_PROVIDER_MISMATCH: cross-provider selection requires a separate native boundary")
     // Replace the whole ref. Mutating the original in place also changes the

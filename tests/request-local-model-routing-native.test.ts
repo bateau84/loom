@@ -262,6 +262,44 @@ describe("request-local selection candidate (mocked native boundaries, not billi
     await expect(f.request(event("s1", "primary", selected()))).rejects.toThrow("fixture cancellation")
   })
 
+  for (const hook of ["resolve", "request"] as const) {
+    for (const termination of ["dispose", "abort"] as const) {
+      test(`${hook} rejects ${termination} after evaluation but before its await continuation`, async () => {
+        const f = fixture()
+        const value = input()
+        const order: string[] = []
+        let disposal: Promise<void> | undefined
+        await f.install(async () => {
+          // The first microtask precedes current()'s load continuation. It
+          // queues termination after synchronous planning, but before the
+          // outer hook resumes from await current(). No sleeps or host mocks
+          // of the private current() helper are needed to hit this boundary.
+          queueMicrotask(() => queueMicrotask(() => {
+            order.push(termination)
+            if (termination === "dispose") disposal = f.registrations[0].dispose()
+            else f.controller.abort(new Error("fixture boundary abort"))
+          }))
+          return { ...value, get inventory() {
+            order.push("evaluate")
+            return value.inventory
+          } }
+        })
+        const request = hook === "resolve" ? event() : event("s1", "primary", selected())
+        const original = request.model
+        const error = await f[hook](request).then(
+          () => { order.push("accepted"); return undefined },
+          cause => { order.push("rejected"); return cause as Error },
+        )
+        await disposal
+        expect(order).toEqual(["evaluate", termination, "rejected"])
+        expect(error).toBeInstanceOf(Error)
+        expect(error!.message).toContain(termination === "dispose"
+          ? "LOOM_REQUEST_LOCAL_NOT_READY" : "fixture boundary abort")
+        expect(request.model).toBe(original)
+      })
+    }
+  }
+
   test("unknown host versions never install selection hooks", async () => {
     for (const version of ["2.2.6", "2.3.1", "2.3.0-dev", undefined]) {
       const f = fixture()

@@ -6,6 +6,12 @@ type: Log
 
 ## 2026-11-19
 
+**PR #243 review correction (MINOR-01):** The request-local candidate now
+rechecks its lifetime after awaited route evaluation in both native callbacks.
+Deterministic microtask regressions reject disposal and abort at that boundary,
+preventing late model mutation or successful validation after shutdown.
+Production managed routing remains inactive.
+
 **Request-local model selection candidate (#206/#239):** Added an internal
 OpenCode 2.3.0 hook bridge that reuses the workload planner, replaces the
 request-local model reference, preserves compatible explicit Session choices,
