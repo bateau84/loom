@@ -9,8 +9,9 @@ type: Log
 **Native routing host contract refresh (#205):** Source-inspected the pinned
 OpenCode 2.3.0 model-resolution, request-preparation, retry, HTTP/WS and
 credential-resolution code against merged #243's installed local-provider
-attempt counts. Added a version-pinned qualification report and seven
-source-modelled public-callback ambiguity witnesses. Host mechanics are
+attempt counts. Added a version-pinned qualification report, five
+source-modelled public-callback ambiguity witnesses, a retained native-trace
+check and an installed-SDK declaration check. Host mechanics are
 PARTIAL, but effective provider billing principal, per-send admission,
 transport-attempt identity and final settlement remain BLOCKED. No real
 provider billing calls, new production hooks or no-paid authorization.

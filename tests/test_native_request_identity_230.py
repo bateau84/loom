@@ -1,13 +1,21 @@
 """OpenCode 2.3.0 source-modeled request/attempt identity counterexamples.
 
-These are intentionally NOT installed-host tests or provider billing receipts.
-The public field sets are copied from tagged v2.3.0 session plugin types.
+Five cases are source-modeled, not installed-host tests or billing receipts.
+Two additional checks replay retained native evidence and compare the modeled
+hook fields with the exact installed SDK. No new native host runs here.
 Hidden _attempt/_account annotations construct two plausible native histories
 with identical public observations. See docs/native-attempt-qualification-205.md.
 """
 from __future__ import annotations
 
+import hashlib
+import json
+import re
 import unittest
+from collections import Counter
+from pathlib import Path
+
+REPOSITORY = Path(__file__).resolve().parents[1]
 
 MODEL = {"providerID": "request-local", "id": "fast", "variant": "medium"}
 PUBLIC = {
@@ -18,6 +26,8 @@ PUBLIC = {
     "http.response": ("sessionID", "agent", "kind", "model", "request", "response"),
     "experimental.ws.handshake": ("sessionID", "agent", "kind", "model", "url", "headers"),
     "experimental.ws.send": ("sessionID", "agent", "kind", "model", "frame"),
+    # Session bus events below are projections for the modeled counterexample,
+    # not a claim to enumerate their complete native schemas.
     "session.execution.succeeded": ("sessionID",),
     "session.execution.interrupted": ("sessionID", "reason"),
 }
@@ -34,7 +44,7 @@ def visible(events: list[dict]) -> list[dict]:
     ]
 
 
-def prepared(kind: str = "generate", *, account: str = "A") -> list[dict]:
+def prepared(kind: str = "primary", *, account: str = "A") -> list[dict]:
     return [
         row("experimental.model.resolve", sessionID="s", agent="architect", kind=kind, model=MODEL),
         row("model.request", sessionID="s", agent="architect", kind=kind, model=MODEL,
@@ -49,18 +59,21 @@ def retry(origin: str) -> dict:
 
 
 class Tagged230AttemptWitnesses(unittest.TestCase):
-    def test_generate_prepared_retry_has_one_public_model_request_for_two_private_sends(self):
-        """This source-modeled send path matches the counts measured in #243's installed host."""
-        public = prepared()
-        underlying = [
-            row("private-send", _attempt="send-1", _account="A"),
-            retry("send-1"),
-            row("private-send", _attempt="send-2", _account="B"),
-        ]
-        self.assertEqual(len([e for e in public if e["event"] == "model.request"]), 1)
-        self.assertEqual(len([e for e in underlying if e["event"] == "private-send"]), 2)
-        self.assertNotIn("attemptID", visible(public)[1])
-        self.assertNotIn("accountID", visible(public)[1])
+    def test_retained_native_generate_trace_has_no_session_retry_callback(self):
+        """Replay prior CI evidence; this is not a new host/account qualification."""
+        evidence = json.loads((REPOSITORY / "docs/native-request-identity-230-evidence.json").read_text())
+        excerpt = next(item for item in evidence["prior_installed_evidence"]["retry_excerpts"]
+                       if item["case"] == "native-generate-prepared-retry")
+        events = [item["event"] for item in excerpt["events"]]
+        original_lines = "".join(json.dumps(event, sort_keys=True) + "\n" for event in events).encode()
+        self.assertEqual(hashlib.sha256(original_lines).hexdigest(), excerpt["source_lines_sha256"])
+        self.assertEqual([item["source_line"] for item in excerpt["events"]], excerpt["source_trace_line_numbers"])
+        counts = Counter(event["type"] for event in events)
+        self.assertEqual(counts["resolve-input"], 1)
+        self.assertEqual(counts["request-input"], 1)
+        self.assertEqual(counts["request-approved"], 1)
+        self.assertEqual(counts["transport"], 2)
+        self.assertEqual(counts["retry"], 0)
 
     def test_two_effective_accounts_are_indistinguishable_to_request_and_retry_hooks(self):
         before = prepared(account="A")
@@ -114,11 +127,27 @@ class Tagged230AttemptWitnesses(unittest.TestCase):
         self.assertEqual(visible(old), visible(new))
         self.assertNotEqual(old[-1]["_attempt"], new[-1]["_attempt"])
 
-    def test_explicit_absence_of_transport_account_fields_in_tagged_public_hooks(self):
-        for event, names in PUBLIC.items():
-            self.assertNotIn("effectiveBillingAccount", names, event)
-            self.assertNotIn("attemptID", names, event)
-            self.assertNotIn("credentialRevision", names, event)
+    def test_modeled_hook_fields_match_the_exact_installed_sdk(self):
+        """Check actual declarations, not absence from our own projection table."""
+        sdk = REPOSITORY / "node_modules/@opencode/plugin"
+        self.assertEqual(json.loads((sdk / "package.json").read_text())["version"], "2.3.0")
+        declarations = (sdk / "dist/promise/session.d.ts").read_text()
+        interfaces = {
+            "experimental.model.resolve": "SessionModelResolve",
+            "model.request": "SessionModelRequest",
+            "retry": "SessionRetry",
+            "http.request": "SessionHttpRequest",
+            "http.response": "SessionHttpResponse",
+            "experimental.ws.handshake": "SessionWebSocketHandshake",
+            "experimental.ws.send": "SessionWebSocketSend",
+        }
+        for event, interface in interfaces.items():
+            with self.subTest(event=event):
+                block = re.search(r"export interface " + interface + r" \{(.*?)^\}",
+                                  declarations, re.MULTILINE | re.DOTALL)
+                self.assertIsNotNone(block, interface)
+                fields = re.findall(r"^\s*(?:readonly\s+)?(\w+)\??\s*:", block.group(1), re.MULTILINE)
+                self.assertEqual(set(fields), set(PUBLIC[event]))
 
 
 if __name__ == "__main__":
