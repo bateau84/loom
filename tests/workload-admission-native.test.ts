@@ -66,6 +66,49 @@ test("F-03: a second assignment cannot relabel the same work/owner/revision to b
   expect(journal.get("first", "session-A")?.objectiveId).toBe("one-origin")
 }))
 
+test("F-03A: title-only Action revision cannot mint a second candidate for the same logical work", () =>
+  withFixture(({ journal, store, db, actionId }) => {
+    const initial = journal.record(source(actionId), config(), "architect", inventory, work("first"))
+    const revision = store.update(actionId, 1, { title: "Renamed without changing task" })
+    expect(revision.revision).toBe(2)
+    const after = { ...source(actionId), actionRevision: 2 }
+    expect(() => journal.record(after, config(), "architect", inventory,
+      work("second", ["authority"]))).toThrow("CONFLICT")
+    expect(() => journal.record(after, config(), "architect", inventory,
+      work("first"))).toThrow("CONFLICT")
+    expect(journal.get("first", "session-A")).toEqual(initial)
+    expect(db.query("SELECT COUNT(*) AS n FROM loom_workload_records").get()).toEqual({ n: 1 })
+  }))
+
+test("F-03A: a plan-only revision or another Session cannot reissue the same node/agent candidate", () =>
+  withFixture(({ journal, store, db, actionId }) => {
+    journal.record(source(actionId), config(), "architect", inventory, work("first"))
+    store.savePlan(actionId, 1, [{ id: "node-A", kind: "task", title: "Still same task" }])
+    const updated = { ...source(actionId), planRevision: 2 }
+    expect(() => journal.record(updated, config(), "architect", inventory,
+      work("another", ["authority"]))).toThrow("CONFLICT")
+
+    store.select("session-B", { action_id: actionId, node_id: "node-A" })
+    const otherOwner = { ...updated, ownerSessionID: "session-B" }
+    expect(() => journal.record(otherOwner, config(), "architect", inventory,
+      work("new-session", ["credentials"]))).toThrow("CONFLICT")
+    expect(db.query("SELECT COUNT(*) AS n FROM loom_workload_records").get()).toEqual({ n: 1 })
+  }))
+
+test("F-03A: distinct task nodes can retain separate candidate identity after a valid plan revision", () =>
+  withFixture(({ journal, store, db, actionId }) => {
+    journal.record(source(actionId), config(), "architect", inventory, work("first"))
+    store.savePlan(actionId, 1, [
+      { id: "node-A", kind: "task", title: "First task" },
+      { id: "node-B", kind: "task", title: "Separate task" },
+    ])
+    store.select("session-A", { action_id: actionId, node_id: "node-B" })
+    const second = journal.record({ ...source(actionId), planRevision: 2, nodeID: "node-B" },
+      config(), "architect", inventory, work("second"))
+    expect(second.status).toBe("candidate-only")
+    expect(db.query("SELECT COUNT(*) AS n FROM loom_workload_records").get()).toEqual({ n: 2 })
+  }))
+
 test("F-03: stale plan, wrong selection, and made-up safe phase cannot admit a new decision", () => withFixture(({ journal, store, actionId, db }) => {
   const ref = source(actionId)
   expect(() => journal.record({ ...ref, planRevision: 0 }, config(), "architect", inventory, work())).toThrow("STALE")
