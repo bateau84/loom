@@ -91,6 +91,12 @@ The trust boundary must be inside native host/provider send admission and must c
 
 Tests in `tests/test_native_request_identity_230.py` assert **observable ambiguity** from exact public hook field sets. They are not a replacement for the installed host and cannot prove a host/provider capability's total absence.
 
+## Related upstream work (not existing guarantees)
+
+- [OpenCode #60468](https://github.com/anomalyco/opencode/issues/60468) proposes debug-only transport attempt IDs and timing through HTTP/WS fallback. That would improve **diagnostics and correlation**, but the proposal is **open**, limited to debug observability and does **not** attest effective billing account or enforce included-only sending.
+- [OpenCode #55985](https://github.com/anomalyco/opencode/issues/55985) proposes public per-call completion events for title/compaction, which could improve outcome attribution. It is **open**, does not cover pre-send authorization or per-transport credential binding.
+- Do not duplicate these requests when proposing the smallest #205 contract. The missing mandatory capability is **trusted per-send account/no-paid admission and immutable outcome binding**, not merely a request-ID log field.
+
 ## Disposition and owner
 
 **#205: PARTIAL request-local selection; BLOCKED per-send attempt/account attribution. #206: BLOCKED for production included-only routing.** Next required evidence comes from the **OpenCode host maintainer/provider integration** for per-send identity and settlement, and from the **billing provider** for enforced no-paid restrictions. Loom owns policy, verified route checking, conservative quota state and fail-closed integration, but cannot truthfully manufacture the missing native facts.
