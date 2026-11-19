@@ -14,6 +14,7 @@ type Case = {
   tier?: "standard" | "advanced" | "frontier"
   scenario?: "text" | "tool"
   nativeTitle?: boolean
+  titleRejectPreferred?: boolean
   overrideModel?: string
   provider?: string
   billing?: "included" | "unknown" | "metered"
@@ -54,6 +55,7 @@ export default Plugin.define({
     const exhausted = new Set<string>()
     const failedOnce = new Set<string>()
     const retryAllowed = new Set<string>()
+    const titleResolves = new Map<string, number>()
     const overlap: Array<() => void> = []
     const rendezvous = () => new Promise<void>((done, fail) => {
       const timer = setTimeout(() => fail(new Error("REQUEST_LOCAL_FIXTURE_NO_CONCURRENT_TRANSPORT")), 5000)
@@ -180,6 +182,17 @@ export default Plugin.define({
         const c = one(event.sessionID)
         audit("resolve-output", eventRef(event))
         if (c.exhaustAfterResolve) exhausted.add(event.sessionID)
+        if (event.kind === "title") {
+          const count = (titleResolves.get(event.sessionID) ?? 0) + 1
+          titleResolves.set(event.sessionID, count)
+          if (c.titleRejectPreferred && count === 2) {
+            // The host can try a preferred title model and fall back to the
+            // first resolved choice. Fail only that speculative second path.
+            event.model = { providerID: Provider.ID.make("unavailable-title-provider"),
+              id: Model.ID.make("rejected"), variant: Model.VariantID.make("medium") }
+            audit("title-preferred-rejected", { sessionID: event.sessionID, kind: "title", count })
+          }
+        }
         if (c.lateModel) {
           event.model = { providerID: Provider.ID.make(providerID), id: Model.ID.make(c.lateModel),
             variant: Model.VariantID.make("medium") }

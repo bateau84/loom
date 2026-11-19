@@ -220,6 +220,13 @@ def finalize_cases(cases: list[dict], captured: list[dict]) -> None:
                     transport_kinds=sorted({row["kind"] for row in rows(trace, "transport")}),
                     native_tool_count=len(rows(trace, "tool-after")), final_trace_revalidated=True)
     by_name = {case["name"]: case for case in cases}
+    for name in ("native-title", "native-title-preferred-fallback"):
+        entry = by_name[name]
+        require(entry["transport_count"] == 2 and entry["request_count"] == 2
+                and entry["resolve_count"] == 3,
+                "Final title primary/preferred selection counts changed: " + name)
+    require(len(rows(captured, "title-preferred-rejected", kind="title")) == 1,
+            "Final title preferred/fallback rejection witness was lost")
     tool = by_name["native-tool-continuation"]
     require(tool["native_tool_count"] == 1 and tool["request_count"] == tool["transport_count"] == 2,
             "Final trace changed the single-tool continuation result")
@@ -301,7 +308,9 @@ def run(cli: Path, repo: Path, plugin: Path, artifact: Path, output: Path, expec
             cfg = {"plugins": ["*", str(plugin), str(repo / "tests/request-local-host")],
                    "model": PROVIDER + "/limited#medium", "update": "disable", "share": "disabled",
                    "agents": {"architect": {"description": "Private native selection fixture", "mode": "primary",
-                       "system": "Use only the scripted local provider.", "model": PROVIDER + "/default#medium"}}}
+                       "system": "Use only the scripted local provider.", "model": PROVIDER + "/default#medium"},
+                              "title": {"description": "Native title dual-selection fixture",
+                                        "model": PROVIDER + "/limited#medium"}}}
             (Path(env["OPENCODE_CONFIG_DIR"]) / "opencode.json").write_text(json.dumps(cfg) + "\n")
             host = start_host(cli, repo, plugin, root, env, output, "request-local")
             try:
@@ -359,6 +368,26 @@ def run(cli: Path, repo: Path, plugin: Path, artifact: Path, output: Path, expec
                 title_after = request(host, "GET", f"/api/session/{title}")
                 require(title_after.get("model") == report["cases"][-1]["persisted_model"],
                         "Native title changed the persisted Session model")
+                require(len(rows(s.trace(title), "resolve-input", kind="title")) == 2
+                        and len(rows(s.trace(title), "request-approved", kind="title")) == 1
+                        and len(rows(s.trace(title), "transport", kind="title")) == 1,
+                        "Native preferred title selection did not resolve twice and send once")
+                fallback = s.create("native-title-preferred-fallback",
+                                    native_title=True, titleRejectPreferred=True)
+                report["cases"].append(s.positive(fallback, "fast", "medium"))
+                deadline = time.monotonic() + 10
+                while not rows(s.trace(fallback), "transport", kind="title") and time.monotonic() < deadline:
+                    time.sleep(.05)
+                fallback_trace = s.trace(fallback)
+                selected(fallback_trace, "fast", "medium", "title")
+                require(len(rows(fallback_trace, "resolve-input", kind="title")) == 2
+                        and len(rows(fallback_trace, "title-preferred-rejected", kind="title")) == 1
+                        and len(rows(fallback_trace, "request-approved", kind="title")) == 1
+                        and len(rows(fallback_trace, "transport", kind="title")) == 1,
+                        "Rejected speculative title choice was not followed by a single guarded fallback send")
+                require(request(host, "GET", f"/api/session/{fallback}").get("model")
+                        == report["cases"][-1]["persisted_model"],
+                        "Native preferred-title fallback mutated persisted Session model")
                 generate = s.create("native-generate")
                 generate_before = request(host, "GET", f"/api/session/{generate}")
                 generated = request(host, "POST", f"/api/session/{generate}/generate", {"prompt": "Private local generation"})
