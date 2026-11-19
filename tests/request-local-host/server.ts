@@ -21,6 +21,8 @@ type Case = {
   lateModel?: string
   exhaustAfterResolve?: boolean
   retryKind?: "primary" | "generate" | "compaction"
+  /** Fixture-only eligibility change between native transport attempts. */
+  exhaustAfterFirstTransport?: boolean
   concurrent?: boolean
 }
 const providerID = "request-local"
@@ -80,6 +82,12 @@ export default Plugin.define({
       if (c.retryKind === kind && !failedOnce.has(sessionID + ":" + kind)) {
         failedOnce.add(sessionID + ":" + kind)
         audit("transport-failure", { sessionID, kind, modelID: id })
+        if (c.exhaustAfterFirstTransport) {
+          // Represents a policy/quota change after one physical provider
+          // attempt. No native request callback runs for prepared retries.
+          exhausted.add(sessionID)
+          audit("eligibility-changed", { sessionID, kind, status: "exhausted", when: "after-first-send" })
+        }
         throw new APICallError({ message: "REQUEST_LOCAL_FIXTURE_RETRY", url: "http://127.0.0.1/never-sent",
           requestBodyValues: {}, statusCode: 503, isRetryable: true })
       }
