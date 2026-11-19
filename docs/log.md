@@ -4,6 +4,44 @@ type: Log
 
 # Update Log
 
+## 2026-11-19
+
+**Accepted routing scope separation (#239/#240):** Product-owner approval on
+2026-11-19 separates the reviewed provider-free policy foundation from
+host-qualified model dispatch. A model chosen for an individual request by
+OpenCode's 2.3.0 `experimental.model.resolve` is selected before request
+construction without changing the Session model; F-03B's stronger protected
+work-epoch guarantee applies only to assignment-wide/in-place transitions or
+claims of exactly-once new-work admission (#242). The foundation can merge
+independently after exact-head checks; no live routing, billing entitlement,
+provider switching or authorization guarantee is activated. #205/#206 stay
+required for native managed routing.
+
+**F-03A independent re-review remediation (#240):** Fixed the journal's
+revision-scoped uniqueness by separating stable Action/node/agent work identity
+from mutable Action/Plan revision checks. Added real Bun SQLite regressions for
+Action rename, plan update, cross-Session selection, separate node, process
+reopen and rejection of the earlier draft schema without data mutation.
+Protected native admission (F-03B) remains **BLOCKED** and is not inferred from
+saved Action identity, a new assignment ID or a journal receipt. PR #240 stays
+draft pending exact-head CI and independent assessment.
+
+## 2026-11-18
+
+**Workload-aware model routing, Milestone A (#239; draft PR #240):**
+Added pure assignment-scoped model-tier selection for the existing router,
+with bounded conservative risk floors, layered role/agent tier policies,
+provider-free plan tests, explicit assessment/quality/reasoning/independence
+inputs, and account-sensitive deterministic decision fingerprints. Independent
+review found missing reasoning evidence acceptance and an off-by-digest-size
+bound; the corrected path now rejects missing variants and measures the full
+serialized record. An optional additive SQLite journal stores **candidate-only**
+work decisions bound to existing current saved Action/plan selection, and refuses
+conflicting/unsafe reuse after restart. This does not register a native model
+hook, attest safe native work admission, persist authoritative routing receipts,
+qualify billing or enable live managed routing. All #205/#206 and independent acceptance gates remain open. See
+[the candidate policy and limits](workload-routing.md).
+
 ## 2026-11-17
 
 **PR #237 bounded remediation:** Retained existing-Session question delivery and

@@ -1,4 +1,4 @@
-import type { Config, Reasoning } from "./config.js"
+import type { Config, Reasoning, WorkloadTier, WorkloadTierPolicy } from "./config.js"
 
 /**
  * Pure selection policy; it never sends a request or assumes that an OpenCode
@@ -53,6 +53,25 @@ export function resolveModelPolicy(config: Config, agentID: string): ModelPolicy
   return { modelClass, reasoning }
 }
 
+/** Resolve the exact policy for one workload tier; no fallback from a missing premium tier. */
+export function resolveWorkloadTierPolicy(config: Config, agentID: string, tier: WorkloadTier): ModelPolicy | undefined {
+  const base = resolveModelPolicy(config, agentID)
+  if (!base) return undefined
+  if (tier === "standard") return base
+  const agent = config.agents[agentID]
+  const explicit = agent.workloadTiers?.[tier]
+  const inherited = agent.roles
+    .map(role => config.roles[role]?.workloadTiers?.[tier])
+    .filter((policy): policy is WorkloadTierPolicy => policy !== undefined)
+  const distinct = new Set(inherited.map(value => JSON.stringify(value)))
+  if (!explicit && distinct.size > 1)
+    throw new Error(`agents.${agentID} has conflicting role workload tier ${tier}; set an explicit agent override`)
+  const policy = explicit ?? inherited[0]
+  if (policy && !config.modelClasses[policy.modelClass])
+    throw new Error(`agents.${agentID} tier ${tier} references unknown model-class ${policy.modelClass}`)
+  return policy
+}
+
 export function validateModelRouting(config: Config): void {
   if (!config.modelRouting.enabled) return
   if (!Object.keys(config.modelClasses).length) throw new Error("model-routing enabled without model-classes")
@@ -60,7 +79,10 @@ export function validateModelRouting(config: Config): void {
     throw new Error(`model-routing.default-class references unknown model-class ${config.modelRouting.defaultClass}`)
   }
   for (const [id, agent] of Object.entries(config.agents)) {
-    if (agent.enabled) resolveModelPolicy(config, id)
+    if (!agent.enabled) continue
+    resolveModelPolicy(config, id)
+    resolveWorkloadTierPolicy(config, id, "advanced")
+    resolveWorkloadTierPolicy(config, id, "frontier")
   }
 }
 
@@ -72,10 +94,14 @@ export function validateModelRouting(config: Config): void {
  * (across the entire class) before considering a metered provider.
  * A billing state of "unknown" is never authorization for metered usage.
  */
-export function planModelRoutes(config: Config, agentID: string, inventory: readonly RouteInventory[]): ModelPlan {
+export function planModelRoutes(
+  config: Config, agentID: string, inventory: readonly RouteInventory[], workPolicy?: ModelPolicy,
+): ModelPlan {
   if (!config.modelRouting.enabled) return { status: "disabled", candidates: [] }
-  const policy = resolveModelPolicy(config, agentID)
-  if (!policy) return { status: "no-policy", candidates: [] }
+  const base = resolveModelPolicy(config, agentID)
+  if (!base) return { status: "no-policy", candidates: [] }
+  const policy = workPolicy ?? base
+  if (!config.modelClasses[policy.modelClass]) throw new Error(`unknown model-class ${policy.modelClass}`)
 
   const preferredProviders = new Map(config.modelRouting.providerOrder.map((id, index) => [id, index]))
   const providerRank = (provider: string) => preferredProviders.get(provider) ?? Number.MAX_SAFE_INTEGER
