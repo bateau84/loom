@@ -275,10 +275,10 @@ def run(cli: Path, repo: Path, plugin: Path, artifact: Path, output: Path, expec
               "host_version_required": VERSION, "sdk_version_required": VERSION,
               "cases": [], "limits": [
                   "The fixture supplies assessment and included inventory labels; these are not native authority or billing attestations.",
-                  "model.request guards request preparation, not every physical retry; auxiliary Prepared requests can be reused.",
+                  "model.request guards request preparation, not every physical retry; generate and compaction can reuse a Prepared request after eligibility changes.",
                   "Fresh-child cross-provider routing, assignment-wide admission and live provider/account guarantees are outside this qualification.",
-              ], "not_exercised": ["title preferred/fallback dual-candidate path", "automatic compaction model reuse",
-                                    "compaction prepared retries", "cancellation and fresh-child dispatch"]}
+              ], "not_exercised": ["automatic compaction model reuse", "installed cancellation",
+                                    "fresh-child dispatch"]}
     try:
         report["candidate"] = installed_plugin_inventory(artifact, plugin, expected_version, VERSION)
         source = source_inventory(repo)

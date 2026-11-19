@@ -99,19 +99,30 @@ eligibility and policy enforcement at those sends remains part of #205/#206.
 The candidate neither attributes retries to billing accounts nor reserves
 quota during speculative resolution.
 
-`tests/installed_request_local_routing.py` passed **19 installed mechanics
+`tests/installed_request_local_routing.py` passed **19 base installed mechanics
 cases** on 2026-11-19 with exact CLI/SDK 2.3.0, a packed candidate and an
-in-memory native provider. The actual model ID and native variant header reach
+in-memory native provider. A follow-up #245 adds two more installed cases
+(**21 total**, after its exact-head qualification) for preferred-title
+fallback and compaction prepared-retry behavior. The actual model ID and native variant header reach
 the provider, while stored Session choices and agent defaults remain unchanged.
 The suite covers explicit-choice precedence, wrong-provider/model/variant
 refusal, uncertain assessment, unknown billing labels, stale eligibility,
 late resolver mutation, concurrent workloads of one agent, a single native
 tool with continuation, all four request kinds, and process restart.
+The follow-up fixture qualification in [PR #245](https://github.com/bateau84/loom/pull/245)
+also exercises **two title-resolution paths (preferred and failed-preferred fallback)**
+and a **prepared compaction retry after fixture eligibility changes**. The
+installed host resolves two title candidates, sends one title request, and
+falls back after the second candidate is deliberately rejected. It also
+makes two compaction provider sends after only one model resolution and
+one `model.request` validation, even when the fixture marks the route exhausted
+after the first send. These are local scripted-provider mechanics only.
 
 | Installed retry discriminator | Resolver calls | `model.request` validations | Provider attempts |
 | --- | ---: | ---: | ---: |
 | Primary retry | 2 | 2 | 2 |
 | Generate retry of a prepared request | 1 | 1 | 2 |
+| Compaction retry after synthetic eligibility exhaustion | 1 | 1 | 2 |
 
 The harness compares all 42 runtime files across archive, installed package
 and source; requires the specific denial and native Session identity; rejects
@@ -123,9 +134,9 @@ control separately passes enabled-denied (zero sends) and disabled-native
 (one successful send). CI reruns both controls and the new mechanics suite
 on each PR in the existing installed-routing workflow.
 
-Title's preferred/fallback dual-candidate branch, automatic compaction model
-reuse, compaction prepared retries, installed cancellation and fresh-child
-dispatch remain **unexercised** by this suite. Cancellation/disposal and failed
+Automatic compaction model reuse, installed cancellation and fresh-child
+dispatch remain **unexercised** by this suite. The title dual-candidate and
+manual prepared-compaction retry cases have installed-host evidence in #245. Cancellation/disposal and failed
 hook registration have separate mocked callback tests. Native Session reads
 do not authenticate the fixture's workload assessment or turn synthetic
 inventory into billing proof. Production activation and all real-provider
@@ -152,7 +163,7 @@ The workflow artifact retains `request-local-report.json` and the sanitized
 | Ordered model classes, model aliases, per-agent reasoning and paid-fallback default | Loom `src/model-routing.ts`, `src/model-routing-runtime.ts`, configuration | **Implemented (pure policy)** |
 | Shared cross-process quota, conservative reservations and failure fencing | Loom `src/quota-state.ts`, `src/model-routing-shared-quota.ts` | **Implemented (state only)**; no certified live account outcomes |
 | Exact agent native model/variant transform, initial-route mismatch guard | Loom historical `registerModelRoutingCandidate()` | **Internal test candidate, inactive** |
-| Same-provider request-local model/variant replacement and exact request guard | Loom `src/request-local-model-routing.ts`, isolated fixture only | **19 installed mechanics cases PASS**, no production caller |
+| Same-provider request-local model/variant replacement and exact request guard | Loom `src/request-local-model-routing.ts`, isolated fixture only | **19 base cases PASS** (#243); **2 additional cases PASS** (#245: title fallback, prepared compaction retry), no production caller |
 | Host-unqualified native pre-transport denial and disabled routing compatibility | Loom `src/plugin.ts` / `registerModelRouting()`, current installed 2.3.0 checks | **Implemented for a loaded, versioned host** |
 | Server entrypoint guard before optional skill/review transforms | Loom `server.ts`, `tests/server-startup-native.test.ts` | **Merged**; historical 2.2.6 guard/replay evidence retained, suite carried forward to 2.3.0 |
 | Exact effective **provider billing principal** bound to native credential generation and send attempt | OpenCode + native provider integration | **Missing supported API** |
