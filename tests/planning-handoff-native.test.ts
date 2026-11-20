@@ -27,7 +27,7 @@ test("planning and coordination guidance distinguish Action planning from option
   expect(researcher).not.toContain("docs/plan/")
 })
 
-test("an Action plan revision is attributable to its native planning Session and visible to General", async () => {
+test("a milestone plan retains outcome context and native authorship without cascading task completion", async () => {
   const f = await registeredLoom()
   try {
     const action = (await f.invoke("action", {
@@ -41,8 +41,12 @@ test("an Action plan revision is attributable to its native planning Session and
     expect((await f.invoke("context", { action_id: action.id }, "planner-session", "task-manager")).result.action.id)
       .toBe(action.id)
     const nodes = [
-      { id: "research", kind: "task", title: "Investigate retry safety", roles: ["research"] },
-      { id: "implement", kind: "task", title: "Implement retries", depends_on: ["research"], roles: ["implementation"] },
+      { id: "safe-retry", kind: "phase", title: "Retry an interrupted request safely",
+        outcome: "The operator can retry a request without repeating a completed effect.",
+        criteria: ["Interrupt the real request path and inspect the retry outcome and effect count."],
+        context: "Advances the Action goal of safe retries; provider compatibility remains outside this milestone." },
+      { id: "research", kind: "task", title: "Investigate retry safety", parent: "safe-retry", roles: ["research"] },
+      { id: "implement", kind: "task", title: "Implement retries", parent: "safe-retry", depends_on: ["research"], roles: ["implementation"] },
     ]
     const saved = (await f.invoke("plan", {
       operation: "save", action_id: action.id, expected_revision: 0, nodes,
@@ -50,6 +54,22 @@ test("an Action plan revision is attributable to its native planning Session and
     expect(saved).toMatchObject({ revision: 1, nodes, saved_by: { session_id: "planner-session", agent: "task-manager" } })
     expect((await f.invoke("plan", { operation: "read", action_id: action.id }, "general-session", "general")).result)
       .toEqual(saved)
+
+    const worker = (await f.invoke("context", {
+      action_id: action.id, node_id: "implement",
+    }, "worker-session", "author")).result
+    expect(worker.related_tasks.find((node: any) => node.id === "safe-retry")).toEqual(nodes[0])
+    await f.invoke("record", {
+      operation: "complete", work_ref: worker.work_ref,
+      statement: "Fixture implementation report only; the assembled retry demonstration has not run.",
+    }, "worker-session", "author")
+    const progress = (await f.invoke("record", {
+      operation: "query", view: "progress", action_id: action.id,
+    }, "general-session", "general")).result.items
+    expect(progress.find((item: any) => item.node_id === "implement").state).toBe("reported-complete")
+    expect(progress.find((item: any) => item.node_id === "safe-retry").state).toBe("open")
+    expect((await f.invoke("action", { operation: "list" }, "general-session", "general")).result.items[0].state)
+      .toBe("active")
 
     // A Plan writer remains discoverable after clearing the current selection.
     await f.invoke("context", { clear: true }, "planner-session", "task-manager")
@@ -75,10 +95,12 @@ test("an Action plan revision is attributable to its native planning Session and
     // Each revision keeps its original writer, without overwriting history.
     const newer = (await f.invoke("plan", {
       operation: "save", action_id: action.id, expected_revision: 1,
-      nodes: [...nodes, { id: "verify", kind: "task", title: "Verify behavior", depends_on: ["implement"] }],
+      nodes: [...nodes, { id: "verify", kind: "task", title: "Demonstrate safe retry", parent: "safe-retry", depends_on: ["implement"] }],
     }, "second-planner-session", "task-manager")).result
     expect(newer.saved_by).toEqual({ session_id: "second-planner-session", agent: "task-manager" })
     expect((await f.invoke("plan", { operation: "read", action_id: action.id, revision: 1 })).result.saved_by)
       .toEqual({ session_id: "planner-session", agent: "task-manager" })
+    expect((await f.invoke("plan", { operation: "read", action_id: action.id, revision: 1 })).result.nodes)
+      .toEqual(nodes)
   } finally { await f.close() }
 })

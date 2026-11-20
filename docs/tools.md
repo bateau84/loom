@@ -109,7 +109,8 @@ order or complete work. Reread/reconcile stale revisions, never guess a replacem
 
 When General delegates planning for an existing Action, include its `action_id`.
 The planning agent selects it with `loom_context`, reads the existing Plan,
-saves the complete revision through `loom_plan`, and returns the Action ID,
+saves the complete revision through `loom_plan`, and leads its human handback
+with the next outcome and proof strategy, followed by the Action ID,
 saved revision and node IDs. General reads that revision to verify it before
 delegating planned work. A chat response or `docs/plan/` document can be a
 proposal or supplement, not a saved Loom Plan. Without an Action ID, a
@@ -120,6 +121,28 @@ A saved revision includes `saved_by: {session_id, agent}` from the native
 caller; older revisions can omit it. `loom_action sessions` can discover
 that Session from its Plan write, even after it clears selection. This is
 traceability, not proof that the plan was reviewed or executed.
+
+For substantial product work, professional planning guidance can organize the
+Plan around milestones without changing Loom's schema. A milestone is a
+checkpoint for a meaningful outcome, represented on an ordinary phase or task.
+Use the existing fields, for example:
+
+| Field | Example for a local export tool |
+| --- | --- |
+| `title` | Export and inspect one complete report |
+| `outcome` | The operator can create a report and inspect its completed output. |
+| `criteria` | Run the real export command from accepted input, read its output, and verify that failure never reports success. |
+| `context` | Advances the Action goal of reliable local reporting; this increment covers one format, with later formats still planned. |
+
+Here `criteria` is stored as a list of strings. Phases can group work toward a
+milestone; waves arrange execution and do not themselves establish product
+progress. A single task may carry a small outcome without either grouping.
+Keep required technical prerequisites and accepted guarantees in the plan.
+After a demonstration, record evidence, limits and learning in existing result
+or review records, then revise affected remaining work. Explain current
+capability and the next demonstration before listing IDs. Completion remains
+agent-reported: completing tasks does not complete or accept their milestone,
+parent or Action, and a milestone does not certify the whole product.
 
 Select work through `loom_context`:
 
