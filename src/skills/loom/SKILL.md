@@ -29,8 +29,7 @@ Parse only JSON. Await writes; sequence dependencies; inspect Promise.allSettled
 
 ## Start or resume work
 
-Use an Action for cross-agent/Session continuity, not ordinary chat. Use a Plan for meaningful dependencies, distinct tasks or resumption needs,
-not merely because work takes several steps.
+Use Actions for cross-agent/Session continuity and Plans for meaningful dependencies, distinct tasks or resumption needs. Ordinary chat needs neither.
 
 Use `loom_agents {}`: match `agents[].roles` to `role_descriptions`.
 Check `available`/`enabled`; delegate natively.
@@ -41,7 +40,7 @@ Reuse handed-off Action IDs or find via `loom_action` list. To create an Action:
 {"operation":"create","title":"Explain a setting","goal":"Produce a source-backed explanation with its limitations."}
 ```
 
-Use `result.id` as Action ID. Page `loom_action sessions` for local Sessions, not execution proof.
+`result.id` is the Action ID. `loom_action sessions` lists local Sessions, not execution proof.
 
 Read the Plan before edits:
 
@@ -49,9 +48,11 @@ Read the Plan before edits:
 {"operation":"read","action_id":"ACTION_ID"}
 ```
 
-Plan nodes can be phase/wave/task/subtask; each requires `id`, `kind`, `title`. Optional: `outcome`, `criteria`, `context`, `depends_on`, `parent`, `agent`, `roles`, `skills`. Save the complete node list with Plan `expected_revision` (0 initially), preserving IDs and reconciling conflicts. Action updates use the Action's separate current revision; Plan saves record native `saved_by`.
+Save the complete node list with Plan `expected_revision` (0 initially); preserve IDs and reconcile conflicts. Action updates use the Action's separate current revision. Plan `saved_by` identifies its native author.
 
-For delegated planning, select the given Action via `loom_context`, read/save via `loom_plan`, and return Action/revision/node IDs for General to verify. Chat/`docs/plan/` is not Plan storage. Without an Action ID, propose without creating one. Report failed saves.
+Use `outcome` for milestone capability, `criteria` for proof, and `context` for contribution to the Action goal and limits. Phases group; waves schedule. Hierarchy is optional.
+
+For delegated planning, select via `loom_context`, read/save via `loom_plan`, then return the next outcome and proof strategy with Action/revision/node IDs for General to verify. Chat/`docs/plan/` is not Plan storage. Without an Action ID, propose without creating one. Report failed saves.
 
 Explicitly select the work before performing it:
 
@@ -65,7 +66,7 @@ Each child selects its own work; selection is not inherited.
 
 ### Handoffs and independent first review
 
-Record `kind:result` handoffs with goal/revision, decisions, evidence/limits and next step. Pass the ID, not chat. Pin same-Action `handoff_id`; read with `loom_record` using `action_id`+`record_id` (no `node_id`). A pointer does not prove completion.
+Record `kind:result` handoffs with goal/revision, decisions, evidence/limits, learning and next step. Pass the ID, not chat. Pin same-Action `handoff_id`; read with `loom_record` using `action_id`+`record_id` (no `node_id`). A pointer does not prove completion.
 
 For independent Assessment, start a fresh Session and select `mode:"independent"` before reading opinions. Without an Action, context is Session-only and no selection is saved. Action-linked independent mode withholds Loom history, but cannot erase native messages, task text or earlier conversation. Record original findings before switching to continuation to reconcile prior work. Without an Action, query Session history with `session_only:true`. Mode persists; default is continuation. Save failure leaves the old mode. See [handoff limits and recovery](../../../docs/handoffs.md).
 
