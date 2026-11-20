@@ -49,9 +49,26 @@ Call `loom_assessment` with:
 {"skill":"software-engineering"}
 ```
 
-Call `loom_qa` with the same input to obtain the QA lens. In Code Mode, search for
-the tool and use the exact callable path returned by search. Request `response_format:"json"` and parse its JSON text
-once; the payload is under `result`.
+Call `loom_qa` with the same input to obtain the QA lens. Without Code Mode, each
+direct tool call already returns Markdown with real newlines. In Code Mode, search
+for the tool and use the exact callable path returned by search. The default result
+is also Markdown; do not `JSON.parse` it. Request `response_format:"json"` only
+when structured fields are needed (the parsed payload is under `result`).
+
+When reading multiple independent lenses in Code Mode, do not return an array of
+Markdown strings: OpenCode JSON-serializes the array, escaping its newlines in the
+`execute` output. Return **one Markdown string** instead, keeping rejected calls
+visible. For example, with the discovered `tools.loom.qa` path:
+
+```javascript
+const skills = ["SKILL_ID_1", "SKILL_ID_2"];
+const settled = await Promise.allSettled(skills.map(skill => tools.loom.qa({ skill })));
+return settled.map((r, i) => r.status === "fulfilled" ? r.value : "# QA lens failed: " + skills[i] + "\n\n" + String(r.reason)).join("\n\n---\n\n");
+```
+
+Use `tools.loom.assessment` for Assessment. A single string improves the displayed
+text without requiring rich Markdown rendering in the host TUI. This is an output
+presentation choice, not a change to loader permissions, content, or provenance.
 
 Use an exact ID from OpenCode's current native skill registry. OpenCode 2.1.1
 supports two local entry-file layouts, and Loom uses the selected native path:

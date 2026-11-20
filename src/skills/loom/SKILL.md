@@ -24,8 +24,8 @@ Loom retains intent/history, not a scheduler. Roles restrict companion loaders.
 | `loom_qa` | Load QA.md; requires configured qa role. |
 
 Tool search supplies syntax. JSON outputs contain `result` and optional `config_errors`.
-Assessment/QA and `full_thread` default to Markdown; use `response_format:"json"` for scripts.
-Parse only JSON. Await writes; sequence dependencies; inspect Promise.allSettled results.
+Assessment/QA and `full_thread` return Markdown; parse only JSON.
+Code Mode: join lenses into one string (arrays escape newlines); inspect Promise.allSettled failures. Await writes.
 
 ## Start or resume work
 
