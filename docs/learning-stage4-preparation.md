@@ -14,6 +14,8 @@ The new operation freezes a separate method/scope over an existing authorized St
 
 The subsequent [execution-admission assessment](learning-stage4-admission.md) adds a read-only `loom_insights evaluation-admission` view of that exact preparation and canonical issue. It distinguishes capability-specific blockers and consumed/uncertain issue history without granting an effect permit or implementing budget reservation. This does not change preparation or enable dispatch.
 
+The [restricted execution consumer](learning-restricted-execution.md) subsequently adds immutable admission/outcome mirrors and a trusted-adapter lifecycle over that prepared chain. Production has no connected authority adapter. Preparation and its public readers retain the behavior described here; fixture-qualified execution is not a live account or genuine Evaluator qualification.
+
 ## What is usable
 
 | Capability | Meaning in this increment |

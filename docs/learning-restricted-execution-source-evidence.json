@@ -1,0 +1,71 @@
+{
+  "format": "loom-restricted-execution-source-evidence/v1",
+  "inspected_on": "2026-11-25",
+  "evidence_kind": "source-inspection-only",
+  "installed_host_qualification": false,
+  "account_qualification": false,
+  "revisions": [
+    {
+      "label": "v2.3.0",
+      "commit": "a6b15d33daf6ab7d35569f6d711fdb630b9f04e7",
+      "sha256": {
+        "packages/plugin/src/promise/session.ts": "3cc1a007438f1fd085a62174f2591a13e9ecd9830208d87674522179f7bf41c8",
+        "packages/core/src/session.ts": "3721a2c0e6ea8d91e57fb1d00d6d7626027a89e83e73de8cbbd979cc15e5fe66",
+        "packages/core/src/session/inbox.ts": "98adf0f19cb049450b2ce6af15cee0f3e13b268d379a77a0431addbe0d30e98e",
+        "packages/core/src/session/session.ts": "877bc355b90ca2672b8639e96a76df7255d984f186f9b01dabfca513ffa173a4",
+        "packages/core/src/session/execution.ts": "5abca2e8da8e65dea2f382cc8e7db0956ae12ab35ad3f9221d3c3058e4651d86",
+        "packages/core/src/session/execution/restart.ts": "0a78168af96f8253567edc88938dd2476625abfe75ca901e4927469a047a7cbc",
+        "packages/server/src/process.ts": "cc3f8652c87b529d2593c574196b261febadef0c62ba1d78890e5ffe9db33bde",
+        "packages/core/src/session/generate.ts": "b102dc1dff0321fc9ca65dab2e553ee93f7c19fa26c22d6907d99c97025cb84e",
+        "packages/core/src/model-retry.ts": "346b6116cea6aaa0d3aaf569e054f0f2dba2fd10351741820d76921fa0ab6ad9",
+        "packages/core/src/model-resolver.ts": "65424cc372f85ff0de66c974dec8024692a7f389bbf663ef32982061273f0fa3",
+        "packages/core/src/managed-policy.ts": "ca523aad4cbd12d7dc2d46ddf2f47a3fb0c2023e0790e41e895df0fbf3241715",
+        "packages/core/src/config/plugin/policy.ts": "125e1002d859d8b38e41655e7e8cc158d8df9149ef957c51d7383d475570533b",
+        "packages/core/src/plugin/provider/claude-agent/claude/query-options.ts": "4ddcca50e199bf6e280b14297a526182c03562c6ddd45f2677a54aebc4b6c12c",
+        "packages/core/src/session/runner/llm.ts": "04be4f888e90189a3e54ef0b85f7e80cd166842bf7c2f1018b971dc2b3bd44fe"
+      }
+    },
+    {
+      "label": "v2.4.1",
+      "commit": "6f0514052a3c859894ad01bb14cc14dda1e44b96",
+      "sha256": {
+        "packages/plugin/src/promise/session.ts": "53208416dd8351d0846fcb1f4968e3b4722ad01e5a16bef6e2b3f92c6b6d0289",
+        "packages/core/src/session.ts": "89eccc3b3fe6d71b4d74a8e4b5f0d693912fb12658b07f08e26be4684eb41076",
+        "packages/core/src/session/inbox.ts": "98adf0f19cb049450b2ce6af15cee0f3e13b268d379a77a0431addbe0d30e98e",
+        "packages/core/src/session/session.ts": "3075bb0517f75f99ff0950e3500b2fa4d8ced08d062d846c3928fcc7ccd46c4e",
+        "packages/core/src/session/execution.ts": "bf6f26852912a45139d293f33972945028479b7a5299036a4a340b89556c5698",
+        "packages/core/src/session/execution/restart.ts": "b3db3662de1e6ea62393ba67f3bf65653f897adae020e845aaa6fbfd8d9d4641",
+        "packages/server/src/process.ts": "c0c865b0f994925bb8b7755e918ca32ccb3cea5f419a81be4a62aa930dad0712",
+        "packages/core/src/session/generate.ts": "b102dc1dff0321fc9ca65dab2e553ee93f7c19fa26c22d6907d99c97025cb84e",
+        "packages/core/src/model-retry.ts": "346b6116cea6aaa0d3aaf569e054f0f2dba2fd10351741820d76921fa0ab6ad9",
+        "packages/core/src/model-resolver.ts": "fe948488cc81f6369e560d2908592a46192c0afdf308bd603db6a87372e65db1",
+        "packages/core/src/managed-policy.ts": "ca523aad4cbd12d7dc2d46ddf2f47a3fb0c2023e0790e41e895df0fbf3241715",
+        "packages/core/src/config/plugin/policy.ts": "73cbffe0583bbc7e569442eae71d5c9a79d8927a8b18711bd9e634648336409e",
+        "packages/core/src/plugin/provider/claude-agent/claude/accounts.ts": "7107472f2b13bbaacc1919133ad866c8b50084e41958e06b2d2153d9eb96df84",
+        "packages/core/src/plugin/provider/claude-agent/claude/query-options.ts": "3e0d445f8cc2da2bd8c12597d02190410749b14ebe00282a78acc36f4313021a",
+        "packages/core/src/session/runner/llm.ts": "04be4f888e90189a3e54ef0b85f7e80cd166842bf7c2f1018b971dc2b3bd44fe"
+      }
+    },
+    {
+      "label": "244491841dea5735c4c069ddc217e1e5f16126bd",
+      "commit": "244491841dea5735c4c069ddc217e1e5f16126bd",
+      "sha256": {
+        "packages/plugin/src/promise/session.ts": "53208416dd8351d0846fcb1f4968e3b4722ad01e5a16bef6e2b3f92c6b6d0289",
+        "packages/core/src/session.ts": "b0bbd60abf61c3123faa63d2ee905cbe8797e29d5304aad29c432d1ac1d15e9d",
+        "packages/core/src/session/inbox.ts": "98adf0f19cb049450b2ce6af15cee0f3e13b268d379a77a0431addbe0d30e98e",
+        "packages/core/src/session/session.ts": "3075bb0517f75f99ff0950e3500b2fa4d8ced08d062d846c3928fcc7ccd46c4e",
+        "packages/core/src/session/execution.ts": "bf6f26852912a45139d293f33972945028479b7a5299036a4a340b89556c5698",
+        "packages/core/src/session/execution/restart.ts": "b3db3662de1e6ea62393ba67f3bf65653f897adae020e845aaa6fbfd8d9d4641",
+        "packages/server/src/process.ts": "c0c865b0f994925bb8b7755e918ca32ccb3cea5f419a81be4a62aa930dad0712",
+        "packages/core/src/session/generate.ts": "b102dc1dff0321fc9ca65dab2e553ee93f7c19fa26c22d6907d99c97025cb84e",
+        "packages/core/src/model-retry.ts": "346b6116cea6aaa0d3aaf569e054f0f2dba2fd10351741820d76921fa0ab6ad9",
+        "packages/core/src/model-resolver.ts": "ab4603c3015b608efabbe6d676a3c77510bba8b3e77eee3793375ed9b357e8bb",
+        "packages/core/src/managed-policy.ts": "ca523aad4cbd12d7dc2d46ddf2f47a3fb0c2023e0790e41e895df0fbf3241715",
+        "packages/core/src/config/plugin/policy.ts": "73cbffe0583bbc7e569442eae71d5c9a79d8927a8b18711bd9e634648336409e",
+        "packages/core/src/plugin/provider/claude-agent/claude/accounts.ts": "7107472f2b13bbaacc1919133ad866c8b50084e41958e06b2d2153d9eb96df84",
+        "packages/core/src/plugin/provider/claude-agent/claude/query-options.ts": "3e0d445f8cc2da2bd8c12597d02190410749b14ebe00282a78acc36f4313021a",
+        "packages/core/src/session/runner/llm.ts": "54792dc2031ced19d79ea02d7ab077b7152533a0cb808edb76df9ef294c9eb1f"
+      }
+    }
+  ]
+}

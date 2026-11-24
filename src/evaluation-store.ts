@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto"
 import { canonical, digest, ProcessingBudget, uid, type Actor } from "./model.js"
 import type { SQL } from "./store.js"
 import { evaluatorMethod, parseEvaluatorMethod, type EvaluatorMethodManifest } from "./evaluator-method.js"
+import { assertEvaluatorReceiptProgress, parseEvaluatorAdmission, parseEvaluatorReceipt,
+  type EvaluatorExecutionAdmission, type EvaluatorExecutionReceipt } from "./evaluator-execution-contract.js"
 
 export type EvaluationSourceRef = { kind: string; id: string; session_id?: string; revision?: string; sha256?: string; required: boolean }
 export type EvaluationMember = { key: string; kind: "session" | "objective"; source_refs: EvaluationSourceRef[] }
@@ -51,6 +53,14 @@ export const EVALUATOR_COLUMNS = {
   methods: ["id", "manifest_json", "manifest_sha256", "instruction_sha256"],
   requests: ["batch_id", "slot", "method_id", "request_id", "data_json", "sha256", "created_at"],
 } as const
+
+export type EvaluatorExecutionRecord = { admission: EvaluatorExecutionAdmission; receipts: EvaluatorExecutionReceipt[] }
+export const EXECUTION_COLUMNS = {
+  schema: ["singleton", "version"],
+  admissions: ["batch_id", "request_id", "attempt_id", "authority_id", "reservation_id", "semantic_key", "data_json", "sha256"],
+  receipts: ["batch_id", "sequence", "authority_id", "receipt_id", "data_json", "sha256"],
+} as const
+const EXECUTION_RECEIPTS = 1024
 
 const prefix = "learning_evaluation_"
 export const EVALUATION_COLUMNS = {
@@ -239,7 +249,7 @@ export class EvaluationStore {
         .run(method.id, canonical(manifest), digest(manifest), method.instruction_sha256)
       const requestID = evaluatorRequestID({ id: batch.id, source_store_id: batch.source_store_id, method }), data = build(requestID, origin), now = new Date(this.clock()).toISOString()
       const envelope = { requester: origin, data }, json = canonical(envelope, new ProcessingBudget(131072)), sha256 = digest(envelope)
-      this.db.prepare("INSERT INTO learning_evaluator_requests VALUES(?,'overall',?,?,?,?,?)")
+      this.db.prepare("INSERT INTO learning_evaluator_requests(batch_id,slot,method_id,request_id,data_json,sha256,created_at) VALUES(?,'overall',?,?,?,?,?)")
         .run(batchID, method.id, requestID, json, sha256, now)
       this.db.prepare("UPDATE learning_evaluation_batches SET blocked_reason='evaluator-request-mapped' WHERE id=?").run(batchID)
       return { batch_id: batchID, request_id: requestID, requester: origin, method: manifest, data, sha256, created_at: now }
@@ -271,6 +281,136 @@ export class EvaluationStore {
     if (requester.session_id !== owner || digest(envelope) !== row.sha256 || !Number.isFinite(Date.parse(row.created_at))
       || row.request_id !== evaluatorRequestID({ id: batch.id, source_store_id: batch.source_store_id, method })) throw new Error("Evaluator preparation integrity mismatch")
     return { batch_id: row.batch_id, request_id: uid(row.request_id), requester, method: manifest, data: envelope.data, sha256: row.sha256, created_at: row.created_at }
+  }
+
+  /** Mirrors qualified-owner records; no authority, spend pool or effect permit
+   * is created here. A lost/older local mirror must be reconciled externally. */
+  private executionSchema(create: boolean): boolean {
+    const tables = this.db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name GLOB 'learning_execution_*'").all() as Array<{ name: string }>
+    const columns = this.db.prepare("PRAGMA table_info(learning_evaluator_requests)").all() as Array<{ name: string }>
+    const hasMarker = columns.some(row => row.name === "execution_admission_sha256")
+    if (!tables.length) {
+      if (hasMarker && this.db.prepare("SELECT 1 FROM learning_evaluator_requests WHERE execution_admission_sha256 IS NOT NULL LIMIT 1").get())
+        throw new Error("Evaluator execution mirror lost; authority reconciliation required")
+      if (!create) return false
+      if (!hasMarker) this.db.exec("ALTER TABLE learning_evaluator_requests ADD COLUMN execution_admission_sha256 TEXT")
+      this.db.exec(`
+        CREATE TABLE learning_execution_schema(singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL CHECK(version=1));
+        CREATE TABLE learning_execution_admissions(
+          batch_id TEXT PRIMARY KEY REFERENCES learning_evaluation_batches(id),
+          request_id TEXT NOT NULL UNIQUE REFERENCES learning_evaluator_requests(request_id), attempt_id TEXT NOT NULL UNIQUE,
+          authority_id TEXT NOT NULL, reservation_id TEXT NOT NULL, semantic_key TEXT NOT NULL UNIQUE,
+          data_json TEXT NOT NULL, sha256 TEXT NOT NULL, UNIQUE(authority_id,reservation_id));
+        CREATE TABLE learning_execution_receipts(
+          batch_id TEXT NOT NULL REFERENCES learning_execution_admissions(batch_id), sequence INTEGER NOT NULL CHECK(sequence>0),
+          authority_id TEXT NOT NULL, receipt_id TEXT NOT NULL, data_json TEXT NOT NULL, sha256 TEXT NOT NULL,
+          PRIMARY KEY(batch_id,sequence), UNIQUE(authority_id,receipt_id));
+        INSERT INTO learning_execution_schema VALUES(1,1);
+      `)
+      return true
+    }
+    if (!hasMarker) throw new Error("Evaluator execution enrollment marker is missing")
+    for (const [name, required] of Object.entries(EXECUTION_COLUMNS)) {
+      const actual = this.db.prepare(`PRAGMA table_info(learning_execution_${name})`).all() as Array<{ name: string }>
+      if (required.some(column => !actual.some(row => row.name === column))) throw new Error(`Evaluator execution schema is incomplete: ${name}`)
+    }
+    const markers = this.db.prepare("SELECT singleton,version FROM learning_execution_schema").all() as Array<{ singleton: number; version: number }>
+    if (markers.length !== 1 || markers[0]?.singleton !== 1 || markers[0]?.version !== 1) throw new Error("Unsupported evaluator execution schema")
+    return true
+  }
+
+  private executionBinding(batchID: string, owner: string, admission: EvaluatorExecutionAdmission): EvaluatorPreparationRecord {
+    const batch = this.row(batchID, owner), prepared = this.readEvaluatorRequest(batchID, owner), subject = admission.grant.subject
+    if (!prepared || !prepared.data || typeof prepared.data !== "object" || Array.isArray(prepared.data)
+        || !("manifest_sha256" in prepared.data) || subject.batch_id !== batchID || subject.owner_session !== owner
+        || subject.request_id !== prepared.request_id || subject.source_store_id !== batch.source_store_id
+        || subject.manifest_sha256 !== prepared.data.manifest_sha256 || canonical(admission.grant.method) !== canonical(prepared.method))
+      throw new Error("Evaluator execution preparation binding mismatch")
+    // The ReviewIssues owner checks attempt identity and the authority adapter
+    // checks semantic enrollment. This store cannot certify either relationship.
+    return prepared
+  }
+
+  private executionRecord(batchID: string, owner: string): EvaluatorExecutionRecord | null {
+    this.row(batchID, owner)
+    if (!this.readEvaluatorRequest(batchID, owner)) throw new Error("Evaluator execution preparation unavailable")
+    if (!this.executionSchema(false)) return null
+    const marker = this.db.prepare("SELECT execution_admission_sha256 AS sha256 FROM learning_evaluator_requests WHERE batch_id=?").get(batchID) as { sha256: unknown }
+    const row = this.db.prepare(`SELECT batch_id,request_id,attempt_id,authority_id,reservation_id,semantic_key,sha256,
+      CASE WHEN typeof(data_json)='text' AND octet_length(data_json)<=196608 THEN data_json END AS data_json
+      FROM learning_execution_admissions WHERE batch_id=?`).get(batchID) as {
+        batch_id: string; request_id: string; attempt_id: string; authority_id: string; reservation_id: string;
+        semantic_key: string; sha256: string; data_json: string | null;
+      } | undefined
+    if (!row) {
+      if (marker.sha256 !== null) throw new Error("Evaluator execution mirror lost; authority reconciliation required")
+      return null
+    }
+    if (!row.data_json || row.data_json.length > 65536) throw new Error("Evaluator execution admission unavailable")
+    const admission = parseEvaluatorAdmission(JSON.parse(row.data_json)), subject = admission.grant.subject
+    this.executionBinding(batchID, owner, admission)
+    if (digest(admission) !== row.sha256 || marker.sha256 !== row.sha256 || row.batch_id !== subject.batch_id
+        || row.request_id !== subject.request_id || row.attempt_id !== subject.attempt_id || row.authority_id !== admission.grant.authority_id
+        || row.reservation_id !== admission.reservation_id || row.semantic_key !== subject.semantic_key)
+      throw new Error("Evaluator execution admission integrity mismatch")
+    const rows = this.db.prepare(`SELECT sequence,authority_id,receipt_id,sha256,
+      CASE WHEN typeof(data_json)='text' AND octet_length(data_json)<=196608 THEN data_json END AS data_json
+      FROM learning_execution_receipts WHERE batch_id=? ORDER BY sequence LIMIT ?`).all(batchID, EXECUTION_RECEIPTS + 1) as Array<{
+        sequence: number; authority_id: string; receipt_id: string; sha256: string; data_json: string | null;
+      }>
+    if (rows.length > EXECUTION_RECEIPTS) throw new Error("Evaluator execution receipt limit exceeded")
+    const receipts: EvaluatorExecutionReceipt[] = []
+    for (const item of rows) {
+      if (!item.data_json || item.data_json.length > 65536) throw new Error("Evaluator execution receipt unavailable")
+      const receipt = parseEvaluatorReceipt(JSON.parse(item.data_json), admission)
+      if (digest(receipt) !== item.sha256 || receipt.sequence !== item.sequence || receipt.authority_id !== item.authority_id || receipt.receipt_id !== item.receipt_id)
+        throw new Error("Evaluator execution receipt integrity mismatch")
+      for (const previous of receipts) assertEvaluatorReceiptProgress(previous, receipt)
+      receipts.push(receipt)
+    }
+    return { admission, receipts }
+  }
+
+  /** Reconciliation may continue after source revocation. This internal mirror
+   * does not authorize disclosure; the execution consumer rechecks that gate. */
+  readExecution(batchID: string, owner: string): EvaluatorExecutionRecord | null {
+    return this.transaction(() => this.executionRecord(batchID, owner))
+  }
+
+  saveExecutionAdmission(batchID: string, owner: string, input: unknown): EvaluatorExecutionAdmission {
+    const admission = parseEvaluatorAdmission(input), json = canonical(admission), sha256 = digest(admission)
+    return this.transaction(() => {
+      this.executionBinding(batchID, owner, admission)
+      this.executionSchema(true)
+      const previous = this.executionRecord(batchID, owner)
+      if (previous) {
+        if (canonical(previous.admission) !== json) throw new Error("Evaluator execution immutable admission conflict")
+        return previous.admission
+      }
+      const subject = admission.grant.subject
+      this.db.prepare("INSERT INTO learning_execution_admissions VALUES(?,?,?,?,?,?,?,?)")
+        .run(batchID, subject.request_id, subject.attempt_id, admission.grant.authority_id, admission.reservation_id, subject.semantic_key, json, sha256)
+      this.db.prepare("UPDATE learning_evaluator_requests SET execution_admission_sha256=? WHERE batch_id=?").run(sha256, batchID)
+      return admission
+    })
+  }
+
+  appendExecutionReceipt(batchID: string, owner: string, input: unknown): EvaluatorExecutionRecord {
+    return this.transaction(() => {
+      const current = this.executionRecord(batchID, owner)
+      if (!current) throw new Error("Evaluator execution admission unavailable")
+      const receipt = parseEvaluatorReceipt(input, current.admission), json = canonical(receipt), sha256 = digest(receipt)
+      const replay = current.receipts.find(item => item.receipt_id === receipt.receipt_id || item.sequence === receipt.sequence)
+      if (replay) {
+        if (canonical(replay) !== json) throw new Error("Evaluator execution receipt identity conflict")
+        return current
+      }
+      for (const previous of current.receipts) assertEvaluatorReceiptProgress(previous, receipt)
+      if (current.receipts.length >= EXECUTION_RECEIPTS) throw new Error("Evaluator execution receipt limit exceeded")
+      this.db.prepare("INSERT INTO learning_execution_receipts VALUES(?,?,?,?,?,?)")
+        .run(batchID, receipt.sequence, receipt.authority_id, receipt.receipt_id, json, sha256)
+      return { admission: current.admission, receipts: [...current.receipts, receipt] }
+    })
   }
 
   noteOpportunity(sessionID: string, reason: string): void {

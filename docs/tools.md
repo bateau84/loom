@@ -58,6 +58,8 @@ After [durable preparation](learning-stage4-preparation.md), call `loom_insights
 
 The result is an assessment, with no effect permit or budget reservation. A local issue ID is not a native effect receipt; null accounting does not establish zero spending or permit release of uncertain budget. Capture-off remains inspectable under existing read authority. See the [admission contract and remaining execution obligations](learning-stage4-admission.md).
 
+The [restricted execution consumer](learning-restricted-execution.md) is an internal owner integration with no production authority adapter. It adds no public execution operation or grant-bearing tool arguments. Genuine execution requires the separately qualified native/account boundary and operator scope described in that document.
+
 ## Assessment and QA lenses
 
 Call either loader with `{"skill":"software-engineering"}` using an exact native
