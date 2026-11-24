@@ -66,6 +66,14 @@ function counts(f: Fixture) {
     issues: f.action.query("SELECT COUNT(*) AS n FROM review_issue_intents").get(),
     mappings: f.derived.query("SELECT COUNT(*) AS n FROM learning_evaluator_requests").get() }
 }
+type Prepared = ReturnType<Fixture["learning"]["evaluator"]["prepare"]>
+function assess(f: Fixture, prepared: Prepared) {
+  return f.learning.evaluator.admission(actor.session_id, prepared.batch_id, prepared.request_id,
+    prepared.manifest_sha256, prepared.issue?.attempt.attempt_id, true)
+}
+function changes(f: Fixture) {
+  return [f.action.query("SELECT total_changes() AS n").get(), f.derived.query("SELECT total_changes() AS n").get()]
+}
 
 test("preparation preserves one fail/fail/pass objective and stable request identity without reasoning or effects", async () => {
   const f = fixture()
@@ -138,6 +146,59 @@ test("an uncertain consumed canonical issue never becomes a new permit on prepar
     expect(f.store.reviews.claimIssue(actor, intent, "reclaimer").status).toBe("existing-state")
     expect(counts(f)).toEqual({ requests: { n: 1 }, issues: { n: 1 }, mappings: { n: 1 } })
     expect(again.interpretation).toBeNull()
+    const before = changes(f), assessment = assess(f, prepared)
+    expect(assessment.local_issue.attempt).toEqual(claim.attempt)
+    expect(assessment.recovery.state).toBe("native-reconciliation-required")
+    expect(assessment.effect_permit).toBeNull(); expect(assessment.budget_accounting).toBe("not-established")
+    expect(changes(f)).toEqual(before)
+  } finally { f.close() }
+})
+
+test.each(["unknown", "issued", "proven-non-admission"] as const)("admission preserves a consumed %s issue across restart and expired processing leases", async outcome => {
+  const root = mkdtempSync(join(tmpdir(), "loom-admission-restart-"))
+  let f = fixture(root)
+  try {
+    const source = await seed(f), prepared = f.learning.evaluator.prepare(actor, source.batch, method(), null)
+    const intent = { request_id: prepared.request_id, kind: "initial" as const }, claimant = "earlier-issuer"
+    expect(f.store.reviews.claimIssue(actor, intent, claimant).status).toBe("claimed-now")
+    // These are local owner observations used to exercise preserved history,
+    // not evidence that a real native call or billing event took place.
+    const recorded = f.store.reviews.issues.recordOutcome(intent, claimant, { status: outcome, source_ref: "fixture://outcome", reason: "fixture observation" })
+    expect(f.learning.automatic.history.claim(prepared.batch_id, "expired-worker", { now_ms: 1000, lease_ms: 1 }).status).toBe("claimed")
+    f.close(); f = fixture(root)
+    expect(f.learning.automatic.history.claim(prepared.batch_id, "replacement-worker", { now_ms: 1002, lease_ms: 1 }).status).toBe("claimed")
+    const lease = f.derived.query("SELECT state,claim_token,worker_id,lease_until_ms FROM learning_evaluation_batches WHERE id=?").get(prepared.batch_id)
+    const before = changes(f), assessment = assess(f, prepared)
+    expect(assessment.local_issue.attempt).toEqual(recorded.attempt)
+    expect(assessment.recovery.state).toBe(outcome === "proven-non-admission" ? "consumed-intent-preserved" : "native-reconciliation-required")
+    expect(assessment.blockers).toContainEqual({ capability: "canonical-issue", state: "blocked", reason: "canonical-issue-consumed" })
+    expect(assessment.effect_permit).toBeNull(); expect(assessment.budget_reservation).toBeNull()
+    expect(assessment.budget_accounting).toBe("not-established")
+    expect(assessment.qualifications.local_state_proves_native_nonexecution).toBe(false)
+    expect(changes(f)).toEqual(before)
+    expect(f.derived.query("SELECT state,claim_token,worker_id,lease_until_ms FROM learning_evaluation_batches WHERE id=?").get(prepared.batch_id)).toEqual(lease)
+    expect(f.store.reviews.claimIssue(actor, intent, "new-claimant").status).toBe("existing-state")
+    expect(counts(f)).toEqual({ requests: { n: 1 }, issues: { n: 1 }, mappings: { n: 1 } })
+  } finally { f.close(); rmSync(root, { recursive: true, force: true }) }
+})
+
+test("admission uses the current issue projection beyond the first outcome page", async () => {
+  const f = fixture()
+  try {
+    const source = await seed(f), prepared = f.learning.evaluator.prepare(actor, source.batch, method(), null)
+    const intent = { request_id: prepared.request_id, kind: "initial" as const }
+    f.store.reviews.claimIssue(actor, intent, "issuer")
+    for (let i = 0; i < 51; i++) f.store.reviews.issues.recordOutcome(intent, "issuer", { status: "unknown", source_ref: "fixture://pending/" + i, reason: "pending" })
+    const latest = f.store.reviews.issues.recordOutcome(intent, "issuer", { status: "issued", source_ref: "fixture://issued", reason: "call started" })
+    const page = f.store.reviews.readIssue(actor, prepared.request_id)
+    expect(page.next_outcome_sequence).not.toBeNull()
+    expect(page.outcomes.every(item => item.status === "unknown")).toBe(true)
+    const before = changes(f), assessment = assess(f, prepared)
+    expect(assessment.local_issue.attempt).toEqual(latest.attempt)
+    expect(assessment.local_issue.attempt.native_outcome).toBe("issued")
+    expect(assessment.native_effect_identity).toBe("not-established")
+    expect(assessment.recovery.state).toBe("native-reconciliation-required")
+    expect(changes(f)).toEqual(before)
   } finally { f.close() }
 })
 
@@ -154,6 +215,7 @@ test.each(["delete", "change"] as const)("%s of an original withholds preparatio
     if (damage === "delete") f.action.query("DELETE FROM ledger WHERE id=?").run(source.original.id)
     else f.action.query("UPDATE ledger SET data=json_set(data,'$.data.statement','altered original') WHERE id=?").run(source.original.id)
     expect(() => f.learning.evaluator.read(actor.session_id, prepared.batch_id)).toThrow("unavailable")
+    expect(() => assess(f, prepared)).toThrow("unavailable")
     expect(() => f.learning.evaluator.members(actor.session_id, prepared.batch_id, prepared.request_id, prepared.manifest_sha256)).toThrow("unavailable")
     expect(() => f.learning.evaluator.source(actor.session_id, prepared.batch_id, prepared.request_id, prepared.manifest_sha256, member.key, index)).toThrow("unavailable")
     expect(() => f.learning.evaluator.prepare(actor, source.batch, method(), null)).toThrow("unavailable")
@@ -236,6 +298,17 @@ for (const [count, limit] of [[501, 100], [40, 17]] as const) describe(`${count}
     expect(new Set(members.flatMap(member => member.source_refs).filter(ref => ref.kind === "ledger-record").map(ref => ref.id))).toEqual(new Set([original.id]))
     expect(prepared.request.originating_request_independence).toBe("unknown")
     expect(prepared.interpretation).toBeNull()
+    expect(assess(f, prepared).local_issue.attempt).toEqual(prepared.issue!.attempt)
+    // Damage an original referenced only beyond the first member page. Full
+    // population validation must not become a first-page readiness check.
+    const all = f.learning.automatic.history.preparationPopulation(prepared.batch_id, actor.session_id).members
+    const later = all.slice(limit).find(member => member.source_refs.some(ref => ref.kind === "objective"))
+    const ref = later?.source_refs.find(ref => ref.kind === "objective")
+    if (!ref) throw new Error("Expected an objective beyond the first page")
+    f.derived.query("UPDATE learning_objectives SET label=? WHERE id=?").run("Changed late original", ref.id)
+    const before = changes(f)
+    expect(() => assess(f, prepared)).toThrow("unavailable")
+    expect(changes(f)).toEqual(before)
   }, 30000)
 })
 
@@ -247,6 +320,9 @@ for (const boundary of ["mapping", "review"] as const) test(`failed write after 
     expect(() => f.learning.evaluator.prepare(actor, source.batch, method(), null)).toThrow("injected preparation write failure")
     const saved = mapped(f)
     expect(f.learning.evaluator.read(actor.session_id, saved.batch_id)).toMatchObject({ state: "incomplete", request_id: saved.request_id })
+    const incomplete = f.learning.evaluator.read(actor.session_id, saved.batch_id), before = changes(f)
+    expect(() => assess(f, incomplete)).toThrow("canonical issue unavailable")
+    expect(changes(f)).toEqual(before)
     expect(counts(f)).toEqual({ requests: { n: boundary === "mapping" ? 0 : 1 }, issues: { n: 0 }, mappings: { n: 1 } })
     f.action.exec("DROP TRIGGER stop_preparation")
     const resumed = new Learning(f.derived, new Store(f.action), f.action).evaluator.prepare({ ...actor, agent: "recovery-agent" }, source.batch, method(), null)
@@ -291,6 +367,7 @@ test("damaged optional preparation schema blocks recovery while Stage 3 remains 
     f.derived.exec("DROP TABLE learning_evaluator_requests")
     const reopened = new Learning(f.derived, new Store(f.action), f.action)
     expect(() => reopened.evaluator.read(actor.session_id, prepared.batch_id)).toThrow("schema is incomplete")
+    expect(() => assess({ ...f, learning: reopened }, prepared)).toThrow("schema is incomplete")
     expect(() => reopened.evaluator.prepare(actor, source.batch, method(), null)).toThrow("schema is incomplete")
     expect(reopened.automatic.history.report(source.batch, actor.session_id)).toEqual(report)
     expect(f.action.query("SELECT COUNT(*) AS n FROM review_issue_intents").get()).toEqual({ n: 1 })
@@ -308,6 +385,9 @@ for (const loss of ["mapping-row", "entire-extension"] as const) test(`lost comm
     const reopened = new Learning(f.derived, new Store(f.action), f.action)
     expect(() => reopened.evaluator.prepare(actor, source.batch, method(), null)).toThrow()
     expect(() => reopened.evaluator.read(actor.session_id, prepared.batch_id)).toThrow()
+    const before = changes(f)
+    expect(() => assess({ ...f, learning: reopened }, prepared)).toThrow()
+    expect(changes(f)).toEqual(before)
     expect(f.action.query("SELECT * FROM review_requests").all()).toEqual(requests)
     expect(f.action.query("SELECT * FROM review_issue_intents").all()).toEqual(issues)
     expect(f.derived.query("SELECT name,sql FROM sqlite_schema WHERE type='table' AND name GLOB 'learning_evaluator_*' ORDER BY name").all()).toEqual(schema)
@@ -411,6 +491,7 @@ test("restoring an actual pre-mapping learning snapshot preserves the later cons
     copyFileSync(snapshot, join(root, "learning.sqlite"))
     f = fixture(root)
     expect(() => f.learning.evaluator.read(actor.session_id, prepared.batch_id)).toThrow("unavailable")
+    expect(() => assess(f, prepared)).toThrow("unavailable")
     const resumed = f.learning.evaluator.prepare({ ...actor, agent: "different-agent-after-restore" }, source.batch, method(), null)
     expect(resumed.batch_id).toBe(prepared.batch_id)
     expect(resumed.request_id).toBe(prepared.request_id)
@@ -423,6 +504,11 @@ test("restoring an actual pre-mapping learning snapshot preserves the later cons
     expect(f.action.query("SELECT * FROM review_issue_intents").all()).toEqual(originalIssues)
     expect(counts(f)).toEqual({ requests: { n: 1 }, issues: { n: 1 }, mappings: { n: 1 } })
     expect(resumed.interpretation).toBeNull()
+    const before = changes(f), assessment = assess(f, prepared)
+    expect(assessment.local_issue.attempt).toEqual(claim.attempt)
+    expect(assessment.recovery.state).toBe("native-reconciliation-required")
+    expect(assessment.effect_permit).toBeNull()
+    expect(changes(f)).toEqual(before)
   } finally { try { f.close() } catch {} rmSync(root, { recursive: true, force: true }) }
 })
 
@@ -567,6 +653,80 @@ test("two actual processes share one preparation request and canonical initial i
   } finally { for (const child of children) child.kill(); f.close(); rmSync(root, { recursive: true, force: true }) }
 }, 15000)
 
+test("concurrent assessments of the same and different intents perform no database writes", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loom-admission-read-race-")), f = fixture(root)
+  const children: ReturnType<typeof Bun.spawn>[] = []
+  try {
+    const source = await seed(f), first = f.learning.evaluator.prepare(actor, source.batch, method(), null)
+    const changed = method(); changed.rubric.sha256 = "c".repeat(64)
+    const second = f.learning.evaluator.prepare(actor, source.batch, changed, null)
+    const queries = [first, second].map(p => [p.batch_id, p.request_id, p.manifest_sha256, p.issue!.attempt.attempt_id])
+    const issues = f.action.query("SELECT * FROM review_issue_intents").all(), mappings = f.derived.query("SELECT * FROM learning_evaluator_requests").all()
+    const gate = join(root, "gate")
+    const script = `import {Database} from 'bun:sqlite'; import {Store} from ${JSON.stringify(new URL("../src/store.ts", import.meta.url).pathname)};
+      import {Learning} from ${JSON.stringify(new URL("../src/learning.ts", import.meta.url).pathname)}; import {writeFileSync,existsSync} from 'node:fs';
+      const action=new Database(process.env.ADM_ACTION),db=new Database(process.env.ADM_LEARNING),store=new Store(action),learning=new Learning(db,store,action);
+      const changes=()=>JSON.stringify([action.query('SELECT total_changes() AS n').get(),db.query('SELECT total_changes() AS n').get()]);
+      writeFileSync(process.env.ADM_READY,'ready');const deadline=Date.now()+10000;
+      while(!existsSync(process.env.ADM_GATE)){if(Date.now()>deadline)throw new Error('barrier expired');await Bun.sleep(2)}
+      try{const before=changes(),results=[];
+        for(let repeat=0;repeat<3;repeat++)for(const query of JSON.parse(process.env.ADM_QUERIES)) {
+          const result=learning.evaluator.admission('owner',...query,true);
+          if(result.state!=='blocked'||result.effect_permit!==null||result.budget_reservation!==null)throw new Error('unexpected effect authority');
+          results.push({request_id:result.request_id,attempt_id:result.local_issue.attempt.attempt_id,state:result.local_issue.attempt.state});
+        }
+        if(changes()!==before)throw new Error('assessment wrote database state');console.log(JSON.stringify(results));
+      }finally{db.close();action.close()}`
+    for (let i = 0; i < 2; i++) children.push(Bun.spawn([process.execPath, "--eval", script], { env: { ...process.env,
+      ADM_ACTION: join(root, "ledger.sqlite"), ADM_LEARNING: join(root, "learning.sqlite"), ADM_READY: join(root, "ready-" + i),
+      ADM_GATE: gate, ADM_QUERIES: JSON.stringify(queries) }, stdout: "pipe", stderr: "pipe" }))
+    const deadline = Date.now() + 10000
+    while (![0, 1].every(i => existsSync(join(root, "ready-" + i)))) {
+      if (Date.now() > deadline) throw new Error("Admission readers did not reach the barrier")
+      await Bun.sleep(5)
+    }
+    writeFileSync(gate, "release")
+    const results = await Promise.all(children.map(async child => {
+      if (!child.stdout || !child.stderr || typeof child.stdout === "number" || typeof child.stderr === "number") throw new Error("Missing reader pipes")
+      const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()])
+      expect(stderr).toBe(""); expect(code).toBe(0)
+      return JSON.parse(stdout) as Array<{ request_id: string; attempt_id: string; state: string }>
+    }))
+    expect(results[0]).toEqual(results[1]); expect(results[0]).toHaveLength(6)
+    expect(new Set(results[0]!.map(result => result.request_id))).toEqual(new Set([first.request_id, second.request_id]))
+    expect(f.action.query("SELECT * FROM review_issue_intents").all()).toEqual(issues)
+    expect(f.derived.query("SELECT * FROM learning_evaluator_requests").all()).toEqual(mappings)
+    expect(counts(f)).toEqual({ requests: { n: 2 }, issues: { n: 2 }, mappings: { n: 2 } })
+  } finally { for (const child of children) child.kill(); f.close(); rmSync(root, { recursive: true, force: true }) }
+}, 15000)
+
+test("a restored pre-claim snapshot cannot turn missing local history into execution permission", async () => {
+  const root = mkdtempSync(join(tmpdir(), "loom-admission-rollback-"))
+  let f = fixture(root)
+  try {
+    const source = await seed(f), prepared = f.learning.evaluator.prepare(actor, source.batch, method(), null)
+    const actionSnapshot = join(root, "before-action.sqlite"), learningSnapshot = join(root, "before-learning.sqlite")
+    f.action.query("VACUUM INTO ?").run(actionSnapshot); f.derived.query("VACUUM INTO ?").run(learningSnapshot)
+    const claim = f.store.reviews.claimIssue(actor, { request_id: prepared.request_id, kind: "initial" }, "issuer-after-snapshot")
+    expect(claim.status).toBe("claimed-now")
+    f.close()
+    for (const name of ["ledger.sqlite", "learning.sqlite"]) {
+      rmSync(join(root, name + "-wal"), { force: true }); rmSync(join(root, name + "-shm"), { force: true })
+    }
+    copyFileSync(actionSnapshot, join(root, "ledger.sqlite")); copyFileSync(learningSnapshot, join(root, "learning.sqlite"))
+    f = fixture(root)
+    const before = changes(f), assessment = assess(f, prepared)
+    expect(assessment.local_issue.attempt).toEqual(prepared.issue!.attempt)
+    expect(assessment.local_issue.attempt.native_outcome).toBe("not-issued") // Local snapshot only.
+    expect(assessment.effect_permit).toBeNull(); expect(assessment.budget_reservation).toBeNull()
+    expect(assessment.native_effect_identity).toBe("not-established")
+    expect(assessment.qualifications.local_state_proves_native_nonexecution).toBe(false)
+    expect(assessment.recovery.restore_reconciliation).toBe("unsupported")
+    expect(assessment.budget_accounting).toBe("not-established")
+    expect(changes(f)).toEqual(before)
+  } finally { f.close(); rmSync(root, { recursive: true, force: true }) }
+})
+
 for (const boundary of ["mapping", "review", "issue"] as const) test(`SIGKILL after durable ${boundary} commit resumes the same preparation`, async () => {
   const root = mkdtempSync(join(tmpdir(), "loom-evaluator-kill-"))
   let f = fixture(root)
@@ -594,6 +754,10 @@ for (const boundary of ["mapping", "review", "issue"] as const) test(`SIGKILL af
     f = fixture(root)
     const saved = mapped(f), partial = f.learning.evaluator.read(actor.session_id, saved.batch_id)
     expect(partial.state).toBe(boundary === "issue" ? "prepared" : "incomplete")
+    const before = changes(f)
+    if (boundary === "issue") expect(assess(f, partial).effect_permit).toBeNull()
+    else expect(() => assess(f, partial)).toThrow("canonical issue unavailable")
+    expect(changes(f)).toEqual(before)
     expect(counts(f)).toEqual({ requests: { n: boundary === "mapping" ? 0 : 1 }, issues: { n: boundary === "issue" ? 1 : 0 }, mappings: { n: 1 } })
     const resumed = f.learning.evaluator.prepare({ ...actor, agent: "after-restart" }, source.batch, method(), null)
     expect(resumed.request_id).toBe(saved.request_id)

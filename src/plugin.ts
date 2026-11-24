@@ -151,7 +151,7 @@ const specs = [
       include_text: { type: "boolean" }, limit: { type: "integer", minimum: 1, maximum: 50 },
       cursor: { type: "string", minLength: 1, maxLength: 4096 } }, ["operation"]) },
   { name: "insights", description: TOOL_HELP.insights, input: preserveInput({ operation: choice("action", "window", "findings", ...EVALUATION_READS), batch_id: str, member_key: str, report_id: str,
-    request_id: str, manifest_sha256: str, source_index: num, after: num, finding_cursor: { type: "string", maxLength: 512 }, action_id: str, before: { type: "integer", minimum: 1 }, limit: { type: "integer", minimum: 1, maximum: 200 }, since_at: str, until_at: str }, ["operation"]) },
+    request_id: str, manifest_sha256: str, attempt_id: str, source_index: num, after: num, finding_cursor: { type: "string", maxLength: 512 }, action_id: str, before: { type: "integer", minimum: 1 }, limit: { type: "integer", minimum: 1, maximum: 200 }, since_at: str, until_at: str }, ["operation"]) },
   { name: "objective", description: TOOL_HELP.objective, input: obj({
       operation: choice("create", "link", "read", "list", "find"),
       objective_id: str, label: { type: "string", maxLength: 200 }, unit_key: str,
@@ -541,9 +541,15 @@ export default Plugin.define({
                   lifetime.signal.throwIfAborted(); toolContext.signal.throwIfAborted()
                   await checkedSession(actor.session_id)
                   if (!learningRuntime) throw new Error("LOOM_LEARNING_UNAVAILABLE: automatic report runtime is unavailable")
-                  result = learningRuntime.read(input, actor.session_id, !snapshot.errors.length && snapshot.config.ledger.capture === "automatic")
+                  // An admission assessment describes current source-processing
+                  // policy, including changes while native authorization awaited.
+                  // Historical read access remains separate from that policy.
+                  const current = input.operation === "evaluation-admission" ? await getConfig(toolContext.signal) : snapshot
+                  if (input.operation === "evaluation-admission") await checkedSession(actor.session_id)
+                  lifetime.signal.throwIfAborted(); toolContext.signal.throwIfAborted()
+                  result = learningRuntime.read(input, actor.session_id, !current.errors.length && current.config.ledger.capture === "automatic")
                 } else if (input.batch_id !== undefined || input.member_key !== undefined || input.report_id !== undefined || input.after !== undefined
-                  || input.request_id !== undefined || input.manifest_sha256 !== undefined || input.source_index !== undefined) {
+                  || input.request_id !== undefined || input.manifest_sha256 !== undefined || input.attempt_id !== undefined || input.source_index !== undefined) {
                   throw new Error("Evaluation fields require an evaluation read operation")
                 } else if (input.operation === "action") {
                   const actionID = input.action_id === undefined ? store.selected(actor.session_id)?.action_id : String(input.action_id)

@@ -1,4 +1,4 @@
-"""Installed Stage 4 preparation mechanics, with no Evaluator dispatch.
+"""Installed Stage 4 preparation and admission assessment, with no Evaluator dispatch.
 
 The exact packed Loom candidate owns every request, review intent and reader.
 An isolated local scripted provider invokes real native tools; it does not
@@ -23,7 +23,7 @@ from installed_host_smoke import (
 )
 from installed_instruction_variants import verify_host_version
 from installed_learning_stage3 import make_session, report_result, until
-from installed_questions import Scenario, audit_session, events, final_events, request
+from installed_questions import Scenario, audit_session, events, final_events, request, result_value
 
 
 HOST = "2.3.0"
@@ -35,6 +35,10 @@ CHECKS = {
     "S4-native-wrong-identity-checksum-and-cursor-denied",
     "S4-native-restart-preserves-preparation-and-stage3",
     "S4-native-mutated-original-withholds-dependent-preparation",
+    "S4-native-read-only-admission-and-replay",
+    "S4-native-competing-intents-remain-unadmitted",
+    "S4-native-admission-identity-and-authority-denied",
+    "S4-native-capture-off-admission-remains-blocked",
     "S4-native-no-evaluator-dispatch-or-instruction-mutation",
 }
 IDENTITY_FIELDS = (
@@ -195,8 +199,84 @@ def assert_unissued(value: dict):
             "Local preparation upgraded native execution provenance")
 
 
+def admission_query(prepared: dict) -> dict:
+    return {"operation": "evaluation-admission",
+            **{field: prepared[field] for field in ("batch_id", "request_id", "manifest_sha256")},
+            "attempt_id": prepared["issue"]["attempt"]["attempt_id"]}
+
+
+def assert_admission(value: dict, prepared: dict, *, capture_enabled: bool = True):
+    """A readable assessment must never be mistaken for an executable permit."""
+    require(len(encoded(value)) <= PUBLIC_READ_CHARS, "Native admission assessment exceeds public allowance")
+    for field in ("batch_id", "request_id", "method_id", "manifest_sha256"):
+        require(value[field] == prepared[field], "Admission assessment changed " + field)
+    require(value["format"] == "loom-evaluation-admission-assessment/v1"
+            and value["state"] == "blocked" and value["mode"] == "assessment-only",
+            "Admission assessment claimed execution authorization")
+    require(value["source_store_id"] == prepared["manifest"]["source_store_id"]
+            and value["source_scope"] == prepared["request"]["source_scope"]
+            and value["method_binding"] == "declared-not-admitted",
+            "Admission assessment upgraded declared method or source authority")
+    require(value["local_issue"] == {key: prepared["issue"][key] for key in ("intent", "attempt")},
+            "Admission assessment changed the canonical issue")
+    require(value["dispatch_enabled"] is False and value["automatic_model_calls"] is False
+            and value["effect_permit"] is None and value["budget_reservation"] is None
+            and value["budget_accounting"] == "not-established"
+            and value["native_effect_identity"] == "not-established",
+            "Admission assessment manufactured an effect or budget authority")
+    require(value["recovery"] == {"state": "qualification-required", "retry_authority": "unavailable",
+                                  "restore_reconciliation": "unsupported"},
+            "Admission assessment claimed qualified native recovery")
+    require(value["qualifications"] == {
+        "Q4": "partial-unqualified", "Q5": "unqualified-transfer-withheld", "E11": "unqualified",
+        "originating_request_independence": "unknown", "reader_access_is_recipient_authority": False,
+        "local_state_proves_native_nonexecution": False,
+    }, "Admission assessment upgraded its qualification boundary")
+    expected = {
+        "effective-method": ("unsupported", "effective-method-authority-unavailable"),
+        "recipient": ("unsupported", "qualified-recipient-preparation-unavailable"),
+        "recipient-source-access": ("unsupported", "recipient-source-authority-unavailable"),
+        "model-provider-account": ("unsupported", "model-account-authority-unavailable"),
+        "budget": (("missing", "budget-policy-missing") if prepared["request"]["budget_policy"] is None
+                   else ("unsupported", "declared-budget-policy-is-not-authority")),
+        "budget-reservation": ("unsupported", "atomic-budget-owner-unavailable"),
+        "native-reconciliation": ("unsupported", "native-effect-reconciliation-unavailable"),
+    }
+    require(value["source_processing"] == ("enabled" if capture_enabled else "disabled"),
+            "Admission assessment ignored current source-processing configuration")
+    if not capture_enabled:
+        expected["source-processing"] = ("blocked", "source-processing-disabled")
+    blockers = value["blockers"]
+    require(len(blockers) == len(expected)
+            and {item["capability"]: (item["state"], item["reason"]) for item in blockers} == expected,
+            "Admission assessment omitted, duplicated or upgraded a required capability blocker")
+
+
+def assert_no_evaluator_effects(observed: list, driver_sessions: set[str]) -> dict:
+    """Inspect native/provider receipts; fixture driving itself makes model calls."""
+    providers = [event["data"] for event in observed if event["type"] == "provider-request"]
+    requests = [event["data"] for event in observed if event["type"] == "model-request"]
+    require(providers and requests, "No real native fixture-provider boundary was observed")
+    require(all(item.get("providerID", item.get("model", {}).get("providerID")) == "question-fixture"
+                and item.get("sessionID") in driver_sessions and item.get("agent") in ("general", "restricted")
+                for item in requests), "A non-driver native model request was observed")
+    require(all(item.get("role") == "reader"
+                and item.get("headers", {}).get("x-opencode-session-id") in driver_sessions
+                for item in providers), "An unexpected native provider recipient was observed")
+    created = {event["data"].get("data", {}).get("sessionID") for event in observed
+               if event["type"] == "native-event" and event["data"].get("type") == "session.created"}
+    require(created == driver_sessions, "Native Session creation differs from the known fixture drivers")
+    require(not any(event["type"] == "tool-before" and event["data"].get("tool")
+                    in ("subagent", "loom_tweak", "loom.tweak") for event in observed),
+            "Preparation or assessment attempted native dispatch or canonical instruction mutation")
+    return {"evaluator_dispatches": 0, "instruction_mutations": 0, "provider": "question-fixture",
+            "native_recipient_sessions": 0,
+            "driver_model_requests": len(requests), "scripted_provider_requests": len(providers),
+            "inference_qualification": "local scripted provider drove tools; no genuine Evaluator reasoning or billing qualification"}
+
+
 def preparation_snapshot(learning: Path, ledger: Path) -> dict:
-    """Read-only oracle: rejected native inputs cannot add or change durable effects."""
+    """Read-only oracle for preparation, canonical issue, lease and report changes."""
     result = {}
     for path, tables in (
         (learning, ("learning_evaluator_methods", "learning_evaluator_requests")),
@@ -204,6 +284,8 @@ def preparation_snapshot(learning: Path, ledger: Path) -> dict:
     ):
         with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as db:
             db.execute("PRAGMA query_only=ON")
+            result[path.name + "_schema"] = db.execute(
+                "SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").fetchall()
             for table in tables:
                 result[table] = db.execute("SELECT * FROM " + table + " ORDER BY 1").fetchall()
             if path == learning:
@@ -213,6 +295,9 @@ def preparation_snapshot(learning: Path, ledger: Path) -> dict:
                 result["preparation_members"] = db.execute(
                     "SELECT * FROM learning_evaluation_members WHERE batch_id IN "
                     "(SELECT id FROM learning_evaluation_batches WHERE scope_key=?) ORDER BY batch_id,ordinal", scope).fetchall()
+                result["preparation_reports"] = db.execute(
+                    "SELECT * FROM learning_evaluation_reports WHERE batch_id IN "
+                    "(SELECT id FROM learning_evaluation_batches WHERE scope_key=?) ORDER BY id", scope).fetchall()
     return result
 
 
@@ -222,12 +307,14 @@ def run(args) -> dict:
     result = {
         "format": "loom-installed-stage4-preparation/v1", "status": "UNPROVEN",
         "genuine_evaluator": "UNPROVEN", "e11": "UNPROVEN", "q4": "UNQUALIFIED", "q5": "UNQUALIFIED",
+        "admission_scope": "READ_ONLY_BLOCKED_ASSESSMENT",
         "model_spending": "LOCAL_SCRIPTED_PROVIDER_ONLY", "checks": [],
         "limitations": [
             "Synthetic authored fail/fail/pass evidence; no original engineering corpus or real Evaluator reasoning.",
             "Method content and policy references are declared fixture inputs, not installed definitions or authority.",
             "No native review/source-exposure binding, protected transfer or provider/account eligibility qualified.",
-            "Restart proves preparation recovery; no model effect, budget reservation or uncertain admission occurred.",
+            "Restart proves preparation and assessment readback; no model effect, budget reservation or uncertain admission occurred.",
+            "Concurrent assessment reads remain blocked; atomic budget reservation and native reconciliation are unqualified.",
             "The only direct database write is the explicit stopped-host original-source corruption negative control.",
         ],
     }
@@ -267,7 +354,7 @@ def run(args) -> dict:
             config = {
                 "plugins": ["*", str(args.plugin.resolve()), str(repo / "tests/question-host")],
                 "agents": {name: {
-                    "description": "Synthetic native Stage 4 preparation fixture; not a genuine Evaluator",
+                    "description": "Synthetic native Stage 4 preparation and assessment fixture; not a genuine Evaluator",
                     "mode": "primary", "system": "Execute only the local scripted fixture job.",
                     "model": "question-fixture/reader",
                     "permissions": [{"action": "*", "resource": "*", "effect": "allow"}]
@@ -361,6 +448,19 @@ def run(args) -> dict:
                             "Frozen review subject does not bind the complete immutable membership manifest")
                     check("S4-native-stable-request-review-and-issue-replay", **stable)
 
+                    assess = admission_query(prepared)
+                    before_assessment = preparation_snapshot(learning, ledger)
+                    assessment = scenario.invoke(owner, "insights", assess)
+                    assert_admission(assessment, prepared)
+                    repeated_assessment = scenario.invoke(owner, "insights", assess)
+                    assert_admission(repeated_assessment, prepared)
+                    require(repeated_assessment == assessment, "Repeated admission assessment changed its identity or denial")
+                    require(preparation_snapshot(learning, ledger) == before_assessment,
+                            "Admission assessment wrote preparation, canonical issue, lease, report or schema state")
+                    check("S4-native-read-only-admission-and-replay", **stable,
+                          blockers=assessment["blockers"], effect_permit=None, budget_reservation=None,
+                          preparation_stores_unchanged=True, dispatch_enabled=False)
+
                     prepared_members, pages = members(scenario, owner, page_query)
                     require(prepared_members == original_members, "Preparation omitted or changed frozen Stage 3 membership")
                     require(len(pages) > 1, "Membership paging did not exercise a real continuation")
@@ -375,17 +475,17 @@ def run(args) -> dict:
 
                     first_page = {**page_query, "after": 0, "limit": 1}
                     denied(scenario, foreign, "review", prepare)
-                    for query in (detail_query, first_page):
+                    for query in (detail_query, first_page, assess):
                         denied(scenario, foreign, "insights", query)
                     request(host, "POST", f"/api/session/{owner}/agent", {"agent": "restricted"})
                     require(request(host, "GET", f"/api/session/{owner}")["agent"] == "restricted",
                             "Native agent revocation was not applied")
                     denied(scenario, owner, "review", prepare)
-                    for query in (detail_query, first_page):
+                    for query in (detail_query, first_page, assess):
                         denied(scenario, owner, "insights", query)
                     request(host, "POST", f"/api/session/{owner}/agent", {"agent": "general"})
                     check("S4-native-foreign-and-revoked-readers-denied",
-                          foreign_denials=3, revoked_same_owner_denials=3)
+                          foreign_denials=4, revoked_same_owner_denials=4, admission_included=True)
 
                     budget_policy = {"id": "fixture-budget", "revision": "1", "sha256": "c" * 64}
                     budgeted_input = {**prepare, "budget_policy": budget_policy}
@@ -400,6 +500,30 @@ def run(args) -> dict:
                     assert_unissued(budgeted_replay)
                     require(identity(budgeted_replay) == identity(budgeted),
                             "A valid declared budget reference changed preparation identity on replay")
+                    budgeted_assess = admission_query(budgeted)
+                    before_concurrent = preparation_snapshot(learning, ledger)
+                    concurrent = scenario.command(owner, "return await Promise.all(["
+                        + ",".join("tools.loom.insights(" + encoded(query) + ")"
+                                   for query in (assess, assess, budgeted_assess)) + "]);")
+                    reads = [event for event in concurrent if event["type"] == "tool-after"
+                             and event["data"].get("sessionID") == owner
+                             and event["data"].get("tool") in ("loom_insights", "loom.insights")]
+                    require(len(reads) == 3 and all(event["data"].get("status") == "completed" for event in reads),
+                            "Concurrent admission assessment did not complete all real native reads")
+                    assessments = [result_value(event) for event in reads]
+                    require(sum(value["request_id"] == stable["request_id"] for value in assessments) == 2
+                            and sum(value["request_id"] == budgeted["request_id"] for value in assessments) == 1,
+                            "Concurrent assessment mixed canonical execution intents")
+                    for value in assessments:
+                        expected = prepared if value["request_id"] == stable["request_id"] else budgeted
+                        assert_admission(value, expected)
+                    require(preparation_snapshot(learning, ledger) == before_concurrent,
+                            "Concurrent blocked assessments changed preparation or canonical issue state")
+                    check("S4-native-competing-intents-remain-unadmitted", concurrent_assessment_reads=3,
+                          distinct_prepared_intents=2, preparation_stores_unchanged=True,
+                          declared_budget_is_not_authority=True, budget_reservation_exercised=False,
+                          atomic_budget_qualification="UNPROVEN")
+
                     before_rejections = preparation_snapshot(learning, ledger)
                     for query in (
                         {**first_page, "request_id": "wrong-request-identity"},
@@ -427,6 +551,26 @@ def run(args) -> dict:
                     check("S4-native-wrong-identity-checksum-and-cursor-denied", negative_controls=12,
                           preparation_stores_unchanged=True, declared_budget_replay=True)
 
+                    admission_rejections = [
+                        {**assess, "batch_id": source_batch},
+                        {**assess, "request_id": budgeted["request_id"]},
+                        {**assess, "manifest_sha256": "0" * 64},
+                        {**assess, "attempt_id": budgeted["issue"]["attempt"]["attempt_id"]},
+                        {key: value for key, value in assess.items() if key != "attempt_id"},
+                        {**assess, "qualified": True},
+                        {**assess, "recipient": owner},
+                        {**assess, "method": method},
+                        {**assess, "budget_policy": budget_policy},
+                        {**assess, "dispatch_enabled": True},
+                        {**assess, "source_processing": "enabled"},
+                    ]
+                    for query in admission_rejections:
+                        denied(scenario, owner, "insights", query)
+                    require(preparation_snapshot(learning, ledger) == before_rejections,
+                            "Rejected admission identity or caller authority changed durable preparation state")
+                    check("S4-native-admission-identity-and-authority-denied",
+                          negative_controls=len(admission_rejections), preparation_stores_unchanged=True)
+
                     old_pid = host.proc.pid
                     host.close()
                     host = None
@@ -440,6 +584,12 @@ def run(args) -> dict:
                     resumed = scenario.invoke(owner, "review", prepare)
                     require(identity(resumed) == stable, "Restart replay allocated a second evaluation issue")
                     assert_unissued(resumed)
+                    before_recovered_assessment = preparation_snapshot(learning, ledger)
+                    recovered_assessment = scenario.invoke(owner, "insights", assess)
+                    assert_admission(recovered_assessment, recovered)
+                    require(recovered_assessment == assessment, "Restart changed the blocked admission assessment")
+                    require(preparation_snapshot(learning, ledger) == before_recovered_assessment,
+                            "Restart assessment repaired or consumed preparation state")
                     restored_members, _ = members(scenario, owner, page_query)
                     require(restored_members == prepared_members, "Restart lost frozen preparation membership")
                     old_report = report_result(scenario, owner, source_batch)
@@ -456,7 +606,29 @@ def run(args) -> dict:
                     require(sum(event["type"] == "model-request" for event in events(root)) == prior_requests,
                             "Idle preparation started an unsolicited native model request")
                     check("S4-native-restart-preserves-preparation-and-stage3", before_pid=old_pid,
-                          after_pid=host.proc.pid, stage3_report_id=old_report["report"]["id"], **stable)
+                          after_pid=host.proc.pid, stage3_report_id=old_report["report"]["id"],
+                          admission_unchanged=True, **stable)
+
+                    host.close()
+                    host = None
+                    final_events(root)
+                    (project / ".loom.yaml").write_text("instructions: {enabled: false}\nledger: {capture: off}\n")
+                    host = boot("capture-off")
+                    scenario = Scenario(host, root)
+                    before_capture_off = preparation_snapshot(learning, ledger)
+                    disabled_assessment = scenario.invoke(owner, "insights", assess)
+                    assert_admission(disabled_assessment, prepared, capture_enabled=False)
+                    disabled_replay = scenario.invoke(owner, "insights", assess)
+                    require(disabled_replay == disabled_assessment, "Capture-off admission assessment changed on replay")
+                    denied(scenario, owner, "review", prepare)
+                    disabled_stage3 = report_result(scenario, owner, source_batch)
+                    require(disabled_stage3["report"] == old_report["report"],
+                            "Capture-off admission assessment changed Stage 3 historical readback")
+                    require(preparation_snapshot(learning, ledger) == before_capture_off,
+                            "Capture-off assessment or rejected preparation changed durable preparation state")
+                    check("S4-native-capture-off-admission-remains-blocked", source_processing="disabled",
+                          admission_readable=True, preparation_denied=True, preparation_stores_unchanged=True,
+                          stage3_report_id=disabled_stage3["report"]["id"], effect_permit=None)
 
                     host.close()
                     host = None
@@ -468,28 +640,21 @@ def run(args) -> dict:
                         changed["data"]["statement"] = "Stopped-host synthetic source corruption negative control."
                         db.execute("UPDATE ledger SET data=? WHERE id=?", (encoded(changed), trajectory["anchor"]))
                         db.commit()
+                    (project / ".loom.yaml").write_text("instructions: {enabled: false}\nledger: {capture: automatic}\n")
                     host = boot("mutated-source")
                     scenario = Scenario(host, root)
                     denied(scenario, owner, "insights", detail_query)
                     denied(scenario, owner, "insights", first_page)
+                    denied(scenario, owner, "insights", assess)
                     denied(scenario, owner, "review", prepare)
                     check("S4-native-mutated-original-withholds-dependent-preparation",
-                          original_record=trajectory["anchor"], stopped_host_mutation=True, native_denials=3)
+                          original_record=trajectory["anchor"], stopped_host_mutation=True,
+                          native_denials=4, admission_included=True)
                     host.close()
                     host = None
                     observed = final_events(root)
-                    require(any(event["type"] == "provider-request" for event in observed),
-                            "No real native fixture-provider boundary was observed")
-                    requests = [event for event in observed if event["type"] == "model-request"]
-                    require(requests and all(event["data"].get("providerID", event["data"].get("model", {}).get("providerID"))
-                                             == "question-fixture" for event in requests),
-                            "An unapproved provider/model request was observed")
-                    require(not any(event["type"] == "tool-before" and event["data"].get("tool")
-                                    in ("subagent", "loom_tweak", "loom.tweak") for event in observed),
-                            "Preparation attempted native dispatch or canonical instruction mutation")
                     check("S4-native-no-evaluator-dispatch-or-instruction-mutation",
-                          evaluator_dispatches=0, instruction_mutations=0, provider="question-fixture",
-                          inference_qualification="no real-model calls; scripted native tool driving only")
+                          **assert_no_evaluator_effects(observed, {owner, foreign}))
                     require({item["name"] for item in result["checks"]} == CHECKS,
                             "Stage 4 native qualification omitted a required check")
                     result["status"] = "PASS"

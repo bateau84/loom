@@ -52,6 +52,12 @@ this is not an atomic multi-write transaction. Use the exact callable search pat
 
 `loom_trends` reads the optional source-linked objective index, not individual bounded `loom_insights` ledger pages. Supply explicit `since_at`, `until_at` (exclusive), `as_of_at`, population mode, and optional grouping/filter. Totals are computed across a frozen high-water-mark objective population on **every** page; `next_cursor` pages original objective IDs without reselecting members during concurrent appends. Unknown outcomes and undated starts remain visible. Counts represent authored judgments with original source IDs, not independently verified task success. Same-source failures are identified as correlated evidence, not independent incidents. Work type, model/provider, host/tool revision, observer/rubric and actual instruction exposure must not be inferred from today’s files or current defaults. See [longitudinal comparison details](learning-experiments.md).
 
+## Evaluator admission assessment
+
+After [durable preparation](learning-stage4-preparation.md), call `loom_insights` with `operation:"evaluation-admission"` and its exact `batch_id`, `request_id`, `manifest_sha256`, and initial `issue.attempt.attempt_id` as `attempt_id`. This read validates the complete existing source population and current canonical issue under the calling Session's native read permissions. It reports capability-specific blockers, consumed or uncertain issue state, and recovery limits. Caller-supplied authority, recipient, account, reservation and retry fields are rejected.
+
+The result is an assessment, with no effect permit or budget reservation. A local issue ID is not a native effect receipt; null accounting does not establish zero spending or permit release of uncertain budget. Capture-off remains inspectable under existing read authority. See the [admission contract and remaining execution obligations](learning-stage4-admission.md).
+
 ## Assessment and QA lenses
 
 Call either loader with `{"skill":"software-engineering"}` using an exact native
