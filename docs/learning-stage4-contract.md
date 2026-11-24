@@ -18,6 +18,8 @@ This document is a **proposed Stage 4 implementation contract**, derived from th
 
 **Subsequent implementation:** The user selected this contract for the next assignment. The [durable preparation increment](learning-stage4-preparation.md) implements a bounded part of section 6 with dispatch unavailable. The documentation-only stop point below records the original PR #235 assignment; it is not a claim that no later implementation exists.
 
+The later [admission-assessment increment](learning-stage4-admission.md) adds capability-specific read-only assessment of one prepared request and its canonical issue. Positive execution admission, atomic budget reservation and native reconciliation remain unimplemented. That document also scopes newer OpenCode 2.4.1 source findings separately from the historical host evidence below; no dependency upgrade or dispatch qualification follows.
+
 Example: three Coder handbacks concern one goal. The first two fail later verification; the third fixes the defect. R1 reviewed artifact A for security, while R2 checked only the correction in B. An Evaluator should explain the whole trajectory, recovery, useful practices and remaining uncertainty. It must neither count three wins nor promote either scoped review into general acceptance. It can conclude that no system change is justified.
 
 ## Derived from

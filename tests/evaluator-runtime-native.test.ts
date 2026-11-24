@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { registeredLoom } from "./helpers/registered-loom.js"
 import type { EvaluatorMethodManifest } from "../src/evaluator-method.js"
 import { AutomaticLearning } from "../src/automatic-learning.js"
+import { TOOL_EXAMPLES } from "../src/tool-help.js"
 
 function method(): EvaluatorMethodManifest {
   const ref = (name: string) => ({ locator: "fixture://" + name, sha256: "a".repeat(64) })
@@ -36,7 +37,12 @@ function queries(prepared: Record<string, any>) {
     { operation: "evaluation-preparation", batch_id: prepared.batch_id },
     { operation: "evaluation-preparation-members", batch_id: prepared.batch_id, request_id: prepared.request_id, manifest_sha256: prepared.manifest_sha256, after: 0, limit: 1 },
     { operation: "evaluation-preparation-source", batch_id: prepared.batch_id, request_id: prepared.request_id, manifest_sha256: prepared.manifest_sha256, member_key: "session:s:0", source_index: 0 },
+    admissionQuery(prepared),
   ]
+}
+function admissionQuery(prepared: Record<string, any>) {
+  return { operation: "evaluation-admission", batch_id: prepared.batch_id, request_id: prepared.request_id,
+    manifest_sha256: prepared.manifest_sha256, attempt_id: prepared.issue.attempt.attempt_id }
 }
 function replays(prepared: Record<string, any>) {
   const { requester: _requester, ...review } = prepared.request.review_request
@@ -180,5 +186,85 @@ test("capture opt-out during permission resolution stops explicit preparation be
     const db = new Database(path)
     try { expect(db.query("SELECT name FROM sqlite_schema WHERE name GLOB 'learning_evaluator_*'").all()).toEqual([]) } finally { db.close() }
     expect(f.sessionPrompts).toHaveLength(0)
+  } finally { f.permission.beforeReturn = undefined; await f.close() }
+})
+
+test("registered admission example explains missing authority without claiming an issue or changing Stage 3", async () => {
+  const { f, input } = await fixture()
+  try {
+    const prepared = (await f.invoke("review", input)).result
+    const stage3 = (await f.invoke("insights", { operation: "evaluation", batch_id: input.batch_id })).result
+    const example = TOOL_EXAMPLES.insights.find(item => item.operation === "evaluation-admission")
+    expect(example).toBeDefined()
+    const query = JSON.parse(JSON.stringify(example).replaceAll("BATCH_ID", prepared.batch_id)
+      .replaceAll("REQUEST_ID", prepared.request_id).replaceAll("MANIFEST_SHA256", prepared.manifest_sha256)
+      .replaceAll("ATTEMPT_ID", prepared.issue.attempt.attempt_id))
+    const assessment = (await f.invoke("insights", query)).result
+    expect(assessment).toMatchObject({ format: "loom-evaluation-admission-assessment/v1", state: "blocked", mode: "assessment-only",
+      request_id: prepared.request_id, source_store_id: prepared.manifest.source_store_id, method_id: prepared.method_id,
+      local_issue: { intent: prepared.issue.intent, attempt: prepared.issue.attempt },
+      dispatch_enabled: false, automatic_model_calls: false, effect_permit: null, budget_reservation: null,
+      budget_accounting: "not-established", native_effect_identity: "not-established", source_processing: "enabled",
+      recovery: { state: "qualification-required", restore_reconciliation: "unsupported" },
+      qualifications: { reader_access_is_recipient_authority: false, local_state_proves_native_nonexecution: false } })
+    expect(assessment.blockers).toContainEqual({ capability: "budget", state: "missing", reason: "budget-policy-missing" })
+    expect(assessment.blockers.map((item: { capability: string }) => item.capability)).toEqual([
+      "effective-method", "recipient", "recipient-source-access", "model-provider-account", "budget", "budget-reservation", "native-reconciliation",
+    ])
+    const repeated = await Promise.all(Array.from({ length: 4 }, () => f.invoke("insights", query)))
+    for (const read of repeated) expect(read.result).toEqual(assessment)
+    expect((await f.invoke("insights", { operation: "evaluation-preparation", batch_id: prepared.batch_id })).result).toEqual(prepared)
+    expect((await f.invoke("insights", { operation: "evaluation", batch_id: input.batch_id })).result).toEqual(stage3)
+    expect(f.tools.get("insights").description).toContain("evaluation-admission")
+    expect(f.sessionCreates).toHaveLength(0); expect(f.sessionPrompts).toHaveLength(0); expect(f.nativeInputs).toHaveLength(0)
+  } finally { await f.close() }
+})
+
+test("admission accepts selectors only and never upgrades declared budget, model or policy references", async () => {
+  const { f, input } = await fixture()
+  try {
+    const prepared = (await f.invoke("review", { ...input, budget_policy: { id: "claimed-authorized-budget", revision: "1", sha256: "c".repeat(64) } })).result
+    const query = admissionQuery(prepared)
+    for (const invalid of [
+      { ...query, request_id: "other-request" }, { ...query, manifest_sha256: "f".repeat(64) }, { ...query, attempt_id: "other-attempt" },
+      { ...query, qualified: true }, { ...query, authority: { granted: true } }, { ...query, recipient: { session_id: "s" } },
+      { ...query, account_id: "included-account" }, { ...query, budget_reservation: "reservation" }, { ...query, claimant_id: "worker" },
+      { ...query, authorization_ref: "approval" }, { ...query, dispatch: true }, { ...query, now_ms: Number.MAX_SAFE_INTEGER },
+    ]) await expect(f.invoke("insights", invalid)).rejects.toThrow()
+    for (const field of ["request_id", "manifest_sha256", "attempt_id"] as const) {
+      const missing: Record<string, unknown> = { ...query }; delete missing[field]
+      await expect(f.invoke("insights", missing)).rejects.toThrow("identity mismatch")
+    }
+    await expect(f.invoke("insights", { operation: "window", attempt_id: query.attempt_id })).rejects.toThrow("Evaluation fields")
+    const assessment = (await f.invoke("insights", query)).result
+    expect(assessment.blockers).toContainEqual({ capability: "budget", state: "unsupported", reason: "declared-budget-policy-is-not-authority" })
+    expect(assessment.effect_permit).toBeNull(); expect(assessment.budget_reservation).toBeNull()
+    expect(assessment.local_issue.attempt).toEqual(prepared.issue.attempt)
+    for (const [name, replay] of replays(prepared).filter(([name]) => name === "record"))
+      expect((await f.invoke(name, replay)).result.dispatch).toMatchObject({ status: "not-attempted", attempted: false })
+    expect(f.sessionCreates).toHaveLength(0); expect(f.sessionPrompts).toHaveLength(0); expect(f.nativeInputs).toHaveLength(0)
+  } finally { await f.close() }
+})
+
+test.each(["off", "invalid"] as const)("admission rechecks %s configuration after authorization but preserves authorized historical reads", async mode => {
+  const { f, input } = await fixture()
+  try {
+    const prepared = (await f.invoke("review", input)).result
+    let changed = false
+    f.permission.beforeReturn = async () => {
+      const permission = f.permissionRequests.at(-1)
+      if (!changed && permission.source?.type === "tool" && permission.resources.some((path: string) => path.endsWith("learning.sqlite"))) {
+        changed = true
+        await writeFile(join(f.directory, ".loom.yaml"), mode === "off" ? config("off") : "ledger: [invalid\n")
+      }
+    }
+    const assessment = (await f.invoke("insights", admissionQuery(prepared))).result
+    expect(changed).toBe(true)
+    expect(assessment.source_processing).toBe("disabled")
+    expect(assessment.blockers).toContainEqual({ capability: "source-processing", state: "blocked", reason: "source-processing-disabled" })
+    expect(assessment.effect_permit).toBeNull()
+    expect((await f.invoke("insights", { operation: "evaluation-preparation", batch_id: prepared.batch_id })).result).toEqual(prepared)
+    expect((await f.invoke("action", { operation: "create", title: "Ordinary work", goal: "Still usable" })).result.id).toBeTruthy()
+    expect(f.sessionCreates).toHaveLength(0); expect(f.sessionPrompts).toHaveLength(0)
   } finally { f.permission.beforeReturn = undefined; await f.close() }
 })

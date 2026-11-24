@@ -13,7 +13,7 @@ type Options = {
   warn: (error: unknown) => void;
 }
 export const EVALUATION_READS = ["evaluation-status", "evaluations", "evaluation", "evaluation-members", "evaluation-sources", "evaluation-observations",
-  "evaluation-preparation", "evaluation-preparation-members", "evaluation-preparation-source"] as const
+  "evaluation-preparation", "evaluation-preparation-members", "evaluation-preparation-source", "evaluation-admission"] as const
 
 const PUBLIC_READ_CHARS = 262144
 /** A failed fit test must never consume a cursor or silently drop an observation. */
@@ -191,6 +191,15 @@ export async function registerAutomaticLearning(ctx: Plugin.Context, options: Op
     read(input: Record<string, unknown>, session: string, captureEnabled: boolean): unknown {
       if (!engine) throw new Error("LOOM_LEARNING_UNAVAILABLE: original Action history remains available")
       const operation = input.operation
+      if (operation === "evaluation-admission") {
+        const allowed = ["operation", "batch_id", "request_id", "manifest_sha256", "attempt_id"]
+        if (Object.keys(input).some(key => !allowed.includes(key)) || typeof input.batch_id !== "string")
+          throw new Error("Invalid evaluator admission read fields")
+        const result = options.learning!.evaluator.admission(session, input.batch_id, input.request_id,
+          input.manifest_sha256, input.attempt_id, captureEnabled)
+        canonical(result, new ProcessingBudget(PUBLIC_READ_CHARS))
+        return result
+      }
       if (typeof operation === "string" && operation.startsWith("evaluation-preparation")) {
         const allowed = operation === "evaluation-preparation" ? ["operation", "batch_id"]
           : operation === "evaluation-preparation-members" ? ["operation", "batch_id", "request_id", "manifest_sha256", "after", "limit"]

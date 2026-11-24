@@ -141,6 +141,54 @@ export class EvaluatorPreparation {
         "originating-request-independence-unknown", "method-content-not-loaded-or-attested", "no-native-recipient-or-admission"] }
   }
 
+  /** A current assessment, never the authority-bearing admission envelope.
+   * Reuse the frozen source/request and issue owners; reading cannot repair,
+   * claim, reserve, release, or dispatch anything. Local identity is not a
+   * native effect receipt, including after a rollback of either local store. */
+  admission(owner: string, batchID: string, requestID: unknown, manifestSHA: unknown, attemptID: unknown, captureEnabled: boolean) {
+    const prepared = this.read(owner, batchID)
+    if (requestID !== prepared.request_id || manifestSHA !== prepared.manifest_sha256)
+      throw new Error("Evaluator admission identity mismatch")
+    const issue = prepared.issue
+    if (!issue) throw new Error("Evaluator admission canonical issue unavailable; preparation is incomplete")
+    if (attemptID !== issue.attempt.attempt_id) throw new Error("Evaluator admission issue identity mismatch")
+    const consumed = issue.attempt.claimant_id !== null
+    const blockers: Array<{ capability: string; state: "blocked" | "missing" | "unsupported"; reason: string }> = [
+      { capability: "effective-method", state: "unsupported", reason: "effective-method-authority-unavailable" },
+      { capability: "recipient", state: "unsupported", reason: "qualified-recipient-preparation-unavailable" },
+      { capability: "recipient-source-access", state: "unsupported", reason: "recipient-source-authority-unavailable" },
+      { capability: "model-provider-account", state: "unsupported", reason: "model-account-authority-unavailable" },
+      { capability: "budget", state: prepared.request.budget_policy === null ? "missing" : "unsupported",
+        reason: prepared.request.budget_policy === null ? "budget-policy-missing" : "declared-budget-policy-is-not-authority" },
+      { capability: "budget-reservation", state: "unsupported", reason: "atomic-budget-owner-unavailable" },
+      { capability: "native-reconciliation", state: "unsupported", reason: "native-effect-reconciliation-unavailable" },
+    ]
+    if (!captureEnabled) blockers.unshift({ capability: "source-processing", state: "blocked", reason: "source-processing-disabled" })
+    if (issue.attempt.state !== "prepared") blockers.unshift({ capability: "canonical-issue", state: "blocked",
+      reason: consumed ? "canonical-issue-consumed" : "canonical-issue-rejected" })
+    return {
+      format: "loom-evaluation-admission-assessment/v1", state: "blocked", mode: "assessment-only",
+      batch_id: batchID, request_id: prepared.request_id, manifest_sha256: prepared.manifest_sha256,
+      source_store_id: prepared.manifest.source_store_id, method_id: prepared.method_id,
+      source_scope: prepared.request.source_scope, method_binding: prepared.method_binding,
+      local_issue: { intent: issue.intent, attempt: issue.attempt },
+      source_processing: captureEnabled ? "enabled" : "disabled", blockers,
+      dispatch_enabled: false, automatic_model_calls: false, effect_permit: null,
+      native_effect_identity: "not-established", budget_reservation: null, budget_accounting: "not-established",
+      recovery: {
+        state: consumed ? issue.attempt.native_outcome === "proven-non-admission"
+          ? "consumed-intent-preserved" : "native-reconciliation-required"
+          : issue.attempt.state === "prepared" ? "qualification-required" : "local-rejection-preserved",
+        retry_authority: "unavailable", restore_reconciliation: "unsupported",
+      },
+      qualifications: {
+        Q4: prepared.Q4, Q5: prepared.Q5, E11: prepared.E11,
+        originating_request_independence: "unknown", reader_access_is_recipient_authority: false,
+        local_state_proves_native_nonexecution: false,
+      },
+    }
+  }
+
   members(owner: string, batchID: string, requestID: unknown, manifestSHA: unknown, after: unknown = 0, limit: unknown = 20) {
     const { record, request: saved, manifest: header, members } = this.load(owner, batchID)
     if (requestID !== record.request_id || manifestSHA !== saved.manifest_sha256) throw new Error("Evaluator preparation page identity mismatch")

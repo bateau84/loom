@@ -12,6 +12,8 @@ timestamp: 2026-11-15T00:00:00Z
 
 The new operation freezes a separate method/scope over an existing authorized Stage 3 batch, persists one evaluation request, freezes its retrospective review mandate and prepares one canonical initial issue. It never claims that issue, creates a native recipient, invokes a provider, reserves budget or publishes an interpretation. `interpretation` and `budget_reservation` are explicitly null. Q4, Q5 and E11 remain unqualified.
 
+The subsequent [execution-admission assessment](learning-stage4-admission.md) adds a read-only `loom_insights evaluation-admission` view of that exact preparation and canonical issue. It distinguishes capability-specific blockers and consumed/uncertain issue history without granting an effect permit or implementing budget reservation. This does not change preparation or enable dispatch.
+
 ## What is usable
 
 | Capability | Meaning in this increment |

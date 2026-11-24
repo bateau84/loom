@@ -32,6 +32,7 @@ scan root so the profile is discovered; it declares no mandatory link counts.
 - [Stage 3 automatic learning implementation](learning-automatic-stage3.md) — Merged bounded descriptions, six authorized readers and durable recovery; Q4/Q5 and E11 remain separate
 - [Stage 4 whole-objective learning contract](learning-stage4-contract.md) — Fresh Q4/Q5 host investigation, minimum native changes, Evaluator architecture, authority boundaries and acceptance; documentation proposal only
 - [Stage 4 durable Evaluator preparation](learning-stage4-preparation.md) — Declared methods, authorized frozen sources, canonical review linkage and recovery; genuine evaluation and dispatch remain unavailable
+- [Stage 4 execution-admission assessment](learning-stage4-admission.md) — Authorized, read-only capability blockers and canonical issue recovery state; no effect permit or budget reservation
 - [Native review qualification](native-review-qualification.md) — Installed 2.2.6 Q1–Q7 observations, negative controls, capability matrix and unsupported host guarantees
 - [Native Evaluator audit qualification](native-evaluator-audit-qualification.md) — Source preflight and installed scripted recovery; real original-work audit pending
 - [Trusted learning host contracts](learning-host-trust-contract.md) — Native provenance/permission counterexamples and the host-owned guarantees still required

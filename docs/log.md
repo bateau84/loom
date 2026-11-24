@@ -4,6 +4,16 @@ type: Log
 
 # Update Log
 
+## 2026-11-24
+
+**Stage 4 execution-admission assessment (#227):** Added a read-only assessment
+of an exact prepared request and canonical initial issue through the existing
+insights reader. Capability-specific blockers, consumed claims and uncertain
+outcomes remain explicit; the read grants no effect permit, reserves no budget
+and performs no repair or dispatch. Documented the bounded acceptance criteria,
+remaining authority dependencies and source-inspected OpenCode 2.4.1 changes
+without upgrading the pinned host. See [the assessment boundary](learning-stage4-admission.md).
+
 ## 2026-11-19
 
 **Native routing host contract refresh (#205):** Source-inspected the pinned
