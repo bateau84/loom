@@ -12,6 +12,7 @@ from contextlib import closing
 import hashlib
 import json
 from pathlib import Path
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -252,8 +253,121 @@ def assert_admission(value: dict, prepared: dict, *, capture_enabled: bool = Tru
             "Admission assessment omitted, duplicated or upgraded a required capability blocker")
 
 
-def assert_no_evaluator_effects(observed: list, driver_sessions: set[str]) -> dict:
-    """Inspect native/provider receipts; fixture driving itself makes model calls."""
+def assert_driver_invocations(observed: list, invocation_plan: list[dict]) -> dict:
+    """Reconcile every planned prompt, native step and provider call.
+
+    This serial Code Mode fixture expects one primary tool-decision request and
+    one primary tool-result follow-up per job, even when an inner tool denies.
+    The title hook supplies a result without inference and no compaction is
+    requested. There are therefore no unplanned auxiliary-call exceptions.
+    Job markers describe fixture intent; they are not native invocation or
+    admitted-input provenance. Native message/step/call IDs remain separate.
+    """
+    require(invocation_plan and all(
+        isinstance(item.get("session_id"), str) and item["session_id"]
+        and re.fullmatch(r"[a-f0-9]{16}", item.get("job", ""))
+        and re.fullmatch(r"[a-f0-9]{64}", item.get("code_sha256", ""))
+        for item in invocation_plan), "Missing or malformed expected driver invocation plan")
+    require(len({item["job"] for item in invocation_plan}) == len(invocation_plan),
+            "Repeated job in expected driver invocation plan")
+
+    def data(kind):
+        return [event["data"] for event in observed if event["type"] == kind]
+
+    def native(kind):
+        return [event["data"] for event in data("native-event") if event.get("type") == kind]
+
+    prompts = data("prompt")
+    expected_prompts = [(item["session_id"], "LOOM_HARNESS_JOB:" + item["job"]) for item in invocation_plan]
+    require([(item.get("sessionID"), item.get("prompt", {}).get("text")) for item in prompts]
+            == expected_prompts, "Native prompt invocation sequence differs from the expected driver jobs")
+    message_ids = [item.get("messageID") for item in prompts]
+    require(all(isinstance(item, str) and item for item in message_ids)
+            and len(set(message_ids)) == len(message_ids), "Native driver prompt IDs are missing or repeated")
+    admitted = native("session.inbox.enqueued")
+    require([(item.get("sessionID"), item.get("inboxID"), item.get("item", {}).get("type"),
+              item.get("item", {}).get("payload", {}).get("text")) for item in admitted]
+            == [(session, message, "user", prompt) for (session, prompt), message
+                in zip(expected_prompts, message_ids)],
+            "Native admitted-input sequence differs from the expected driver prompts")
+    require([(item.get("sessionID"), item.get("inboxID")) for item in native("session.inbox.delivered")]
+            == [(session, message) for (session, _), message in zip(expected_prompts, message_ids)],
+            "Native delivered-input sequence differs from the expected driver prompts")
+
+    # Counts alone cannot detect a lost invocation replaced by a duplicate from
+    # another legitimate driver. Preserve the per-job sequence at each boundary.
+    planned_steps = [item for item in invocation_plan for _ in range(2)]
+    requests, providers = data("model-request"), data("provider-request")
+    require(len(requests) == len(providers) == len(planned_steps),
+            "Unexpected or missing model/provider invocation in the expected driver sequence")
+    require(all(item.get("kind") == "primary" for item in requests),
+            "Unexpected native auxiliary request; no auxiliary invocation is planned")
+    require([item.get("sessionID") for item in requests]
+            == [item["session_id"] for item in planned_steps],
+            "Native model invocation sequence differs from the expected driver jobs")
+    require(all(item.get("model", {}).get("id") == "reader" for item in requests),
+            "Native model invocation changed the expected driver model")
+    starts, ends = native("session.step.started"), native("session.step.ended")
+    require(len(starts) == len(ends) == len(planned_steps),
+            "Unexpected or missing native step invocation in the expected driver sequence")
+    step_ids = [item.get("assistantMessageID") for item in starts]
+    require(all(isinstance(item, str) and item for item in step_ids)
+            and len(set(step_ids)) == len(step_ids), "Native step invocation IDs are missing or repeated")
+    require([(item.get("sessionID"), item.get("agent"), item.get("model")) for item in starts]
+            == [(item.get("sessionID"), item.get("agent"), item.get("model")) for item in requests],
+            "Native steps disagree with the model invocation sequence")
+    require([(item.get("sessionID"), item.get("assistantMessageID"), item.get("finish")) for item in ends]
+            == [(item["session_id"], step_id, "tool-calls" if index % 2 == 0 else "stop")
+                for index, (item, step_id) in enumerate(zip(planned_steps, step_ids))],
+            "Native step outcomes differ from the expected tool-decision/follow-up sequence")
+
+    before = [item for item in data("tool-before") if item.get("tool") == "execute"]
+    after = [item for item in data("tool-after") if item.get("tool") == "execute"]
+    require(len(before) == len(after) == len(invocation_plan),
+            "Unexpected or missing native execute invocation in the expected driver sequence")
+    call_ids = [item.get("id") for item in before]
+    require(all(isinstance(item, str) and item for item in call_ids)
+            and len(set(call_ids)) == len(call_ids), "Native execute invocation IDs are missing or repeated")
+    for index, (planned, call, result) in enumerate(zip(invocation_plan, before, after)):
+        binding = (planned["session_id"], step_ids[index * 2], call_ids[index])
+        require((call.get("sessionID"), call.get("messageID"), call.get("id")) == binding
+                and (result.get("sessionID"), result.get("messageID"), result.get("id")) == binding
+                and result.get("status") == "completed",
+                "Native execute invocation does not bind its expected step and result")
+        code = call.get("input", {}).get("code")
+        require(isinstance(code, str) and hashlib.sha256(code.encode()).hexdigest() == planned["code_sha256"],
+                "Native execute invocation differs from its planned script")
+        for offset in (0, 1):
+            provider = providers[index * 2 + offset]
+            prompt = provider.get("prompt", [])
+            require(isinstance(prompt, list), "Missing native provider invocation prompt")
+            users = [(position, item.get("content")) for position, item in enumerate(prompt)
+                     if item.get("role") == "user"]
+            require(users, "Missing native provider invocation user input")
+            position, content = users[-1]
+            text = content if isinstance(content, str) else "\n".join(
+                part.get("text", "") for part in content if part.get("type") == "text")
+            require(text == "LOOM_HARNESS_JOB:" + planned["job"]
+                    and provider.get("headers", {}).get("x-opencode-session-id") == planned["session_id"],
+                    "Provider invocation sequence differs from the expected driver jobs")
+            calls = [part for item in prompt[position + 1:] if item.get("role") == "assistant"
+                     for part in item.get("content", []) if isinstance(part, dict) and part.get("type") == "tool-call"]
+            results = [part for item in prompt[position + 1:] if item.get("role") == "tool"
+                       for part in item.get("content", []) if isinstance(part, dict) and part.get("type") == "tool-result"]
+            require([(part.get("toolName"), part.get("toolCallId")) for part in calls]
+                    == ([] if offset == 0 else [("execute", call_ids[index])])
+                    and [(part.get("toolName"), part.get("toolCallId")) for part in results]
+                    == ([] if offset == 0 else [("execute", call_ids[index])]),
+                    "Provider invocation is not the expected tool decision or exact native result follow-up")
+    return {"planned_driver_invocations": len(invocation_plan), "native_prompt_invocations": len(prompts),
+            "native_step_invocations": len(starts), "native_execute_invocations": len(before),
+            "expected_tool_followup_requests": len(invocation_plan), "native_auxiliary_requests": 0,
+            "invocation_sequence_reconciled": True,
+            "native_send_identity_qualification": "UNQUALIFIED; exact serial fixture sequence, not a protected per-send identity"}
+
+
+def assert_no_evaluator_effects(observed: list, driver_sessions: set[str], invocation_plan: list[dict]) -> dict:
+    """Inspect all native/provider receipts, including extra known-driver calls."""
     providers = [event["data"] for event in observed if event["type"] == "provider-request"]
     requests = [event["data"] for event in observed if event["type"] == "model-request"]
     require(providers and requests, "No real native fixture-provider boundary was observed")
@@ -269,9 +383,11 @@ def assert_no_evaluator_effects(observed: list, driver_sessions: set[str]) -> di
     require(not any(event["type"] == "tool-before" and event["data"].get("tool")
                     in ("subagent", "loom_tweak", "loom.tweak") for event in observed),
             "Preparation or assessment attempted native dispatch or canonical instruction mutation")
+    reconciled = assert_driver_invocations(observed, invocation_plan)
     return {"evaluator_dispatches": 0, "instruction_mutations": 0, "provider": "question-fixture",
             "native_recipient_sessions": 0,
             "driver_model_requests": len(requests), "scripted_provider_requests": len(providers),
+            **reconciled,
             "inference_qualification": "local scripted provider drove tools; no genuine Evaluator reasoning or billing qualification"}
 
 
@@ -319,6 +435,8 @@ def run(args) -> dict:
         ],
     }
     host = None
+    invocation_plan = []
+    result["expected_driver_invocations"] = invocation_plan
     try:
         require(args.opencode is not None and args.opencode.is_file(), "Pinned installed OpenCode binary missing")
         result["source_head"] = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
@@ -390,7 +508,7 @@ def run(args) -> dict:
             with audit_session(root) as audit:
                 try:
                     host = boot("initial")
-                    scenario = Scenario(host, root)
+                    scenario = Scenario(host, root, invocation_plan)
                     owner, foreign = [make_session(host, project, "general") for _ in range(2)]
                     result["sessions"] = {"owner": owner, "foreign": foreign}
                     learning_files = list(Path(env["XDG_STATE_HOME"]).rglob("learning.sqlite"))
@@ -577,7 +695,7 @@ def run(args) -> dict:
                     final_events(root)
                     host = boot("restart")
                     require(host.proc.pid != old_pid, "Preparation recovery reused the previous process")
-                    scenario = Scenario(host, root)
+                    scenario = Scenario(host, root, invocation_plan)
                     recovered = scenario.invoke(owner, "insights", detail_query)
                     require(identity(recovered) == stable, "Restart changed durable preparation identity")
                     assert_unissued(recovered)
@@ -614,7 +732,7 @@ def run(args) -> dict:
                     final_events(root)
                     (project / ".loom.yaml").write_text("instructions: {enabled: false}\nledger: {capture: off}\n")
                     host = boot("capture-off")
-                    scenario = Scenario(host, root)
+                    scenario = Scenario(host, root, invocation_plan)
                     before_capture_off = preparation_snapshot(learning, ledger)
                     disabled_assessment = scenario.invoke(owner, "insights", assess)
                     assert_admission(disabled_assessment, prepared, capture_enabled=False)
@@ -642,7 +760,7 @@ def run(args) -> dict:
                         db.commit()
                     (project / ".loom.yaml").write_text("instructions: {enabled: false}\nledger: {capture: automatic}\n")
                     host = boot("mutated-source")
-                    scenario = Scenario(host, root)
+                    scenario = Scenario(host, root, invocation_plan)
                     denied(scenario, owner, "insights", detail_query)
                     denied(scenario, owner, "insights", first_page)
                     denied(scenario, owner, "insights", assess)
@@ -654,7 +772,7 @@ def run(args) -> dict:
                     host = None
                     observed = final_events(root)
                     check("S4-native-no-evaluator-dispatch-or-instruction-mutation",
-                          **assert_no_evaluator_effects(observed, {owner, foreign}))
+                          **assert_no_evaluator_effects(observed, {owner, foreign}, invocation_plan))
                     require({item["name"] for item in result["checks"]} == CHECKS,
                             "Stage 4 native qualification omitted a required check")
                     result["status"] = "PASS"
