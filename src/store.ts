@@ -41,6 +41,37 @@ const guardedData = (maxChars: number = PROCESSING_LIMITS.recordChars) =>
   `CASE WHEN typeof(data)='text' AND octet_length(data)<=${maxChars * 3} THEN data END AS data`
 export const RETRIEVAL_LIMITS = Object.freeze({ recordSetBytes: 4194304, contextNodes: 300 })
 type LedgerCandidate = { seq: number; data_bytes: number }
+export const RECORD_FIELDS = ["statement", "evidence_ids", "artifact_refs", "verdict", "verification"] as const
+export type RecordField = typeof RECORD_FIELDS[number]
+export const RECORD_KINDS = ["observation", "claim", "result", "concern", "assessment", "qa", "completion", "reopen", "question", "answer",
+  "assignment", "delivery-intent", "continuation-authorization", "continuation-withdrawal", "delivery-event"] as const satisfies readonly RecordKind[]
+export type RecordQuery = {
+  action_id?: string; session_id?: string; node_id?: string; record_id?: string; after?: number; limit?: number;
+  source_session_id?: string; record_kinds?: RecordKind[]; through?: number;
+  projection?: "metadata" | "fields"; fields?: RecordField[];
+}
+export type RecordMetadata = Omit<LedgerRecord, "data"> & {
+  sequence: number; stored_bytes: number; evidence_count: number; artifact_count: number;
+}
+export type RecordFields = RecordMetadata & { data: Partial<Record<RecordField, unknown>>; missing_fields: RecordField[] }
+type RecordPage<T> = { items: T[]; next_after: number | null }
+type RecordProjectionPage = RecordPage<RecordMetadata | RecordFields> & { projection: "metadata" | "fields"; fields?: RecordField[] }
+type RecordReadPage = RecordPage<LedgerRecord & { sequence: number }> | RecordProjectionPage
+const recordFieldPaths: Record<RecordField, string> = {
+  statement: "$.data.statement", evidence_ids: "$.data.evidence_ids", artifact_refs: "$.data.artifact_refs",
+  verdict: "$.data.verdict", verification: "$.data.verification",
+}
+function reserveLedger(candidates: LedgerCandidate[]) {
+  if (candidates.length > 56) throw new ProcessingLimitError("record set exceeds 56 rows")
+  let bytes = 0
+  for (const row of candidates) {
+    if (!Number.isSafeInteger(row.seq) || !Number.isSafeInteger(row.data_bytes) || row.data_bytes < 0 || row.data_bytes > PROCESSING_LIMITS.recordChars * 3) {
+      throw new ProcessingLimitError(`stored ledger row exceeds its byte allowance; history is unchanged (sequence ${row.seq})`)
+    }
+    bytes += row.data_bytes
+    if (bytes > RETRIEVAL_LIMITS.recordSetBytes) throw new ProcessingLimitError(`record set exceeds ${RETRIEVAL_LIMITS.recordSetBytes} stored bytes; use loom_record with a smaller limit or exact record_id; history is unchanged`)
+  }
+}
 const encode = (value: unknown, maxChars: number = PROCESSING_LIMITS.recordChars) => canonical(value, new ProcessingBudget(maxChars))
 const now = () => new Date().toISOString()
 const nonempty = (s: unknown, label: string, max = 16000): string => {
@@ -294,32 +325,119 @@ export class Store {
         kind: input.kind, data: { statement, evidence_ids: ids, ...(input.verdict ? { verdict: input.verdict } : {}), artifact_refs: artifacts, verification: "agent-reported; not independently validated by Loom" } })
     })
   }
-  records(query: { action_id?: string; session_id?: string; node_id?: string; record_id?: string; after?: number; limit?: number }) {
-    const after = query.after ?? 0, limit = query.limit ?? 30
+  records(query: RecordQuery & { projection: "metadata" }): RecordPage<RecordMetadata> & { projection: "metadata" }
+  records(query: RecordQuery & { projection: "fields" }): RecordPage<RecordFields> & { projection: "fields"; fields: RecordField[] }
+  records(query: RecordQuery & { projection?: undefined }): RecordPage<LedgerRecord & { sequence: number }>
+  records(query: RecordQuery): RecordReadPage
+  records(query: RecordQuery): RecordReadPage {
+    const after = query.after === undefined ? 0 : query.after, limit = query.limit === undefined ? 30 : query.limit
     if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw new Error("Invalid ledger page (limit 1-50)")
-    if (!query.action_id && !query.session_id) throw new Error("Ledger queries need an Action or Session")
+    if (query.through !== undefined && (!Number.isSafeInteger(query.through) || query.through < after)) throw new Error("Invalid ledger through bound (inclusive and at least after)")
+    for (const name of ["action_id", "session_id", "source_session_id", "node_id", "record_id"] as const)
+      if (query[name] !== undefined) uid(query[name], name)
+    if (query.projection !== undefined && query.projection !== "metadata" && query.projection !== "fields") throw new Error("Invalid ledger projection")
+    if (query.projection === "fields") {
+      if (!query.record_id || !Array.isArray(query.fields) || !query.fields.length || query.fields.length > RECORD_FIELDS.length
+        || new Set(query.fields).size !== query.fields.length || query.fields.some(field => !(RECORD_FIELDS as readonly unknown[]).includes(field)))
+        throw new Error("Field projection requires an exact record_id and distinct supported fields")
+    } else if (query.fields !== undefined) throw new Error("fields requires projection=fields")
+    if (query.record_kinds !== undefined && (!Array.isArray(query.record_kinds) || !query.record_kinds.length
+      || query.record_kinds.length > RECORD_KINDS.length || new Set(query.record_kinds).size !== query.record_kinds.length
+      || query.record_kinds.some(kind => !(RECORD_KINDS as readonly unknown[]).includes(kind)))) throw new Error("Invalid ledger record_kinds")
+    const session = query.source_session_id ?? query.session_id
+    if (!query.action_id && !session) throw new Error("Ledger queries need an Action or Session")
     if (query.action_id) this.action(query.action_id)
     const column = query.action_id ? "action_id" : "session_id"
     let where = `${column}=? AND seq>?`
-    const params: unknown[] = [query.action_id ?? query.session_id, after]
+    const params: unknown[] = [query.action_id ?? session, after]
+    if (query.source_session_id && query.action_id) { where += " AND session_id=?"; params.push(query.source_session_id) }
+    if (query.through !== undefined) { where += " AND seq<=?"; params.push(query.through) }
+    if (query.record_kinds) { where += ` AND kind IN (${query.record_kinds.map(() => "?").join(",")})`; params.push(...query.record_kinds) }
     if (query.node_id) { where += " AND json_extract(data,'$.node_id')=?"; params.push(uid(query.node_id)) }
     if (query.record_id) { where += " AND id=?"; params.push(uid(query.record_id)) }
     // Freeze page membership in small metadata, not a potentially huge array of bodies.
     const rows = this.db.prepare(`SELECT seq,octet_length(data) AS data_bytes FROM ledger WHERE ${where} ORDER BY seq LIMIT ?`).all(...params, limit + 1) as LedgerCandidate[]
     const page = rows.slice(0, limit)
+    if (query.projection) {
+      const result: RecordProjectionPage = { projection: query.projection,
+        ...(query.projection === "fields" ? { fields: [...query.fields!] } : {}),
+        items: this.projectLedger(page, query), next_after: rows.length > limit ? page.at(-1)!.seq : null }
+      canonical(result, new ProcessingBudget(262144))
+      return result
+    }
     return { items: this.hydrateLedger(page), next_after: rows.length > limit ? page.at(-1)!.seq : null }
+  }
+  /** Project selected original fields in SQLite; metadata reads never hydrate a
+   * record statement or observation payload through the database driver. */
+  private projectLedger(candidates: LedgerCandidate[], query: RecordQuery): Array<RecordMetadata | RecordFields> {
+    reserveLedger(candidates)
+    if (!candidates.length) return []
+    const fields = query.fields ?? []
+    // Only this fixed allowlist supplies SQL paths. Requested field names never
+    // become a path, identifier, predicate or arbitrary SQL expression.
+    const selected = fields.map((field, index) => `json_array(json_type(source,'${recordFieldPaths[field]}'),json_extract(source,'${recordFieldPaths[field]}')) AS field_${index}`)
+    const rows = this.db.prepare(`WITH wanted(seq,max_bytes) AS (VALUES ${candidates.map(() => "(?,?)").join(",")}),
+      bounded AS MATERIALIZED (
+        SELECT ledger.seq,ledger.id,ledger.action_id,ledger.session_id,ledger.kind,octet_length(ledger.data) AS stored_bytes,
+          CASE WHEN typeof(ledger.data)='text' AND octet_length(ledger.data)<=wanted.max_bytes THEN
+            CASE WHEN length(ledger.data)<=${PROCESSING_LIMITS.recordChars} AND json_valid(ledger.data) THEN ledger.data END END AS source
+        FROM wanted JOIN ledger ON ledger.seq=wanted.seq
+      )
+      SELECT seq,CASE WHEN json_type(source)='object' AND json_type(source,'$.data')='object'
+        AND json_extract(source,'$.id') IS id AND json_extract(source,'$.session_id') IS session_id
+        AND json_extract(source,'$.kind') IS kind AND json_extract(source,'$.action_id') IS action_id
+        THEN json_object('sequence',seq,'id',id,'kind',kind,'session_id',session_id,'action_id',action_id,
+          'node_id',json_extract(source,'$.node_id'),'agent',json_extract(source,'$.agent'),
+          'created_at',json_extract(source,'$.created_at'),'fingerprint',json_extract(source,'$.fingerprint'),
+          'stored_bytes',stored_bytes,
+          'evidence_count',CASE WHEN json_type(source,'$.data.evidence_ids') IS NULL THEN 0
+            WHEN json_type(source,'$.data.evidence_ids')='array' THEN json_array_length(source,'$.data.evidence_ids') ELSE -1 END,
+          'artifact_count',CASE WHEN json_type(source,'$.data.artifact_refs') IS NULL THEN 0
+            WHEN json_type(source,'$.data.artifact_refs')='array' THEN json_array_length(source,'$.data.artifact_refs') ELSE -1 END)
+        END AS metadata${selected.length ? "," + selected.join(",") : ""}
+      FROM bounded`).all(...candidates.flatMap(row => [row.seq, row.data_bytes])) as Array<Record<string, unknown> & { seq: number; metadata: string | null }>
+    if (rows.length !== candidates.length) throw new Error("Selected ledger records disappeared during retrieval")
+    const bySequence = new Map(rows.map(row => [row.seq, row]))
+    const invalid = () => new Error("Stored ledger projection is invalid or changed; history is unchanged")
+    return candidates.map(candidate => {
+      const row = bySequence.get(candidate.seq)
+      if (!row || typeof row.metadata !== "string") throw invalid()
+      let value: Record<string, unknown>
+      try { value = JSON.parse(row.metadata) as Record<string, unknown> } catch { throw invalid() }
+      const short = (item: unknown, max: number) => typeof item === "string" && item.length > 0 && item.length <= max
+      if (value.sequence !== candidate.seq || !short(value.id, 120) || !short(value.session_id, 120)
+        || !short(value.agent, 200) || !short(value.created_at, 64) || !(RECORD_KINDS as readonly unknown[]).includes(value.kind)
+        || !Number.isSafeInteger(value.stored_bytes) || (value.stored_bytes as number) < 0 || (value.stored_bytes as number) > candidate.data_bytes
+        || !Number.isSafeInteger(value.evidence_count) || (value.evidence_count as number) < 0
+        || !Number.isSafeInteger(value.artifact_count) || (value.artifact_count as number) < 0) throw invalid()
+      try { uid(value.id); uid(value.session_id) } catch { throw invalid() }
+      for (const name of ["action_id", "node_id", "fingerprint"] as const) {
+        if (value[name] === null) delete value[name]
+        else if (!short(value[name], name === "fingerprint" ? 128 : 120)) throw invalid()
+        else if (name !== "fingerprint") { try { uid(value[name]) } catch { throw invalid() } }
+      }
+      if ((query.action_id !== undefined && value.action_id !== query.action_id)
+        || (query.source_session_id !== undefined && value.session_id !== query.source_session_id)
+        || (!query.action_id && query.source_session_id === undefined && value.session_id !== query.session_id)
+        || (query.node_id !== undefined && value.node_id !== query.node_id)
+        || (query.record_id !== undefined && value.id !== query.record_id)
+        || (query.record_kinds !== undefined && !query.record_kinds.includes(value.kind as RecordKind))) throw invalid()
+      const metadata = value as RecordMetadata
+      if (query.projection !== "fields") return metadata
+      const data: Partial<Record<RecordField, unknown>> = {}, missing_fields: RecordField[] = []
+      for (const [index, field] of fields.entries()) {
+        let selected: unknown
+        try { selected = JSON.parse(String(row[`field_${index}`])) } catch { throw invalid() }
+        if (!Array.isArray(selected) || selected.length !== 2) throw invalid()
+        if (selected[0] === null) missing_fields.push(field)
+        else data[field] = selected[0] === "true" ? true : selected[0] === "false" ? false : selected[1]
+      }
+      return { ...metadata, data, missing_fields }
+    })
   }
   /** Read only already-selected immutable records, after reserving their byte sizes. */
   hydrateLedger(candidates: LedgerCandidate[]) {
-    if (candidates.length > 56) throw new ProcessingLimitError("record set exceeds 56 rows")
-    let bytes = 0
-    for (const row of candidates) {
-      if (!Number.isSafeInteger(row.seq) || !Number.isSafeInteger(row.data_bytes) || row.data_bytes < 0 || row.data_bytes > PROCESSING_LIMITS.recordChars * 3) {
-        throw new ProcessingLimitError(`stored ledger row exceeds its byte allowance; history is unchanged (sequence ${row.seq})`)
-      }
-      bytes += row.data_bytes
-      if (bytes > RETRIEVAL_LIMITS.recordSetBytes) throw new ProcessingLimitError(`record set exceeds ${RETRIEVAL_LIMITS.recordSetBytes} stored bytes; use loom_record with a smaller limit or exact record_id; history is unchanged`)
-    }
+    reserveLedger(candidates)
     if (!candidates.length) return []
     // Recheck each reservation in SQL. Even a same-user external writer growing
     // a body between queries cannot make the driver materialize unreserved text.
