@@ -309,6 +309,15 @@ cursor with the same scope until null; a short page can still be incomplete.
 No recursive evidence expansion, invented raw bodies, cross-project/native Session
 reads, frozen concurrent snapshot or perpetual-cursor guarantee is provided.
 
+For [historical evidence discovery](docs/learning-historical-evidence.md),
+`loom_record query` also supports metadata-only or allowlisted exact-record field
+projections, source-Session/kind filters and inclusive `through` sequence bounds.
+`loom_trace` adds explicitly authorized historical child inventory, native tool-part
+metadata and exact status/dispatch references. Raw part reads and body matching are
+limited to the caller's current native context; exported/cross-Session raw release
+remains blocked on the native source-owner authorization boundary. These read-only
+views do not change complete Stage 3 batches or enable Evaluator execution.
+
 Use `loom_record` to record useful results, claims, Assessment or QA findings.
 Choose relevant skills independently. Use `loom_assessment` to load `ASSESSMENT.md`
 and `loom_qa` to load `QA.md` from the installed skill. The enabled caller needs

@@ -1,4 +1,5 @@
 import { constants } from "node:fs"
+import { createHash } from "node:crypto"
 import { open, realpath, stat } from "node:fs/promises"
 import { isAbsolute, relative, resolve, sep } from "node:path"
 
@@ -63,7 +64,7 @@ const local = (root: string, path: string) => path !== root && !relative(root, p
 
 /** Read one explicitly supplied OpenCode export without accessing the host database or other projects.
  * The full untrusted transcript is never returned to the tool caller or stored in Loom. */
-export async function readSessionExport(directory: string, path: string, sessionID: string, projectID: string, authorize: (canonicalPath: string) => Promise<void>, signal?: AbortSignal): Promise<{ messages: unknown[]; locationVerified: boolean }> {
+export async function readSessionExport(directory: string, path: string, sessionID: string, projectID: string, authorize: (canonicalPath: string) => Promise<void>, signal?: AbortSignal): Promise<{ messages: unknown[]; locationVerified: boolean; sourceSha256: string; revalidate: () => Promise<void> }> {
   signal?.throwIfAborted()
   if (typeof path !== "string" || !path || path.length > 4096 || isAbsolute(path) || path.includes("\0"))
     throw new Error("export_path must be a relative path under the current project")
@@ -92,7 +93,7 @@ export async function readSessionExport(directory: string, path: string, session
   // O_NONBLOCK prevents a replaced FIFO from hanging before descriptor stat.
   // It does not change reads from regular files; stat below rejects all other types.
   const file = await open(candidate, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0))
-  let content: string
+  let content: string, sourceSha256: string
   try {
     signal?.throwIfAborted()
     if (!unchanged(await file.stat())) throw new Error("Export file changed during permission approval")
@@ -108,7 +109,10 @@ export async function readSessionExport(directory: string, path: string, session
     signal?.throwIfAborted()
     if (count !== before.size || !unchanged(await file.stat()))
       throw new Error("Export file changed during reading")
-    content = buffer.subarray(0, count).toString("utf8")
+    const bytes = buffer.subarray(0, count)
+    sourceSha256 = createHash("sha256").update(bytes).digest("hex")
+    try { content = new TextDecoder("utf-8", { fatal: true }).decode(bytes) }
+    catch { throw new Error("Export is not valid UTF-8 JSON") }
   } finally { await file.close() }
 
   let raw: unknown
@@ -135,7 +139,14 @@ export async function readSessionExport(directory: string, path: string, session
   if (!Array.isArray(transfer.messages) || transfer.messages.length > MAX_MESSAGES)
     throw new Error("Export messages are absent or exceed the processing budget")
   signal?.throwIfAborted()
-  return { messages: transfer.messages, locationVerified }
+  return { messages: transfer.messages, locationVerified,
+    sourceSha256,
+    revalidate: async () => {
+      signal?.throwIfAborted()
+      if (await realpath(candidate) !== canonical || !unchanged(await stat(canonical)))
+        throw new Error("Evidence export changed during retrieval")
+      signal?.throwIfAborted()
+    } }
 }
 
 export type TimelineOptions = {

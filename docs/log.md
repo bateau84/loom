@@ -4,6 +4,16 @@ type: Log
 
 # Update Log
 
+## 2026-11-25
+
+**Historical engineering evidence (#227):** Extended existing record and trace
+tools with historical child discovery, record metadata and exact selected fields,
+native part inventory, structural matching and exact status/dispatch projections.
+Raw native fields are limited to the caller's current context. Documented the
+source-owner release dependency, distinct future selected-population scope,
+external-source responsibilities and preserved Stage 3/4 execution boundaries.
+See [the delivery boundary and interfaces](learning-historical-evidence.md).
+
 ## 2026-11-24
 
 **Stage 4 execution-admission assessment (#227):** Added a read-only assessment

@@ -61,6 +61,22 @@ not permission to experiment against production state. Ignored `node_modules/`,
 `.test-build/`, `__pycache__/`, private logs/reports and backups are outputs, not
 additional maintained tests. Do not publish private host reports without inspection.
 
+## Historical engineering evidence
+
+The current historical-evidence profile targets exact SDK/CLI **2.3.0/2.3.0**.
+Its [delivery boundary](learning-historical-evidence.md) distinguishes supported
+metadata and current-context reads from blocked cross-Session raw release,
+external-original resolution and selected-population preparation.
+
+| Entry | Invocation, behavior and proof limit |
+| --- | --- |
+| `tests/record-evidence-native.test.ts` | Profile N; SQLite metadata/field projections, intersected source filters, stable sequence bounds, old exact-ID compatibility and malformed/oversized source controls. |
+| `tests/native-evidence-native.test.ts` | Profile N; normalized native part identity, exact selected values, structural/body matching bounds, changed source/part pins, missing/redacted data and cursor validation. |
+| `tests/historical-evidence-native.test.ts` | Profile N; registered tools, four selected Sessions/five records, 261 direct children and three grandchildren, separate native permission resources, revocation before final release, location and export controls. Component policy decisions are not atomic native source-release qualification. Set `LOOM_EVIDENCE_MEASUREMENTS_PATH=/ABS/measurements.json` to retain controlled calls/bytes/latency comparisons. No token measurement or private-original replay. |
+| `tests/installed_historical_evidence.py` | `python3 tests/installed_historical_evidence.py --opencode /ABS/CLI --plugin /ABS/INSTALL/node_modules/loom-plugin --artifact /ABS/CANDIDATE.tgz --repository /ABS/REPO --expect-head COMMIT --expect-plugin-version VERSION --report-directory /ABS/NEW_REPORT`; exact clean packed candidate, private OpenCode 2.3.0, synthetic local provider, native dispatch, registered readers, denial/revocation controls and passive effect audit. Explicit `experimental.part_rows: true` plus public import establish split and inline storage controls; stopped-host read-only inspection is a fixture oracle, never the agent interface. Temporary host/state/config are removed. Reports contain synthetic data only. |
+| `tests/test_installed_historical_evidence.py` | Profile P; counterexamples for the installed audit and storage-generation oracles, not a replacement for the installed run. |
+| `.github/workflows/installed-historical-evidence.yml` | Exact pull-request head, separately packed/installed candidate and pinned CLI; runs the installed profile and retains its report for seven days. No external provider or operator data. |
+
 ## Learning trust, recovery and audit qualification
 
 These additions keep automatic reporting and live treatment disabled. They run

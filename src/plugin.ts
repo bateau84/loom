@@ -13,10 +13,10 @@ import { configLoadStatus } from "./config-admission.js"
 import { injectInstructions, registry, roleDescriptions, type NativeAgent } from "./agents.js"
 import { Observer } from "./context.js"
 import { resolveContextSelection, workContext } from "./work-context.js"
-import { digest, PROCESSING_LIMITS, type Actor, type Focus } from "./model.js"
+import { digest, uid, PROCESSING_LIMITS, type Actor, type Focus } from "./model.js"
 import { renderFullHistory } from "./history-renderer.js"
 import { fullThreadMarkdown } from "./response-format.js"
-import { Store, type SQL } from "./store.js"
+import { Store, RECORD_FIELDS, RECORD_KINDS, type SQL, type RecordQuery } from "./store.js"
 import { Learning } from "./learning.js"
 import { EVALUATION_READS, registerAutomaticLearning, type AutomaticLearningRuntime } from "./learning-runtime.js"
 import type { ObjectiveSource, ObjectivePhase } from "./objectives.js"
@@ -25,6 +25,7 @@ import { questionRoute, sendQuestion, type NativeModel, type QuestionRoute } fro
 import { resumeAnswer } from "./answer-resume.js"
 import { TOOL_HELP, LOOM_NAMESPACE_HELP } from "./tool-help.js"
 import { findTraceSource, readSessionExport, traceTimeline } from "./session-trace.js"
+import { nativeEvidenceDigest, nativeEvidenceParts, nativeEvidenceSource, type NativeEvidenceField, type NativeEvidenceMatchField } from "./native-evidence.js"
 
 function payload(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected an object")
@@ -146,9 +147,14 @@ const specs = [
       obj({ operation: { const: "work" }, request_id: str, member_id: str }, ["operation", "request_id", "member_id"]),
     ],
   } },
-  { name: "trace", description: TOOL_HELP.trace, input: obj({ operation: choice("timeline", "children"),
+  { name: "trace", description: TOOL_HELP.trace, input: obj({ operation: choice("timeline", "children", "parts", "source"),
       session_id: str, export_path: { type: "string", minLength: 1, maxLength: 4096 },
       include_text: { type: "boolean" }, limit: { type: "integer", minimum: 1, maximum: 50 },
+      access: choice("historical"), message_id: str, part_id: str, tool: { type: "string", minLength: 1, maxLength: 120 },
+      fields: { type: "array", minItems: 1, maxItems: 5, uniqueItems: true, items: choice("input", "output", "dispatch", "status", "error") },
+      match: { type: "string", minLength: 1, maxLength: 256 },
+      match_fields: { type: "array", minItems: 1, maxItems: 5, uniqueItems: true, items: choice("tool", "status", "dispatch", "input", "output") },
+      source_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" }, part_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
       cursor: { type: "string", minLength: 1, maxLength: 4096 } }, ["operation"]) },
   { name: "insights", description: TOOL_HELP.insights, input: preserveInput({ operation: choice("action", "window", "findings", ...EVALUATION_READS), batch_id: str, member_key: str, report_id: str,
     request_id: str, manifest_sha256: str, attempt_id: str, source_index: num, after: num, finding_cursor: { type: "string", maxLength: 512 }, action_id: str, before: { type: "integer", minimum: 1 }, limit: { type: "integer", minimum: 1, maximum: 200 }, since_at: str, until_at: str }, ["operation"]) },
@@ -185,7 +191,11 @@ const specs = [
   { name: "action", description: TOOL_HELP.action, input: obj({ operation: choice("list", "create", "update", "sessions"), action_id: str, title: str, goal: str, state: choice("active", "paused", "completed", "cancelled"), expected_revision: num, offset: num, archived: { type: "boolean" }, cursor: { type: "string", minLength: 1, maxLength: 4096 }, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
   { name: "plan", description: TOOL_HELP.plan, input: obj({ operation: choice("read", "save"), action_id: str, revision: num, expected_revision: num, nodes: { type: "array", maxItems: 300, items: obj({ id: str, kind: choice("phase", "wave", "task", "subtask"), title: str, parent: str, depends_on: list, outcome: str, context: str, criteria: list, roles: list, skills: list, agent: str }, ["id", "kind", "title"]) } }, ["operation", "action_id"]) },
   { name: "context", description: TOOL_HELP.context, input: obj({ action_id: str, node_id: str, clear: { type: "boolean" }, mode: choice("continuation", "independent"), handoff_id: { type: ["string", "null"] } }) },
-  { name: "record", description: TOOL_HELP.record, input: { ...obj({ operation: choice("add", "query", "complete", "reopen", "ask", "answer", "bind-respondent"), view: choice("ledger", "progress", "questions", "inbox", "thread", "full_thread"), response_format: choice("markdown", "json"), cursor: str, work_ref: workRefInput, ...askInput, ...answerInput, ...bindInput, respondent: str, question_state: choice("open", "answered", "all"), offset: num, action_id: str, node_id: str, kind: choice("claim", "result", "concern", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]),
+  { name: "record", description: TOOL_HELP.record, input: { ...obj({ operation: choice("add", "query", "complete", "reopen", "ask", "answer", "bind-respondent"), view: choice("ledger", "progress", "questions", "inbox", "thread", "full_thread"), response_format: choice("markdown", "json"), cursor: str, work_ref: workRefInput, ...askInput, ...answerInput, ...bindInput, respondent: str, question_state: choice("open", "answered", "all"), offset: num, action_id: str, node_id: str, kind: choice("claim", "result", "concern", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num,
+      projection: choice("metadata", "fields"), source_session_id: str, through: num,
+      fields: { type: "array", minItems: 1, maxItems: RECORD_FIELDS.length, uniqueItems: true, items: choice(...RECORD_FIELDS) },
+      record_kinds: { type: "array", minItems: 1, maxItems: RECORD_KINDS.length, uniqueItems: true, items: choice(...RECORD_KINDS) },
+      limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]),
     allOf: [
       { if: { properties: { operation: { const: "ask" } } }, then: {
           ...obj({ operation: { const: "ask" }, ...askInput }, ["operation", "question", "blocking"]),
@@ -380,6 +390,36 @@ export default Plugin.define({
             toolContext.signal.throwIfAborted()
             const diagnostics = spec.name === "context" ? contextConfigDiagnostics(snapshot.errors, snapshot.config.context.max_chars)
               : snapshot.errors.length ? { config_errors: snapshot.errors } : {}
+            // New evidence views use independently grantable native read resources.
+            // One final assertion covers the entire union, including export files.
+            // This observes native policy; it is not a qualified atomic transfer fence.
+            const evidenceResources = new Set<string>()
+            const evidenceSessions = new Set<string>([actor.session_id])
+            // uid permits ':' in native identities. Encode components so an ID
+            // cannot impersonate resource separators or another exact tuple.
+            const evidenceID = (value: unknown, label: string) => encodeURIComponent(uid(value, label))
+            let evidenceSourceCheck: (() => Promise<void>) | undefined
+            const assertEvidence = async (resources: string[], viewSha256?: string) => {
+              await ctx.permission.assert({ action: "read", resources,
+                sessionID: toolContext.sessionID, agent: toolContext.agent,
+                source: { type: "tool", messageID: toolContext.messageID, id: toolContext.id },
+                metadata: { purpose: "historical-engineering-evidence", recipient_session_id: actor.session_id,
+                  ...(viewSha256 ? { view_sha256: viewSha256 } : {}) } })
+              lifetime.signal.throwIfAborted(); toolContext.signal.throwIfAborted()
+            }
+            const beginEvidence = async (scope: string, views: string[], inspect: string[] = []) => {
+              const discovery = `loom:evidence:discover:${scope}`
+              // Do not look up the target, return a cursor, or count its records first.
+              await assertEvidence([discovery])
+              evidenceResources.add(discovery)
+              for (const view of views) evidenceResources.add(`loom:evidence:disclose:${scope}:view:${view}:recipient:${evidenceID(actor.session_id, "recipient Session")}`)
+              for (const view of inspect) evidenceResources.add(`loom:evidence:inspect:${scope}:view:${view}`)
+              await assertEvidence([...evidenceResources])
+            }
+            const evidenceSession = async (id: string) => {
+              try { return await checkedSession(id) }
+              catch { throw new Error("Evidence source unavailable in the authorized scope") }
+            }
             const authorizeReview = async () => {
               // The native source-file read owner is the existing authority for
               // this private projection. Project membership or an intended
@@ -479,7 +519,118 @@ export default Plugin.define({
               }
               case "trace": {
                 if ("offset" in input) throw new Error("Trace offset is not supported; follow next_cursor instead")
-                const targetID = input.session_id === undefined ? actor.session_id : String(input.session_id)
+                const targetID = input.session_id === undefined ? actor.session_id : uid(input.session_id, "source Session")
+                const nativeEvidence = input.operation === "parts" || input.operation === "source"
+                const historicalChildren = input.operation === "children" && input.access === "historical"
+                if (input.access !== undefined && !historicalChildren)
+                  throw new Error("access=historical is only supported by children")
+                if (nativeEvidence) {
+                  const allowed = input.operation === "parts"
+                    ? ["operation", "session_id", "export_path", "limit", "cursor", "match", "match_fields", "tool", "message_id", "source_sha256"]
+                    : ["operation", "session_id", "export_path", "message_id", "part_id", "fields", "source_sha256", "part_sha256"]
+                  if (Object.keys(input).some(key => !allowed.includes(key))) throw new Error("Unsupported native evidence option")
+                  const fields = input.operation === "source" ? input.fields as NativeEvidenceField[] : []
+                  if (input.operation === "source" && (!Array.isArray(fields) || fields.length < 1 || fields.length > 5
+                    || fields.some(field => !["input", "output", "dispatch", "status", "error"].includes(field))
+                    || new Set(fields).size !== fields.length)) throw new Error("source requires unique supported fields")
+                  const matchFields = input.match_fields as NativeEvidenceMatchField[] | undefined
+                  if (matchFields !== undefined && (!Array.isArray(matchFields) || matchFields.length < 1 || matchFields.length > 5
+                    || matchFields.some(field => !["tool", "status", "dispatch", "input", "output"].includes(field))
+                    || new Set(matchFields).size !== matchFields.length)) throw new Error("Invalid native evidence match_fields")
+                  const views = input.operation === "source" ? fields.map(field => "native-" + field) : ["native-parts"]
+                  const inspected = input.operation === "source" ? views
+                    : input.match === undefined ? [] : (matchFields ?? ["tool", "status", "dispatch"]).map(field => "native-" + field)
+                  const exactScope = input.operation === "source"
+                    ? ":message:" + evidenceID(input.message_id, "message_id") + ":part:" + evidenceID(input.part_id, "part_id") : ""
+                  await beginEvidence("session:" + evidenceID(targetID, "source Session") + exactScope, views, inspected)
+                  const rawFields = fields.some(field => ["input", "output", "error"].includes(field))
+                    || (input.match !== undefined && matchFields?.some(field => field === "input" || field === "output"))
+                  // A native policy assertion can wait on stale approval. Do not
+                  // turn it into protected cross-Session raw transfer authority.
+                  if (rawFields && (targetID !== actor.session_id || input.export_path !== undefined))
+                    throw new Error("unsupported-source-release: raw exported or cross-Session native evidence requires a qualified source-owner release boundary")
+                  await evidenceSession(targetID)
+                  evidenceSessions.add(targetID)
+                  if (targetID !== actor.session_id && input.export_path === undefined)
+                    throw new Error("Historical native evidence requires an authorized project-local export; the plugin SDK has no full-history reader")
+                  let messages: unknown, sourceSha256: string, locationVerified = true
+                  if (input.export_path === undefined) {
+                    messages = unwrapped(await ctx.session.context({ sessionID: targetID }))
+                    sourceSha256 = nativeEvidenceDigest(messages)
+                  } else {
+                    const exported = await readSessionExport(directory, String(input.export_path), targetID, ctx.location.project.id, async path => {
+                      evidenceResources.add(path)
+                      await assertEvidence([...evidenceResources])
+                      await evidenceSession(targetID)
+                    }, toolContext.signal)
+                    messages = exported.messages; sourceSha256 = exported.sourceSha256
+                    locationVerified = exported.locationVerified; evidenceSourceCheck = exported.revalidate
+                  }
+                  const common = { sessionID: targetID, source: input.export_path === undefined ? "native-context" as const : "provided-export" as const,
+                    sourceSha256, locationVerified }
+                  if (input.operation === "parts") {
+                    if (input.source_sha256 !== undefined && input.source_sha256 !== sourceSha256)
+                      throw new Error("Native evidence source changed; restart discovery")
+                    result = nativeEvidenceParts(messages, { ...common, cursor: input.cursor as string | undefined,
+                      limit: input.limit as number | undefined, match: input.match as string | undefined,
+                      matchFields, tool: input.tool as string | undefined, messageID: input.message_id as string | undefined })
+                  } else result = nativeEvidenceSource(messages, { ...common,
+                    messageID: uid(input.message_id, "message_id"), partID: uid(input.part_id, "part_id"), fields,
+                    expectedSha256: input.source_sha256 as string | undefined, expectedPartSha256: input.part_sha256 as string | undefined })
+                  result = { ...payload(result), namespace: { project_id: ctx.location.project.id,
+                    workspace_id: ctx.location.workspaceID ?? null, native_store_identity: "unavailable" } }
+                  break
+                }
+                if (["fields", "match", "match_fields", "message_id", "part_id", "tool", "source_sha256", "part_sha256"].some(key => key in input))
+                  throw new Error("Native evidence options require parts or source")
+                if (historicalChildren) {
+                  if (Object.keys(input).some(key => !["operation", "access", "session_id", "limit", "cursor"].includes(key)))
+                    throw new Error("Unsupported historical child inventory option")
+                  if (input.export_path !== undefined || input.include_text !== undefined)
+                    throw new Error("children does not accept export_path or include_text")
+                  const limit = input.limit ?? 20
+                  if (!Number.isSafeInteger(limit) || Number(limit) < 1 || Number(limit) > 50) throw new Error("children limit must be 1-50")
+                  await beginEvidence("session:" + evidenceID(targetID, "source Session"), ["children"])
+                  await evidenceSession(targetID); evidenceSessions.add(targetID)
+                  const scope = digest({ operation: "historical-children/v1", parent: targetID,
+                    recipient: actor.session_id, project: ctx.location.project.id, workspace: ctx.location.workspaceID ?? null, directory })
+                  let nativeCursor: string | undefined
+                  if (input.cursor !== undefined) {
+                    let cursor: Record<string, unknown>
+                    try {
+                      if (typeof input.cursor !== "string" || input.cursor.length > 4096 || !/^[A-Za-z0-9_-]+$/.test(input.cursor)) throw new Error()
+                      cursor = payload(JSON.parse(Buffer.from(input.cursor, "base64url").toString("utf8")))
+                      if (cursor.version !== 1 || cursor.scope !== scope || typeof cursor.native !== "string" || cursor.native.length > 2048) throw new Error()
+                    } catch { throw new Error("Historical child cursor does not match this authorized scope") }
+                    nativeCursor = cursor.native as string
+                  }
+                  const native = payload(await ctx.session.list({ project: ctx.location.project.id, directory,
+                    parentID: targetID, limit: Number(limit), ...(nativeCursor ? { cursor: nativeCursor } : {}) }))
+                  if (!Array.isArray(native.data) || native.data.length > Number(limit)) throw new Error("Historical child inventory unavailable")
+                  const sessions: Array<Record<string, unknown>> = []
+                  for (const raw of native.data) {
+                    const child = payload(raw)
+                    // Never expose scan counts or a cursor derived from excluded rows.
+                    if (typeof child.id !== "string" || child.parentID !== targetID || !await sessionIsLocal(child))
+                      throw new Error("Historical child inventory unavailable in the authorized scope")
+                    const time = payload(child.time ?? {})
+                    sessions.push({ id: uid(child.id, "child Session"), parent_id: targetID,
+                      ...(typeof time.created === "number" ? { created_at: time.created } : {}),
+                      ...(typeof time.updated === "number" ? { updated_at: time.updated } : {}),
+                      archived: time.archived !== undefined && time.archived !== null,
+                      relationship: "native-parentage", objective_participation: "not-established" })
+                  }
+                  const next = payload(native.cursor).next
+                  if (next !== null && next !== undefined && (typeof next !== "string" || !next || next.length > 2048))
+                    throw new Error("Historical child inventory cursor unavailable")
+                  result = { parent_session_id: targetID, sessions,
+                    namespace: { project_id: ctx.location.project.id, workspace_id: ctx.location.workspaceID ?? null,
+                      native_store_identity: "unavailable" },
+                    next_cursor: typeof next === "string" ? Buffer.from(JSON.stringify({ version: 1, scope, native: next })).toString("base64url") : null,
+                    coverage: { direct_children: true, recursive: false, snapshot: false },
+                    note: "Authorized direct-child structure only. Follow next_cursor until null and query selected descendants explicitly. Parentage does not establish objective participation or authorize native content." }
+                  break
+                }
                 await checkedSession(targetID)
                 if (input.operation === "timeline") {
                   // The 2.2.0 plugin SDK provides no target-Session read authority API.
@@ -750,6 +901,11 @@ export default Plugin.define({
                 break
               }
               case "record": {
+                const evidenceQuery = ["projection", "fields", "source_session_id", "record_kinds", "through"].some(key => key in input)
+                if (evidenceQuery && (input.operation !== "query" || (input.view !== undefined && input.view !== "ledger")))
+                  throw new Error("Evidence projections and filters require a ledger query")
+                if (input.source_session_id !== undefined && input.node_id !== undefined && input.action_id === undefined)
+                  throw new Error("node_id requires action_id")
                 if (input.review !== undefined && input.operation !== "ask") throw new Error("review is only supported for a typed ask")
                 if (input.response_format !== undefined) {
                   if (input.response_format !== "markdown" && input.response_format !== "json") throw new Error("response_format must be markdown or json")
@@ -774,7 +930,25 @@ export default Plugin.define({
                 // Explicit work/thread identity must not depend on saved selection.
                 const identityScoped = ["complete", "answer", "bind-respondent"].includes(String(input.operation))
                   || (input.operation === "query" && ["thread", "inbox"].includes(String(input.view)))
-                const focus = identityScoped || input.session_only || (input.operation === "ask" && (input.reference !== undefined || input.review !== undefined)) ? undefined : focusFor(input, actor.session_id)
+                const focus = identityScoped || input.session_only || (input.source_session_id !== undefined && input.action_id === undefined)
+                  || (input.operation === "ask" && (input.reference !== undefined || input.review !== undefined)) ? undefined : focusFor(input, actor.session_id)
+                if (evidenceQuery) {
+                  const sourceSession = input.source_session_id === undefined ? undefined : uid(input.source_session_id, "source_session_id")
+                  if (input.session_only && sourceSession !== undefined && sourceSession !== actor.session_id)
+                    throw new Error("session_only cannot select another source Session")
+                  const scope = sourceSession !== undefined ? "session:" + evidenceID(sourceSession, "source Session")
+                    : focus ? "action:" + evidenceID(focus.action_id, "action_id") : "session:" + evidenceID(actor.session_id, "source Session")
+                  const view = input.projection === "metadata" ? "record-metadata"
+                    : input.projection === "fields" ? "record-fields" : "record-full"
+                  const fields = input.fields as string[] | undefined
+                  if (fields !== undefined && (!Array.isArray(fields) || fields.length < 1 || fields.length > RECORD_FIELDS.length
+                    || fields.some(field => !(RECORD_FIELDS as readonly string[]).includes(field)) || new Set(fields).size !== fields.length))
+                    throw new Error("Invalid evidence record fields")
+                  const recordScope = input.record_id === undefined ? scope : scope + ":record:" + evidenceID(input.record_id, "record_id")
+                  await beginEvidence(recordScope, view === "record-fields" ? (fields ?? []).map(field => "record-" + field) : [view],
+                    view === "record-metadata" ? [] : view === "record-fields" ? (fields ?? []).map(field => "record-" + field) : [view])
+                  if (sourceSession !== undefined) { await evidenceSession(sourceSession); evidenceSessions.add(sourceSession) }
+                }
                 if (input.operation === "bind-respondent") {
                   const question = store.collaboration.thread(String(input.question_id)).question
                   if (question.data.format !== "loom-question/v2" ||
@@ -967,20 +1141,26 @@ export default Plugin.define({
                   result = store.collaboration.execute(actor, input, focus)
                   break
                 }
-                if (input.operation === "query") result = store.records({ action_id: input.session_only ? undefined : focus?.action_id, session_id: actor.session_id, node_id: input.session_only ? undefined : focus?.node_id, record_id: input.record_id as string | undefined, after: input.after as number | undefined, limit: input.limit as number | undefined })
+                if (input.operation === "query") result = store.records({ action_id: input.session_only ? undefined : focus?.action_id,
+                  session_id: actor.session_id, node_id: input.session_only ? undefined : focus?.node_id,
+                  record_id: input.record_id as string | undefined, after: input.after as number | undefined, limit: input.limit as number | undefined,
+                  ...(evidenceQuery ? { projection: input.projection as RecordQuery["projection"], fields: input.fields as RecordQuery["fields"],
+                    source_session_id: input.source_session_id as string | undefined, record_kinds: input.record_kinds as RecordQuery["record_kinds"],
+                    through: input.through as number | undefined } : {}) })
                 else if (input.operation === "add") {
                   result = store.record(actor, focus, { kind: input.kind as Parameters<Store["record"]>[2]["kind"], statement: input.statement as string, evidence_ids: input.evidence_ids as string[] | undefined, artifact_refs: input.artifact_refs as string[] | undefined, verdict: input.verdict as string | undefined })
                 } else throw new Error("Unknown record operation")
+                if (evidenceQuery) result = { ...payload(result), source_store_id: store.reviews.storeID }
                 break
               }
             }
             if ((spec.name === "record" && input.operation !== "query") ||
                 (spec.name === "objective" && ["create", "link"].includes(String(input.operation))) ||
                 (spec.name === "review" && ["freeze", "relate", "prepare"].includes(String(input.operation)))) learningRuntime?.notify(actor.session_id)
-            if (spec.name === "record" && input.operation === "query" && (!input.view || input.view === "ledger") && !input.record_id) {
+            if (spec.name === "record" && input.operation === "query" && (!input.view || input.view === "ledger") && !input.record_id && input.projection === undefined) {
               const page = result as ReturnType<Store["records"]>
-              result = { ...page, items: page.items.map(r => ({ ...r, data: typeof r.data.statement === "string" && r.data.statement.length > 600
-                ? { ...r.data, statement: r.data.statement.slice(0,600), truncated: true, read_full: "Pass this record_id to loom_record query" } : r.data })) }
+              result = { ...page, items: page.items.map(r => "data" in r ? ({ ...r, data: typeof r.data.statement === "string" && r.data.statement.length > 600
+                ? { ...r.data, statement: r.data.statement.slice(0,600), truncated: true, read_full: "Pass this record_id to loom_record query" } : r.data }) : r) }
             }
             const content = JSON.stringify({ result, ...diagnostics })
             if (spec.name === "trace" && Buffer.byteLength(content, "utf8") > 262144)
@@ -994,6 +1174,14 @@ export default Plugin.define({
                   throw new Error("Full thread Markdown response exceeds processing limit; cursor not advanced; reduce limit")
                 return { content: markdown }
               }
+            }
+            if (evidenceResources.size) {
+              if (Buffer.byteLength(content, "utf8") > 262144) throw new Error("Evidence response exceeds 262144 bytes; reduce the page or selected fields")
+              await evidenceSourceCheck?.()
+              for (const session of evidenceSessions) await evidenceSession(session)
+              // The serialized response and all source/location work precede the
+              // final native decision. Do not await anything between it and return.
+              await assertEvidence([...evidenceResources], createHash("sha256").update(content).digest("hex"))
             }
             return { content }
           },
