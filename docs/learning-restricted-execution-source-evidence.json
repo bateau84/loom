@@ -66,6 +66,43 @@
         "packages/core/src/plugin/provider/claude-agent/claude/query-options.ts": "3e0d445f8cc2da2bd8c12597d02190410749b14ebe00282a78acc36f4313021a",
         "packages/core/src/session/runner/llm.ts": "54792dc2031ced19d79ea02d7ab077b7152533a0cb808edb76df9ef294c9eb1f"
       }
+    },
+    {
+      "label": "development-s3-follow-up",
+      "commit": "0caad64533a160451808b78623ed7614d0330bfe",
+      "sha256": {
+        "packages/plugin/src/promise/session.ts": "53208416dd8351d0846fcb1f4968e3b4722ad01e5a16bef6e2b3f92c6b6d0289",
+        "packages/core/src/session.ts": "b0bbd60abf61c3123faa63d2ee905cbe8797e29d5304aad29c432d1ac1d15e9d",
+        "packages/core/src/session/inbox.ts": "98adf0f19cb049450b2ce6af15cee0f3e13b268d379a77a0431addbe0d30e98e",
+        "packages/core/src/session/session.ts": "3075bb0517f75f99ff0950e3500b2fa4d8ced08d062d846c3928fcc7ccd46c4e",
+        "packages/core/src/session/execution.ts": "bf6f26852912a45139d293f33972945028479b7a5299036a4a340b89556c5698",
+        "packages/core/src/session/execution/restart.ts": "b3db3662de1e6ea62393ba67f3bf65653f897adae020e845aaa6fbfd8d9d4641",
+        "packages/server/src/process.ts": "c0c865b0f994925bb8b7755e918ca32ccb3cea5f419a81be4a62aa930dad0712",
+        "packages/core/src/session/generate.ts": "b102dc1dff0321fc9ca65dab2e553ee93f7c19fa26c22d6907d99c97025cb84e",
+        "packages/core/src/model-retry.ts": "346b6116cea6aaa0d3aaf569e054f0f2dba2fd10351741820d76921fa0ab6ad9",
+        "packages/core/src/model-resolver.ts": "ab4603c3015b608efabbe6d676a3c77510bba8b3e77eee3793375ed9b357e8bb",
+        "packages/core/src/managed-policy.ts": "ca523aad4cbd12d7dc2d46ddf2f47a3fb0c2023e0790e41e895df0fbf3241715",
+        "packages/core/src/config/plugin/policy.ts": "73cbffe0583bbc7e569442eae71d5c9a79d8927a8b18711bd9e634648336409e",
+        "packages/core/src/plugin/provider/claude-agent/claude/accounts.ts": "7107472f2b13bbaacc1919133ad866c8b50084e41958e06b2d2153d9eb96df84",
+        "packages/core/src/plugin/provider/claude-agent/claude/query-options.ts": "3e0d445f8cc2da2bd8c12597d02190410749b14ebe00282a78acc36f4313021a",
+        "packages/core/src/session/runner/llm.ts": "54792dc2031ced19d79ea02d7ab077b7152533a0cb808edb76df9ef294c9eb1f"
+      }
     }
-  ]
+  ],
+  "s3_cli_collection_inspection": {
+    "commit": "a6b15d33daf6ab7d35569f6d711fdb630b9f04e7",
+    "evidence_kind": "source-inspection-only",
+    "executed": false,
+    "finding": "Native api/export without explicit --server may start the managed service; startup can resume native execution and schedules. Explicit --server has no startup fallback but does not fence existing work.",
+    "sha256": {
+      "packages/cli/src/commands/commands.ts": "ade1c01d9b81f50e796d313bfe95344521c101142574bf79b24387a5ab91eeab",
+      "packages/cli/src/commands/handlers/api.ts": "6d2a1d2ba6a24179835eb02d7d53ba05a47ec0cd49e3dd5789c67fa2fb33b74a",
+      "packages/cli/src/commands/handlers/serve.ts": "b136a083952d0b281f068183e2886652e3fe6271473a1b50b0ddf3fdbd86dc55",
+      "packages/cli/src/commands/handlers/session/export.ts": "2089d07f1e476919c95c81070d698cef53a20d70ae3152e3236f0d12b4b2db02",
+      "packages/cli/src/server-process.ts": "37e89b2eed32bc9324f4cdf0a639387dfe6fc0ef8e6f37fc33c43987869b4bc2",
+      "packages/cli/src/services/server-connection.ts": "00ef29453ac8d8b024554c4a5e63e282772e7f1224f7eeba727f579b58f1d6f3",
+      "packages/client/src/effect/service.ts": "0f0d244102d26719048dc87a0c219f812dc72613934fbd4dad5966f69e563548",
+      "packages/server/src/process.ts": "cc3f8652c87b529d2593c574196b261febadef0c62ba1d78890e5ffe9db33bde"
+    }
+  }
 }
