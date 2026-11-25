@@ -71,6 +71,19 @@ EVALUATOR_COLUMNS = {
         "batch_id", "slot", "method_id", "request_id", "data_json", "sha256", "created_at",
     },
 }
+# Execution records are mirrors in the existing learning database, not a
+# provider authority or spend pool. A retained preparation marker makes loss
+# of this complete optional extension detectable without guessing nonexecution.
+EXECUTION_COLUMNS = {
+    "learning_execution_schema": {"singleton", "version"},
+    "learning_execution_admissions": {
+        "batch_id", "request_id", "attempt_id", "authority_id", "reservation_id",
+        "semantic_key", "data_json", "sha256",
+    },
+    "learning_execution_receipts": {
+        "batch_id", "sequence", "authority_id", "receipt_id", "data_json", "sha256",
+    },
+}
 REVIEW_COLUMNS = {
     "review_store_identity": {"singleton", "store_id"},
     "review_requests": {"request_id", "requester_session", "data", "membership_data", "created_at"},
@@ -178,10 +191,19 @@ def inspect_sql(directory, file_names):
                 has_evaluator = name == "learning.sqlite" and any(
                     table.startswith("learning_evaluator_") for table in tables
                 )
-                if has_evaluation or has_evaluator:
+                has_execution = name == "learning.sqlite" and any(
+                    table.startswith("learning_execution_") for table in tables
+                )
+                if has_evaluation or has_evaluator or has_execution:
                     required_columns = {**required_columns, **EVALUATION_COLUMNS}
-                if has_evaluator:
+                if has_evaluator or has_execution:
                     required_columns = {**required_columns, **EVALUATOR_COLUMNS}
+                if has_execution:
+                    required_columns = {**required_columns, **EXECUTION_COLUMNS}
+                    required_columns["learning_evaluator_requests"] = (
+                        EVALUATOR_COLUMNS["learning_evaluator_requests"] |
+                        {"execution_admission_sha256"}
+                    )
                 required_tables = REQUIRED_TABLES[name] | set(required_columns)
                 require(required_tables <= tables,
                         "Missing required " + name + " tables: " +
@@ -216,6 +238,41 @@ def inspect_sql(directory, file_names):
                             "Missing or invalid evaluator preparation schema marker")
                     require(markers[0][1] == 1,
                             "Unsupported evaluator preparation schema version: " + str(markers[0][1]))
+                    evaluator_columns = {row[1] for row in db.execute(
+                        "PRAGMA table_info(learning_evaluator_requests)"
+                    )}
+                    if "execution_admission_sha256" in evaluator_columns:
+                        enrolled = db.execute(
+                            "SELECT 1 FROM learning_evaluator_requests "
+                            "WHERE execution_admission_sha256 IS NOT NULL LIMIT 1"
+                        ).fetchone()
+                        require(has_execution or not enrolled,
+                                "Missing required learning_execution_ tables for enrolled evaluator execution")
+                if has_execution:
+                    markers = db.execute(
+                        "SELECT singleton,version FROM learning_execution_schema"
+                    ).fetchall()
+                    require(len(markers) == 1 and markers[0][0] == 1,
+                            "Missing or invalid evaluator execution schema marker")
+                    require(markers[0][1] == 1,
+                            "Unsupported evaluator execution schema version: " + str(markers[0][1]))
+                    missing = db.execute(
+                        "SELECT 1 FROM learning_evaluator_requests AS request "
+                        "LEFT JOIN learning_execution_admissions AS admission "
+                        "ON admission.batch_id=request.batch_id "
+                        "WHERE request.execution_admission_sha256 IS NOT NULL "
+                        "AND (admission.batch_id IS NULL OR "
+                        "request.execution_admission_sha256<>admission.sha256) LIMIT 1"
+                    ).fetchone()
+                    unmarked = db.execute(
+                        "SELECT 1 FROM learning_execution_admissions AS admission "
+                        "LEFT JOIN learning_evaluator_requests AS request "
+                        "ON request.batch_id=admission.batch_id "
+                        "WHERE request.execution_admission_sha256 IS NULL "
+                        "OR request.execution_admission_sha256<>admission.sha256 LIMIT 1"
+                    ).fetchone()
+                    require(not missing and not unmarked,
+                            "Evaluator execution enrollment/mirror mismatch")
                 if name == "ledger.sqlite" and version == 2:
                     identity = db.execute(
                         "SELECT singleton,store_id FROM review_store_identity"

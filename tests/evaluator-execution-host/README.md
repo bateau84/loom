@@ -1,0 +1,91 @@
+# Restricted execution consumer fixture
+
+This is a test-only authority and provider. It gives no production component
+permission to execute an Evaluator. The installed qualification imports the
+production consumer from the packed candidate, prepares synthetic authored
+originals through the existing Stage 3 and preparation owners, and connects that
+consumer directly to this private fixture. Native execution uses the actual
+OpenCode 2.3.0 Session and streaming provider path. No public Loom tool or
+configuration can install this authority.
+
+`installed_evaluator_execution.py` creates isolated HOME/XDG directories and a
+loopback private host. Its only provider is the in-process scripted model in
+`server.ts`; `provider.mjs` rejects use without that hook. The fixture denies
+all tools, external providers, fallback models, auxiliary requests and native
+retries. The native title hook supplies a fixed title without a provider call.
+The retry hook is exercised by an actual provider rejection, not a fabricated
+consumer receipt.
+
+`authority.ts` owns immutable synthetic grants, shared reservations and readback.
+`fixture-store.ts` owns actual provider-send admission in a separate durable
+SQLite database. Its immediate transaction consumes a reservation once, before
+returning a scripted result. It checks current synthetic authority, expiry,
+source permission, method/configuration, recipient, model, account and the
+original prompt digest at every send. Already consumed entries remain consumed
+through host restart, lease expiry, lost acknowledgements and restoration of the
+Loom store pair. Admission requires an empty native recipient history. The
+fixture only reports completion after finding the exact original native input
+and one finished native assistant result in that exclusive one-send Session.
+That restricted first-response association does not establish Q4 contributing
+input provenance. Recovery never submits a prompt or wakes a Session.
+
+The resource unit is a synthetic request with fixed scripted input/output usage
+of one each. This tests reservation and settlement mechanics; these numbers are
+not tokenization, cost, provider spending enforcement or subscription evidence.
+The provider is wholly owned by this fixture and has no network fallback.
+Authority loss or rollback alongside Loom is outside the qualified boundary.
+
+The twelve installed checks cover:
+
+- One authorized native logical execution and a completed result.
+- Original-result recovery after native host restart.
+- Restoring the pre-effect Loom snapshot without another admitted send.
+- An actual additional native request denied at the durable provider boundary.
+- A duplicate admitted invocation using a legitimate recipient rejected by the oracle.
+- A deliberately lost native acknowledgement reconciled without another send.
+- Provider send rejection after native input admission and delivery, denied retry,
+  zero admitted model sends and authoritative budget release, with the canonical
+  claim retained and its native outcome conservative through recovery and replay.
+- SIGKILL after native provider admission, uncertain reservation retention, consumer
+  replay without dispatch and a denied additional native request after restart.
+- Independent consumer processes competing for one shared account-pool unit.
+- An external reservation becoming uncertain after reserve: fresh execution,
+  recovery and replay leave the canonical issue unclaimed, retain capacity and
+  produce zero authority execution entries, native inputs or model requests.
+- A losing process failing claim validation while another process owns the
+  same issue's held native request: no cancellation, revocation or interruption
+  of the winner; its original result completes and recovers without another send.
+- The same contention with an aborted losing caller, preserving the winner and
+  its original result under the same assertions.
+
+The contender checks use file barriers at the fixture authority's claim
+validation boundary. The winning process enters the packed consumer through
+the same canonical preparation pins and remains active until the actual held
+native response is released. The driver journals authority execution,
+cancellation and native interruption entries; failures cannot hide behind a
+provider that independently rejects an invalid send. Only the fixture-owned
+authority is wrapped to inject uncertainty, a validation failure or caller
+abort. Canonical claims and consumer results are produced by the packed code.
+
+The rejection case preserves the earlier source exposure: the original input
+was committed to the native inbox, delivered into Session history and presented
+to the fixture provider before its send gate rejected it. Fenced zero model
+usage justifies releasing this fixture's spending reservation. It does not prove
+native pre-admission rejection or retract source access. The effect receipt's
+`not-admitted` therefore leaves canonical `native_outcome` as `unknown`, without
+reopening its consumed claim. Recovery and execution replay retain that claim
+and budget release without another native model request.
+
+The crash case does not assert that every restart automatically retries. It
+proves that the consumed fixture reservation survives restart, and deliberately
+exercises a later native request against that same durable fence. Native startup
+resume remains a required boundary for any eventual production owner.
+
+The harness requires a clean exact candidate, its installed tarball, Bun and the
+pinned OpenCode binary. `--allow-dirty-development` is a debugging option: its
+report is explicitly marked development-only and cannot qualify a reviewed
+commit. Reports include source/runtime fingerprints and identifier-only native
+and provider events. Temporary databases, configuration and credentials are
+deleted when the harness exits. The real installed Evaluator definition, Agent
+Run Audit method, genuine reasoning, real account authority, Q4, Q5 and E11 stay
+unqualified.

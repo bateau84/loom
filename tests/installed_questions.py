@@ -251,9 +251,10 @@ def call(name, value):
 
 
 class Scenario:
-    def __init__(self, host, root):
+    def __init__(self, host, root, invocation_plan=None):
         self.host, self.root = host, root
         self.jobs = {}
+        self.invocation_plan = invocation_plan
 
     def session(self, role):
         return request(self.host, 'POST', '/api/session', {'agent': 'question-' + role, 'title': role,
@@ -264,6 +265,11 @@ class Scenario:
         job = secrets.token_hex(8)
         self.jobs[job] = {'code': code, 'hold': hold}
         (self.root / 'jobs.json').write_text(json.dumps(self.jobs))
+        if self.invocation_plan is not None:
+            # Fixture intent recorded before native admission, not inferred from
+            # whichever calls subsequently happen to appear in the audit.
+            self.invocation_plan.append({'session_id': session, 'job': job,
+                                         'code_sha256': hashlib.sha256(code.encode()).hexdigest()})
         start = len(events(self.root))
         request(self.host, 'POST', f'/api/session/{session}/prompt', {'text': 'LOOM_HARNESS_JOB:' + job})
         return job, start

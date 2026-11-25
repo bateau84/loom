@@ -1,10 +1,15 @@
 """Counterexamples for the installed Stage 4 oracles; no installed-host acceptance."""
 from copy import deepcopy
+import hashlib
+from pathlib import Path
+import tempfile
 import unittest
+from unittest.mock import patch
 
 from installed_learning_stage4 import (
     admission_query, assert_admission, assert_no_evaluator_effects,
 )
+from installed_questions import Scenario
 
 
 def preparation():
@@ -48,14 +53,45 @@ def assessment():
     }
 
 
-def driver_receipts():
+def driver_plan(job="a" * 16, session="owner"):
+    return [{"session_id": session, "job": job,
+             "code_sha256": hashlib.sha256(b"return 'fixture';").hexdigest()}]
+
+
+def driver_receipts(job="a" * 16, session="owner", *, agent="general"):
+    """One native prompt, one Code Mode call and its ordinary model follow-up."""
+    def event(kind, data):
+        return {"type": kind, "data": data}
+
+    def native(kind, data):
+        return event("native-event", {"type": kind, "data": data})
+
+    model = {"providerID": "question-fixture", "id": "reader"}
+    prompt = "LOOM_HARNESS_JOB:" + job
+    message_id, first_step, second_step, call_id = [job + suffix for suffix in (":user", ":tool", ":final", ":call")]
+    request = {"sessionID": session, "agent": agent, "model": model, "kind": "primary"}
+    call = {"tool": "execute", "sessionID": session, "messageID": first_step,
+            "id": call_id, "input": {"code": "return 'fixture';"}}
+    provider = {"role": "reader", "headers": {"x-opencode-session-id": session},
+                "prompt": [{"role": "user", "content": [{"type": "text", "text": prompt}]}]}
+    followup = deepcopy(provider)
+    followup["prompt"].extend([
+        {"role": "assistant", "content": [{"type": "tool-call", "toolName": "execute", "toolCallId": call_id}]},
+        {"role": "tool", "content": [{"type": "tool-result", "toolName": "execute", "toolCallId": call_id}]},
+    ])
     return [
-        {"type": "model-request", "data": {"sessionID": "owner", "agent": "general",
-                                             "model": {"providerID": "question-fixture", "id": "reader"}}},
-        {"type": "provider-request", "data": {"role": "reader",
-                                                "headers": {"x-opencode-session-id": "owner"}}},
-        {"type": "tool-before", "data": {"tool": "loom_insights", "sessionID": "owner"}},
-        {"type": "native-event", "data": {"type": "session.created", "data": {"sessionID": "owner"}}},
+        native("session.created", {"sessionID": session}),
+        event("prompt", {"sessionID": session, "messageID": message_id, "prompt": {"text": prompt}}),
+        native("session.inbox.enqueued", {"sessionID": session, "inboxID": message_id,
+                                          "item": {"type": "user", "payload": {"text": prompt}}}),
+        native("session.inbox.delivered", {"sessionID": session, "inboxID": message_id}),
+        event("model-request", deepcopy(request)), event("provider-request", provider),
+        native("session.step.started", {**request, "assistantMessageID": first_step}),
+        event("tool-before", call), event("tool-after", {**call, "status": "completed"}),
+        native("session.step.ended", {"sessionID": session, "assistantMessageID": first_step, "finish": "tool-calls"}),
+        event("model-request", deepcopy(request)), event("provider-request", followup),
+        native("session.step.started", {**request, "assistantMessageID": second_step}),
+        native("session.step.ended", {"sessionID": session, "assistantMessageID": second_step, "finish": "stop"}),
     ]
 
 
@@ -136,22 +172,40 @@ class AdmissionOracleTest(unittest.TestCase):
 
 
 class NoEvaluatorEffectOracleTest(unittest.TestCase):
+    def test_intended_jobs_are_recorded_before_native_prompt_and_across_restart(self):
+        plan = []
+        with tempfile.TemporaryDirectory(prefix="loom-stage4-oracle-") as temp:
+            root = Path(temp)
+            with patch("installed_questions.events", return_value=[]), patch("installed_questions.request") as native:
+                def admitted(host, method, path, body):
+                    self.assertEqual(len(plan), native.call_count)
+                    self.assertEqual(body["text"], "LOOM_HARNESS_JOB:" + plan[-1]["job"])
+                    self.assertEqual(plan[-1]["session_id"], "owner")
+                    self.assertEqual(plan[-1]["code_sha256"], driver_plan()[0]["code_sha256"])
+                native.side_effect = admitted
+                Scenario(None, root, plan).begin("owner", "return 'fixture';")
+                Scenario(None, root, plan).begin("owner", "return 'fixture';")
+        self.assertEqual(len(plan), 2)
+        self.assertNotEqual(plan[0]["job"], plan[1]["job"])
+
     def test_local_scripted_provider_calls_are_reported_as_driver_activity(self):
-        evidence = assert_no_evaluator_effects(driver_receipts(), {"owner"})
-        self.assertEqual(evidence["driver_model_requests"], 1)
-        self.assertEqual(evidence["scripted_provider_requests"], 1)
+        evidence = assert_no_evaluator_effects(driver_receipts(), {"owner"}, driver_plan())
+        self.assertEqual(evidence["driver_model_requests"], 2)
+        self.assertEqual(evidence["scripted_provider_requests"], 2)
         self.assertEqual(evidence["evaluator_dispatches"], 0)
         self.assertEqual(evidence["native_recipient_sessions"], 0)
-        receipts = driver_receipts()
-        receipts[0]["data"]["agent"] = "restricted"
-        assert_no_evaluator_effects(receipts, {"owner"})
+        self.assertEqual(evidence["planned_driver_invocations"], 1)
+        self.assertEqual(evidence["expected_tool_followup_requests"], 1)
+        self.assertEqual(evidence["native_auxiliary_requests"], 0)
+        self.assertTrue(evidence["invocation_sequence_reconciled"])
+        assert_no_evaluator_effects(driver_receipts(agent="restricted"), {"owner"}, driver_plan())
 
     def test_missing_native_or_provider_receipt_cannot_pass(self):
         for missing in ("model-request", "provider-request"):
             with self.subTest(missing=missing):
                 receipts = [event for event in driver_receipts() if event["type"] != missing]
                 with self.assertRaisesRegex(RuntimeError, "fixture-provider boundary"):
-                    assert_no_evaluator_effects(receipts, {"owner"})
+                    assert_no_evaluator_effects(receipts, {"owner"}, driver_plan())
 
     def test_new_recipient_evaluator_agent_or_other_provider_cannot_pass(self):
         for changed in (
@@ -160,17 +214,17 @@ class NoEvaluatorEffectOracleTest(unittest.TestCase):
         ):
             with self.subTest(changed=changed):
                 receipts = driver_receipts()
-                receipts[0]["data"].update(changed)
+                next(event["data"] for event in receipts if event["type"] == "model-request").update(changed)
                 with self.assertRaisesRegex(RuntimeError, "non-driver native model request"):
-                    assert_no_evaluator_effects(receipts, {"owner"})
+                    assert_no_evaluator_effects(receipts, {"owner"}, driver_plan())
         for changed in (
             {"role": "evaluator"}, {"headers": {"x-opencode-session-id": "new-recipient"}}, {"headers": {}},
         ):
             with self.subTest(changed=changed):
                 receipts = driver_receipts()
-                receipts[1]["data"].update(changed)
+                next(event["data"] for event in receipts if event["type"] == "provider-request").update(changed)
                 with self.assertRaisesRegex(RuntimeError, "unexpected native provider recipient"):
-                    assert_no_evaluator_effects(receipts, {"owner"})
+                    assert_no_evaluator_effects(receipts, {"owner"}, driver_plan())
 
     def test_native_dispatch_or_canonical_mutation_cannot_pass(self):
         for tool in ("subagent", "loom_tweak", "loom.tweak"):
@@ -178,17 +232,82 @@ class NoEvaluatorEffectOracleTest(unittest.TestCase):
                 receipts = driver_receipts()
                 receipts.append({"type": "tool-before", "data": {"tool": tool}})
                 with self.assertRaisesRegex(RuntimeError, "dispatch or canonical instruction mutation"):
-                    assert_no_evaluator_effects(receipts, {"owner"})
+                    assert_no_evaluator_effects(receipts, {"owner"}, driver_plan())
 
     def test_new_native_session_fails_even_before_a_model_request(self):
         receipts = driver_receipts()
         receipts.append({"type": "native-event", "data": {"type": "session.created",
                                                            "data": {"sessionID": "unexpected-recipient"}}})
         with self.assertRaisesRegex(RuntimeError, "Session creation"):
-            assert_no_evaluator_effects(receipts, {"owner"})
+            assert_no_evaluator_effects(receipts, {"owner"}, driver_plan())
         receipts = [event for event in driver_receipts() if event["type"] != "native-event"]
         with self.assertRaisesRegex(RuntimeError, "Session creation"):
-            assert_no_evaluator_effects(receipts, {"owner"})
+            assert_no_evaluator_effects(receipts, {"owner"}, driver_plan())
+
+    def test_unexpected_complete_invocation_using_a_legitimate_driver_is_rejected(self):
+        # Distinct genuine-looking prompt/step/call IDs, same allowed Session,
+        # agent and provider: the old identity allowlist accepted this sequence.
+        receipts = driver_receipts() + driver_receipts("b" * 16)
+        with self.assertRaisesRegex(RuntimeError, "prompt invocation sequence"):
+            assert_no_evaluator_effects(receipts, {"owner"}, driver_plan())
+
+    def test_unexpected_send_without_an_extra_prompt_is_rejected(self):
+        receipts = driver_receipts()
+        receipts.extend(deepcopy([event for event in receipts if event["type"] in ("model-request", "provider-request")][-2:]))
+        with self.assertRaisesRegex(RuntimeError, "model/provider invocation"):
+            assert_no_evaluator_effects(receipts, {"owner"}, driver_plan())
+
+    def test_duplicate_cannot_replace_another_planned_job_with_equal_aggregate_counts(self):
+        plan = driver_plan() + driver_plan("b" * 16)
+        receipts = driver_receipts() + driver_receipts("b" * 16)
+        assert_no_evaluator_effects(receipts, {"owner"}, plan)
+        providers = [event for event in receipts if event["type"] == "provider-request"]
+        providers[2]["data"] = deepcopy(providers[0]["data"])
+        with self.assertRaisesRegex(RuntimeError, "Provider invocation sequence"):
+            assert_no_evaluator_effects(receipts, {"owner"}, plan)
+
+    def test_model_and_provider_counts_must_reconcile_individually(self):
+        for kind in ("model-request", "provider-request"):
+            with self.subTest(kind=kind):
+                receipts = driver_receipts()
+                receipts.append(deepcopy(next(event for event in receipts if event["type"] == kind)))
+                with self.assertRaisesRegex(RuntimeError, "model/provider invocation"):
+                    assert_no_evaluator_effects(receipts, {"owner"}, driver_plan())
+
+    def test_unplanned_auxiliary_request_cannot_masquerade_as_a_driver_followup(self):
+        # This fixture resolves title without inference and does not request
+        # compaction. An auxiliary request needs its own explicit expectation.
+        for kind in ("title", "compaction", None):
+            with self.subTest(kind=kind):
+                receipts = driver_receipts()
+                requests = [event["data"] for event in receipts if event["type"] == "model-request"]
+                requests[-1]["kind"] = kind
+                with self.assertRaisesRegex(RuntimeError, "auxiliary request"):
+                    assert_no_evaluator_effects(receipts, {"owner"}, driver_plan())
+
+    def test_native_step_and_execute_identity_are_reconciled(self):
+        for kind, change, expected in (
+            ("session.step.started", {"assistantMessageID": "extra-step"}, "step outcomes"),
+            ("session.step.ended", {"finish": "error"}, "step outcomes"),
+            ("tool-after", {"id": "another-call"}, "expected step and result"),
+            ("tool-before", {"input": {"code": "return 'unexpected';"}}, "planned script"),
+            ("session.inbox.delivered", {"inboxID": "another-prompt"}, "delivered-input sequence"),
+        ):
+            with self.subTest(kind=kind, change=change):
+                receipts = driver_receipts()
+                target = next(event["data"]["data"] if event["type"] == "native-event" else event["data"]
+                              for event in receipts if event["type"] == kind
+                              or event["type"] == "native-event" and event["data"]["type"] == kind)
+                target.update(change)
+                with self.assertRaisesRegex(RuntimeError, expected):
+                    assert_no_evaluator_effects(receipts, {"owner"}, driver_plan())
+
+    def test_followup_must_contain_the_exact_native_tool_result(self):
+        receipts = driver_receipts()
+        provider = [event["data"] for event in receipts if event["type"] == "provider-request"][-1]
+        provider["prompt"][-1]["content"][0]["toolCallId"] = "different-result"
+        with self.assertRaisesRegex(RuntimeError, "exact native result follow-up"):
+            assert_no_evaluator_effects(receipts, {"owner"}, driver_plan())
 
 
 if __name__ == "__main__":

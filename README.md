@@ -389,5 +389,11 @@ declared Evaluator/Audit methods, immutable source manifests and recoverable
 canonical review linkage. Its authorized readers expose existing originals;
 genuine Evaluator reasoning and native dispatch remain unavailable.
 
+The [restricted execution lifecycle](docs/learning-restricted-execution.md)
+adds immutable admission, exclusive effect ordering and outcome recovery behind
+a trusted authority interface. Controlled-provider tests exercise that consumer;
+the production authority adapter remains absent. The [original-work audit handoff](docs/learning-evaluator-s3-handoff.md)
+specifies the separate authorization and qualification needed for genuine reasoning.
+
 See [Design and implementation boundaries](docs/design.md) and [Coordination](docs/coordination.md);
 [the alpha operating policy](docs/operating-policy.md) defines the narrower release scope.
