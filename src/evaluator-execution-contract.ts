@@ -33,6 +33,13 @@ export type EvaluatorExecutionReceipt = {
 }
 export type EvaluatorExecutionSnapshot = { admission: EvaluatorExecutionAdmission; receipt: EvaluatorExecutionReceipt }
 
+/** Valid recovery observations need not authorize a fresh canonical claim. In
+ * particular, reserved/uncertain is retainable evidence, never a usable budget. */
+export function evaluatorReservationHeld(receipt: EvaluatorExecutionReceipt): boolean {
+  return receipt.execution === "reserved" && receipt.budget === "held" && !receipt.fenced
+    && receipt.usage === null && receipt.result === null
+}
+
 /** Trusted host/account integration, NEVER a tool argument or configuration flag.
  * No production implementation is qualified. A conforming owner must:
  * - prepare a concrete recipient without transferring sources or starting models;
@@ -49,7 +56,14 @@ export interface EvaluatorExecutionAuthority {
   reconcile(subject: EvaluatorExecutionSubject): Promise<EvaluatorExecutionSnapshot | null>;
   prepare(subject: EvaluatorExecutionSubject, method: EvaluatorMethodManifest, budget: EvaluatorPolicyRef): Promise<EvaluatorExecutionGrant>;
   reserve(grant: EvaluatorExecutionGrant): Promise<EvaluatorExecutionAdmission>;
-  validate(admission: EvaluatorExecutionAdmission, boundary: "claim" | "source"): Promise<void>;
+  /** At claim: finish asynchronous native checks, await recheckCaller, then read
+   * current durable reservation/policy state without further awaited work and
+   * return its bound receipt. Propagate callback failures without cancellation.
+   * The consumer claims synchronously after that observation. Cross-process
+   * changes afterward still require atomic enforcement at the actual send.
+   * Source validation does not require a fresh held reservation. */
+  validate(admission: EvaluatorExecutionAdmission, boundary: "claim" | "source",
+    recheckCaller?: () => Promise<void>): Promise<EvaluatorExecutionReceipt>;
   execute(admission: EvaluatorExecutionAdmission,
     source: (memberKey: string, sourceIndex: number) => Promise<unknown>, signal: AbortSignal): Promise<EvaluatorExecutionReceipt>;
   cancel(admission: EvaluatorExecutionAdmission): Promise<EvaluatorExecutionReceipt>;

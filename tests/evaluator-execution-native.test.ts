@@ -134,13 +134,21 @@ test("forged grant and missing operator grant fail at the actual fixture owner",
 })
 
 for (const boundary of ["reserved", "claim", "before-consume"] as const) {
-  test(`revocation at ${boundary} fences before the fixture effect`, async () => {
+  test(`revocation at ${boundary} prevents the fixture effect without unowned cleanup`, async () => {
     const f = fixture()
     try {
       const { prepared } = await preparedFixture(f)
       f.authority.phase = async phase => { if (phase === boundary) f.authority.revoke() }
       await Promise.allSettled([f.runtime().execute(ACTOR, pins(prepared), freshSignal())])
       expect(f.authority.counts().effects).toBe(0)
+      if (boundary !== "before-consume") {
+        expect(issue(f.state, prepared).attempt.claimant_id).toBeNull()
+        expect(f.authority.all()[0]!.receipt).toMatchObject({ execution: "reserved", budget: "held", fenced: false })
+        await expect(f.runtime().execute(ACTOR, pins(prepared), freshSignal())).rejects.toThrow("revoked")
+        // An invocation that never claimed cannot cancel the shared reservation.
+        // The explicit canonical operation can still obtain a safe owner fence.
+        await f.runtime().cancel(ACTOR, pins(prepared))
+      }
       const remote = f.authority.all()[0]!
       expect(remote.receipt).toMatchObject({ execution: "not-admitted", budget: "released", fenced: true })
       expect(remote.receipt.usage?.requests).toBe(0)
@@ -163,7 +171,7 @@ test("changed credential generation and changed original before claim are denied
       await expect(f.runtime().execute(ACTOR, pins(prepared), freshSignal())).rejects.toThrow()
       expect(f.authority.counts().effects).toBe(0)
       expect(issue(f.state, prepared).attempt.claimant_id).toBeNull()
-      expect(f.authority.all()[0]!.receipt.budget).toBe("released")
+      expect(f.authority.all()[0]!.receipt).toMatchObject({ execution: "reserved", budget: "held", fenced: false })
     } finally { f.close() }
   }
 })
@@ -457,13 +465,14 @@ test("receipt persistence acknowledgement failure reconciles the original withou
     let fail = true
     history.appendExecutionReceipt = (...args) => {
       const result = append(...args)
-      if (fail) { fail = false; throw new Error("lost-receipt-commit-ack") }
+      if (fail && result.receipts.at(-1)?.execution === "completed") { fail = false; throw new Error("lost-receipt-commit-ack") }
       return result
     }
     await expect(f.runtime().execute(ACTOR, pins(prepared), freshSignal())).rejects.toThrow("lost-receipt-commit-ack")
     const result = await f.runtime().recover(ACTOR, pins(prepared))
+    expect(result.receipt.result).not.toBeNull()
     expect(result.receipt.result).toEqual(f.authority.all()[0]!.receipt.result)
-    expect(saved(f.state, prepared).receipts).toHaveLength(1)
+    expect(saved(f.state, prepared).receipts.map(receipt => receipt.execution)).toEqual(["reserved", "completed"])
     expect(f.authority.counts().effects).toBe(1)
   } finally { f.close() }
 })
@@ -576,7 +585,8 @@ test("SIGKILL after original result storage recovers that exact result without a
     const original = f.authority.all()[0]!.receipt.result
     expect(original).not.toBeNull()
     expect(issue(f.state, prepared).attempt.native_outcome).toBe("unknown")
-    expect(saved(f.state, prepared).receipts).toHaveLength(0)
+    expect(saved(f.state, prepared).receipts.map(receipt => receipt.execution)).toEqual(["reserved"])
+    expect(saved(f.state, prepared).receipts[0]!.result).toBeNull()
     const recovered = await f.runtime().recover(ACTOR, pins(prepared))
     expect(recovered.receipt.result).toEqual(original)
     expect(recovered.receipt.budget).toBe("settled")
@@ -641,7 +651,7 @@ for (const boundary of ["claim", "source"] as const) {
         expect(f.authority.counts()).toEqual({ reservations: 1, consumed: 0, execute_calls: boundary === "claim" ? 0 : 1, effects: 0 })
         if (boundary === "claim") {
           expect(issue(f.state, prepared).attempt.claimant_id).toBeNull()
-          expect(f.authority.all()[0]!.receipt).toMatchObject({ execution: "not-admitted", budget: "released", fenced: true })
+          expect(f.authority.all()[0]!.receipt).toMatchObject({ execution: "reserved", budget: "held", fenced: false })
         } else {
           expect(issue(f.state, prepared).attempt.claimant_id).not.toBeNull()
           expect(f.authority.all()[0]!.receipt).toMatchObject({ execution: "reserved", budget: "held", fenced: false })

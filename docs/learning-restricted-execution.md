@@ -54,11 +54,15 @@ Resource accounting belongs to the actual shared pool, including independent iss
 2. Consult the authority's durable inventory **even when local execution rows are absent**.
 3. Prepare the exact native recipient without content/inference, then reserve capacity atomically at the shared owner.
 4. Persist the immutable per-issue admission before claiming the issue.
-5. Revalidate current source/method/recipient/account authority and expiry; acquire the existing review owner's exclusive claim.
+5. Revalidate current source/method/recipient/account authority and expiry, obtain the current held-reservation receipt, and acquire the existing review owner's exclusive claim.
 6. Only a fresh `claimed-now` path may call the adapter's execution operation. The authority must revalidate and durably consume at the actual effect boundary, including native retry, auxiliary, fallback and restart paths.
 7. Persist scoped outcome/result-reference/accounting receipts. Reconcile the original result after failure or lost acknowledgement; never wake native work to perform a recovery read.
 
 The source callback rechecks current authorization, source availability, expiry and recipient authority for every original read. It does not broaden `LearningSources`, retain a new raw transcript, or turn a parent read into recipient transfer authority. The adapter must authorize the actual recipient and transfer before receiving content; general Q5 protection is not claimed.
+
+Claim validation completes its asynchronous native checks, invokes and awaits the consumer's final caller-authorization callback, then reads the current durable reservation and applicable local authority policy without further awaited work. The consumer requires that callback to have completed, validates and mirrors the returned receipt, and checks the latest accepted observation before synchronously claiming. The immutable reservation envelope and an earlier inventory response are insufficient. Source validation remains separate: ongoing execution may legitimately retain uncertain accounting while its source reads require live permission.
+
+This ordering detects reservation changes during the consumer's awaited checks. It is not a transaction across authority and review databases. Another process can change authority after the final observation; the authority must reject that change at the actual send, retaining a consumed local claim if no effect is admitted. A production adapter unable to provide this final authoritative observation remains unqualified.
 
 | Situation | Implemented consumer behavior |
 | --- | --- |
@@ -66,6 +70,7 @@ The source callback rechecks current authorization, source availability, expiry 
 | Different issues contend for one pool | The consumer requires the authority's atomic reserve result; no local estimate or independent pool is substituted. |
 | Reservation ACK or local admission ACK lost | Recover the same external reservation. If no local claim exists, the reserved issue can continue through the original claim path; no replacement reservation or recipient is created. |
 | Claim ACK lost, crash after claim, or unknown native result | Retain the consumed claim. Replay reconciles only; it never receives a replacement permit. |
+| One contender fails or aborts | Its reservation is shared, not owned by that invocation. Cleanup may cancel only after durable canonical readback matches its own preallocated claimant ID; otherwise reconcile without cancellation or release. Explicit `cancel` remains the separate canonical cancellation operation. |
 | Execution throws | Query existing authority inventory where possible; preserve uncertainty if unavailable. A transport error is not proven non-admission. |
 | Cancellation, expiry or revocation | Refuse new effects/reads. Ask the authority to fence; never release merely because the caller stopped or a deadline passed. |
 | Result appears after cancellation/lost acknowledgement | Keep the original native input/result identity and authority accounting. No interpretation publication or successful engineering outcome is inferred. |
@@ -74,6 +79,8 @@ The source callback rechecks current authorization, source availability, expiry 
 | Conflicting terminal receipts | Reject the conflicting observation. Previously admitted work cannot become proven non-admission through an intermediate unknown receipt; settled/released facts cannot be silently rewritten. |
 
 Receipts distinguish `reserved`, `unknown`, `admitted`, `not-admitted`, `completed`, `failed` and `cancelled` from `held`, `uncertain`, `released` and `settled` budget states. A release requires authoritative fenced non-admission and zero usage. Settlement requires a fence, authoritative terminal usage within the reservation, and no remaining effect authority. A completed native result is not an accepted Evaluator interpretation.
+
+Only `reserved` + `held` + unfenced + null usage/result is eligible for a fresh claim. `reserved` + `uncertain` is valid recovery evidence but cannot claim or enter execution. Fenced reservations, unknown/admitted effects, cancelled or terminal outcomes, and released/settled accounting remain recovery-only. An exact older held receipt cannot override newer uncertainty already retained in the mirror. A lost claim acknowledgement never permits another execution: matching durable claimant identity allows an owner fence; missing, different or unreadable ownership permits reconciliation only.
 
 Here, effect admission is the execution authority's **budgeted effect boundary**. A provider can deny that effect after OpenCode has already admitted and delivered the input. Fenced zero-send proof can therefore justify releasing the provider reservation while native admission and source exposure remain real. The consumer never promotes an effect `not-admitted` receipt to canonical native `proven-non-admission`; it records `unknown`, preserving any earlier `issued` observation and the consumed claim. Recovery and additional-issue arbitration retain that uncertainty. A genuine native pre-admission rejection requires its own qualified evidence; no full Q4 claim is needed to keep these existing boundaries distinct.
 

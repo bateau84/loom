@@ -113,11 +113,17 @@ export class NativeFixtureAuthority implements EvaluatorExecutionAuthority {
       return admission
     }).immediate()
   }
-  async validate(admission: EvaluatorExecutionAdmission, _boundary: "claim" | "source") {
+  async validate(admission: EvaluatorExecutionAdmission, boundary: "claim" | "source", recheckCaller?: () => Promise<void>) {
     this.permitted(admission.grant); await this.recipient(admission.grant)
+    if (boundary === "claim") {
+      if (!recheckCaller) throw new Error("Fixture claim validation requires caller recheck")
+      await recheckCaller()
+    }
+    this.permitted(admission.grant)
     const saved = this.saved(admission.grant.subject.semantic_key), entry = this.journal.enrollment(admission.grant.subject.semantic_key)
     if (!saved?.admission_json || this.digest(JSON.parse(saved.admission_json)) !== this.digest(admission) || !entry || entry.revoked)
       throw new Error("Fixture authority revoked or admission mismatched")
+    return JSON.parse(saved.receipt_json!) as EvaluatorExecutionReceipt
   }
   private receipt(admission: EvaluatorExecutionAdmission, sequence: number,
     execution: EvaluatorExecutionReceipt["execution"], budget: EvaluatorExecutionReceipt["budget"], fenced: boolean,
@@ -183,6 +189,9 @@ export class NativeFixtureAuthority implements EvaluatorExecutionAuthority {
       this.permitted(admission.grant)
       const current = this.journal.enrollment(key)!
       if (current.enabled || current.consumed || current.revoked) throw new Error("Fixture effect already claimed")
+      const reservation = JSON.parse(this.saved(key)!.receipt_json!) as EvaluatorExecutionReceipt
+      if (reservation.execution !== "reserved" || reservation.budget !== "held" || reservation.fenced)
+        throw new Error("Fixture execution reservation is not held")
       this.journal.db.query("UPDATE fixture_enrollments SET enabled=1,prompt_sha256=? WHERE issue_key=?").run(sha(text), key)
       return this.observe(admission, "unknown", "uncertain", false, null, null)
     }).immediate()

@@ -3,7 +3,7 @@ import { canonical, digest, type Actor } from "./model.js"
 import type { EvaluatorPreparation } from "./evaluator-preparation.js"
 import type { EvaluationStore } from "./evaluation-store.js"
 import type { Store } from "./store.js"
-import { parseEvaluatorAdmission, parseEvaluatorGrant, parseEvaluatorReceipt,
+import { evaluatorReservationHeld, parseEvaluatorAdmission, parseEvaluatorGrant, parseEvaluatorReceipt,
   type EvaluatorExecutionAdmission, type EvaluatorExecutionAuthority, type EvaluatorExecutionReceipt,
   type EvaluatorExecutionSnapshot, type EvaluatorExecutionSubject } from "./evaluator-execution-contract.js"
 
@@ -125,7 +125,7 @@ export class EvaluatorExecution {
     if (remote) {
       admission = this.bound(subject, remote.admission, prepared)
       const known = this.remember(actor, subject, remote)
-      if (known.receipt.execution !== "reserved" || known.receipt.fenced || prepared.issue?.attempt.claimant_id)
+      if (!evaluatorReservationHeld(known.receipt) || prepared.issue?.attempt.claimant_id)
         return this.disclose(actor, pins, known)
     } else {
       if (saved || prepared.issue?.attempt.claimant_id || prepared.issue?.attempt.state !== "prepared")
@@ -145,25 +145,39 @@ export class EvaluatorExecution {
       this.history.saveExecutionAdmission(pins.batch_id, actor.session_id, admission)
     }
 
-    let claimed = false
+    const claimantID = randomUUID()
+    let claimAcknowledged = false
     try {
       await authorize(actor)
       signal.throwIfAborted()
       prepared = this.prepared(actor, pins)
       this.bound(this.subject(actor, prepared), admission, prepared)
       this.live(admission.grant.expires_at)
-      await authority.validate(admission, "claim")
-      signal.throwIfAborted()
-      // Recheck after asynchronous native authority validation, before the sole
-      // local claim. The adapter must also recheck at the actual effect boundary.
-      await authorize(actor)
+      let callerRechecked = false
+      const claimReceipt = await authority.validate(admission, "claim", async () => {
+        // The owner observes current reservation state only after this final
+        // awaited caller check. Neither an old inventory read nor reserve's
+        // immutable envelope proves that capacity is still held now.
+        signal.throwIfAborted()
+        await authorize(actor)
+        signal.throwIfAborted()
+        this.live(admission.grant.expires_at)
+        const current = this.prepared(actor, pins)
+        this.bound(this.subject(actor, current), admission, current)
+        callerRechecked = true
+      })
+      if (!callerRechecked) throw new Error("Evaluator claim authority omitted caller revalidation")
+      const current = this.remember(actor, subject, { admission, receipt: claimReceipt })
+      if (!evaluatorReservationHeld(current.receipt)) return this.disclose(actor, pins, current)
+      // No awaited work separates the final authority observation and local
+      // claim. The authority still owns concurrent revocation at actual sends.
       signal.throwIfAborted()
       this.live(admission.grant.expires_at)
       prepared = this.prepared(actor, pins)
       this.bound(this.subject(actor, prepared), admission, prepared)
-      const claim = this.store.reviews.claimIssue(actor, { request_id: subject.request_id, kind: "initial" }, randomUUID())
+      const claim = this.store.reviews.claimIssue(actor, { request_id: subject.request_id, kind: "initial" }, claimantID)
       if (claim.status !== "claimed-now") return this.recover(actor, pins)
-      claimed = true
+      claimAcknowledged = true
       await authorize(actor)
       signal.throwIfAborted()
       prepared = this.prepared(actor, pins)
@@ -194,9 +208,17 @@ export class EvaluatorExecution {
       signal.throwIfAborted()
       return visible
     } catch (error) {
-      // Never resend, release, or infer nonexecution here. Cancellation asks the
-      // authority to fence; an interrupted acknowledgement keeps its reservation.
-      if (signal.aborted || !claimed) {
+      // A caller's failure/abort does not cancel another contender's shared
+      // admission. Read durable ownership, including a possibly lost claim ACK;
+      // missing or unreadable ownership supplies no cancellation authority.
+      let ownsClaim = false
+      if (signal.aborted || !claimAcknowledged) {
+        try {
+          const issue = this.store.reviews.readIssue(actor, subject.request_id)
+          ownsClaim = issue.attempt.attempt_id === subject.attempt_id && issue.attempt.claimant_id === claimantID
+        } catch { /* Ownership is unproven; reconciliation is the only cleanup. */ }
+      }
+      if (ownsClaim) {
         try { this.remember(actor, subject, { admission, receipt: await authority.cancel(admission) }) }
         catch { /* Preserve the original failure and uncertain owner reservation. */ }
       } else {

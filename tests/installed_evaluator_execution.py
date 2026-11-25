@@ -38,6 +38,9 @@ CHECKS = {
     "crashed-native-send-retains-uncertain-reservation",
     "concurrent-issues-share-one-capacity-pool",
     "provider-admission-oracle-rejects-duplicate",
+    "uncertain-reservation-never-claims-or-dispatches",
+    "losing-validation-failure-preserves-native-winner",
+    "losing-caller-abort-preserves-native-winner",
 }
 
 
@@ -93,6 +96,15 @@ def assert_admissions(value, expected):
     require(all(event.get("provider_id") == PROVIDER and event.get("model_id") == "audit"
                 and event.get("agent") == "evaluator" and event.get("kind") == "primary" for event in requests),
             "Unexpected effective model, recipient or native auxiliary request")
+
+
+def assert_no_cancellation(value):
+    require(not any(event["type"] in ("consumer-cancel-entry", "consumer-native-interrupt")
+                    for event in value["events"]), "Losing caller cancelled the shared authority admission")
+    require(not any(row["revoked"] for row in value["enrollments"]), "Losing caller revoked the winner's reservation")
+    require(not any(event["type"] == "native-event"
+                    and event["data"].get("type") == "session.execution.interrupted"
+                    for event in value["events"]), "Native winner was interrupted")
 
 
 def until(read, predicate, label, seconds=20):
@@ -184,6 +196,18 @@ class Case:
         require(value["ok"] == success, "Unexpected fixture driver result: " + encoded(value))
         return value.get("result", value)
 
+    def worker(self, command, name="first"):
+        return subprocess.Popen(self.arguments(command, name), env=self.env, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True)
+
+    def collect(self, worker, success=True):
+        stdout, stderr = worker.communicate(timeout=35)
+        require(stdout.strip(), "Concurrent fixture driver returned no result: " + stderr[-2000:])
+        value = json.loads(stdout.strip().splitlines()[-1])
+        require(value["ok"] == success and worker.returncode == (0 if success else 2),
+                "Unexpected concurrent fixture driver result: " + encoded(value))
+        return value.get("result", value)
+
     def snapshot(self):
         backup = self.root / "before-effect"
         backup.mkdir()
@@ -243,6 +267,8 @@ def run(args):
             verify_host_version(result["host_version"])
             for name, mode, lose_ack in (("complete", "complete", False), ("lost-ack", "hold", True),
                                          ("reject", "reject", False), ("crash", "hold", False),
+                                         ("uncertain", "complete", False), ("loser-failure", "hold", False),
+                                         ("loser-abort", "hold", False),
                                          ("capacity", "complete", False)):
                 root = base / name
                 root.mkdir(mode=0o700)
@@ -377,7 +403,83 @@ def run(args):
                         assert_admissions(observed, 1)
                         require(observed["pools"][0]["reserved"] == 1, "Restart released consumed reservation")
                         check("crashed-native-send-retains-uncertain-reservation", denied_sends=observed["enrollments"][0]["denied_sends"])
-                    else:
+                    elif name == "uncertain":
+                        first = case.driver("execute-uncertain")
+                        require(first["receipt"]["execution"] == "reserved" and first["receipt"]["budget"] == "uncertain",
+                                "Current uncertain reservation was not retained")
+                        for command in ("recover", "execute"):
+                            recovered = case.driver(command)
+                            require(recovered["receipt"] == first["receipt"], "Uncertain inventory changed on replay")
+                            issue = case.driver("inspect")["issue"]["attempt"]
+                            require(issue["state"] == "prepared" and not issue["claimant_id"] and not issue["claimed_at"],
+                                    "Uncertain reservation acquired the canonical claim")
+                        observed = inventory(root)
+                        assert_admissions(observed, 0)
+                        assert_no_cancellation(observed)
+                        require(len(observed["enrollments"]) == 1 and observed["pools"][0]["reserved"] == 1,
+                                "Uncertain reservation disappeared or released capacity")
+                        require(not any(event["type"] in ("consumer-execute-entry", "model-request", "provider-attempt")
+                                        or (event["type"] == "native-event"
+                                            and event["data"].get("type") == "session.inbox.enqueued")
+                                        for event in observed["events"]),
+                                "Uncertain reservation reached execution or native input admission")
+                        check("uncertain-reservation-never-claims-or-dispatches", canonical_claims=0,
+                              execute_entries=0, native_inputs=0, model_sends=0, reserved_capacity=1)
+                    elif name in ("loser-failure", "loser-abort"):
+                        loser = case.worker("execute-" + name)
+                        workers = [loser]
+                        try:
+                            until(lambda: (root / "loser-ready").is_file(), bool, "loser paused before its canonical claim")
+                            winner = case.worker("execute-winner")
+                            workers.append(winner)
+                            held = until(lambda: inventory(root), lambda value: any(
+                                event["type"] == "provider-held" for event in value["events"]),
+                                "winning native provider request held")
+                            assert_admissions(held, 1)
+                            before = case.driver("inspect")["issue"]["attempt"]
+                            require(before["claimant_id"] and before["claimed_at"], "Native winner has no canonical claim")
+                            claim = {key: before[key] for key in ("attempt_id", "claimant_id", "claimed_at")}
+                            (root / "release-loser").write_text("fail or abort only the paused losing caller")
+                            failed = case.collect(loser, success=False)
+                            expected = "losing claim validation failed" if name == "loser-failure" else "losing caller aborted"
+                            require(expected in failed["error"], "Losing caller did not cross the intended failure boundary")
+                            observed = inventory(root)
+                            assert_admissions(observed, 1)
+                            assert_no_cancellation(observed)
+                            after = case.driver("inspect")["issue"]["attempt"]
+                            require({key: after[key] for key in claim} == claim, "Losing caller changed the canonical winner")
+                            require(winner.poll() is None, "Winner stopped before the original native response was released")
+                            entries = [event for event in observed["events"] if event["type"] == "consumer-execute-entry"]
+                            require(len(entries) == 1 and entries[0]["data"]["command"] == "execute-winner",
+                                    "Losing caller entered authority execution")
+                            row = observed["enrollments"][0]
+                            (root / ("release-" + row["input_id"])).write_text("complete only the original winning response")
+                            completed_winner = case.collect(winner)
+                            require(completed_winner["receipt"]["execution"] == "completed"
+                                    and completed_winner["receipt"]["budget"] == "settled",
+                                    "Losing caller prevented the winner's original result from completing")
+                            for command in ("recover", "execute"):
+                                recovered = case.driver(command)
+                                require(recovered["receipt"] == completed_winner["receipt"],
+                                        "Winner recovery changed the original result")
+                            final = inventory(root)
+                            assert_admissions(final, 1)
+                            assert_no_cancellation(final)
+                            require([event for event in final["events"] if event["type"] in (
+                                "consumer-execute-entry", "model-request", "provider-attempt")] == [
+                                    event for event in observed["events"] if event["type"] in (
+                                        "consumer-execute-entry", "model-request", "provider-attempt")],
+                                    "Winner completion or recovery caused an additional execution or model request")
+                            check("losing-validation-failure-preserves-native-winner" if name == "loser-failure"
+                                  else "losing-caller-abort-preserves-native-winner",
+                                  canonical_claim_retained=True, authority_cancellations=0, native_interrupts=0,
+                                  execute_entries=1, model_sends=1, result=completed_winner["receipt"]["result"])
+                        finally:
+                            for worker in workers:
+                                if worker.poll() is None:
+                                    worker.kill()
+                                    worker.communicate(timeout=5)
+                    elif name == "capacity":
                         case.driver("init", "second")
                         workers = [subprocess.Popen(case.arguments("execute", who), env=case.env, stdout=subprocess.PIPE,
                                                     stderr=subprocess.PIPE, text=True) for who in ("first", "second")]
@@ -405,7 +507,7 @@ def run(args):
                     if (root / "fixture-authority.sqlite").is_file():
                         result["journals"][name] = inventory(root)
                         if completed:
-                            assert_admissions(result["journals"][name], 0 if name == "reject" else 1)
+                            assert_admissions(result["journals"][name], 0 if name in ("reject", "uncertain") else 1)
         require({item["name"] for item in result["checks"]} == CHECKS, "Missing installed execution checks")
         result["status"] = "PASS"
     except Exception as error:

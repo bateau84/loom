@@ -35,7 +35,7 @@ not tokenization, cost, provider spending enforcement or subscription evidence.
 The provider is wholly owned by this fixture and has no network fallback.
 Authority loss or rollback alongside Loom is outside the qualified boundary.
 
-The nine installed checks cover:
+The twelve installed checks cover:
 
 - One authorized native logical execution and a completed result.
 - Original-result recovery after native host restart.
@@ -49,6 +49,23 @@ The nine installed checks cover:
 - SIGKILL after native provider admission, uncertain reservation retention, consumer
   replay without dispatch and a denied additional native request after restart.
 - Independent consumer processes competing for one shared account-pool unit.
+- An external reservation becoming uncertain after reserve: fresh execution,
+  recovery and replay leave the canonical issue unclaimed, retain capacity and
+  produce zero authority execution entries, native inputs or model requests.
+- A losing process failing claim validation while another process owns the
+  same issue's held native request: no cancellation, revocation or interruption
+  of the winner; its original result completes and recovers without another send.
+- The same contention with an aborted losing caller, preserving the winner and
+  its original result under the same assertions.
+
+The contender checks use file barriers at the fixture authority's claim
+validation boundary. The winning process enters the packed consumer through
+the same canonical preparation pins and remains active until the actual held
+native response is released. The driver journals authority execution,
+cancellation and native interruption entries; failures cannot hide behind a
+provider that independently rejects an invalid send. Only the fixture-owned
+authority is wrapped to inject uncertainty, a validation failure or caller
+abort. Canonical claims and consumer results are produced by the packed code.
 
 The rejection case preserves the earlier source exposure: the original input
 was committed to the native inbox, delivered into Session history and presented

@@ -187,7 +187,8 @@ export class FixtureExecutionAuthority implements EvaluatorExecutionAuthority {
     const accepted = this.atomic(() => {
       const row = this.checked(admission), snapshot = this.snapshot(row)
       if (!this.eligible(admission.grant) || signal.aborted) return false
-      if (row.consumed || snapshot.receipt.fenced || snapshot.receipt.execution !== "reserved") throw new Error("Fixture effect already consumed or fenced")
+      if (row.consumed || snapshot.receipt.fenced || snapshot.receipt.execution !== "reserved" || snapshot.receipt.budget !== "held")
+        throw new Error("Fixture effect already consumed, fenced or reservation not held")
       this.db.query("UPDATE fixture_enrollments SET consumed=1,effect_calls=effect_calls+1 WHERE semantic_key=?").run(admission.grant.subject.semantic_key)
       this.update(admission, this.receipt(admission, snapshot.receipt, { execution: "unknown", budget: "uncertain", fenced: false, usage: null, result: null }))
       return true
@@ -209,11 +210,17 @@ export class FixtureExecutionAuthority implements EvaluatorExecutionAuthority {
     await this.phase("result", admission)
     return result
   }
-  async validate(admission: EvaluatorExecutionAdmission, boundary: "claim" | "source") {
+  async validate(admission: EvaluatorExecutionAdmission, boundary: "claim" | "source", recheckCaller?: () => Promise<void>) {
     this.checked(admission)
     if (!this.eligible(admission.grant)) throw new Error("Fixture authority expired, revoked or changed")
     await this.phase(boundary, admission)
+    if (boundary === "claim") {
+      if (!recheckCaller) throw new Error("Fixture claim validation requires caller recheck")
+      await recheckCaller()
+    }
+    // Keep the final authority observation after the caller's awaited check.
     if (!this.eligible(admission.grant)) throw new Error("Fixture authority expired, revoked or changed")
+    return this.snapshot(this.checked(admission)).receipt
   }
   async cancel(admission: EvaluatorExecutionAdmission) {
     const result = this.atomic(() => {
