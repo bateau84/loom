@@ -63,6 +63,36 @@ test("exact native part read returns only the selected original fields, with sep
   expect(context.coverage).toMatchObject({ full_history: false, authenticity: "native-context" })
 })
 
+test("exact source envelope carries references and selected fields without inventory disclosure", () => {
+  const part = { ...tool("part_selected"), name: "UNSELECTED_TOOL_NAME", time: { created: 12345 } }
+  const messages = [{ id: "msg_selected", type: "assistant", time: { created: 12300 }, content: [part] }]
+  const options = source(messages)
+  const inventory = nativeEvidenceParts(messages, options)
+  const result = nativeEvidenceSource(messages, { ...options, messageID: "msg_selected", partID: "part_selected", fields: ["dispatch"] })
+  const encoded = JSON.stringify(result), returned = JSON.parse(encoded)
+  expect(Object.keys(returned).sort()).toEqual([
+    "coverage", "fields", "format", "gaps", "identity", "messages_sha256", "note", "part", "session_id", "source", "source_sha256", "status",
+  ])
+  expect(returned.part).toEqual({ part_sha256: inventory.items[0]!.part_sha256 })
+  expect(returned.fields).toEqual({ dispatch: { session_id: "child_one", source_field: "state.metadata.sessionID" } })
+  expect(returned.status).toBe("resolved")
+  for (const hidden of ["completed", "UNSELECTED_TOOL_NAME", "verify scoped-subtest", "scoped-subtest passed", "unrequested metadata",
+    '"created_at"', '"message_created_at"', '"normalized_source_bytes"', '"normalized_part_bytes"', '"availability"', '"bytes"'])
+    expect(encoded).not.toContain(hidden)
+  expect(inventory.items[0]).toMatchObject({ status: "completed", tool: "UNSELECTED_TOOL_NAME", created_at: 12345, message_created_at: 12300 })
+  expect(inventory.normalized_source_bytes).toBeGreaterThan(0)
+  const selectedStatus = nativeEvidenceSource(messages, { ...options, messageID: "msg_selected", partID: "part_selected", fields: ["status"] })
+  expect(selectedStatus.fields).toEqual({ status: "completed" })
+  expect("part" in selectedStatus ? selectedStatus.part : undefined).toEqual(returned.part)
+  for (const absent of [
+    nativeEvidenceSource(messages, { ...options, messageID: "msg_selected", partID: "absent", fields: ["dispatch"] }),
+    nativeEvidenceSource(messages, { ...options, messageID: "msg_selected", partID: "part_selected", fields: ["dispatch"], expectedSha256: "0".repeat(64) }),
+  ]) {
+    expect(absent).not.toHaveProperty("normalized_source_bytes")
+    expect(absent).not.toHaveProperty("part")
+  }
+})
+
 test("matching is bounded, case-sensitive and selects identities without leaking inspected values", () => {
   const messages = history(), options = source(messages)
   const found = nativeEvidenceParts(messages, { ...options, match: "scoped-subtest", matchFields: ["output"], tool: "shell", messageID: "msg_work" })
@@ -165,20 +195,43 @@ test("exact part pin tolerates appended context but rejects changed or missing o
     .toThrow("expected part sha256")
 })
 
-test("redacted or missing fields are explicit gaps, never substituted originals or matches", () => {
+test("unverified redaction markers and missing fields are explicit gaps, never substituted originals or matches", () => {
   const redacted = { ...tool("part_redacted"), state: { status: "completed", input: { redacted: "tool-input:msg_work" },
     content: [{ type: "text", text: "[redacted:tool-output:msg_work]" }], metadata: { redacted: "tool-metadata:msg_work" } } }
   const messages = [{ id: "msg_work", type: "assistant", content: [redacted, { type: "tool", id: "part_running", name: "shell", state: { status: "running", input: {}, metadata: {} } }] }]
   const options = source(messages)
   const result = nativeEvidenceSource(messages, { ...options, messageID: "msg_work", partID: "part_redacted", fields: ["input", "output", "dispatch", "status"] })
   expect(result).toMatchObject({ status: "partial", fields: { status: "completed" }, gaps: [
-    { field: "input", reason: "redacted" }, { field: "output", reason: "redacted" }, { field: "dispatch", reason: "redacted" },
+    { field: "input", reason: "redaction-marker-unverified" }, { field: "output", reason: "redaction-marker-unverified" }, { field: "dispatch", reason: "redaction-marker-unverified" },
   ] })
   expect(nativeEvidenceParts(messages, { ...options, match: "msg_work" }).items).toEqual([])
   const running = nativeEvidenceSource(messages, { ...options, messageID: "msg_work", partID: "part_running", fields: ["output"] })
   expect(running).toMatchObject({ status: "partial", fields: {}, gaps: [{ field: "output", reason: "field-missing" }] })
   const changed = nativeEvidenceSource(messages, { ...options, messageID: "msg_work", partID: "part_redacted", fields: ["status"], expectedSha256: "b".repeat(64) })
   expect(changed).toMatchObject({ status: "changed", fields: {}, gaps: [{ field: "status", reason: "source-changed" }] })
+})
+
+test("literal marker-shaped values remain uncertain in native context and supplied exports", () => {
+  const inputs = ["[redacted:literal-input]", { redacted: "literal-input" }, { nested: [{ redacted: "literal-input" }] }]
+  for (const kind of ["native-context", "provided-export"] as const) for (const input of inputs) {
+    const messages = [{ id: "msg_literal", type: "assistant", content: [{ ...tool("part_literal"), state: {
+      status: "completed", input, content: [{ type: "text", text: "[redacted:literal-output]" }],
+      error: "[redacted:literal-error]", metadata: { sessionID: "child_one" },
+    } }] }]
+    const options = { ...source(messages), source: kind }
+    const result = nativeEvidenceSource(messages, { ...options, messageID: "msg_literal", partID: "part_literal", fields: ["input", "output", "error"] })
+    expect(result).toMatchObject({ status: "partial", fields: {}, gaps: [
+      { field: "input", reason: "redaction-marker-unverified" },
+      { field: "output", reason: "redaction-marker-unverified" },
+      { field: "error", reason: "redaction-marker-unverified" },
+    ] })
+    const inventory = nativeEvidenceParts(messages, options)
+    for (const name of ["input", "output", "error"]) {
+      expect(inventory.items[0]!.fields[name]).toEqual({ availability: "redaction-marker-unverified" })
+    }
+    expect(nativeEvidenceParts(messages, { ...options, match: "literal", matchFields: ["input", "output"] }).items).toEqual([])
+    expect(JSON.stringify(result)).not.toContain('"reason":"redacted"')
+  }
 })
 
 test("duplicate native identities fail instead of choosing a replacement; tuple remains Session/message/part", () => {

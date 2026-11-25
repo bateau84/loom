@@ -185,6 +185,99 @@ test("disclosure denial precedes native source inspection and export source rele
   } finally { contextReads.mockRestore(); await f.close() }
 })
 
+for (const useExport of [false, true]) test(`selective native field grants constrain the entire ${useExport ? "export" : "current-context"} source response`, async () => {
+  const f = await registeredLoom(), contextReads = spyOn(f.nativeContexts, "get")
+  try {
+    const target = useExport ? sourceSession : "s", partID = "part_selective"
+    const original = { ...toolPart(partID, "selected_child", "UNREQUESTED_NATIVE_OUTPUT"),
+      name: "UNREQUESTED_NATIVE_TOOL", time: { created: 123456 } }
+    const native = [message([original])]
+    const path = useExport ? await exported(f, native) : undefined
+    if (!useExport) f.nativeContexts.set(target, { data: native })
+    const scope = `session:${target}:message:${sourceMessage}:part:${partID}`
+    const discovery = `loom:evidence:discover:${scope}`
+    const dispatchInspect = `loom:evidence:inspect:${scope}:view:native-dispatch`
+    const dispatchDisclose = `loom:evidence:disclose:${scope}:view:native-dispatch:recipient:s`
+    const statusInspect = `loom:evidence:inspect:${scope}:view:native-status`
+    const statusDisclose = `loom:evidence:disclose:${scope}:view:native-status:recipient:s`
+    const partsDisclose = `loom:evidence:disclose:session:${target}:view:native-parts:recipient:s`
+    const sourceResources = [discovery, dispatchInspect, dispatchDisclose, ...(path ? [join(f.directory, path)] : [])]
+    const allowed = new Set(sourceResources)
+    const denied = new Set([statusDisclose, partsDisclose])
+    let revokeFinal = false
+    f.permission.beforeReturn = async () => {
+      const request = f.permissionRequests.at(-1)
+      if (request.action !== "read" || request.resources.some((resource: string) => denied.has(resource) || !allowed.has(resource)))
+        throw new Error("selective native field policy denied")
+      if (revokeFinal && typeof request.metadata?.view_sha256 === "string") throw new Error("selective final release revoked")
+    }
+    const sourceQuery = { operation: "source", session_id: target, message_id: sourceMessage,
+      part_id: partID, fields: ["dispatch"], ...(path ? { export_path: path } : {}) }
+    const dispatch = { session_id: "selected_child", source_field: "state.metadata.sessionID" }
+    function assertExactEnvelope(response: { content: string }, expectedFields: Record<string, unknown>) {
+      expect(typeof response.content).toBe("string")
+      const envelope = JSON.parse(response.content)
+      expect(Object.keys(envelope)).toEqual(["result"])
+      const result = envelope.result
+      // Check the entire serialized tool return, including shared/nested metadata.
+      // A valid resolution status is distinct from the separately gated native lifecycle.
+      const forbidden = ['"tool"', '"created_at"', '"message_created_at"', '"normalized_part_bytes"',
+        '"normalized_source_bytes"', '"availability"', '"bytes"', "UNREQUESTED_NATIVE_TOOL",
+        "PRIVATE_DISPATCH_PROMPT", "PRIVATE_NATIVE_METADATA"]
+      if (!("status" in expectedFields)) forbidden.unshift('"completed"', '"running"')
+      if (!("output" in expectedFields)) forbidden.push("UNREQUESTED_NATIVE_OUTPUT")
+      if (!("dispatch" in expectedFields)) forbidden.push("selected_child")
+      for (const value of forbidden) expect(response.content).not.toContain(value)
+      expect(Object.keys(result).sort()).toEqual(["format", "session_id", "source", "source_sha256", "messages_sha256",
+        "coverage", "identity", "status", "part", "fields", "gaps", "note", "namespace"].sort())
+      expect(result.status).toBe("resolved")
+      expect(result.identity).toEqual({ session_id: target, message_id: sourceMessage, part_id: partID })
+      expect(result.fields).toEqual(expectedFields)
+      expect(result.gaps).toEqual([])
+      expect(Object.keys(result.part)).toEqual(["part_sha256"])
+      expect(result.part.part_sha256).toMatch(/^[a-f0-9]{64}$/)
+    }
+    assertExactEnvelope(await execute(f, "trace", sourceQuery, new AbortController().signal), { dispatch })
+    expect(new Set(f.permissionRequests.at(-1).resources)).toEqual(new Set(sourceResources))
+
+    const readsBeforeDeniedStatus = contextReads.mock.calls.length
+    await expect(execute(f, "trace", { ...sourceQuery, fields: ["dispatch", "status"] }, new AbortController().signal))
+      .rejects.toThrow("selective native field policy denied")
+    expect(contextReads.mock.calls).toHaveLength(readsBeforeDeniedStatus)
+    expect(f.permissionRequests.at(-1).resources).toContain(statusDisclose)
+
+    allowed.add(statusInspect); allowed.add(statusDisclose); denied.delete(statusDisclose)
+    assertExactEnvelope(await execute(f, "trace", { ...sourceQuery, fields: ["dispatch", "status"] }, new AbortController().signal),
+      { dispatch, status: "completed" })
+    allowed.delete(dispatchInspect); allowed.delete(dispatchDisclose); denied.add(dispatchDisclose)
+    assertExactEnvelope(await execute(f, "trace", { ...sourceQuery, fields: ["status"] }, new AbortController().signal), { status: "completed" })
+    if (!useExport) {
+      allowed.delete(statusInspect); allowed.delete(statusDisclose); denied.add(statusDisclose)
+      allowed.add(`loom:evidence:inspect:${scope}:view:native-output`)
+      allowed.add(`loom:evidence:disclose:${scope}:view:native-output:recipient:s`)
+      assertExactEnvelope(await execute(f, "trace", { ...sourceQuery, fields: ["output"] }, new AbortController().signal),
+        { output: original.state.content })
+    }
+
+    allowed.add(`loom:evidence:discover:session:${target}`)
+    const partsQuery = { operation: "parts", session_id: target, ...(path ? { export_path: path } : {}) }
+    await expect(execute(f, "trace", partsQuery, new AbortController().signal))
+      .rejects.toThrow("selective native field policy denied")
+    expect(f.permissionRequests.at(-1).resources).toContain(partsDisclose)
+    allowed.add(partsDisclose); denied.delete(partsDisclose)
+    const inventory = (await f.invoke("trace", partsQuery)).result
+    expect(inventory.items[0]).toMatchObject({ tool: "UNREQUESTED_NATIVE_TOOL", status: "completed", created_at: 123456,
+      fields: { input: { availability: "available" }, output: { availability: "available" } } })
+
+    allowed.clear(); for (const resource of sourceResources) allowed.add(resource)
+    denied.delete(dispatchDisclose); denied.add(statusDisclose); denied.add(partsDisclose)
+    revokeFinal = true
+    await expect(execute(f, "trace", sourceQuery, new AbortController().signal)).rejects.toThrow("selective final release revoked")
+    expect(f.permissionRequests.at(-1).metadata.view_sha256).toMatch(/^[a-f0-9]{64}$/)
+    expect(new Set(f.permissionRequests.at(-1).resources)).toEqual(new Set(sourceResources))
+  } finally { contextReads.mockRestore(); await f.close() }
+})
+
 test("a saved historical continuation cannot bypass later discovery revocation", async () => {
   const f = await registeredLoom()
   try {
@@ -391,7 +484,7 @@ test("registered literal matching defaults to structural fields; explicit own-co
   } finally { await f.close() }
 })
 
-test("registered cursor reuse refuses changed native and exported sources; source reads preserve missing and redacted fields", async () => {
+test("registered cursor reuse refuses changed sources and distinguishes missing fields from unverified redaction markers", async () => {
   const f = await registeredLoom()
   try {
     const initial = [message([toolPart("part_one"), toolPart("part_two")])]
@@ -409,7 +502,10 @@ test("registered cursor reuse refuses changed native and exported sources; sourc
       { type: "tool", id: "running", name: "shell", state: { status: "running", input: {} } },
     ])] })
     expect((await f.invoke("trace", { operation: "source", message_id: sourceMessage, part_id: "redacted", fields: ["output", "dispatch", "status"] })).result)
-      .toMatchObject({ status: "partial", fields: { status: "completed" }, gaps: [{ field: "output", reason: "redacted" }, { field: "dispatch", reason: "redacted" }] })
+      .toMatchObject({ status: "partial", fields: { status: "completed" }, gaps: [{ field: "output", reason: "redaction-marker-unverified" }, { field: "dispatch", reason: "redaction-marker-unverified" }] })
+    const uncertain = (await f.invoke("trace", { operation: "parts", message_id: sourceMessage })).result.items[0]
+    expect(uncertain.fields.output).toEqual({ availability: "redaction-marker-unverified" })
+    expect(uncertain.fields.dispatch).toEqual({ availability: "redaction-marker-unverified" })
     expect((await f.invoke("trace", { operation: "source", message_id: sourceMessage, part_id: "running", fields: ["output"] })).result)
       .toMatchObject({ status: "partial", fields: {}, gaps: [{ field: "output", reason: "field-missing" }] })
   } finally { await f.close() }

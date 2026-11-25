@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 from installed_historical_evidence import (
-    assert_read_only_effects, physical_generation_oracle, synthetic_transfer,
+    assert_exact_field_envelope, assert_read_only_effects, physical_generation_oracle, synthetic_transfer,
 )
 from test_installed_learning_stage4 import driver_plan, driver_receipts
 
@@ -133,6 +133,48 @@ class ReadOnlyEffectOracleTest(unittest.TestCase):
         ):
             with self.subTest(path=path), self.assertRaisesRegex(RuntimeError, "unowned transfer"):
                 synthetic_transfer(None, {"ses_owned"}, method, path, body)
+
+
+class SelectiveFieldEnvelopeOracleTest(unittest.TestCase):
+    def response(self, fields):
+        return {"result": {"format": "loom-native-evidence-source/v1", "session_id": "ses_reader",
+            "source": "native-context", "source_sha256": "a" * 64, "messages_sha256": "b" * 64,
+            "coverage": {"full_history": False, "authenticity": "native-context", "location_verified": True,
+                         "detail": "Synthetic native context"},
+            "identity": {"session_id": "ses_reader", "message_id": "msg_exact", "part_id": "part_exact"},
+            "status": "resolved", "part": {"part_sha256": "c" * 64}, "fields": deepcopy(fields), "gaps": [],
+            "note": "Exact selected projection", "namespace": {"project_id": "project", "workspace_id": None,
+                                                                   "native_store_identity": "unavailable"}}}
+
+    def test_complete_dispatch_response_and_explicit_status_are_accepted(self):
+        fields = {"dispatch": {"session_id": "ses_child", "source_field": "state.metadata.sessionID"}}
+        for selected in (fields, {**fields, "status": "completed"}):
+            with self.subTest(fields=selected):
+                result = assert_exact_field_envelope(json.dumps(self.response(selected)), selected, "completed")
+                self.assertTrue(result["complete_serialized_response_checked"])
+
+    def test_unrequested_metadata_anywhere_outside_fields_is_rejected(self):
+        fields = {"dispatch": {"session_id": "ses_child", "source_field": "state.metadata.sessionID"}}
+        for target, key, value in (
+            ("part", "status", "completed"), ("part", "normalized_part_bytes", 123),
+            ("part", "fields", {"output": {"availability": "available", "bytes": 50}}),
+            ("result", "normalized_source_bytes", 456), ("coverage", "status", "completed"),
+            ("namespace", "status", "completed"), ("outer", "status", "completed"),
+            ("fields", "status", "completed"),
+        ):
+            response = self.response(fields)
+            where = response if target == "outer" else response["result"] if target == "result" else response["result"][target]
+            where[key] = value
+            with self.subTest(target=target, key=key), self.assertRaises(RuntimeError):
+                assert_exact_field_envelope(json.dumps(response), fields, "completed")
+
+    def test_approved_original_may_contain_status_text_without_metadata_being_added(self):
+        fields = {"output": [{"type": "text", "text": 'Original {"status":"completed"} payload'}]}
+        response = self.response(fields)
+        self.assertEqual(assert_exact_field_envelope(json.dumps(response), fields, "completed")["selected_fields"], ["output"])
+        response["result"]["part"]["status"] = "completed"
+        with self.assertRaisesRegex(RuntimeError, "unselected part metadata"):
+            assert_exact_field_envelope(json.dumps(response), fields, "completed")
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ type Obj = Record<string, unknown>
 type NativeEvidenceSourceKind = "native-context" | "provided-export"
 export type NativeEvidenceField = "input" | "output" | "dispatch" | "status" | "error"
 export type NativeEvidenceMatchField = "tool" | "status" | "dispatch" | "input" | "output"
-type Availability = "available" | "missing" | "redacted"
+type Availability = "available" | "missing" | "redaction-marker-unverified"
 type CommonOptions = {
   sessionID: string
   source: NativeEvidenceSourceKind
@@ -35,7 +35,7 @@ export type NativeEvidenceSourceOptions = CommonOptions & {
 }
 type Part = { messageID: string; value: Obj; messageCreatedAt?: number }
 type Source = { parts: Part[]; messageCount: number; messagesSha256: string; bytes: number }
-type FieldValue = { availability: Availability; value?: unknown; bytes: number }
+type FieldValue = { availability: Availability; value?: unknown; bytes?: number }
 
 const mapping = (value: unknown): Obj | undefined => value !== null && typeof value === "object" && !Array.isArray(value)
   ? value as Obj : undefined
@@ -111,7 +111,6 @@ function sourceView(source: Source, options: CommonOptions) {
     source: options.source,
     source_sha256: options.sourceSha256,
     messages_sha256: source.messagesSha256,
-    normalized_source_bytes: source.bytes,
     coverage: options.source === "native-context"
       ? { full_history: false, authenticity: "native-context", location_verified: true,
           detail: "Only the caller's post-compaction context; earlier messages and child Session content are not included." }
@@ -120,15 +119,16 @@ function sourceView(source: Source, options: CommonOptions) {
   }
 }
 
-// Recognize the native export sanitizer's exact marker forms. Do not treat a
-// marker as the requested original, or match identifiers within removed content.
-function redacted(value: unknown): boolean {
+// A stored literal can have the same shape as an export sanitizer marker.
+// Withhold ambiguous values conservatively, without claiming known redaction
+// provenance or an original byte length in either source representation.
+function redactionMarker(value: unknown): boolean {
   if (typeof value === "string") return /^\[redacted:[^\]\r\n]+\]$/.test(value)
-  if (Array.isArray(value)) return value.some(redacted)
+  if (Array.isArray(value)) return value.some(redactionMarker)
   const object = mapping(value)
   if (!object) return false
   if (Object.keys(object).length === 1 && typeof object.redacted === "string") return true
-  return Object.values(object).some(redacted)
+  return Object.values(object).some(redactionMarker)
 }
 function field(part: Part, name: NativeEvidenceField): FieldValue {
   const state = mapping(part.value.state)!
@@ -140,21 +140,21 @@ function field(part: Part, name: NativeEvidenceField): FieldValue {
   else {
     const metadata = mapping(state.metadata)
     if (metadata && Object.keys(metadata).length === 1 && typeof metadata.redacted === "string")
-      return { availability: "redacted", bytes: 0 }
+      return { availability: "redaction-marker-unverified" }
     if (typeof metadata?.sessionID === "string") {
-      if (redacted(metadata.sessionID)) return { availability: "redacted", bytes: 0 }
+      if (redactionMarker(metadata.sessionID)) return { availability: "redaction-marker-unverified" }
       value = { session_id: uid(metadata.sessionID, "native dispatch Session id"), source_field: "state.metadata.sessionID" }
     }
   }
   if (value === undefined) return { availability: "missing", bytes: 0 }
-  if (redacted(value)) return { availability: "redacted", bytes: 0 }
+  if (redactionMarker(value)) return { availability: "redaction-marker-unverified" }
   return { availability: "available", value, bytes: Buffer.byteLength(serialized(value), "utf8") }
 }
 const FIELDS: NativeEvidenceField[] = ["input", "output", "dispatch", "status", "error"]
 function metadata(part: Part, sessionID: string) {
   const fields = Object.fromEntries(FIELDS.map(name => {
     const f = field(part, name)
-    return [name, { availability: f.availability, bytes: f.bytes }]
+    return [name, { availability: f.availability, ...(f.bytes === undefined ? {} : { bytes: f.bytes }) }]
   }))
   const state = mapping(part.value.state)!
   const encoded = serialized(part.value)
@@ -240,6 +240,7 @@ export function nativeEvidenceParts(messages: unknown, options: NativeEvidencePa
   return output({
     format: "loom-native-evidence-parts/v1",
     ...sourceView(source, options),
+    normalized_source_bytes: source.bytes,
     source_messages: source.messageCount,
     tool_parts: source.parts.length,
     items,
@@ -275,10 +276,13 @@ export function nativeEvidenceSource(messages: unknown, options: NativeEvidenceS
   for (const name of options.fields) {
     const f = field(part, name)
     if (f.availability === "available") values[name] = f.value
-    else gaps.push({ field: name, reason: f.availability === "redacted" ? "redacted" : "field-missing" })
+    else gaps.push({ field: name, reason: f.availability === "missing" ? "field-missing" : f.availability })
   }
+  // Discovery supplies exact identity/version/coverage, while fields and gaps
+  // describe only the selected views. Detailed metadata belongs to native-parts;
+  // it must not bypass field permissions through this mandatory envelope.
   return output({ ...base, status: gaps.length ? "partial" as const : "resolved" as const,
-    part: metadata(part, options.sessionID), fields: values, gaps,
+    part: { part_sha256: hash(serialized(part.value)) }, fields: values, gaps,
     note: "Approved field projection of the exact stored native tool part. Output is state.content, not a separate result. Dispatch is a stored metadata Session reference; it does not attest Loom assignment, native admission, or objective participation.",
   })
 }

@@ -6,6 +6,13 @@ type: Log
 
 ## 2026-11-25
 
+**PR #251 field disclosure correction:** Exact native-source reads now omit
+inventory metadata from their mandatory envelope, so a dispatch-only grant does
+not disclose lifecycle status, timestamps, field availability or byte counts.
+Registered and installed selective-policy checks inspect the complete response.
+Marker-shaped content remains withheld with unverified redaction provenance.
+See [the field authorization contract](learning-historical-evidence.md).
+
 **Historical engineering evidence (#227):** Extended existing record and trace
 tools with historical child discovery, record metadata and exact selected fields,
 native part inventory, structural matching and exact status/dispatch projections.

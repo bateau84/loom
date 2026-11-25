@@ -103,8 +103,15 @@ uses that reader and excludes unsettled messages.
 Loom consumes normalized messages; it does not inspect native tables. The exact
 native tool-part identity is Session + message + part ID. Tool output belongs to
 that part; there is no invented result identity. Selected projections preserve
-their source field and value. Missing/redacted fields remain missing/redacted;
-oversized requested originals fail explicitly rather than silently excerpting.
+their source field and value. Missing fields remain explicit gaps; oversized
+requested originals fail rather than silently excerpting.
+
+Redaction-shaped strings or objects establish only that a marker was detected.
+They may be literal original content, including in the caller's native context.
+Such values remain conservatively withheld and excluded from matching, with
+availability/gap reason `redaction-marker-unverified`; their original byte count
+is omitted. Neither a supplied export nor a marker alone proves sanitizer
+provenance. This uncertainty is preserved instead of reporting confirmed redaction.
 
 Inventory defaults to metadata. Literal matching defaults to allowlisted tool
 name, lifecycle status and dispatch Session ID. Explicit input/output matching
@@ -147,6 +154,19 @@ context. Every identity component is URI encoded, including the recipient; an
 embedded colon is `%3A` and cannot alias a resource separator or another tuple.
 Views are `children`, `native-parts`, the selected `native-FIELD`,
 `record-metadata`, `record-full`, or the selected `record-FIELD`.
+
+An exact native-source response contains the selected fields and their gaps,
+plus a required envelope of source/part identity and version hashes, namespace,
+coverage and operation resolution status. Its `part` object contains only
+`part_sha256`. The response's `status` says `resolved`, `partial`, `missing` or
+`changed`; the native lifecycle value appears only in explicitly selected
+`fields.status`. Tool names, timestamps, source/part sizes and all-field
+availability are inventory metadata under `native-parts`, and are absent from
+exact-source responses. Granting only exact dispatch inspection/disclosure can
+therefore return dispatch while native status and inventory disclosure stay denied.
+The permission envelope covers the complete serialized response, not just its
+`fields` object. Identity/version hashes pin sources; they do not certify origin
+or authorize other field views.
 
 For example, these ordered native rules permit only the named historical parent
 inventory within the new evidence resource namespace (other existing native
@@ -273,12 +293,12 @@ latencies or a production benchmark. Time sums invocation and serialization.
 
 | Equivalent information need | Existing path: calls / response bytes / ms | New path: calls / response bytes / ms |
 | --- | --- | --- |
-| Discover the five records for the same four known approved Session IDs | Whole-Action inventory then filter: 16 / 410,865 / 14.739 | Session-filtered metadata: 4 / 2,235 / 3.840 |
-| Read statement/artifact fields for the same five exact record IDs | Existing full exact-ID lookup: 5 / 3,010 / 2.779 | Selected fields: 5 / 3,516 / 3.707 |
+| Discover the five records for the same four known approved Session IDs | Whole-Action inventory then filter: 16 / 410,865 / 17.200 | Session-filtered metadata: 4 / 2,235 / 4.185 |
+| Read statement/artifact fields for the same five exact record IDs | Existing full exact-ID lookup: 5 / 3,010 / 3.005 | Selected fields: 5 / 3,516 / 3.772 |
 
 Complete direct-child plus selected-grandchild traversal took seven calls and
 51,381 response bytes. Structural part selection took one call and 3,155 bytes;
-four exact dispatch-reference reads took four calls and 6,640 bytes. These are
+four exact dispatch-reference reads took four calls and 4,776 bytes. These are
 absolute observations, without a fabricated pre-existing equivalent trace path.
 No byte-identical request was repeated. The measured responses exposed no project
 path, ledger filename or SQL literal under the fixture's explicit checks.

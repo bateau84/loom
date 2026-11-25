@@ -20,6 +20,7 @@ import subprocess
 import tarfile
 import tempfile
 import time
+from urllib.parse import quote
 from urllib.request import Request
 
 from installed_host_smoke import PrivateHost, installed_plugin_inventory, isolated_environment, require
@@ -39,6 +40,7 @@ CHECKS = {
     "exact-five-records-four-source-sessions",
     "native-dispatch-projection-and-source-pins",
     "own-context-exact-original-and-part-pin",
+    "selective-native-field-disclosure",
     "cross-session-and-export-raw-release-blocked",
     "revoked-discovery-inspection-disclosure-and-file-read-denied",
     "source-change-and-cursor-scope-denied",
@@ -206,6 +208,31 @@ def assert_read_only_effects(observed: list[dict], readers: set[str], plans: lis
             "qualification": "local scripted provider only; genuine Evaluator reasoning remains UNPROVEN"}
 
 
+def assert_exact_field_envelope(response_text: str, expected_fields: dict, native_status: str) -> dict:
+    """Check the complete serialized tool return, not only its selected fields."""
+    envelope = json.loads(response_text)
+    require(isinstance(envelope, dict) and set(envelope) == {"result"},
+            "Exact source returned an unexpected outer response field")
+    source = envelope["result"]
+    require(isinstance(source, dict) and set(source) == {
+        "format", "session_id", "source", "source_sha256", "messages_sha256", "coverage",
+        "identity", "status", "part", "fields", "gaps", "note", "namespace",
+    }, "Exact source returned information outside the permitted response envelope")
+    require(source["status"] == "resolved" and source["gaps"] == []
+            and source["fields"] == expected_fields, "Exact source changed or widened selected native fields")
+    require(set(source["identity"]) == {"session_id", "message_id", "part_id"}
+            and set(source["part"]) == {"part_sha256"}, "Exact source disclosed unselected part metadata")
+    require(set(source["coverage"]) == {"full_history", "authenticity", "location_verified", "detail"}
+            and set(source["namespace"]) == {"project_id", "workspace_id", "native_store_identity"},
+            "Exact source disclosed unexpected coverage or namespace metadata")
+    outside_fields = dict(envelope)
+    outside_fields["result"] = {key: value for key, value in source.items() if key != "fields"}
+    require(json.dumps(native_status) not in encoded(outside_fields),
+            "Native lifecycle status appeared outside the selected fields")
+    return {"complete_serialized_response_checked": True, "selected_fields": sorted(expected_fields),
+            "unselected_inventory_metadata": "absent", "resolution_status": source["status"]}
+
+
 class HistoricalScenario(ReviewScenario):
     def __init__(self, host, root):
         super().__init__(host, root)
@@ -246,6 +273,7 @@ class HistoricalScenario(ReviewScenario):
                     and namespace.get("native_store_identity") == "unavailable",
                     "Native evidence omitted its namespace or invented a store identity")
         self.retrievals.append({"label": label, "tool": tool, "query": query, "result": value,
+                                "response_text": returned_text,
                                 "response_bytes": size, "tool_latency_ms": after[0]["at"] - before[0]["at"],
                                 "driver_elapsed_ms": round(elapsed * 1000, 3)})
         return value
@@ -526,11 +554,56 @@ def run(args) -> dict:
                         "match": "LOOM_HARNESS_JOB:", "match_fields": ["input"]}, "unsupported-source-release")
                     check("cross-session-and-export-raw-release-blocked", raw_reads=2, body_matching=1)
 
-                    def policy(resource):
-                        rules = allow + [{"action": "read", "resource": resource, "effect": "deny"}]
+                    def set_policy(rules):
                         request(host, "PATCH", f"/api/session/{reader}", {"permissions": rules})
                         require(request(host, "GET", f"/api/session/{reader}").get("permissions") == rules,
-                                "Native reader policy did not retain the exact revocation")
+                                "Native reader policy did not retain the exact rules")
+
+                    def selective_policy(query, selected_fields):
+                        encode_id = lambda value: quote(value, safe="-_.!~*'()")
+                        source_session = query.get("session_id", reader)
+                        parent_scope = "session:" + encode_id(source_session)
+                        scope = (parent_scope + ":message:" + encode_id(query["message_id"])
+                                 + ":part:" + encode_id(query["part_id"]))
+                        resources = ["loom:evidence:discover:" + parent_scope, "loom:evidence:discover:" + scope]
+                        for field in selected_fields:
+                            resources += [f"loom:evidence:inspect:{scope}:view:native-{field}",
+                                          f"loom:evidence:disclose:{scope}:view:native-{field}:recipient:{encode_id(reader)}"]
+                        rules = allow + [{"action": "read", "resource": "loom:evidence:*", "effect": "deny"}]
+                        rules += [{"action": "read", "resource": resource, "effect": "allow"} for resource in resources]
+                        set_policy(rules)
+                        return rules
+
+                    selected = {"operation": "source", "session_id": parent,
+                        "export_path": export_files["split"].name, "message_id": target["message_id"],
+                        "part_id": target["part_id"], "part_sha256": target["part_sha256"], "fields": ["dispatch"]}
+                    selected_original = tool_parts(originals[parent])[(target["message_id"], target["part_id"])]
+                    selected_dispatch = {"dispatch": {"session_id": selected_original["state"]["metadata"]["sessionID"],
+                                                      "source_field": "state.metadata.sessionID"}}
+                    dispatch_rules = selective_policy(selected, ["dispatch"])
+                    scenario.read(reader, "trace", selected, "selective-dispatch-status-inventory-denied")
+                    selective_checks = [assert_exact_field_envelope(scenario.retrievals[-1]["response_text"],
+                        selected_dispatch, selected_original["state"]["status"])]
+                    scenario.denied(reader, "trace", {**selected, "fields": ["dispatch", "status"]})
+                    scenario.denied(reader, "trace", {"operation": "parts", "session_id": parent,
+                        "export_path": export_files["split"].name, "tool": "subagent"})
+                    combined_rules = selective_policy(selected, ["dispatch", "status"])
+                    scenario.read(reader, "trace", {**selected, "fields": ["dispatch", "status"]}, "selective-status-explicitly-granted")
+                    selective_checks.append(assert_exact_field_envelope(scenario.retrievals[-1]["response_text"],
+                        {**selected_dispatch, "status": selected_original["state"]["status"]}, selected_original["state"]["status"]))
+                    output_rules = selective_policy(exact, ["output"])
+                    scenario.read(reader, "trace", exact, "selective-own-output-status-inventory-denied")
+                    selective_checks.append(assert_exact_field_envelope(scenario.retrievals[-1]["response_text"],
+                        {"output": current["state"]["content"]}, current["state"]["status"]))
+                    set_policy(allow)
+                    report["selective_field_policy"] = {"dispatch_only": dispatch_rules, "dispatch_and_status": combined_rules,
+                                                       "own_output_only": output_rules}
+                    check("selective-native-field-disclosure", successful_projections=selective_checks,
+                          denied_status_request=True, denied_inventory_request=True,
+                          policy="native evidence denied by default; exact selected fields explicitly allowed")
+
+                    def policy(resource):
+                        set_policy(allow + [{"action": "read", "resource": resource, "effect": "deny"}])
 
                     children_query = {"operation": "children", "access": "historical", "session_id": parent, "limit": 50}
                     parts_query = {"operation": "parts", "session_id": parent, "export_path": export_files["split"].name, "tool": "subagent"}
