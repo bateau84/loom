@@ -34,7 +34,7 @@ CHECKS = {
     "old-loom-snapshot-recovers-without-new-effect",
     "additional-native-send-denied-by-durable-owner",
     "lost-ack-recovered-without-new-effect",
-    "native-rejection-proves-zero-send-and-release",
+    "provider-rejection-with-native-admission-preserved",
     "crashed-native-send-retains-uncertain-reservation",
     "concurrent-issues-share-one-capacity-pool",
     "provider-admission-oracle-rejects-duplicate",
@@ -310,13 +310,49 @@ def run(args):
                         check("lost-ack-recovered-without-new-effect")
                     elif name == "reject":
                         rejected = case.driver("execute")
-                        require(rejected["receipt"]["execution"] == "not-admitted" and rejected["receipt"]["budget"] == "released",
-                                "Native rejection did not yield authoritative zero-effect release")
+                        require(rejected["receipt"]["execution"] == "not-admitted" and rejected["receipt"]["budget"] == "released"
+                                and rejected["receipt"]["fenced"] and rejected["receipt"]["usage"] == {
+                                    "requests": 0, "input_tokens": 0, "output_tokens": 0},
+                                "Provider send rejection did not yield fenced zero-usage budget release")
                         observed = inventory(root)
                         assert_admissions(observed, 0)
-                        require(observed["enrollments"][0]["denied_sends"] >= 1, "Native rejection missed actual provider boundary")
+                        row = observed["enrollments"][0]
+                        enqueued = [event for event in observed["events"] if event["type"] == "native-event"
+                                    and event["data"].get("type") == "session.inbox.enqueued"
+                                    and event["data"].get("session_id") == row["session_id"]
+                                    and event["data"].get("message_id") == row["input_id"]]
+                        delivered = [event for event in observed["events"] if event["type"] == "native-event"
+                                     and event["data"].get("type") == "session.inbox.delivered"
+                                     and event["data"].get("session_id") == row["session_id"]
+                                     and event["data"].get("message_id") == row["input_id"]]
+                        denied = [event for event in observed["events"] if event["type"] == "provider-attempt"
+                                  and event["data"].get("issue_key") == row["issue_key"]
+                                  and event["data"].get("admitted") is False]
+                        require(len(enqueued) == len(delivered) == len(denied) == row["denied_sends"] == 1
+                                and enqueued[0]["sequence"] < delivered[0]["sequence"] < denied[0]["sequence"],
+                                "Expected original native input admission and delivery before provider send denial")
                         require(any(e["type"] == "retry-denied" for e in observed["events"]), "Native retry decision was not exercised")
-                        check("native-rejection-proves-zero-send-and-release",
+                        before = case.driver("inspect")["issue"]["attempt"]
+                        require(before["state"] == "unknown" and before["native_outcome"] == "unknown"
+                                and before["claimant_id"] and before["claimed_at"],
+                                "Provider-only non-admission falsely rejected or reopened the consumed native issue")
+                        claim = {key: before[key] for key in ("attempt_id", "claimant_id", "claimed_at")}
+                        attempts = [event for event in observed["events"] if event["type"] in ("model-request", "provider-attempt")]
+                        for command in ("recover", "execute"):
+                            replay = case.driver(command)
+                            require(replay["receipt"] == rejected["receipt"], "Reconciliation changed provider budget release")
+                            after = case.driver("inspect")["issue"]["attempt"]
+                            require(after["state"] == "unknown" and after["native_outcome"] == "unknown"
+                                    and {key: after[key] for key in claim} == claim,
+                                    "Recovery or replay changed the consumed claim or manufactured native non-admission")
+                            replayed = inventory(root)
+                            assert_admissions(replayed, 0)
+                            require([event for event in replayed["events"]
+                                     if event["type"] in ("model-request", "provider-attempt")] == attempts,
+                                    "Recovery or replay issued another native model request")
+                        check("provider-rejection-with-native-admission-preserved",
+                              native_input_admitted=True, canonical_native_outcome="unknown", admitted_model_sends=0,
+                              budget="released", claim_retained=True,
                               retry_decisions=sum(e["type"] == "retry-denied" for e in observed["events"]))
                     elif name == "crash":
                         uncertain = case.driver("execute")

@@ -23,6 +23,9 @@ export type EvaluatorExecutionReceipt = {
   format: "loom-evaluation-execution-receipt/v1";
   authority_id: string; receipt_id: string; sequence: number; admission_sha256: string;
   reservation_id: string;
+  // The owner's budgeted effect boundary, not native inbox admission. In
+  // particular, not-admitted does not prove that native input or source exposure
+  // never occurred; it cannot supply a canonical native rejection observation.
   execution: "reserved" | "unknown" | "admitted" | "not-admitted" | "completed" | "failed" | "cancelled";
   budget: "held" | "uncertain" | "released" | "settled";
   fenced: boolean; usage: EvaluatorResources | null;

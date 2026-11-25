@@ -3,6 +3,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { EvaluatorExecution } from "../src/evaluator-execution.js"
+import { ReviewIssues, ReviewIssueError, type RetryDecision } from "../src/review-issues.js"
 import type { Actor } from "../src/model.js"
 import type { EvaluatorExecutionAuthority } from "../src/evaluator-execution-contract.js"
 import { ACTOR, NOW, POLICY, FixtureExecutionAuthority, firstSource, freshSignal, method, openState, pins, prepareFixture,
@@ -521,7 +522,7 @@ test("token reservations in the shared fixture pool remain held until authoritat
   }
 })
 
-test("authority lookup failure after claim is not native rejection and retains uncertain reservation until fenced", async () => {
+test("authority lookup failure after claim retains unresolved execution and uncertain reservation until fenced", async () => {
   const f = fixture()
   try {
     const { prepared } = await preparedFixture(f)
@@ -682,4 +683,62 @@ test("a delayed exact reserved observation returns the newer accepted completed 
     expect(issue(observer, prepared).attempt.native_outcome).toBe("issued")
     expect(f.authority.counts()).toEqual({ reservations: 1, consumed: 1, execute_calls: 1, effects: 1 })
   } finally { resume.resolve(); await delayed?.catch(() => {}); f.close() }
+})
+
+test("effect rejection releases unused budget without proving native non-admission or enabling retry", async () => {
+  const f = fixture()
+  try {
+    const { prepared } = await preparedFixture(f)
+    f.authority.phase = async phase => { if (phase === "before-consume") f.authority.revoke() }
+    // The adapter was entered, but its budgeted effect was denied. This receipt
+    // makes no assertion that a native input was never accepted before denial.
+    const denied = await f.runtime().execute(ACTOR, pins(prepared), freshSignal())
+    expect(denied.receipt).toMatchObject({ execution: "not-admitted", budget: "released", fenced: true,
+      usage: { requests: 0, input_tokens: 0, output_tokens: 0 }, result: null })
+    const originalIssue = issue(f.state, prepared), claimant = originalIssue.attempt.claimant_id
+    expect(claimant).not.toBeNull()
+    expect(originalIssue.attempt.native_outcome).toBe("unknown")
+    for (const result of [await f.runtime().recover(ACTOR, pins(prepared)), await f.runtime().execute(ACTOR, pins(prepared), freshSignal())]) {
+      expect(result.receipt).toEqual(denied.receipt)
+      expect(issue(f.state, prepared).attempt).toMatchObject({ claimant_id: claimant, native_outcome: "unknown" })
+    }
+    expect(f.authority.counts()).toEqual({ reservations: 1, consumed: 0, execute_calls: 1, effects: 0 })
+
+    // A separate durable synthetic retry decision permits only a predecessor
+    // with proven native non-admission. Released effect budget cannot satisfy it.
+    const decision: RetryDecision = { canonical_ref: "fixture-only-after-native-non-admission", request_id: prepared.request_id,
+      after_intent: originalIssue.intent, allow_unresolved_prior: false, authority_source: "fixture:separate-retry-owner" }
+    f.authority.db.exec("CREATE TABLE fixture_retry_decisions(reference TEXT PRIMARY KEY,body TEXT NOT NULL,active INTEGER NOT NULL)")
+    f.authority.db.query("INSERT INTO fixture_retry_decisions VALUES(?,?,1)").run(decision.canonical_ref, JSON.stringify(decision))
+    let rechecked = 0
+    const retries = new ReviewIssues(f.state.ledger, {
+      request: (actor, id) => f.state.store.reviews.getRequest(actor, id),
+      checkFresh: () => { throw new Error("Fixture evaluation must retain its frozen historical mandate") },
+    }, {
+      resolve: (_actor, reference) => {
+        const row = f.authority.db.query("SELECT body FROM fixture_retry_decisions WHERE reference=?").get(reference) as { body: string } | undefined
+        return row ? JSON.parse(row.body) as RetryDecision : undefined
+      },
+      recheck: (_actor, candidate) => {
+        rechecked++
+        const row = f.authority.db.query("SELECT active FROM fixture_retry_decisions WHERE reference=?").get(candidate.canonical_ref) as { active: number } | undefined
+        return row?.active === 1
+      },
+    })
+    let retryError: unknown
+    try { retries.prepare(ACTOR, prepared.request_id, { kind: "retry", after_intent: originalIssue.intent, authorization_ref: decision.canonical_ref }) }
+    catch (error) { retryError = error }
+    expect(rechecked).toBe(1)
+    expect(retryError).toBeInstanceOf(ReviewIssueError)
+    expect(retryError).toMatchObject({ code: "unresolved-prior-issue" })
+    expect(retries.list(ACTOR, prepared.request_id).items).toHaveLength(1)
+
+    // A later independent input observation also survives reconciliation of
+    // the budget owner receipt; the receipt must never downgrade it to rejection.
+    f.state.store.reviews.issues.recordOutcome(originalIssue.intent, claimant!, { status: "issued",
+      source_ref: "fixture:late-native-input-observation", reason: "Synthetic independent input observation, not effect admission" })
+    await f.runtime().recover(ACTOR, pins(prepared))
+    expect(issue(f.state, prepared).attempt).toMatchObject({ claimant_id: claimant, native_outcome: "issued" })
+    expect(f.authority.counts()).toEqual({ reservations: 1, consumed: 0, execute_calls: 1, effects: 0 })
+  } finally { f.close() }
 })

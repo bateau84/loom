@@ -43,10 +43,21 @@ The nine installed checks cover:
 - An actual additional native request denied at the durable provider boundary.
 - A duplicate admitted invocation using a legitimate recipient rejected by the oracle.
 - A deliberately lost native acknowledgement reconciled without another send.
-- Actual native provider rejection, denied retry and authoritative zero-effect release.
+- Provider send rejection after native input admission and delivery, denied retry,
+  zero admitted model sends and authoritative budget release, with the canonical
+  claim retained and its native outcome conservative through recovery and replay.
 - SIGKILL after native provider admission, uncertain reservation retention, consumer
   replay without dispatch and a denied additional native request after restart.
 - Independent consumer processes competing for one shared account-pool unit.
+
+The rejection case preserves the earlier source exposure: the original input
+was committed to the native inbox, delivered into Session history and presented
+to the fixture provider before its send gate rejected it. Fenced zero model
+usage justifies releasing this fixture's spending reservation. It does not prove
+native pre-admission rejection or retract source access. The effect receipt's
+`not-admitted` therefore leaves canonical `native_outcome` as `unknown`, without
+reopening its consumed claim. Recovery and execution replay retain that claim
+and budget release without another native model request.
 
 The crash case does not assert that every restart automatically retries. It
 proves that the consumed fixture reservation survives restart, and deliberately

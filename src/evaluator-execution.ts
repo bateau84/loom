@@ -69,10 +69,11 @@ export class EvaluatorExecution {
     // store preserves it idempotently; return the latest accepted receipt too.
     const receipt = current.receipts.at(-1)!
     // Reconciliation cannot acquire a missing/restored claim. Preserve a known
-    // original claimant only; a stronger native receipt never mints a new permit.
+    // original claimant only; an effect receipt never mints a new permit.
+    // Effect non-admission can follow native inbox admission and source exposure.
+    // It cannot prove native pre-admission rejection or resolve that uncertainty.
     if (issue.attempt.claimant_id) this.store.reviews.issues.recordOutcome(issue.intent, issue.attempt.claimant_id, {
-      status: receipt.execution === "not-admitted" ? "proven-non-admission"
-        : ["admitted", "completed", "failed"].includes(receipt.execution) || receipt.result ? "issued" : "unknown",
+      status: ["admitted", "completed", "failed"].includes(receipt.execution) || receipt.result ? "issued" : "unknown",
       source_ref: receipt.receipt_id, reason: "execution-owner-observation-not-Q4-provenance",
     })
     return { admission, receipt }
