@@ -4,8 +4,10 @@ import type { SQL } from "./store.js"
 import { evaluatorMethod, parseEvaluatorMethod, type EvaluatorMethodManifest } from "./evaluator-method.js"
 import { assertEvaluatorReceiptProgress, parseEvaluatorAdmission, parseEvaluatorReceipt,
   type EvaluatorExecutionAdmission, type EvaluatorExecutionReceipt } from "./evaluator-execution-contract.js"
+import { parseRetrospectiveManifest, retrospectiveBudget, retrospectiveDigest, RETROSPECTIVE_LIMITS,
+  type RetrospectiveManifest, type RetrospectivePopulation, type RetrospectiveSources } from "./retrospective-contract.js"
 
-export type EvaluationSourceRef = { kind: string; id: string; session_id?: string; revision?: string; sha256?: string; required: boolean }
+export type EvaluationSourceRef = { kind: string; id: string; session_id?: string; message_id?: string; revision?: string; sha256?: string; required: boolean }
 export type EvaluationMember = { key: string; kind: "session" | "objective"; source_refs: EvaluationSourceRef[] }
 export type EvaluationMethod = { id: string; instruction_sha256: string }
 export type EvaluationFreeze = {
@@ -54,6 +56,20 @@ export const EVALUATOR_COLUMNS = {
   requests: ["batch_id", "slot", "method_id", "request_id", "data_json", "sha256", "created_at"],
 } as const
 
+export const RETROSPECTIVE_COLUMNS = {
+  schema: ["singleton", "version"],
+  populations: ["id", "owner_session", "owner_agent", "source_store_id", "manifest_sha256", "header_json", "contributors_json", "contains_private_reviews", "member_count", "metadata_sha256", "created_at"],
+  members: ["population_id", "key", "ordinal", "data_json"],
+} as const
+type RetrospectiveRow = {
+  id: string; owner_session: string; owner_agent: string; source_store_id: string; manifest_sha256: string;
+  header_json: string; contributors_json: string; contains_private_reviews: number; member_count: number;
+  metadata_sha256: string; created_at: string;
+}
+const retrospectiveID = (owner: string, sourceStoreID: string, manifestSHA: string) => "retrospective-" + digest({
+  format: "loom-retrospective-identity/v1", owner_session: owner, source_store_id: sourceStoreID, manifest_sha256: manifestSHA,
+})
+
 export type EvaluatorExecutionRecord = { admission: EvaluatorExecutionAdmission; receipts: EvaluatorExecutionReceipt[] }
 export const EXECUTION_COLUMNS = {
   schema: ["singleton", "version"],
@@ -87,14 +103,19 @@ const hash = (value: unknown): string => {
 const budget = () => new ProcessingBudget(33554432, 2000000)
 const encoded = (value: unknown) => canonical(value, budget())
 const fingerprint = (value: unknown) => digest(value, budget())
-const sourceKey = (ref: EvaluationSourceRef) => fingerprint({ kind: ref.kind, id: ref.id, session_id: ref.session_id, revision: ref.revision, sha256: ref.sha256 })
+const sourceKey = (ref: EvaluationSourceRef) => fingerprint({ kind: ref.kind, id: ref.id, session_id: ref.session_id,
+  ...(ref.message_id === undefined ? {} : { message_id: ref.message_id }), revision: ref.revision, sha256: ref.sha256 })
 const refs = (input: EvaluationSourceRef[]): EvaluationSourceRef[] => {
   if (!Array.isArray(input) || input.length > 100000) throw new Error("Invalid evaluation source population")
   const found = new Map<string, EvaluationSourceRef>()
   for (const value of input) {
-    if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(k => !["kind", "id", "session_id", "revision", "sha256", "required"].includes(k)) || typeof value.required !== "boolean") throw new Error("Invalid evaluation source")
+    if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some(k => !["kind", "id", "session_id", "message_id", "revision", "sha256", "required"].includes(k)) || typeof value.required !== "boolean") throw new Error("Invalid evaluation source")
     const ref: EvaluationSourceRef = { kind: text(value.kind, "source kind", 100), id: text(value.id, "source ID", 1000), required: value.required }
     if (value.session_id !== undefined) ref.session_id = text(value.session_id, "source Session", 200)
+    if (value.message_id !== undefined) {
+      if (ref.kind !== "native-call" || !ref.session_id) throw new Error("Invalid native call source identity")
+      ref.message_id = text(value.message_id, "source message", 200)
+    }
     if (value.revision !== undefined) ref.revision = text(value.revision, "source revision", 200)
     if (value.sha256 !== undefined) ref.sha256 = hash(value.sha256)
     const key = sourceKey(ref), previous = found.get(key)
@@ -185,6 +206,137 @@ export class EvaluationStore {
     return batch
   }
 
+  /** Selection metadata belongs to this owner, separately from processing batches.
+   * There are no source bodies, source grants or evaluator execution states here. */
+  private retrospectiveSchema(create: boolean): boolean {
+    const tables = this.db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name GLOB 'learning_retrospective_*'").all() as Array<{ name: string }>
+    if (!tables.length) {
+      if (!create) return false
+      this.db.exec(`
+        CREATE TABLE learning_retrospective_schema(singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL CHECK(version=1));
+        CREATE TABLE learning_retrospective_populations(
+          id TEXT PRIMARY KEY, owner_session TEXT NOT NULL, owner_agent TEXT NOT NULL, source_store_id TEXT NOT NULL,
+          manifest_sha256 TEXT NOT NULL, header_json TEXT NOT NULL, contributors_json TEXT NOT NULL,
+          contains_private_reviews INTEGER NOT NULL CHECK(contains_private_reviews IN (0,1)),
+          member_count INTEGER NOT NULL CHECK(member_count>0), metadata_sha256 TEXT NOT NULL, created_at TEXT NOT NULL,
+          UNIQUE(owner_session,manifest_sha256));
+        CREATE TABLE learning_retrospective_members(
+          population_id TEXT NOT NULL REFERENCES learning_retrospective_populations(id), key TEXT NOT NULL,
+          ordinal INTEGER NOT NULL CHECK(ordinal>0), data_json TEXT NOT NULL,
+          PRIMARY KEY(population_id,key), UNIQUE(population_id,ordinal));
+        INSERT INTO learning_retrospective_schema VALUES(1,1);
+      `)
+      return true
+    }
+    for (const [name, required] of Object.entries(RETROSPECTIVE_COLUMNS)) {
+      const columns = this.db.prepare(`PRAGMA table_info(learning_retrospective_${name})`).all() as Array<{ name: string }>
+      if (required.some(column => !columns.some(actual => actual.name === column))) throw new Error("Retrospective population schema is incomplete")
+    }
+    const markers = this.db.prepare("SELECT singleton,version FROM learning_retrospective_schema").all() as Array<{ singleton: number; version: number }>
+    if (markers.length !== 1 || markers[0]?.singleton !== 1 || markers[0]?.version !== 1) throw new Error("Unsupported retrospective population schema")
+    return true
+  }
+
+  private retrospectiveMetadata(row: Omit<RetrospectiveRow, "header_json">): RetrospectiveSources {
+    const contributors: unknown = JSON.parse(row.contributors_json)
+    if (!Array.isArray(contributors) || contributors.length > RETROSPECTIVE_LIMITS.contributors
+      || contributors.some(value => typeof value !== "string") || new Set(contributors).size !== contributors.length
+      || ![0, 1].includes(row.contains_private_reviews)) throw new Error("Retrospective population metadata integrity mismatch")
+    const sources: RetrospectiveSources = { population_id: uid(row.id), manifest_sha256: hash(row.manifest_sha256),
+      owner_session: uid(row.owner_session), source_store_id: uid(row.source_store_id),
+      contributors: contributors.map(value => uid(value)), contains_private_reviews: row.contains_private_reviews === 1,
+      member_count: integer(row.member_count, "retrospective member count", 1, RETROSPECTIVE_LIMITS.members) }
+    const frozenBy = { session_id: sources.owner_session, agent: text(row.owner_agent, "retrospective author", 200) }
+    if (sources.population_id !== retrospectiveID(sources.owner_session, sources.source_store_id, sources.manifest_sha256)
+      || digest({ ...sources, frozen_by: frozenBy, created_at: row.created_at }) !== row.metadata_sha256 || !Number.isFinite(Date.parse(row.created_at)))
+      throw new Error("Retrospective population metadata integrity mismatch")
+    return sources
+  }
+
+  /** Metadata-only permission preflight. An omitted owner does not grant access:
+   * the async source owner must authorize every contributor before body loading. */
+  retrospectiveSources(id: string, owner?: string): RetrospectiveSources {
+    uid(id, "population_id")
+    if (!this.retrospectiveSchema(false)) throw new Error("Retrospective population unavailable")
+    const row = this.db.prepare(`SELECT id,owner_session,owner_agent,source_store_id,manifest_sha256,
+      CASE WHEN typeof(contributors_json)='text' AND octet_length(contributors_json)<=786432 THEN contributors_json END AS contributors_json,
+      contains_private_reviews,member_count,metadata_sha256,created_at
+      FROM learning_retrospective_populations WHERE id=?`).get(id) as Omit<RetrospectiveRow, "header_json"> | undefined
+    if (!row || owner !== undefined && row.owner_session !== owner || typeof row.contributors_json !== "string")
+      throw new Error("Retrospective population unavailable")
+    return this.retrospectiveMetadata(row)
+  }
+
+  findRetrospective(manifestSHA: string, owner: string): RetrospectiveSources | null {
+    hash(manifestSHA); uid(owner)
+    if (!this.retrospectiveSchema(false)) return null
+    const row = this.db.prepare("SELECT id FROM learning_retrospective_populations WHERE owner_session=? AND manifest_sha256=?")
+      .get(owner, manifestSHA) as { id: string } | undefined
+    return row ? this.retrospectiveSources(row.id, owner) : null
+  }
+
+  /** Immutable manifest reconstruction. Current source availability is separate;
+   * callers perform asynchronous original and disclosure checks on every read. */
+  retrospectivePopulation(id: string, owner?: string): RetrospectivePopulation {
+    const sources = this.retrospectiveSources(id, owner)
+    const size = this.db.prepare(`SELECT COUNT(*) AS count,SUM(length(data_json)) AS chars,
+      SUM(CASE WHEN typeof(data_json)='text' THEN 0 ELSE 1 END) AS invalid
+      FROM learning_retrospective_members WHERE population_id=?`).get(id) as { count: number; chars: number | null; invalid: number | null }
+    if (size.count !== sources.member_count || size.invalid || (size.chars ?? 0) > RETROSPECTIVE_LIMITS.chars)
+      throw new Error("Retrospective frozen membership is incomplete or oversized")
+    const row = this.db.prepare(`SELECT owner_agent,created_at,
+      CASE WHEN typeof(header_json)='text' AND octet_length(header_json)<=100663296 THEN header_json END AS header_json
+      FROM learning_retrospective_populations WHERE id=?`).get(id) as Pick<RetrospectiveRow, "owner_agent" | "created_at" | "header_json"> | undefined
+    if (!row || typeof row.header_json !== "string") throw new Error("Retrospective population unavailable")
+    const rows = this.db.prepare(`SELECT key,ordinal,
+      CASE WHEN typeof(data_json)='text' AND octet_length(data_json)<=100663296 THEN data_json END AS data_json
+      FROM learning_retrospective_members WHERE population_id=? ORDER BY ordinal LIMIT ?`)
+      .all(id, RETROSPECTIVE_LIMITS.members + 1) as Array<{ key: string; ordinal: number; data_json: string | null }>
+    if (rows.length !== sources.member_count || rows.some((member, index) => member.ordinal !== index + 1 || typeof member.data_json !== "string"))
+      throw new Error("Retrospective frozen membership is incomplete")
+    // Charge aggregate retained bytes before parsing any member bodies.
+    const readBudget = retrospectiveBudget()
+    readBudget.take(row.header_json.length)
+    for (const member of rows) readBudget.take(member.data_json!.length)
+    const header: unknown = JSON.parse(row.header_json)
+    if (!header || typeof header !== "object" || Array.isArray(header) || "members" in header) throw new Error("Invalid retrospective manifest header")
+    const manifest = parseRetrospectiveManifest({ ...header, members: rows.map(member => JSON.parse(member.data_json!)) })
+    if (retrospectiveDigest(manifest) !== sources.manifest_sha256 || manifest.source_store_id !== sources.source_store_id
+      || canonical(manifest.contributors) !== canonical(sources.contributors)
+      || manifest.members.some((member, index) => member.key !== rows[index]?.key)
+      || manifest.members.some(member => ["review-request", "review-relationship"].includes(member.source.kind)) !== sources.contains_private_reviews)
+      throw new Error("Retrospective population integrity mismatch")
+    return { population_id: id, manifest_sha256: sources.manifest_sha256, owner_session: sources.owner_session,
+      frozen_by: { session_id: sources.owner_session, agent: text(row.owner_agent, "retrospective author", 200) },
+      created_at: row.created_at, manifest }
+  }
+
+  freezeRetrospective(actor: Actor, input: unknown): RetrospectivePopulation {
+    const owner = uid(actor.session_id), agent = text(actor.agent, "retrospective author", 200)
+    const manifest = parseRetrospectiveManifest(input), sha256 = retrospectiveDigest(manifest)
+    const id = retrospectiveID(owner, manifest.source_store_id, sha256)
+    const { members, ...header } = manifest
+    const metadata: RetrospectiveSources = { population_id: id, manifest_sha256: sha256, source_store_id: manifest.source_store_id,
+      owner_session: owner, contributors: manifest.contributors, member_count: members.length,
+      contains_private_reviews: members.some(member => ["review-request", "review-relationship"].includes(member.source.kind)) }
+    this.transaction(() => {
+      this.retrospectiveSchema(true)
+      const existing = this.findRetrospective(sha256, owner)
+      if (existing) {
+        if (existing.population_id !== id) throw new Error("Retrospective population identity conflict")
+        this.retrospectivePopulation(id, owner)
+        return
+      }
+      const createdAt = new Date(this.clock()).toISOString()
+      this.db.prepare("INSERT INTO learning_retrospective_populations VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(id, owner, agent,
+        manifest.source_store_id, sha256, canonical(header, retrospectiveBudget()), canonical(manifest.contributors),
+        Number(metadata.contains_private_reviews), members.length, digest({ ...metadata, frozen_by: { session_id: owner, agent }, created_at: createdAt }), createdAt)
+      const insert = this.db.prepare("INSERT INTO learning_retrospective_members VALUES(?,?,?,?)")
+      members.forEach((member, index) => insert.run(id, member.key, index + 1, canonical(member, retrospectiveBudget())))
+    })
+    return this.retrospectivePopulation(id, owner)
+  }
+
   /** Optional preparation metadata is initialized only by explicit preparation.
    * A damaged extension blocks that operation without disabling Stage 3. */
   private evaluatorSchema(create: boolean): boolean {
@@ -222,6 +374,15 @@ export class EvaluationStore {
     return { batch: this.get(batchID, owner), members }
   }
 
+  /** The new route validates persisted membership only. Source-owner and current
+   * investigator checks are asynchronous service obligations, never this callback. */
+  frozenPreparationPopulation(batchID: string, owner: string): { batch: EvaluationBatch; members: EvaluationMember[] } {
+    const batch = this.row(batchID, owner)
+    if (batch.scope_key !== "evaluator-preparation/retrospective") throw new Error("Retrospective preparation unavailable")
+    const rows = this.verifyMembership(batch)
+    return { batch: this.get(batchID, owner), members: rows.map(row => ({ key: row.key, kind: row.kind, source_refs: refs(JSON.parse(row.source_refs)) })) }
+  }
+
   /** One immutable overall slot. The builder is pure; no cross-store writes run
    * until the mapping and its original requester have committed. */
   prepareEvaluatorRequest(batchID: string, owner: string, input: unknown, requester: Actor,
@@ -231,7 +392,8 @@ export class EvaluationStore {
     if (origin.session_id !== owner) throw new Error("Evaluator preparation unavailable")
     return this.transaction(() => {
       const batch = this.row(batchID, owner)
-      if (canonical(JSON.parse(batch.method_json)) !== canonical(method) || batch.scope_key !== "evaluator-preparation/calling-session")
+      if (canonical(JSON.parse(batch.method_json)) !== canonical(method)
+        || !["evaluator-preparation/calling-session", "evaluator-preparation/retrospective"].includes(batch.scope_key))
         throw new Error("Evaluator preparation method or scope mismatch")
       const mappedBefore = batch.blocked_reason === "evaluator-request-mapped" || batch.blocked_reason === "evaluator-dispatch-unavailable"
       if (!this.evaluatorSchema(false) && mappedBefore) throw new Error("Evaluator preparation mapping lost; restore required")
@@ -321,6 +483,7 @@ export class EvaluationStore {
 
   private executionBinding(batchID: string, owner: string, admission: EvaluatorExecutionAdmission): EvaluatorPreparationRecord {
     const batch = this.row(batchID, owner), prepared = this.readEvaluatorRequest(batchID, owner), subject = admission.grant.subject
+    if (batch.scope_key === "evaluator-preparation/retrospective") throw new Error("Retrospective evaluator execution is disconnected")
     if (!prepared || !prepared.data || typeof prepared.data !== "object" || Array.isArray(prepared.data)
         || !("manifest_sha256" in prepared.data) || subject.batch_id !== batchID || subject.owner_session !== owner
         || subject.request_id !== prepared.request_id || subject.source_store_id !== batch.source_store_id
@@ -455,7 +618,7 @@ export class EvaluationStore {
       const latest = this.db.prepare("SELECT * FROM learning_evaluation_batches WHERE owner_session=? AND scope_key=? ORDER BY sequence DESC LIMIT 1").get(owner, scope) as BatchRow | undefined
       const previous = input.previous_batch_id === undefined ? latest : this.row(input.previous_batch_id, owner)
       if (previous && (previous.scope_key !== scope || previous.id !== latest?.id)) throw new Error("Evaluation predecessor is not the current scope revision")
-      const id = scope === "evaluator-preparation/calling-session" ? "eval-preparation-" + identity : randomUUID(), now = new Date(this.clock()).toISOString()
+      const id = ["evaluator-preparation/calling-session", "evaluator-preparation/retrospective"].includes(scope) ? "eval-preparation-" + identity : randomUUID(), now = new Date(this.clock()).toISOString()
       this.db.prepare("INSERT INTO learning_evaluation_batches(id,identity,owner_session,scope_key,source_store_id,boundary_json,method_json,membership_sha256,revision,previous_batch_id,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,'pending',?,?)")
         .run(id, identity, owner, scope, namespace, canonical(boundary), canonical(method), membership, (latest?.revision ?? 0) + 1, previous?.id ?? null, now, now)
       const insert = this.db.prepare("INSERT INTO learning_evaluation_members(batch_id,key,ordinal,kind,source_refs) VALUES(?,?,?,?,?)")
@@ -572,11 +735,13 @@ export class EvaluationStore {
       .get(text(owner, "owner", 200), text(scope, "scope", 200)) as { id: string } | undefined
     return row ? this.get(row.id, owner) : null
   }
-  list(owner: string, input: { before?: number; limit?: number; exclude_scope?: string } = {}): { items: EvaluationBatch[]; next_before: number | null } {
+  list(owner: string, input: { before?: number; limit?: number; exclude_scope?: string | string[] } = {}): { items: EvaluationBatch[]; next_before: number | null } {
     const take = integer(input.limit ?? 20, "page limit", 1, 100), before = integer(input.before ?? Number.MAX_SAFE_INTEGER, "cursor", 1)
-    const args = [text(owner, "owner", 200), before, ...(input.exclude_scope === undefined ? [] : [text(input.exclude_scope, "excluded scope", 200)]), take + 1]
+    const excluded = input.exclude_scope === undefined ? [] : Array.isArray(input.exclude_scope) ? input.exclude_scope : [input.exclude_scope]
+    if (excluded.length > 20) throw new Error("Invalid evaluation excluded scopes")
+    const args = [text(owner, "owner", 200), before, ...excluded.map(scope => text(scope, "excluded scope", 200)), take + 1]
     const rows = this.db.prepare("SELECT id,sequence FROM learning_evaluation_batches WHERE owner_session=? AND sequence<?"
-      + (input.exclude_scope === undefined ? "" : " AND scope_key<>?") + " ORDER BY sequence DESC LIMIT ?").all(...args) as Array<{ id: string; sequence: number }>
+      + (excluded.length ? ` AND scope_key NOT IN (${excluded.map(() => "?").join(",")})` : "") + " ORDER BY sequence DESC LIMIT ?").all(...args) as Array<{ id: string; sequence: number }>
     const selected = rows.slice(0, take)
     return { items: selected.map(row => this.get(row.id, owner)), next_before: rows.length > take ? selected.at(-1)!.sequence : null }
   }

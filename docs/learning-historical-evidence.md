@@ -242,9 +242,10 @@ a neighboring part. New native views are bounded to 16 MiB normalized source,
 Provided exports retain the existing 16 MiB file bound. Oversized exact content
 fails; it is never silently excerpted. This is not a retained frozen population.
 
-## Frozen retrospective populations: next coherent boundary
+## Frozen retrospective populations: distinct evidence boundary
 
-Add a separately typed selected-population scope under the existing evaluation
+The [retrospective population design](learning-retrospective-populations.md)
+defines a separately typed selected-population scope under the existing evaluation
 store, with an operator-approved retrospective selection initially acceptable.
 Preview must resolve current source availability and coverage without mutation.
 Freeze preserves exactly approved membership, identity/version, permitted view,

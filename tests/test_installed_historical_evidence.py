@@ -131,13 +131,14 @@ class ReadOnlyEffectOracleTest(unittest.TestCase):
             with self.subTest(added=added), self.assertRaises(RuntimeError):
                 assert_read_only_effects(self.receipts() + [added], {"owner"}, driver_plan())
 
-    def test_only_history_read_is_admitted_to_the_existing_effect_oracle(self):
+    def test_only_history_read_operations_are_admitted_to_the_existing_effect_oracle(self):
         for tool in ("loom_history", "loom.history"):
-            with self.subTest(tool=tool):
-                result = assert_read_only_effects(self.receipts() + [
-                    {"type": "tool-before", "data": {"tool": tool, "input": {"operation": "read"}}},
-                ], {"owner"}, driver_plan())
-                self.assertEqual(result["evaluator_dispatches"], 0)
+            for operation in ("read", "preview-population", "population", "population-source"):
+                with self.subTest(tool=tool, operation=operation):
+                    result = assert_read_only_effects(self.receipts() + [
+                        {"type": "tool-before", "data": {"tool": tool, "input": {"operation": operation}}},
+                    ], {"owner"}, driver_plan())
+                    self.assertEqual(result["evaluator_dispatches"], 0)
 
     def test_synthetic_transfer_does_not_widen_shared_host_access(self):
         for method, path, body in (

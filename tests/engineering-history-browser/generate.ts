@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
 import type { EngineeringHistoryQuery, EngineeringHistoryView } from "../../src/engineering-history.js"
+import type { RetrospectivePopulationView } from "../../src/retrospective-populations.js"
 import { digest } from "../../src/model.js"
 import { Store } from "../../src/store.js"
 import { engineeringHistoryScenario, type RegisteredHistoryFixture } from "../helpers/engineering-history-scenarios.js"
@@ -25,6 +26,7 @@ const manifest = { format: "loom-engineering-history-browser-fixtures/v1", head,
 for (const path of ["src/engineering-history.ts", "src/engineering-history-dashboard.ts", "src/plugin.ts",
   "tests/helpers/registered-loom.ts", "tests/helpers/engineering-history-scenarios.ts", "tests/engineering-history-browser/generate.ts",
   "tests/helpers/engineering-trajectory-fixture.ts", "src/engineering-trajectories.ts", "src/objectives.ts", "src/review-requests.ts",
+  "src/retrospective-contract.ts", "src/retrospective-populations.ts", "src/evaluation-store.ts", "src/evaluator-preparation.ts", "src/learning-sources.ts",
   "tests/engineering-history-browser/qualify.mjs", ".github/workflows/engineering-history-browser.yml"])
   manifest.source_sha256[path] = sha256(await readFile(path, "utf8"))
 
@@ -87,6 +89,46 @@ async function save(f: RegisteredHistoryFixture, name: string, query: Engineerin
     owner_sources: [...view.connections.objectives, ...view.connections.reviews].map(item => ({ ref: item.ref, ...item.source })),
     sources: included.map(record => ({ ref: record.ref, record_id: record.source.record_id, sha256: record.source.sha256 })),
     history_requests,
+  })
+  return view
+}
+
+async function savePopulation(f: RegisteredHistoryFixture, name: string, query: Record<string, unknown>,
+  options: { reader_session: string; hostile_text?: string[] }) {
+  const render = async (request: Record<string, unknown>, response_format: "json" | "html" | "markdown") => {
+    const response = await f.tools.get("history").execute({ ...request, response_format }, {
+      sessionID: options.reader_session, agent: "author", messageID: "browser-population-read", id: "browser-population-read",
+      signal: new AbortController().signal,
+    })
+    assert.equal(typeof response.content, "string")
+    const disclosure = f.permissionRequests.at(-1)
+    assert.equal(disclosure.metadata.view_sha256, sha256(response.content), "Population disclosure binds the exact response bytes")
+    return { content: response.content as string, disclosure: disclosure.metadata.view_sha256 as string }
+  }
+  const initial = JSON.parse((await render(query, "json")).content).result as RetrospectivePopulationView
+  assert.equal(initial.format, "loom-retrospective-population-view/v1")
+  const request = initial.navigation.repeat
+  const json = await render(request, "json"), html = await render(request, "html"), markdown = await render(request, "markdown")
+  const view = JSON.parse(json.content).result as RetrospectivePopulationView
+  assert.equal(view.manifest_sha256, initial.manifest_sha256)
+  assert.deepEqual(view.manifest, initial.manifest)
+  assert.equal(view.manifest.coverage.objective_count, 1)
+  assert.equal(view.manifest.coverage.complete_selected_membership, true)
+  assert.ok(view.items.length)
+  assert.equal(new Set(view.items.map(item => item.key)).size, view.items.length)
+  for (const forbidden of ["SYNTHETIC_PRIVATE_COMMAND", "SYNTHETIC_PRIVATE_OUTPUT", "FOREIGN_PRIVATE_REVIEW_MANDATE"])
+    for (const response of [json, html, markdown]) assert.ok(!response.content.includes(forbidden), `No protected original: ${forbidden}`)
+  for (const [extension, response] of Object.entries({ json, html, markdown }))
+    await writeFile(join(output, `${name}.${extension === "markdown" ? "md" : extension}`), response.content)
+  const population_requests = [view.navigation.repeat, ...(view.navigation.next ? [view.navigation.next] : []),
+    ...(view.freeze ? [view.freeze] : []), ...view.items.flatMap(item => item.inspect ? [item.inspect] : [])]
+  manifest.fixtures.push({ name, request, ...options, view_format: view.format,
+    json: `${name}.json`, html: `${name}.html`, markdown: `${name}.md`,
+    sha256: { json: sha256(json.content), html: sha256(html.content), markdown: sha256(markdown.content) },
+    disclosure_sha256: { json: json.disclosure, html: html.disclosure, markdown: markdown.disclosure },
+    required_text: [view.manifest_sha256, view.manifest.source_store_id, ...view.manifest.qualifications],
+    sources: view.items.map(item => ({ key: item.key, ...item.source, permitted_view: item.permitted_view })),
+    population_requests,
   })
   return view
 }
@@ -168,6 +210,65 @@ try {
     assert.equal(continued.navigation.repeat.related, true)
     assert.deepEqual(continued.boundary.owners, page.boundary.owners)
     assert.equal(continued.boundary.owner_version, page.boundary.owner_version)
+
+    // The same registered history owners now supply the bounded evaluation
+    // population. Question text stays untrusted in each shared representation.
+    await trajectory.f.invoke("objective", { operation: "link", objective_id: trajectory.objective.id,
+      phase: "coverage-gap", gap_reason: "missing-source", source_type: "external-ref",
+      source_id: "https://example.test/controlled/ci/a1/attempt/1", confidence: "uncertain",
+      note: "Original CI bytes remain unavailable with their external owner; the reported failure remains distinct." }, owner.reader_session)
+    const hostile = '</style><script>globalThis.__loomHostileExecuted=true</script><img src="https://hostile.invalid/leak">'
+    const populationOptions = { ...owner, hostile_text: [hostile] }
+    const preview = await savePopulation(trajectory.f, "population-preview", { operation: "preview-population",
+      selection: { objective_id: trajectory.objective.id,
+        question: `${trajectory.question} Literal qualification text: ${hostile} ${"long-source-token-".repeat(80)}` }, limit: 7 }, populationOptions)
+    assert.ok(preview.navigation.next, "The selection preview requires bounded continuation")
+    assert.equal(preview.population_id, null)
+    assert.ok(preview.freeze)
+    const previewNext = await savePopulation(trajectory.f, "population-preview-next", preview.navigation.next, populationOptions)
+    assert.equal(previewNext.manifest_sha256, preview.manifest_sha256)
+    assert.deepEqual(previewNext.manifest, preview.manifest)
+    assert.equal(previewNext.items[0]!.ordinal, preview.items.length + 1)
+    const frozen = (await trajectory.f.invoke("review", preview.freeze, owner.reader_session)).result
+    assert.equal(frozen.manifest_sha256, preview.manifest_sha256)
+    const populationRequest = { operation: "population", population_id: frozen.population_id, manifest_sha256: frozen.manifest_sha256 }
+    const first = await savePopulation(trajectory.f, "population-frozen", { ...populationRequest, limit: 20 }, populationOptions)
+    assert.ok(first.navigation.next, "Frozen membership exceeds one bounded page")
+    const populationMembers = [...first.items], populationPages = ["population-frozen"]
+    let next: Record<string, unknown> | null = first.navigation.next
+    while (next) {
+      assert.ok(populationPages.length < 30, "Frozen continuation must terminate")
+      const name = populationPages.length === 1 ? "population-frozen-next" : `population-frozen-next-${populationPages.length}`
+      const following = await savePopulation(trajectory.f, name, next, populationOptions)
+      assert.equal(following.population_id, first.population_id)
+      assert.equal(following.manifest_sha256, first.manifest_sha256)
+      assert.deepEqual(following.manifest, first.manifest)
+      assert.equal(following.items[0]!.ordinal, populationMembers.length + 1)
+      populationMembers.push(...following.items); populationPages.push(name); next = following.navigation.next
+    }
+    assert.equal(populationMembers.length, first.member_count, "Every frozen member is reconstructed through bounded reads")
+    assert.equal(new Set(populationMembers.map(item => item.key)).size, first.member_count)
+    assert.equal(populationMembers.filter(item => item.source.kind === "objective").length, 1)
+    assert.ok(!populationMembers.some(item => item.source.id === trajectory.unrelated.id))
+    for (const record of [trajectory.records.finding, trajectory.records.rerun, trajectory.records.correction, trajectory.records.recheck])
+      assert.ok(populationMembers.some(item => item.source.kind === "ledger-record" && item.source.id === record.id
+        && item.source.sha256 === digest(record)), "Distinct engineering evidence retains its exact original version")
+    assert.ok(populationMembers.some(item => item.availability !== "available"), "Unavailable original sources remain explicit")
+    manifest.boundaries.push({ name: "frozen-population-complete-bounded-readback", status: "reconstructed",
+      population_id: first.population_id, manifest_sha256: first.manifest_sha256, member_count: first.member_count,
+      objective_count: 1, pages: populationPages, source_keys: populationMembers.map(item => item.key) })
+
+    // Missing current originals do not remove the selected member or replace
+    // its frozen hash. This changes only the controlled fixture after freezing.
+    const missingMember = populationMembers.find(item => item.source.id === trajectory.records.finding.id)!
+    trajectory.db.prepare("DELETE FROM ledger WHERE id=?").run(trajectory.records.finding.id)
+    const missing = await savePopulation(trajectory.f, "population-frozen-missing", { ...populationRequest,
+      after: missingMember.ordinal - 1, limit: 1 }, populationOptions)
+    assert.equal(missing.manifest_sha256, first.manifest_sha256)
+    assert.equal(missing.items[0]!.key, missingMember.key)
+    assert.equal(missing.items[0]!.source.sha256, missingMember.source.sha256)
+    assert.equal(missing.items[0]!.availability, "available")
+    assert.equal(missing.items[0]!.current.status, "missing")
   } finally { await trajectory.close() }
 
   // Bound rendering cost with a modest connected population, while retaining

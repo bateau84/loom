@@ -28,6 +28,10 @@ from urllib.request import Request
 from installed_host_smoke import PrivateHost, installed_plugin_inventory, isolated_environment, require
 from installed_instruction_variants import verify_host_version
 from installed_learning_stage4 import assert_driver_invocations
+from installed_retrospective_populations import (
+    assert_population_original, assert_population_pages, assert_population_renderings,
+    assert_population_setup_effects, assert_population_stable, prepare_population, read_population_pages,
+)
 from installed_native_review import ReviewScenario
 from installed_questions import audit_session, events, idle, request, result_value
 from native_review_oracle import call_key
@@ -52,6 +56,10 @@ CHECKS = {
     "layered-history-shared-document-and-dashboard",
     "layered-history-derived-source-and-scope-denials",
     "connected-history-owner-relations-and-frozen-review-scope",
+    "frozen-population-preview-freeze-and-preparation",
+    "frozen-population-complete-membership-and-shared-inspection",
+    "frozen-population-native-source-denials",
+    "frozen-population-restart-and-late-associations",
     "historical-sources-unchanged-and-no-evaluator-effects",
 }
 
@@ -230,7 +238,8 @@ def assert_read_only_effects(observed: list[dict], readers: set[str], plans: lis
             require(event["data"].get("input", {}).get("operation") == "query",
                     "Historical read phase mutated a Loom record")
         if event["type"] == "tool-before" and event["data"].get("tool") in ("loom_history", "loom.history"):
-            require(event["data"].get("input", {}).get("operation") == "read",
+            require(event["data"].get("input", {}).get("operation") in
+                    ("read", "preview-population", "population", "population-source"),
                     "Historical read phase attempted a non-read history operation")
     return {**assert_driver_invocations(observed, plans), "evaluator_dispatches": 0,
             "historical_recipient_requests": 0, "instruction_mutations": 0,
@@ -783,7 +792,7 @@ def run(args) -> dict:
         report.update(verify_candidate(args, repo))
         report["input_sha256"] = {name: sha(repo / name) for name in (
             "tests/installed_historical_evidence.py", "tests/installed_native_review.py", "tests/native_review_oracle.py",
-            "tests/installed_learning_stage4.py", "tests/installed_questions.py", "tests/installed_host_smoke.py",
+            "tests/installed_learning_stage4.py", "tests/installed_retrospective_populations.py", "tests/installed_questions.py", "tests/installed_host_smoke.py",
             "tests/installed_instruction_variants.py", "tests/question-host/server.ts", "tests/question-host/provider.mjs",
             "tests/question-host/review-script.ts", "package.json", "bun.lock", ".bun-version")}
         report["cli_sha256"] = sha(args.opencode.resolve())
@@ -905,6 +914,19 @@ def run(args) -> dict:
                         require(len(authored) == 3 and all(event["data"].get("status") == "completed" for event in authored),
                                 "Installed discovery fixture did not author its competing findings")
                     connected_fixture = prepare_connected_history(scenario, reader)
+                    # Keep this separate from the connected navigation fixture:
+                    # its later associations must not alter the earlier oracles.
+                    population_start = len(events(root))
+                    scenario.invocation_plan = []
+                    population = prepare_population(scenario, reader, prepare_connected_history(scenario, reader))
+                    setup_effects = assert_population_setup_effects(events(root)[population_start:], reader, scenario.invocation_plan)
+                    report["population_setup_driver_invocations"] = scenario.invocation_plan
+                    scenario.invocation_plan = None
+                    check("frozen-population-preview-freeze-and-preparation",
+                          population_id=population["frozen"]["population_id"], manifest_sha256=population["frozen"]["manifest_sha256"],
+                          preview_pages=population["expected"]["pages"], member_count=population["expected"]["member_count"],
+                          preparation_request_id=population["prepared"]["request_id"], freeze_replay_identity_preserved=True,
+                          source_policy="declared-not-authority", **setup_effects)
                     idle(host, [parent, reader, *children])
                     originals = {session: native_export(host, owned, session) for session in (parent, *children)}
                     inline = import_inline_control(host, owned, project, originals[parent])
@@ -1053,6 +1075,28 @@ def run(args) -> dict:
                           **assert_connected_history(connected_discovery, connected, connected_page, connected_next,
                                                      connected_markdown, connected_html, connected_fixture, owner_continuations))
 
+                    population_first = scenario.read(reader, "history", population["query"], "population-frozen-first")
+                    population_pages = read_population_pages(scenario, reader, population_first, "population-frozen")
+                    population_read = assert_population_pages(population_pages, population["fixture"], state="frozen",
+                        population_id=population["frozen"]["population_id"])
+                    assert_population_stable(population["expected"], population_read, population["frozen"]["population_id"])
+                    for item in population_read["items"]:
+                        if item["source"]["kind"] != "ledger-record":
+                            continue
+                        original = next(record for record in population["fixture"]["records"].values() if record["id"] == item["source"]["id"])
+                        selected_original = scenario.read(reader, "history", {"operation": "population-source",
+                            "population_id": population["frozen"]["population_id"], "manifest_sha256": population["frozen"]["manifest_sha256"],
+                            "member_key": item["key"]}, "population-permitted-original")
+                        assert_population_original(selected_original, item, original, population["frozen"]["population_id"],
+                                                   population["frozen"]["manifest_sha256"])
+                    population_markdown = scenario.read(reader, "history", {**population["query"], "response_format": "markdown"},
+                                                        "population-frozen-document")
+                    population_html = scenario.read(reader, "history", {**population["query"], "response_format": "html"},
+                                                    "population-frozen-dashboard")
+                    check("frozen-population-complete-membership-and-shared-inspection", pages=population_read["pages"],
+                          member_count=population_read["member_count"], exact_originals=population_read["original_count"],
+                          rendering=assert_population_renderings(population_first, population_markdown, population_html))
+
                     inventories = {}
                     for label, session in (("split", parent), ("inline", imported)):
                         items, cursor = [], None
@@ -1174,6 +1218,20 @@ def run(args) -> dict:
                     def policy(resource):
                         set_policy(allow + [{"action": "read", "resource": resource, "effect": "deny"}])
 
+                    population_denials = 0
+                    for response_format in ("json", "markdown", "html"):
+                        resource = f"loom:evidence:inspect:session:{reader}:view:retrospective-population"
+                        policy(resource)
+                        denial = scenario.denied(reader, "history", {**population["query"], "response_format": response_format})
+                        assert_evidence_permission_denial(denial, resource,
+                            [record["data"]["statement"] for record in population["fixture"]["records"].values()]
+                            + [record["id"] for record in population["fixture"]["records"].values()])
+                        population_denials += 1
+                        set_policy(allow)
+                    scenario.denied(reader, "history", {**population["query"], "manifest_sha256": "f" * 64})
+                    check("frozen-population-native-source-denials", derived_denials=population_denials,
+                          wrong_manifest_identity_rejected=True, protected_originals_disclosed=False)
+
                     children_query = {"operation": "children", "access": "historical", "session_id": parent, "limit": 50}
                     parts_query = {"operation": "parts", "session_id": parent, "export_path": export_files["split"].name, "tool": "subagent"}
                     for resource, query in (
@@ -1243,6 +1301,22 @@ def run(args) -> dict:
                     export_files["split"].write_bytes(saved)
                     check("source-change-and-cursor-scope-denied", recipient_and_parent_bound=True,
                           changed_export_withheld=True, invalid_utf8_rejected=True, hash_pins="original file bytes")
+
+                    host.close()
+                    host = PrivateHost(str(args.opencode.resolve()), project, env, output, "population-restart")
+                    host.wait_roster("/api/plugin", "plugins", lambda rows: all(any(
+                        row.get("id") == name and row.get("state", {}).get("status") == "active" for row in rows)
+                        for name in ("loom", "loom.question.fixture")))
+                    scenario.host = host
+                    restarted_first = scenario.read(reader, "history", population["query"], "population-restarted-first")
+                    restarted_pages = read_population_pages(scenario, reader, restarted_first, "population-restarted")
+                    restarted = assert_population_pages(restarted_pages, population["fixture"], state="frozen",
+                        population_id=population["frozen"]["population_id"])
+                    assert_population_stable(population_read, restarted, population["frozen"]["population_id"])
+                    check("frozen-population-restart-and-late-associations", population_id=population["frozen"]["population_id"],
+                          manifest_sha256=restarted["manifest_sha256"], late_record_excluded=population["late"]["id"],
+                          late_existing_source_association_excluded=population["fixture"]["unrelated"]["id"],
+                          same_membership_after_restart=True, member_count=restarted["member_count"])
 
                     for session, before in originals.items():
                         require(native_export(host, owned, session) == before, "Historical native Session changed during evidence retrieval")

@@ -33,6 +33,7 @@ export class EvaluatorExecution {
   private prepared(actor: Actor, pins: EvaluatorExecutionPins): Prepared {
     this.pins(pins)
     const p = this.preparation.read(actor.session_id, pins.batch_id)
+    if (p.request.format !== "loom-evaluation-request/v1") throw new Error("retrospective-execution-disconnected")
     if (p.state !== "prepared" || p.request_id !== pins.request_id || p.manifest_sha256 !== pins.manifest_sha256
         || p.issue?.attempt.attempt_id !== pins.attempt_id) throw new Error("Evaluator execution preparation mismatch")
     return p
