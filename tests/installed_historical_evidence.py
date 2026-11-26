@@ -57,6 +57,25 @@ def encoded(value) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def assert_evidence_permission_denial(denial: dict, resource: str, protected_values: list[str]) -> None:
+    """Require the intended native denial and inspect what it returned."""
+    error = denial.get("error")
+    blocked = error.get("error") if isinstance(error, dict) else None
+    require(denial.get("status") == "error" and isinstance(blocked, dict)
+            and blocked.get("_tag") == "Permission.BlockedError" and blocked.get("permission") == "read"
+            and resource in blocked.get("resources", [])
+            and any(isinstance(rule, dict) and rule.get("action") == "read"
+                    and rule.get("resource") == resource and rule.get("effect") == "deny"
+                    for rule in blocked.get("rules", [])),
+            "Native evidence denial did not enforce the expected read resource")
+    # execute.after also carries the caller's original input. A searched marker
+    # there is not a source disclosure. Inspect both complete returned surfaces,
+    # including nested diagnostics and any nested field itself named "input".
+    response = {key: denial[key] for key in ("result", "error") if key in denial}
+    require(not any(value in encoded(response) for value in protected_values),
+            "Denied evidence response disclosed protected source content")
+
+
 def sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -818,17 +837,16 @@ def run(args) -> dict:
                     ):
                         policy(resource)
                         denial = scenario.denied(reader, "history", {**bounded_history_query, "response_format": response_format})
-                        require(not any(claim[2] in encoded(denial) for claim in claims)
-                                and not any(record["id"] in encoded(denial) for record in records),
-                                "Denied derived history disclosed original claims or record identities")
+                        assert_evidence_permission_denial(denial, resource,
+                            [claim[2] for claim in claims] + [record["id"] for record in records])
                         history_denials += 1
                         set_policy(allow)
                     filtered_history_denials = 0
                     for response_format in ("json", "markdown", "html"):
-                        policy(f"loom:evidence:inspect:session:{fillers[23]}:view:engineering-history")
+                        resource = f"loom:evidence:inspect:session:{fillers[23]}:view:engineering-history"
+                        policy(resource)
                         denial = scenario.denied(reader, "history", {**discovery_query, "response_format": response_format})
-                        require("FROST_47" not in encoded(denial) and hidden_original["id"] not in encoded(denial),
-                                "Filtering bypassed a nonmatching contributor's history denial")
+                        assert_evidence_permission_denial(denial, resource, ["FROST_47", hidden_original["id"]])
                         filtered_history_denials += 1
                         set_policy(allow)
                     # The shared view grants no original-record authority. Follow the

@@ -8,7 +8,8 @@ import tempfile
 import unittest
 
 from installed_historical_evidence import (
-    assert_exact_field_envelope, assert_history_discovery, assert_history_navigation, assert_history_renderings,
+    assert_evidence_permission_denial, assert_exact_field_envelope,
+    assert_history_discovery, assert_history_navigation, assert_history_renderings,
     assert_read_only_effects, encoded, physical_generation_oracle, synthetic_transfer,
 )
 from test_installed_learning_stage4 import driver_plan, driver_receipts
@@ -302,6 +303,63 @@ class HistoryDiscoveryOracleTest(unittest.TestCase):
                     discovery["boundary"]["observed_through"] = 10
                 with self.assertRaises(RuntimeError):
                     assert_history_discovery(overview, discovery, expanded, exact, original)
+
+
+class HistoryPermissionDenialOracleTest(unittest.TestCase):
+    resource = "loom:evidence:inspect:session:nonmatching:view:engineering-history"
+
+    def receipt(self):
+        # Pinned native execute.after shape: input repeats caller arguments;
+        # error/result are returned surfaces, including nested diagnostics.
+        return {"tool": "loom_history", "sessionID": "reader", "id": "call", "messageID": "message",
+                "input": {"operation": "read", "action_id": "action", "match": "FROST_47",
+                          "record_kinds": ["concern"], "response_format": "json"},
+                "status": "error", "error": {"_tag": "Tool.Error", "message": "Permission denied: read",
+                    "error": {"_tag": "Permission.BlockedError", "permission": "read",
+                              "resources": [self.resource],
+                              "rules": [{"action": "read", "resource": self.resource, "effect": "deny"}]}}}
+
+    def test_caller_filter_echo_does_not_become_a_source_disclosure(self):
+        for response_format in ("json", "markdown", "html"):
+            with self.subTest(response_format=response_format):
+                denial = self.receipt()
+                denial["input"]["response_format"] = response_format
+                assert_evidence_permission_denial(denial, self.resource, ["FROST_47", "hidden-record-id"])
+
+    def test_returned_content_and_nested_error_diagnostics_are_checked(self):
+        for location in ("result-text", "result-metadata", "result-nested-input", "error-message", "error-details"):
+            with self.subTest(location=location):
+                denial = self.receipt()
+                if location == "result-text":
+                    denial["result"] = {"content": "hidden-record-id"}
+                elif location == "result-metadata":
+                    denial["result"] = {"metadata": {"source": "hidden-record-id"}}
+                elif location == "result-nested-input":
+                    denial["result"] = {"metadata": {"input": {"match": "FROST_47"}}}
+                elif location == "error-message":
+                    denial["error"]["message"] += " FROST_47"
+                else:
+                    denial["error"]["error"]["detail"] = {"source": "hidden-record-id"}
+                with self.assertRaisesRegex(RuntimeError, "disclosed protected source content"):
+                    assert_evidence_permission_denial(denial, self.resource, ["FROST_47", "hidden-record-id"])
+
+    def test_success_or_an_unrelated_error_cannot_establish_the_resource_denial(self):
+        for mutation in ("completed", "unrelated-error", "wrong-resource", "missing-deny-rule", "allowed-rule"):
+            with self.subTest(mutation=mutation):
+                denial = self.receipt()
+                blocked = denial["error"]["error"]
+                if mutation == "completed":
+                    denial["status"] = "completed"
+                elif mutation == "unrelated-error":
+                    blocked["_tag"] = "ProcessingLimitError"
+                elif mutation == "wrong-resource":
+                    blocked["resources"] = ["loom:evidence:inspect:session:other:view:engineering-history"]
+                elif mutation == "missing-deny-rule":
+                    blocked["rules"] = []
+                else:
+                    blocked["rules"][0]["effect"] = "allow"
+                with self.assertRaisesRegex(RuntimeError, "expected read resource"):
+                    assert_evidence_permission_denial(denial, self.resource, ["FROST_47", "hidden-record-id"])
 
 
 if __name__ == "__main__":

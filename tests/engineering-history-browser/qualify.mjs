@@ -8,11 +8,14 @@ import { resolve, join } from "node:path"
 // tool output from synthetic histories, never a developer's private history.
 assert.equal(process.env.GITHUB_ACTIONS, "true", "Browser qualification runs in isolated GitHub CI")
 assert.ok(process.env.LOOM_HISTORY_BROWSER_DEPS, "Set the isolated browser dependency prefix")
-const deps = createRequire(join(resolve(process.env.LOOM_HISTORY_BROWSER_DEPS), "package.json"))
+const dependencyRoot = resolve(process.env.LOOM_HISTORY_BROWSER_DEPS)
+const deps = createRequire(join(dependencyRoot, "package.json"))
 const { chromium } = deps("playwright")
 const { default: AxeBuilder } = deps("@axe-core/playwright")
-const versions = { playwright: deps("playwright/package.json").version,
-  axePlaywright: deps("@axe-core/playwright/package.json").version }
+// Package metadata is not necessarily an exported module subpath (axe's is
+// deliberately private). Read the metadata from the explicit CI-only prefix.
+const packageVersion = async name => JSON.parse(await readFile(join(dependencyRoot, "node_modules", name, "package.json"), "utf8")).version
+const versions = { playwright: await packageVersion("playwright"), axePlaywright: await packageVersion("@axe-core/playwright") }
 assert.equal(versions.playwright, "1.65.1")
 assert.equal(versions.axePlaywright, "4.14.1")
 assert.ok(process.argv[2] && process.argv[3], "Usage: qualify.mjs FIXTURE_DIRECTORY REPORT_DIRECTORY")
