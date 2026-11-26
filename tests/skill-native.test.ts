@@ -163,8 +163,8 @@ test("human core-tool walkthrough examples use canonical collaboration and real 
   try {
     const doc = await readFile(new URL("../docs/tools.md", import.meta.url), "utf8")
     const examples = [...doc.matchAll(/```json\n([\s\S]*?)\n```/g)].map(match => JSON.parse(match[1]))
-    expect(examples).toHaveLength(10)
-    const [actionOverview, sessionOverview, ...inputs] = examples
+    expect(examples).toHaveLength(11)
+    const [actionOverview, sessionOverview, historyDiscovery, ...inputs] = examples
     expect(inputs).toHaveLength(8)
     const action = (await f.invoke("action", inputs[0])).result
     const replace = (input: unknown) => JSON.parse(JSON.stringify(input).replaceAll("ACTION_ID", action.id).replaceAll("TASK_ID", "task"))
@@ -193,6 +193,11 @@ test("human core-tool walkthrough examples use canonical collaboration and real 
     const sessionView = (await f.invoke("history", { ...sessionOverview, session_id: "s" })).result
     expect(sessionView.scope).toEqual({ session_id: "s" })
     expect(sessionView.intent.goal).toBeNull()
+    const timeout = (await f.invoke("record", { operation: "add", action_id: action.id, kind: "concern",
+      statement: "A timeout was observed; its cause remains unproven." })).result
+    const discovered = (await f.invoke("history", replace(historyDiscovery))).result
+    expect(discovered.mode).toBe("discovery")
+    expect(discovered.records.map((item: any) => item.source.record_id)).toEqual([timeout.id])
     for (const input of [inputs[5], inputs[6]]) expect(input).not.toHaveProperty("attachments")
   } finally { await f.close() }
 })

@@ -58,13 +58,33 @@ Start with one known Action or Session, without enumerating child Sessions:
 {"operation":"read","session_id":"SESSION_ID"}
 ```
 
-Call `loom_history` with `operation:"read"` plus a returned branch's `expand`
-query to inspect that group. Keep its `through` boundary when paging records
-with `after:coverage.next_after`, or the ranked branch list with
+To find older work outside the initial overview, use question terms and known
+categories. Selectors run over the eligible authorized scope before paging:
+
+```json
+{"operation":"read","action_id":"ACTION_ID","match":"timeout","record_kinds":["concern","assessment"]}
+```
+
+`match` is a literal ASCII-case-insensitive substring (1–200 characters), not a
+wildcard or semantic search. Optional `verdict`, `source_session_id`, `node_id`,
+`plan_revision` and `has_gaps` selectors combine with AND. `plan_revision` matches
+established WorkRefs only; fingerprints cannot establish a report's exact Plan
+revision. `has_gaps:true` discovers recorded attribution or work-scope gaps.
+
+Call `loom_history` with `operation:"read"` plus a returned branch or record's
+`expand` query to inspect that group. Historical Plan revisions have actionable
+ancestor containers; Sessions contain observed message groups or explicitly
+analytical chronology. Related branches can share a captured subject fingerprint
+without asserting the same revision or invocation.
+
+Keep selectors and `through` when paging matching/branch records with
+`after:coverage.next_after`, or immediate children with
 `branch_offset:coverage.next_branch_offset`. New work appears on a fresh read;
-these bounds are not frozen retrospective membership. A `record_id` retrieves
-that record with its branch context. Exact original references contain the
-separately authorized `loom_record` query.
+these bounds are not frozen retrospective membership. `record_id` retrieves that
+record with branch context. Exact original references contain the separately
+authorized `loom_record` query. Focused reads omit unrelated global branches and
+the current intended Plan; coverage distinguishes scoped totals, matches and
+omissions.
 
 The JSON, Markdown and HTML dashboard share identifiers, relationships and
 coverage. The dashboard expands included content with native disclosure controls;
@@ -75,7 +95,8 @@ uses the host's authorized file writer.
 The requested scope and every contributing Session require native discovery,
 inspection and disclosure permission for `engineering-history`. Every format is
 bounded and passes the final assertion on its exact returned bytes. A denied
-contributor withholds the entire view. A reference grants neither original-source
+contributor withholds the entire view, including a contributor excluded by the
+selection filters. A reference grants neither original-source
 access nor delivery to another recipient.
 
 Counts cover recorded Loom activity. Completion and passing assessments remain

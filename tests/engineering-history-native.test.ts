@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test"
 import { Database } from "bun:sqlite"
 import { createHash } from "node:crypto"
-import { Store } from "../src/store.js"
+import { Store, type SQL } from "../src/store.js"
 import { canonical } from "../src/model.js"
 import { checkedRef, workReference } from "../src/collaboration.js"
 import type { EngineeringHistoryView } from "../src/engineering-history.js"
@@ -13,6 +13,257 @@ function fixture() {
   return { db, store, action }
 }
 const statements = (view: EngineeringHistoryView) => [...view.highlights, ...view.records].map(record => record.excerpt).filter(Boolean)
+
+test("selective discovery finds old eligible evidence outside every overview representative and keeps its append boundary", () => {
+  const { db, store, action } = fixture()
+  try {
+    const old = store.record(actor("old_investigation"), { action_id: action.id }, { kind: "concern", statement: "Freshness regression at 100%_literal remains unexplained." })
+    for (let i = 0; i < 40; i++) store.record(actor(`later_${i}`), { action_id: action.id }, { kind: "concern", statement: "A different later concern." })
+    const overview = store.engineeringHistory.read({ action_id: action.id, limit: 1 })
+    expect(overview.highlights.some(record => record.source.record_id === old.id)).toBe(false)
+    const found = store.engineeringHistory.read({ action_id: action.id, match: "FRESHNESS REGRESSION", record_kinds: ["concern"], limit: 1 })
+    expect(found.mode).toBe("discovery")
+    expect(found.records.map(record => record.source.record_id)).toEqual([old.id])
+    expect(found.coverage.matching_records).toBe(1)
+    expect(found.totals.records).toBe(41)
+    expect(store.engineeringHistory.read({ action_id: action.id, match: "100%_literal" }).records.map(record => record.source.record_id)).toEqual([old.id])
+    expect(store.engineeringHistory.read({ action_id: action.id, match: "100%_li_eral" }).records).toEqual([])
+    expect(store.engineeringHistory.read(found.records[0].expand).records[0].source.record_id).toBe(old.id)
+    const first = store.engineeringHistory.read({ action_id: action.id, record_kinds: ["concern"], limit: 2 })
+    store.record(actor("appended"), { action_id: action.id }, { kind: "concern", statement: "Later append." })
+    const next = store.engineeringHistory.read({ action_id: action.id, ...first.selection, through: first.boundary.observed_through, after: first.coverage.next_after!, limit: 2 })
+    expect(next.totals.records).toBe(41)
+    expect(next.coverage.matching_records).toBe(41)
+    expect(next.records.map(record => record.sequence)).toEqual([3, 4])
+  } finally { db.close() }
+})
+
+test("historical Plan ancestors are actionable and authored fingerprints link without inventing an exact revision", () => {
+  const { db, store, action } = fixture()
+  try {
+    store.savePlan(action.id, 0, [{ id: "phase", kind: "phase", title: "Original phase" }, { id: "task", kind: "task", parent: "phase", title: "Original task" }], actor("planner"))
+    store.select("worker", { action_id: action.id, node_id: "task" })
+    const observed = store.startObservation(actor("worker"), { phase: "started", tool: "read" })
+    const authored = store.record(actor("worker"), { action_id: action.id, node_id: "task" }, { kind: "result", statement: "Original contract was checked." })
+    store.savePlan(action.id, 1, [{ id: "task", kind: "task", title: "Moved current task" }], actor("planner"))
+    const overview = store.engineeringHistory.read({ action_id: action.id })
+    const historical = overview.branches.find(branch => branch.kind === "historical-plan")!
+    expect(historical.historical_scope).toEqual({ action_revision: 1, plan_revision: 1 })
+    const phase = store.engineeringHistory.read(historical.expand).branches.find(branch => branch.node_id === "phase")!
+    expect(phase.title).toBe("Original phase")
+    const selected = store.engineeringHistory.read(phase.expand)
+    expect(selected.branches.map(branch => branch.title)).toEqual(["Original task"])
+    expect(selected.intended_plan).toBeNull()
+    expect(selected.branches.every(branch => branch.parent_ref === phase.ref)).toBe(true)
+    const work = store.engineeringHistory.read(selected.branches[0].expand)
+    expect(work.records.map(record => record.source.record_id)).toEqual([observed.id])
+    expect(work.ancestors.map(branch => branch.title)).toContain("Original phase")
+    expect(work.related_branches.some(branch => branch.kind === "unversioned-node" && branch.gaps.some(gap => gap.code === "same-work-fingerprint"))).toBe(true)
+    const report = store.engineeringHistory.read({ action_id: action.id, record_id: authored.id })
+    expect(report.records[0].fingerprint).toBe(observed.fingerprint!)
+    expect(report.records[0].work_ref).toBeNull()
+    expect(report.related_branches.some(branch => branch.work_ref?.plan_revision === 1)).toBe(true)
+  } finally { db.close() }
+})
+
+test("a reused unplanned Session has expandable recorded-message and analytical chronology children", () => {
+  const { db, store, action } = fixture()
+  try {
+    const focus = { action_id: action.id }
+    const first = store.observe(actor("reused"), focus, { phase: "started", tool: "read", message_id: "message-one", call_id: "call-one" })
+    const second = store.observe(actor("reused"), focus, { phase: "started", tool: "shell", message_id: "message-two", call_id: "call-two" })
+    const failure = store.record(actor("reused"), focus, { kind: "assessment", verdict: "fail", statement: "First investigation failed." })
+    const result = store.record(actor("reused"), focus, { kind: "result", statement: "A later correction was reported." })
+    const root = store.engineeringHistory.read({ action_id: action.id }).branches[0]
+    const session = store.engineeringHistory.read(root.expand)
+    expect(session.selected_branch?.child_count).toBe(4)
+    expect(session.branches.filter(branch => branch.kind === "message")).toHaveLength(2)
+    expect(session.branches.filter(branch => branch.meaning === "analytical-chronology")).toHaveLength(2)
+    const groups = session.branches.map(branch => store.engineeringHistory.read(branch.expand))
+    expect(groups.map(view => view.records.map(record => record.source.record_id))).toEqual(expect.arrayContaining([[first.id], [second.id], [failure.id], [result.id]]))
+    expect(groups.every(view => view.branches.length === 0 && view.intended_plan === null)).toBe(true)
+    expect(groups.every(view => view.ancestors[0].ref === root.ref)).toBe(true)
+    expect(session.totals.native_dispatches).toBeNull()
+  } finally { db.close() }
+})
+
+test("observation coverage and use-time provenance remain visible and selectively discoverable", () => {
+  const { db, store, action } = fixture()
+  try {
+    const observed = store.observe(actor("worker"), { action_id: action.id }, { phase: "finished", tool: "skill", status: "completed", capture_gap: true,
+      attribution: "missing-start; not assigned to current work", work_scope: { status: "unknown", reason: "not-observed", detail: "No captured start." },
+      message_id: "msg", call_id: "call", input_digest: "a".repeat(64), result_digest: "b".repeat(64) })
+    store.observe(actor("worker"), { action_id: action.id }, { phase: "skill-load-result", skill_id: "reviewer", rendered_sha256: "c".repeat(64),
+      registry_content_sha256: "d".repeat(64), registered_content_present: true, observation: "Result provenance, not proof of model application." })
+    const view = store.engineeringHistory.read({ action_id: action.id, has_gaps: true })
+    expect(view.totals.capture_gap_records).toBe(1)
+    expect(view.totals.unestablished_finishes).toBe(1)
+    expect(view.records.find(record => record.source.record_id === observed.id)?.observation).toMatchObject({ capture_gap: true, finish_pairing: "unestablished",
+      message_id: "msg", call_id: "call", input_digest: "a".repeat(64), work_scope: { status: "unknown", reason: "not-observed", detail: "No captured start." } })
+    expect(view.records.find(record => record.observation?.phase === "skill-load-result")?.observation).toMatchObject({ skill_id: "reviewer", rendered_sha256: "c".repeat(64), registered_content_present: true })
+    expect(view.highlights.some(record => record.source.record_id === observed.id)).toBe(true)
+  } finally { db.close() }
+})
+
+test("discovery filters combine without promoting fingerprint-only reports into historical WorkRefs", () => {
+  const { db, store, action } = fixture()
+  try {
+    store.savePlan(action.id, 0, [{ id: "task", kind: "task", title: "Stable contract" }])
+    store.select("worker", { action_id: action.id, node_id: "task" })
+    const first = store.startObservation(actor("worker"), { phase: "started", tool: "read", message_id: "old-message" })
+    store.savePlan(action.id, 1, [{ id: "task", kind: "task", title: "Stable contract" }, { id: "unrelated", kind: "task", title: "Unrelated new work" }])
+    const second = store.startObservation(actor("worker"), { phase: "started", tool: "read", message_id: "new-message" })
+    const report = store.record(actor("worker"), { action_id: action.id, node_id: "task" }, { kind: "qa", verdict: "pass", statement: "The same captured contract passed." })
+    expect(first.fingerprint).toBe(second.fingerprint!)
+    const authored = store.engineeringHistory.read({ action_id: action.id, record_id: report.id })
+    expect(authored.records[0].work_ref).toBeNull()
+    expect(authored.selected_branch?.historical_scope).toBeNull()
+    expect(authored.ancestors.every(branch => branch.historical_scope === null)).toBe(true)
+    expect(authored.related_branches.map(branch => branch.work_ref?.plan_revision).sort()).toEqual([1, 2])
+    const exact = store.engineeringHistory.read({ action_id: action.id, plan_revision: 2, node_id: "task", source_session_id: "worker", record_kinds: ["observation"], match: "read" })
+    expect(exact.records.map(record => record.source.record_id)).toEqual([second.id])
+    expect(store.engineeringHistory.read({ action_id: action.id, plan_revision: 2, record_kinds: ["qa"] }).coverage.matching_records).toBe(0)
+    store.savePlan(action.id, 2, [{ id: "task", kind: "task", title: "Changed contract" }])
+    const changed = store.record(actor("worker"), { action_id: action.id, node_id: "task" }, { kind: "qa", verdict: "pass", statement: "A different contract passed." })
+    const related = store.engineeringHistory.read({ action_id: action.id, record_id: first.id }).related_branches.find(branch => branch.kind === "unversioned-node")!
+    expect(store.engineeringHistory.read(related.expand).records.map(record => record.source.record_id)).toEqual([report.id])
+    expect(store.engineeringHistory.read(related.expand).records.some(record => record.source.record_id === changed.id)).toBe(false)
+    expect(store.engineeringHistory.read({ action_id: action.id, verdict: "fail" }).records).toEqual([])
+  } finally { db.close() }
+})
+
+test("ambiguous work scope exposes only bounded candidate identities supported inside the requested scope", () => {
+  const { db, store, action } = fixture()
+  try {
+    const plan = store.savePlan(action.id, 0, [{ id: "task", kind: "task", title: "VISIBLE_ACTION_PLAN_SECRET" }])
+    const visibleRef = workReference(action, plan, "task")
+    const visible = store.observe(actor("reader"), { action_id: action.id, node_id: "task" }, { phase: "started", work_scope: { status: "established", work_ref: visibleRef } })
+    const hiddenAction = store.create("HIDDEN_ACTION_TITLE", "HIDDEN_ACTION_GOAL", actor("hidden"))
+    const hiddenPlan = store.savePlan(hiddenAction.id, 0, [{ id: "hidden-task", kind: "task", title: "HIDDEN_PLAN_TITLE" }])
+    const hiddenRef = workReference(hiddenAction, hiddenPlan, "hidden-task")
+    const hidden = store.observe(actor("hidden"), { action_id: hiddenAction.id, node_id: "hidden-task" }, { phase: "started", work_scope: { status: "established", work_ref: hiddenRef } })
+    const uncertain = store.observe(actor("reader"), undefined, { phase: "finished", attribution: "ambiguous-host-call; not assigned to current work",
+      work_scope: { status: "ambiguous", candidates: [visibleRef, hiddenRef, { ...visibleRef, unsupported: true }], observation_ids: [visible.id, hidden.id, "missing-private-id"] } })
+    const view = store.engineeringHistory.read({ session_id: "reader", record_id: uncertain.id })
+    expect(view.records[0].observation?.work_scope).toEqual({ status: "ambiguous", candidates: [visibleRef], observation_ids: [visible.id], candidates_complete: false,
+      candidates_omitted: 2, observation_ids_omitted: 2 })
+    expect(view.totals.ambiguous_scope_records).toBe(1)
+    expect(view.records[0].work_ref).toBeNull()
+    const encoded = JSON.stringify(view)
+    for (const secret of [hidden.id, hiddenAction.id, hiddenRef.hash, "missing-private-id", "HIDDEN_PLAN_TITLE", "VISIBLE_ACTION_PLAN_SECRET"]) expect(encoded).not.toContain(secret)
+    expect(store.engineeringHistory.read({ action_id: action.id, has_gaps: true }).records.some(record => record.source.record_id === uncertain.id)).toBe(false)
+  } finally { db.close() }
+})
+
+test("unsupported scope shapes and overlong attribution are qualified without arbitrary payload projection", () => {
+  const { db, store, action } = fixture()
+  try {
+    const observed = store.observe(actor("worker"), { action_id: action.id }, { phase: "finished", attribution: "x".repeat(300), input_digest: "NOT_A_DIGEST",
+      work_scope: { status: "unknown", reason: "unsupported-reason", secret: "DO_NOT_PROJECT_ARBITRARY_SCOPE" } })
+    const projected = store.engineeringHistory.read({ action_id: action.id, record_id: observed.id }).records[0]
+    expect(projected.observation).toMatchObject({ attribution: "x".repeat(200), attribution_excerpted: true, input_digest: null,
+      finish_pairing: "unestablished", work_scope: { status: "unavailable", reason: "unsupported" } })
+    expect(JSON.stringify(projected)).not.toContain("DO_NOT_PROJECT_ARBITRARY_SCOPE")
+    for (const query of [{ match: "" }, { match: "x".repeat(201) }, { record_kinds: [] }, { record_kinds: ["qa", "qa"] }, { record_kinds: ["bad-kind"] },
+      { plan_revision: 0 }, { source_session_id: "bad/identity" }, { has_gaps: 1 }, { match: "x", after: 1 }])
+      expect(() => store.engineeringHistory.read({ action_id: action.id, ...query } as never)).toThrow()
+  } finally { db.close() }
+})
+
+test("selected child pages and analytical chronology membership retain their explicit append boundary", () => {
+  const { db, store, action } = fixture()
+  try {
+    for (let i = 0; i < 6; i++) store.observe(actor("reused"), { action_id: action.id }, { phase: "started", message_id: `message-${i}`, tool: "read" })
+    const root = store.engineeringHistory.read({ action_id: action.id }).branches[0]
+    const first = store.engineeringHistory.read({ ...root.expand, limit: 3 })
+    expect(first.coverage).toMatchObject({ page_limit: 3, branch_count: 6, branches_returned: 3, branches_omitted: 3, total_branch_count: 7, matching_records: 6, matching_branches: 6, next_branch_offset: 3 })
+    expect([...first.branches, ...first.ancestors, first.selected_branch!].every(branch => branch.expand.limit === 3)).toBe(true)
+    expect([...first.records, ...first.highlights].every(record => record.expand.limit === 3)).toBe(true)
+    store.observe(actor("reused"), { action_id: action.id }, { phase: "started", message_id: "after-boundary", tool: "read" })
+    const next = store.engineeringHistory.read({ ...root.expand, limit: 3, branch_offset: first.coverage.next_branch_offset! })
+    expect(next.coverage.next_branch_offset).toBeNull()
+    expect(new Set([...first.branches, ...next.branches].map(branch => branch.ref)).size).toBe(6)
+    expect(next.selected_branch?.child_count).toBe(6)
+    expect(next.intended_plan).toBeNull()
+    expect(next.branches.every(branch => branch.parent_ref === root.ref)).toBe(true)
+    expect(store.engineeringHistory.read({ ...root.expand, through: undefined }).selected_branch?.child_count).toBe(7)
+  } finally { db.close() }
+})
+
+test("request-local definition reuse still validates each historical WorkRef hash", () => {
+  const { db, store, action } = fixture()
+  try {
+    const plan = store.savePlan(action.id, 0, [{ id: "task", kind: "task", title: "Exact historical contract" }])
+    const ref = workReference(action, plan, "task")
+    store.observe(actor("worker"), { action_id: action.id, node_id: "task" }, { phase: "started", work_scope: { status: "established", work_ref: ref } })
+    const invalid = store.observe(actor("worker"), { action_id: action.id, node_id: "task" }, { phase: "started", work_scope: { status: "established", work_ref: { ...ref, hash: "0".repeat(64) } } })
+    const view = store.engineeringHistory.read({ action_id: action.id, record_id: invalid.id })
+    expect(view.selected_branch?.historical_node).toBeNull()
+    expect(view.selected_branch?.parent_ref).toBeNull()
+    expect(view.selected_branch?.gaps.some(gap => gap.code === "historical-definition-unavailable")).toBe(true)
+    expect(view.ancestors).toEqual([])
+  } finally { db.close() }
+})
+
+test("historical definition bytes are reserved before hydration and Session reads do not touch those definitions", () => {
+  const { db, store, action } = fixture()
+  try {
+    const plan = store.savePlan(action.id, 0, [{ id: "task", kind: "task", title: "Original contract" }])
+    store.observe(actor("worker"), { action_id: action.id, node_id: "task" }, { phase: "started", work_scope: { status: "established", work_ref: workReference(action, plan, "task") } })
+    store.savePlan(action.id, 1, [{ id: "task", kind: "task", title: "Current contract" }])
+    db.query("UPDATE plans SET data=CAST(zeroblob(?) AS TEXT) WHERE action_id=? AND revision=1").run(34 * 1024 * 1024, action.id)
+    expect(() => store.engineeringHistory.read({ action_id: action.id })).toThrow("historical definitions exceed the bounded read")
+    const session = store.engineeringHistory.read({ session_id: "worker" })
+    expect(session.totals.records).toBe(1)
+    expect(session.branches[0].historical_node).toBeNull()
+    expect(JSON.stringify(session)).not.toContain("Current contract")
+  } finally { db.close() }
+})
+
+test("historical definition budget includes every source-owner Action and Plan hydration", () => {
+  const db = new Database(":memory:"), source = new Store(db), author = { session_id: "source", agent: "author" }
+  try {
+    const action = source.create("Hydration budget probe", "a".repeat(16000), author)
+    for (let i = 0; i < 1375; i++) {
+      source.savePlan(action.id, i, [{ id: "task", kind: "task", title: `Task definition ${i}` }], author)
+      if (!i) source.select(author.session_id, { action_id: action.id, node_id: "task" })
+      source.startObservation(author, { phase: "started", tool: "read" })
+    }
+    for (let i = 0; i < 4; i++) source.record(author, { action_id: action.id }, {
+      kind: i % 2 ? "result" : "concern", statement: `Representative record ${i}`,
+    })
+    let measuring = false, hydratedBytes = 0
+    const observed: SQL = {
+      exec: statement => db.exec(statement),
+      prepare(statement) {
+        const prepared = db.prepare(statement)
+        const track = (row: unknown) => {
+          if (measuring && /FROM (action_versions|actions|plans)\b/i.test(statement)
+            && row && typeof row === "object" && "data" in row && typeof row.data === "string")
+            hydratedBytes += Buffer.byteLength(row.data)
+          return row
+        }
+        return { get: (...args) => track(prepared.get(...args as never[])),
+          all: (...args) => prepared.all(...args as never[]).map(track), run: (...args) => prepared.run(...args as never[]) }
+      },
+    }
+    const store = new Store(observed)
+    measuring = true
+    const nearBoundary = store.engineeringHistory.read({ action_id: action.id, limit: 1 })
+    expect(nearBoundary.highlights).toHaveLength(4)
+    expect(hydratedBytes).toBeGreaterThan(63 * 1024 * 1024)
+    expect(hydratedBytes).toBeLessThanOrEqual(64 * 1024 * 1024)
+    measuring = false
+    for (let i = 1375; i < 1400; i++) {
+      source.savePlan(action.id, i, [{ id: "task", kind: "task", title: `Task definition ${i}` }], author)
+      source.startObservation(author, { phase: "started", tool: "read" })
+    }
+    hydratedBytes = 0; measuring = true
+    expect(() => store.engineeringHistory.read({ action_id: action.id, limit: 1 })).toThrow("historical definitions exceed the bounded read")
+    expect(hydratedBytes).toBeGreaterThan(63 * 1024 * 1024)
+    expect(hydratedBytes).toBeLessThanOrEqual(64 * 1024 * 1024)
+  } finally { db.close() }
+})
 
 test("large unfamiliar history exposes the significant four-Session trajectory without client enumeration", () => {
   const { db, store, action } = fixture()
@@ -63,9 +314,11 @@ test("historical Plan bindings retain their own definition and node-only history
     const view = store.engineeringHistory.read({ action_id: action.id })
     expect(view.intended_plan?.revision).toBe(2)
     expect(view.intended_plan?.nodes[0].title).toBe("Revised task")
-    expect(view.branches.filter(branch => branch.kind === "historical-work")).toHaveLength(2)
-    const old = view.branches.find(branch => branch.work_ref?.plan_revision === 1)!
-    const current = view.branches.find(branch => branch.work_ref?.plan_revision === 2)!
+    const historicalPlans = view.branches.filter(branch => branch.kind === "historical-plan")
+    expect(historicalPlans).toHaveLength(2)
+    const historicalWork = historicalPlans.flatMap(branch => store.engineeringHistory.read(branch.expand).branches)
+    const old = historicalWork.find(branch => branch.work_ref?.plan_revision === 1)!
+    const current = historicalWork.find(branch => branch.work_ref?.plan_revision === 2)!
     expect(old.title).toBe("Original task")
     expect(old.counts.records).toBe(2)
     expect(old.counts.reported_completions).toBe(1)
@@ -194,7 +447,8 @@ test("branch expansion pages keep whole branch coverage and source membership st
     const first = store.engineeringHistory.read({ ...branch.expand, limit: 3 })
     expect(first.selected_branch?.counts.records).toBe(7)
     expect(first.records.map(record => record.source.record_id)).toEqual(ids.slice(0, 3))
-    expect(first.coverage.records_omitted).toBe(4)
+    expect(first.coverage.records_returned).toBe(5) // three paged records plus two independent gap representatives
+    expect(first.coverage.records_omitted).toBe(2)
     const second = store.engineeringHistory.read({ ...branch.expand, limit: 3, after: first.coverage.next_after! })
     expect(second.records.map(record => record.source.record_id)).toEqual(ids.slice(3, 6))
     const third = store.engineeringHistory.read({ ...branch.expand, limit: 3, after: second.coverage.next_after! })
@@ -237,7 +491,8 @@ test("ranked branch continuation reaches all groups without including new append
     expect(new Set(refs).size).toBe(57)
     expect(() => store.engineeringHistory.read({ action_id: action.id, branch_offset: 10 })).toThrow("through")
     expect(() => store.engineeringHistory.read({ action_id: action.id, after: 0 })).toThrow("selected branch")
-    expect(() => store.engineeringHistory.read({ ...first.branches[0].expand, branch_offset: 0 })).toThrow("only applies")
+    expect(store.engineeringHistory.read({ ...first.branches[0].expand, branch_offset: 0 }).selected_branch?.ref).toBe(first.branches[0].ref)
+    expect(() => store.engineeringHistory.read({ action_id: action.id, record_id: "record", branch_offset: 0 })).toThrow("only applies")
   } finally { db.close() }
 })
 
@@ -246,8 +501,8 @@ test("a large legal Plan remains navigable through a compact qualified intent pr
   try {
     store.savePlan(action.id, 0, Array.from({ length: 30 }, (_, i) => ({ id: `task_${i}`, kind: "task", title: `Task ${i}`, context: "x".repeat(7000), criteria: ["Retain the complete original contract."] })))
     const view = store.engineeringHistory.read({ action_id: action.id, limit: 1 })
-    expect(view.intended_plan).toMatchObject({ revision: 1, nodes_total: 30, nodes_omitted: 29, projection: "identity-and-title" })
-    expect(view.intended_plan?.nodes).toEqual([{ id: "task_0", kind: "task", title: "Task 0" }])
+    expect(view.intended_plan).toMatchObject({ revision: 1, nodes_total: 30, nodes_omitted: 10, projection: "identity-and-title" })
+    expect(view.intended_plan?.nodes).toEqual(Array.from({ length: 20 }, (_, i) => ({ id: `task_${i}`, kind: "task", title: `Task ${i}` })))
     expect(view.intended_plan?.read.query).toEqual({ operation: "read", action_id: action.id, revision: 1 })
     expect(Buffer.byteLength(JSON.stringify(view))).toBeLessThan(10000)
     expect(store.plan(action.id).nodes[0].context).toHaveLength(7000)
@@ -326,7 +581,7 @@ test("consecutive authored reopens retain the exact prior progress report withou
     expect(view.totals.verified_outcomes).toBeNull()
     const bounded = store.engineeringHistory.read({ action_id: action.id, limit: 1 })
     expect(bounded.relationships).toEqual(expect.arrayContaining([
-      expect.objectContaining({ from: expect.stringContaining(second.id), to: expect.stringContaining(first.id), kind: "follows-reopen", target: "in-scope-not-included" }),
+      expect.objectContaining({ from: expect.stringContaining(second.id), to: expect.stringContaining(first.id), kind: "follows-reopen", target: "included" }),
     ]))
   } finally { db.close() }
 })
@@ -370,7 +625,7 @@ test("malformed whole-scope source data is rejected even when no highlight would
   }
 })
 
-test("a smaller limit bounds representative and relationship detail while retaining opposing verdicts and complete counts", () => {
+test("record and branch paging does not shrink independent representative, relationship or Plan detail", () => {
   const { db, store, action } = fixture()
   try {
     const focus = { action_id: action.id }
@@ -379,13 +634,14 @@ test("a smaller limit bounds representative and relationship detail while retain
       store.record(actor("reviewer"), focus, { kind: "qa", verdict, statement: `Partial ${verdict} check ${i}.`, evidence_ids: observations.map(record => record.id) })
     const usual = store.engineeringHistory.read({ action_id: action.id })
     const small = store.engineeringHistory.read({ action_id: action.id, limit: 1 })
-    expect(usual.highlights).toHaveLength(4)
+    expect(usual.highlights).toHaveLength(6)
     expect(usual.relationships).toHaveLength(80)
-    expect(small.highlights).toHaveLength(2)
-    expect(small.highlights.map(record => record.verdict).sort()).toEqual(["fail", "pass"])
-    expect(small.relationships).toHaveLength(2)
+    expect(small.highlights.map(({ expand, ...record }) => record)).toEqual(usual.highlights.map(({ expand, ...record }) => record))
+    expect(small.highlights.filter(record => record.meaning === "authored").map(record => record.verdict).sort()).toEqual(["fail", "fail", "pass", "pass"])
+    expect(small.relationships).toEqual(usual.relationships)
+    expect(small.branches).toHaveLength(1)
     expect(small.totals).toEqual(usual.totals)
-    expect(small.highlights.every(record => record.gaps.some(gap => gap.code === "relationships-omitted" && gap.detail.startsWith("19 ")))).toBe(true)
+    expect(small.highlights.every(record => record.gaps.every(gap => gap.code !== "relationships-omitted"))).toBe(true)
     expect(small.coverage.gaps.some(gap => gap.code === "representative-highlights")).toBe(true)
   } finally { db.close() }
 })

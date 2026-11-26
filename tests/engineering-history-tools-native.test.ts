@@ -1,6 +1,7 @@
 import { expect, spyOn, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { Database } from "bun:sqlite"
+import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { EngineeringHistory } from "../src/engineering-history.js"
 import { Store } from "../src/store.js"
@@ -51,8 +52,11 @@ test("registered history starts at an Action, selects relevant branches and reso
     expect(view.intended_plan).toBeNull()
     const concern = view.highlights.find((r: any) => r.kind === "concern")
     expect(concern.excerpt).toContain("cause remains unproven")
-    const branch = view.branches.find((b: any) => b.ref === concern.branch_ref)
-    const expanded = (await f.invoke("history", { operation: "read", ...branch.expand }, "reader")).result
+    const selected = (await f.invoke("history", { operation: "read", ...concern.expand }, "reader")).result
+    expect(selected.records.map((r: any) => r.source.record_id)).toContain(concern.source.record_id)
+    const sourceSession = selected.ancestors.find((branch: any) => branch.kind === "session")
+    expect(sourceSession).toBeDefined()
+    const expanded = (await f.invoke("history", { operation: "read", ...sourceSession.expand }, "reader")).result
     expect(expanded.records.map((r: any) => r.source.record_id).sort()).toEqual(records.slice(0, 2).map(r => r.id).sort())
     expect(expanded.records.every((r: any) => r.meaning === "authored")).toBe(true)
     expect(expanded.records.map((r: any) => r.excerpt).join(" ")).toContain("did not verify the later correction")
@@ -225,7 +229,7 @@ test("a minimum-page dense overview remains available in all three formats witho
   } finally { db.close(); await f.close() }
 })
 
-test("controlled usability measurement starts with only the Action identity", async () => {
+test("the original single-concern fixture admits an optimized two-call record baseline", async () => {
   const { f, action, records } = await trajectory(257)
   try {
     const run = async (name: string, input: unknown, metric: { calls: number; bytes: number; ms: number }) => {
@@ -238,32 +242,44 @@ test("controlled usability measurement starts with only the Action identity", as
     // Equivalent need: identify every record in the branch containing the coarse
     // failure and retrieve those exact stored records. Neither path starts with
     // the branch, source Session or record IDs.
-    const legacy = { calls: 0, bytes: 0, ms: 0 }, all: any[] = []
-    let after: number | undefined
-    do {
-      const page = await run("record", { operation: "query", action_id: action.id, limit: 50, ...(after === undefined ? {} : { after }) }, legacy)
-      all.push(...page.items); after = page.next_after ?? undefined
-    } while (after !== undefined)
-    const legacyConcern = all.find(record => record.kind === "concern" && record.data.statement.includes("coarse"))
-    const legacyBranch = all.filter(record => record.session_id === legacyConcern.session_id)
+    // #251 already supports kind and source-Session filters. A baseline that
+    // enumerates all 776 records unfairly handicaps that existing interface.
+    const legacy = { calls: 0, bytes: 0, ms: 0 }
+    const concerns = await run("record", { operation: "query", action_id: action.id,
+      record_kinds: ["concern"], limit: 50 }, legacy)
+    const legacyConcern = concerns.items.find((record: any) => record.data.statement.includes("coarse"))
+    expect(legacyConcern).toBeDefined()
+    const selectedSource = await run("record", { operation: "query", action_id: action.id,
+      source_session_id: legacyConcern.session_id, limit: 50 }, legacy)
+    expect(selectedSource.next_after).toBeNull()
+    const legacyBranch: any[] = selectedSource.items
     const progressive = { calls: 0, bytes: 0, ms: 0 }
     const overview = await run("history", { operation: "read", action_id: action.id }, progressive)
     const concern = overview.highlights.find((record: any) => record.kind === "concern" && record.excerpt.includes("coarse"))
-    const selected = overview.branches.find((branch: any) => branch.ref === concern.branch_ref)
-    const branch = await run("history", { operation: "read", ...selected.expand }, progressive)
-    const exact = []
-    for (const record of branch.records) exact.push(...(await run("record", record.source.query, progressive)).items)
+    // The new path can use the same efficient existing bulk source query once
+    // its overview reveals the contributor. Do not handicap either route with
+    // avoidable hierarchy traversal or one exact-read call per record.
+    const originals = await run("record", { operation: "query", action_id: action.id,
+      source_session_id: concern.source.session_id, limit: 50 }, progressive)
+    expect(originals.next_after).toBeNull()
+    const exact: any[] = originals.items
     expect(exact.map(record => record.id).sort()).toEqual(legacyBranch.map(record => record.id).sort())
     expect(exact.map(record => record.data)).toEqual(legacyBranch.map(record => record.data))
     expect(exact.map(record => record.id).sort()).toEqual(records.slice(0, 2).map(record => record.id).sort())
-    expect(legacy.calls).toBe(16)
-    expect(progressive.calls).toBe(4)
-    expect(progressive.bytes).toBeLessThan(legacy.bytes)
-    if (process.env.LOOM_HISTORY_MEASURE === "1") console.log("ENGINEERING_HISTORY_MEASUREMENT " + JSON.stringify({
-      scope: "controlled registered-tool fixture; simulated native permission/Session owner; 776 records, 261 source Sessions",
+    expect(legacy.calls).toBe(2)
+    expect(progressive.calls).toBe(2)
+    const measurement = {
+      scope: "counterexample to the old all-record baseline; controlled registered tools and simulated native permission/Session owner; 776 records, 261 source Sessions",
       information_need: "find coarse failure branch from Action identity, retrieve both exact originals",
-      legacy, progressive, selection_correct: true, exhaustive_client_enumeration: { legacy: true, progressive: false },
+      legacy, progressive, selection_correct: true, exhaustive_client_enumeration: { legacy: false, progressive: false },
+      selected_original_record_ids: exact.map(record => record.id),
+      qualification: "The old interface is already efficient for this favorable single-concern fixture. No speed or comprehension claim follows.",
       excludes: "fixture setup, real host/network latency, model reasoning, tokens and production performance",
-    }))
+    }
+    if (process.env.LOOM_HISTORY_MEASURE_DIR) {
+      await mkdir(process.env.LOOM_HISTORY_MEASURE_DIR, { recursive: true })
+      await writeFile(join(process.env.LOOM_HISTORY_MEASURE_DIR, "single-concern-counterexample.json"), JSON.stringify(measurement, null, 2) + "\n")
+    }
+    if (process.env.LOOM_HISTORY_MEASURE === "1") console.log("ENGINEERING_HISTORY_MEASUREMENT " + JSON.stringify(measurement))
   } finally { await f.close() }
 })

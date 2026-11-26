@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 from installed_historical_evidence import (
-    assert_exact_field_envelope, assert_history_navigation, assert_history_renderings,
+    assert_exact_field_envelope, assert_history_discovery, assert_history_navigation, assert_history_renderings,
     assert_read_only_effects, encoded, physical_generation_oracle, synthetic_transfer,
 )
 from test_installed_learning_stage4 import driver_plan, driver_receipts
@@ -264,6 +264,44 @@ class HistoryNavigationOracleTest(unittest.TestCase):
                         html.replace("native-originals-unavailable", ""), html + "<script>fetch('/source')</script>"):
             with self.subTest(changed=changed), self.assertRaises(RuntimeError):
                 assert_history_renderings(view, markdown, changed)
+
+
+class HistoryDiscoveryOracleTest(unittest.TestCase):
+    def discovery_fixture(self):
+        overview, expanded, exact, original = HistoryNavigationOracleTest().fixture()
+        discovery = deepcopy(overview)
+        discovery.update(mode="discovery", selection={"match": "SYNTHETIC_ORIGINAL_FAILURE", "record_kinds": ["result"]},
+                         records=deepcopy(discovery["highlights"]))
+        discovery["coverage"].update(matching_records=1, matching_branches=1, next_after=None)
+        overview.update(mode="overview", highlights=[], branches=[])
+        overview["coverage"]["branches_omitted"] = 24
+        expanded.update(mode="branch", ancestors=[{"kind": "session", "ref": "parent"}], branches=[])
+        return overview, discovery, expanded, exact, original
+
+    def test_hidden_original_requires_actual_selective_discovery_and_ancestry(self):
+        result = assert_history_discovery(*self.discovery_fixture())
+        self.assertTrue(result["target_absent_from_overview"])
+        self.assertFalse(result["preknown_child_or_record_ids_supplied"])
+        self.assertEqual(result["supported_reads"], 4)
+
+    def test_favorable_overview_or_incorrect_match_cannot_pass_discovery(self):
+        for mutation in ("visible", "wrong-match", "no-ancestry", "unrelated-context", "wrong-original", "wrong-boundary"):
+            with self.subTest(mutation=mutation):
+                overview, discovery, expanded, exact, original = self.discovery_fixture()
+                if mutation == "visible":
+                    overview["highlights"] = deepcopy(discovery["records"])
+                elif mutation == "wrong-match":
+                    discovery["records"][0]["source"]["record_id"] = "adjacent"
+                elif mutation == "no-ancestry":
+                    expanded["ancestors"] = []
+                elif mutation == "unrelated-context":
+                    expanded["intended_plan"] = {"revision": 2}
+                elif mutation == "wrong-original":
+                    exact["items"][0]["data"]["statement"] = "adjacent success"
+                else:
+                    discovery["boundary"]["observed_through"] = 10
+                with self.assertRaises(RuntimeError):
+                    assert_history_discovery(overview, discovery, expanded, exact, original)
 
 
 if __name__ == "__main__":

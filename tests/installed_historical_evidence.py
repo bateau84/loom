@@ -46,6 +46,7 @@ CHECKS = {
     "source-change-and-cursor-scope-denied",
     "native-inline-and-split-export-normalization",
     "layered-history-top-down-selective-original",
+    "layered-history-discovery-outside-overview",
     "layered-history-shared-document-and-dashboard",
     "layered-history-derived-source-and-scope-denials",
     "historical-sources-unchanged-and-no-evaluator-effects",
@@ -284,6 +285,43 @@ def assert_history_navigation(overview: dict, expanded: dict, exact: dict, origi
             "qualification": "controlled installed mechanics; no unfamiliar-model or private-history acceptance"}
 
 
+def assert_history_discovery(overview: dict, discovery: dict, expanded: dict, exact: dict, original: dict) -> dict:
+    """Require a hidden original, a content-selected result, and actual nested navigation."""
+    require(original["id"] not in encoded(overview) and overview.get("coverage", {}).get("branches_omitted", 0) > 0,
+            "Discovery fixture did not place its target outside the initial overview")
+    require(discovery.get("mode") == "discovery" and discovery.get("selection", {}).get("match")
+            and not any(key in discovery["selection"] for key in ("source_session_id", "record_id", "branch_ref")),
+            "Selective discovery used preknown target identities instead of the question terms")
+    for view in (discovery, expanded):
+        require(view.get("format") == overview.get("format") == "loom-engineering-history/v1"
+                and view.get("scope") == overview.get("scope") == {"action_id": original["action_id"]}
+                and view.get("store_id") == overview.get("store_id")
+                and view.get("boundary", {}).get("observed_through") == overview["boundary"]["observed_through"],
+                "Selective discovery changed the namespace, scope or append boundary")
+    matches = [item for item in discovery.get("records", []) if item["source"]["record_id"] == original["id"]]
+    require(len(matches) == 1 and discovery.get("coverage", {}).get("matching_records") == 1,
+            "Selective discovery did not return the exact matching original")
+    subject = matches[0]
+    require(expanded.get("selected_branch", {}).get("ref") == subject["branch_ref"]
+            and expanded.get("ancestors") and expanded.get("intended_plan") is None
+            and any(item["source"]["record_id"] == original["id"] for item in expanded.get("records", [])),
+            "Selected discovery branch lost its nested ancestry or returned unrelated current context")
+    require(subject.get("excerpt") == original["data"]["statement"] and subject.get("meaning") == "authored"
+            and subject.get("verification") == "authored claim; not independently verified",
+            "Selective history changed or certified the authored finding")
+    require(subject["source"].get("query") == {"operation": "query", "action_id": original["action_id"],
+            "source_session_id": original["session_id"], "record_id": original["id"]}
+            and subject["source"].get("sha256") == hashlib.sha256(encoded(original).encode()).hexdigest(),
+            "Selective history lost original identity, permission scope or digest")
+    require(len(exact.get("items", [])) == 1
+            and {key: value for key, value in exact["items"][0].items() if key != "sequence"} == original,
+            "Selective history source request did not return the exact original")
+    return {"target_absent_from_overview": True, "preknown_child_or_record_ids_supplied": False,
+            "scope": overview["scope"], "selected_record_id": original["id"], "supported_reads": 4,
+            "observed_through": overview["boundary"]["observed_through"], "ancestor_count": len(expanded["ancestors"]),
+            "qualification": "controlled installed selective retrieval; not unfamiliar-agent comprehension or a speed claim"}
+
+
 def assert_history_renderings(view: dict, markdown: str, html: str) -> dict:
     require(markdown.startswith("# Engineering history\n") and html.startswith("<!doctype html>"),
             "History did not return the requested document/dashboard formats")
@@ -495,6 +533,28 @@ def run(args) -> dict:
                     grandchildren = [request(host, "POST", "/api/session", {"parentID": fillers[0], "agent": "reviewer",
                         "title": "Synthetic grandchild", "location": {"directory": str(project)}})["id"] for _ in range(3)]
                     owned.update(grandchildren)
+                    # A separate Action preserves the original five-record/source
+                    # controls while exercising new selectors in the installed host.
+                    # All sources are authored through registered tools, before the
+                    # read-only phase and the native-source immutability snapshot.
+                    discovery_action = scenario.invoke(parent, "action", {"operation": "create",
+                        "title": "Synthetic competing findings", "goal": "Investigate the early FROST_47 failure"})
+                    hidden_original = scenario.invoke(parent, "record", {"operation": "add", "action_id": discovery_action["id"],
+                        "kind": "concern", "statement": "FROST_47 early timeout; attribution remains unproven."})
+                    scenario.invoke(parent, "record", {"operation": "add", "action_id": discovery_action["id"],
+                        "kind": "result", "statement": "FROST_47 rerun passed unchanged code; correction verification remains incomplete."})
+                    for index, session in enumerate(fillers[:24]):
+                        competing = [{"operation": "add", "action_id": discovery_action["id"], **record} for record in (
+                            {"kind": "concern", "statement": f"Unrelated queue {index} reports a newer concern."},
+                            {"kind": "assessment", "verdict": "fail", "statement": f"Unrelated queue {index} failed its scoped check."},
+                            {"kind": "result", "statement": f"Unrelated queue {index} reports a later result."},
+                        )]
+                        receipts = scenario.command(session, "return [" + ",".join(
+                            "await tools.loom.record(" + encoded(query) + ")" for query in competing) + "]")
+                        authored = [event for event in receipts if event["type"] == "tool-after"
+                                    and event["data"].get("tool") in ("loom_record", "loom.record")]
+                        require(len(authored) == 3 and all(event["data"].get("status") == "completed" for event in authored),
+                                "Installed discovery fixture did not author its competing findings")
                     idle(host, [parent, *children])
                     originals = {session: native_export(host, owned, session) for session in (parent, *children)}
                     inline = import_inline_control(host, owned, project, originals[parent])
@@ -510,6 +570,8 @@ def run(args) -> dict:
                         "participating_children": children, "direct_children": DIRECT_CHILDREN, "grandchildren": grandchildren,
                         "same_revision_nonparticipant": fillers[0], "action": action["id"], "record_ids": [item["id"] for item in records],
                         "dispatches": dispatches, "imported_control": imported,
+                        "discovery_action": discovery_action["id"], "discovery_competing_sessions": 24,
+                        "discovery_target_record_id": hidden_original["id"],
                         "authored_support": "five claims with empty evidence_ids; no objective registration or Loom assignment/delivery"}
                     read_start = len(events(root))
                     scenario.invocation_plan = []
@@ -573,9 +635,7 @@ def run(args) -> dict:
                     failure = [item for item in history["highlights"]
                                if (item.get("excerpt") or "").startswith("SYNTHETIC_ORIGINAL_FAILURE:")]
                     require(len(failure) == 1, "History overview did not reveal one original-failure branch")
-                    selected_branch = [item for item in history["branches"] if item["ref"] == failure[0]["branch_ref"]]
-                    require(len(selected_branch) == 1, "Highlighted history record has no navigable branch")
-                    expanded = scenario.read(reader, "history", {"operation": "read", **selected_branch[0]["expand"]},
+                    expanded = scenario.read(reader, "history", {"operation": "read", **failure[0]["expand"]},
                                              "layered-history-selected-branch")
                     history_original = scenario.read(reader, failure[0]["source"]["tool"].removeprefix("loom_"),
                                                      failure[0]["source"]["query"], "layered-history-exact-original")
@@ -592,6 +652,25 @@ def run(args) -> dict:
                                                  "layered-history-dashboard")
                     check("layered-history-shared-document-and-dashboard",
                           **assert_history_renderings(history, history_markdown, history_html))
+
+                    discovery_overview = scenario.read(reader, "history", {"operation": "read", "action_id": discovery_action["id"]},
+                                                       "layered-discovery-initial-overview")
+                    discovery_query = {"operation": "read", "action_id": discovery_action["id"], "match": "FROST_47",
+                                       "record_kinds": ["concern"], "through": discovery_overview["boundary"]["observed_through"]}
+                    discovered = scenario.read(reader, "history", discovery_query, "layered-discovery-question-terms")
+                    matches = [item for item in discovered["records"] if "FROST_47" in (item.get("excerpt") or "")]
+                    require(len(matches) == 1, "Installed selective discovery did not identify the requested finding")
+                    discovered_branch = scenario.read(reader, "history", {"operation": "read", **matches[0]["expand"]},
+                                                      "layered-discovery-nested-branch")
+                    discovered_original = scenario.read(reader, "record", matches[0]["source"]["query"], "layered-discovery-original")
+                    discovery_receipt = assert_history_discovery(discovery_overview, discovered, discovered_branch,
+                                                                discovered_original, hidden_original)
+                    discovery_markdown = scenario.read(reader, "history", {**discovery_query, "response_format": "markdown"},
+                                                       "layered-discovery-document")
+                    discovery_html = scenario.read(reader, "history", {**discovery_query, "response_format": "html"},
+                                                   "layered-discovery-dashboard")
+                    check("layered-history-discovery-outside-overview", **discovery_receipt,
+                          competing_sessions=24, rendering=assert_history_renderings(discovered, discovery_markdown, discovery_html))
 
                     inventories = {}
                     for label, session in (("split", parent), ("inline", imported)):
@@ -744,6 +823,14 @@ def run(args) -> dict:
                                 "Denied derived history disclosed original claims or record identities")
                         history_denials += 1
                         set_policy(allow)
+                    filtered_history_denials = 0
+                    for response_format in ("json", "markdown", "html"):
+                        policy(f"loom:evidence:inspect:session:{fillers[23]}:view:engineering-history")
+                        denial = scenario.denied(reader, "history", {**discovery_query, "response_format": response_format})
+                        require("FROST_47" not in encoded(denial) and hidden_original["id"] not in encoded(denial),
+                                "Filtering bypassed a nonmatching contributor's history denial")
+                        filtered_history_denials += 1
+                        set_policy(allow)
                     # The shared view grants no original-record authority. Follow the
                     # exact request emitted above under an explicit original denial.
                     policy(f"loom:evidence:inspect:session:{records[0]['session_id']}:record:{records[0]['id']}:view:record-full")
@@ -758,6 +845,7 @@ def run(args) -> dict:
                             and action["title"] not in encoded(session_history),
                             "Session history read linked Action intent without Action authority")
                     check("layered-history-derived-source-and-scope-denials", derived_denials=history_denials,
+                          filtered_nonmatching_contributor_denials=filtered_history_denials,
                           original_denials=1, mismatched_branch_scope=1, session_scope_withholds_action_content=True,
                           timing="native policy changed between completed reads; in-flight final-assertion denial covered by registered-tool tests")
 

@@ -14,9 +14,11 @@ Give humans and agents the same compact map of recorded engineering work. A
 Store-owned projection supplies intent, historical work groups, significant
 authored records, typed references and coverage. One authorized `loom_history`
 reader exposes that projection as JSON, Markdown or a self-contained HTML
-dashboard. Consumers can expand a selected group without enumerating the whole
-ledger. Original records remain available through the existing `loom_record`
-reader.
+dashboard. Deterministic selectors search the eligible authorized history before
+the result limit is applied, including work omitted from an overview. Consumers
+then expand a selected group or retrieve an exact original through the existing
+`loom_record` reader. Representative highlights are an entry point, not an
+inventory of every important event.
 
 This is the first useful **ledger navigation** increment of
 [issue #227](https://github.com/bateau84/loom/issues/227). It does not claim the
@@ -55,7 +57,7 @@ The four views answer different questions over the same evidence:
 | View | Question | First increment and boundary |
 | --- | --- | --- |
 | Intent and overview | What was intended, and which branches deserve investigation? | Explicit Action intent where authorized; current intended Plan separately from historical work groups; recorded outcomes, concerns and failures; visible missing coverage. Original user conversations are not reconstructed from an Action title. |
-| Execution and decisions | What happened in the selected work? | Historical WorkRefs, recorded Sessions and selected observations/authored decisions. A Session group is not a dispatch or execution attempt. Missing timing, model, assignment and skill-content information remains unknown. |
+| Execution and decisions | What happened in the selected work? | Historical Plan ancestry and WorkRefs; recorded Session/message groups; qualified chronological groups; captured tool, attribution, agent-context and skill-load metadata. A Session or chronology group is not a dispatch or execution attempt. Missing source content and invocation ownership remain unknown. |
 | Assessment and outcome | What was reported, challenged or checked? | Authored result, assessment, QA and concern records, with their exact source references and qualifications. Deterministic aggregation does not establish resolution, diagnosis, causation or independent acceptance. |
 | Exact originals | What supports the observation or claim? | Exact permitted Loom records through #251; other original owners remain explicit dependencies. Consumers may follow an original reference directly without traversing every layer. |
 
@@ -69,7 +71,9 @@ Status meaning cannot rely on color alone.
 An agent receives the same identifiers, groups, totals, relationships and coverage
 in structured form. Markdown presents the same navigable read as a document, not
 a separate narrative summary. Ranking identifies kinds worth inspecting; it
-does not grade the engineering or infer success from prose.
+does not grade the engineering or infer success from prose. If a question is
+already known, discovery can begin with that question's terms and categories
+without first paging through the ranked overview.
 
 The restore-freshness reference trajectory illustrates the distinction. An
 initial failed run, unchanged-code rerun, corrected revision and partial recheck
@@ -90,7 +94,8 @@ JSON, document and dashboard renderers own presentation only.
    permission resources, then assert history inspection/disclosure for every
    contributing ledger Session before building any returned aggregate or preview.
 3. Read one bounded, synchronous Store transaction. Obtain complete authorized
-   scope aggregates and bounded representative groups/records, preserving
+   scope aggregates, build historical/observed navigation memberships, and apply
+   requested selectors before paging matching records or branches. Preserve
    omission and unavailable-source information.
 4. Render the chosen representation, enforce the response bound and recheck the
    applicable source/location boundary and contributing Session membership.
@@ -110,6 +115,9 @@ that silently disagree with them.
 An established historical WorkRef contains the original Action revision, Plan
 revision, node ID and contract hash. Resolve that exact definition through the
 existing Collaboration owner. Never relabel earlier work using today's Plan.
+Navigate from the recorded historical revision through its saved ancestor nodes
+to exact WorkRef leaves. Each container has a usable expansion request, immediate
+children and parent references; historical ancestry is not only a breadcrumb.
 The current Plan is a separately labelled intended-work view; its status and
 structure do not prove execution or verification.
 
@@ -125,13 +133,57 @@ historical Plan binding. Keep that group qualified. Removed nodes and work
 outside the Plan remain navigable. An unavailable historical definition is a gap,
 not permission to substitute another revision.
 
+Ordinary authored records retain a subject fingerprint without necessarily
+retaining a WorkRef. Connect these to observations with the same captured
+fingerprint, Action and node using qualified related-branch references. A subject
+fingerprint intentionally ignores unrelated Plan changes; identical fingerprints
+can therefore span several Plan revisions. The association never establishes an
+exact historical revision, dispatch, invocation, causal link or verification.
+WorkRef contract hashes and subject fingerprints are different identities.
+
 ### Work without a Plan
 
-Use recorded Sessions and records as observed navigation groups. Do not invent a
-Plan, assignment, invocation or objective from proximity, titles, role names or
-matching artifact revisions. A reused Session can contain several attempts.
-Source-established invocations can be added later without changing the meaning
-of existing Session groups.
+Use recorded Sessions as containers. Where captured native message IDs exist,
+their observations form observed message groups; captured start/finish references
+retain their actual pairing. Records without message identity can form
+chronological segments anchored by material authored records such as concerns,
+results, assessments, questions or reopens. These are labelled analytical
+chronology, with source-derived labels and sequence bounds. They are not fixed
+record-page buckets, inferred attempts or causal phases.
+
+Do not invent a Plan, assignment, invocation or objective from proximity,
+titles, role names or matching artifact revisions. A reused Session can contain
+several observed groups without asserting that they are separate dispatches.
+Source-established invocations can be added later without changing this meaning.
+
+### Selective discovery
+
+The existing `read` operation accepts conjunctive selectors:
+
+| Selector | Meaning and boundary |
+| --- | --- |
+| `match` | Literal ASCII-case-insensitive substring, 1–200 characters, over supported authored prose and captured observation metadata. It is not SQL wildcard, regular-expression or semantic matching. |
+| `record_kinds` | Nonempty unique list of supported ledger kinds, evaluated before paging. |
+| `verdict` | Captured authored `pass`, `fail` or `inconclusive`; no inferred sentiment or outcome. |
+| `source_session_id`, `node_id` | Exact recorded source/association within the requested scope. These filters grant no source authority. |
+| `plan_revision` | Positive exact Plan revision on established WorkRefs. A matching fingerprint does not make an unversioned report eligible. |
+| `has_gaps` | Select records with or without known captured attribution/scope gaps. Absence of a recorded gap is not complete native coverage. |
+
+Selectors inspect the eligible history before applying result limits. An older
+matching failure can be discovered even when newer unrelated failures displace
+it from every overview highlight. Many matching results still require bounded
+pagination; this is selective retrieval, not a promise that every investigation
+fits in one call. Matching counts, global scope totals and omitted rows/children
+are distinct. A focused branch read omits unrelated global ranked branches and
+the current intended Plan while retaining its relevant ancestry and associations.
+
+The scope is bounded at 100,000 ledger records and 64 MiB of stored record bodies;
+the returned representation is bounded at 262,144 UTF-8 bytes. Oversized scopes
+fail with an explicit boundary rather than silently sampling eligible history.
+Compact metadata supplies tree memberships; only selected source bodies are
+hydrated for projection. Exact historical definitions have their own cumulative
+64 MiB hydration budget and are reused within a read after each WorkRef is
+validated. There is no new capture, index lifecycle or cross-read cache.
 
 ### Stable references and live changes
 
@@ -146,9 +198,16 @@ external sources have separate versions and availability. The response therefore
 identifies a live read and its observed boundary. Appended work requires refresh;
 changed or unavailable source definitions retain their qualifications.
 
-Ranked branch traversal has its own bounded continuation. Record continuation is
-valid only for a selected branch. Preserve the returned ledger boundary across
-continuations; it does not pin current intended Plan or Action content.
+Branch traversal has its own bounded continuation, including a selected
+container's children. Record continuation applies to selected branches and
+discovery results. Preserve the returned selectors and ledger boundary across
+continuations; the boundary does not pin current intended Plan or Action content.
+The page limit controls records and branches. Representative highlights,
+relationship fanout and compact intended Plan nodes have separate fixed bounds,
+so reducing a record page does not silently remove all other analytical context.
+`coverage.page_limit` and returned expansion requests retain the chosen page
+size. Dense rendered views can exceed the byte ceiling at the default page
+size; the read fails explicitly and the caller can request a smaller page.
 
 The source store's opaque identity must accompany navigation. A matching Session
 ID or record string from another store is not a common source identity.
@@ -161,6 +220,22 @@ identity, recorded time and available source/version basis. A tool event count i
 a count of captured records under a named scope, not a count of all native
 operations. Starts and finishes cannot be counted as two independent executions.
 Unobserved measurements are unknown, not zero.
+
+Project material metadata already captured by the Observer: attribution reason,
+capture-gap flag, established/unscoped/unknown/ambiguous work scope, message/call
+and start-record references, agent-context source and content hashes, and
+skill-load content hashes and recorded qualifications. Bounded excerpts and
+omissions remain explicit. Unsupported metadata cannot become trusted scope.
+Significant captured attribution gaps have their own representative overview
+lane and are discoverable with `has_gaps`.
+
+An unpaired finish deliberately has no Action attribution. It is visible in its
+eligible Session scope, not pulled into an Action merely because that Session
+also contributed Action records. Ambiguous candidates and referenced records
+outside the authorized scope are not disclosed through provenance metadata.
+Agent snapshots describe observed context after Loom's processing; they do not
+prove the final provider input. Skill-load hashes do not prove the agent read or
+applied the skill.
 
 Authored `evidence_ids` establish citations to existing scoped observation
 records. They do not establish causation, a finding's resolution or a review's
@@ -197,6 +272,8 @@ before constructing the projection, and includes the entire union in its final
 assertion. It rechecks membership before release so a new constituent cannot
 silently enter under the old resource union. A denied constituent fails the whole
 view without leaking through totals, ranking, cursors or a different format.
+Discovery filters do not narrow this permission union: even a nonmatching
+contributor's denial withholds the entire requested Action view.
 Session-scoped reads do not hydrate linked Action titles or Plans without Action
 authority.
 
@@ -243,12 +320,12 @@ population and source-authority obligations are met.
 
 | Obligation | Owner and falsification point | Delivery boundary |
 | --- | --- | --- |
-| BR-010, QS-006: useful overview and selective expansion | Registered tool against a large realistic ledger; an investigator identifies a relevant branch without pre-known child IDs. Compare equivalent information needs, calls, bytes, latency and selection correctness. | First ledger-navigation increment; measured fixture results are not production savings. |
+| BR-010, QS-006: useful overview and selective expansion | Registered tools against competing concerns/failures in planned and unplanned histories; the older target is outside the initial overview. Start with question terms, navigate ancestry, retrieve exact originals and compare with competent #251 filters. | Scripted mechanics establish selective retrieval, not unfamiliar-agent comprehension or universal efficiency gains. |
 | BR-001, OC-001, QS-001: attribution | Store projection preserves recorded Session, observation and WorkRef identities; no inference of invocation from Session grouping. | Existing capture reused; missing native invocation ownership remains a gap. |
 | BR-002: historical definitions | Change Plan/Action after captured work, remove a node, then expand historical work and unversioned/no-Plan groups. | No current-Plan substitution; missing historical definitions remain visible. |
 | BR-004, BR-005: original claims and qualified outcomes | Include initial failure, unchanged rerun, corrected head, partial recheck, conflicting assessments and missing originals. | No aggregate verified-success or proven-cause promotion. Review/ObjectiveIndex integration remains separately scoped. |
 | OC-003, QS-004: protected derived views | Deny discovery, inspection or disclosure; test another recipient, scope mismatch, source movement and final denial for every format. Inspect entire serialized responses, not only record bodies. | Same qualified native permission observation as #251; no claim of atomic protected transfer. |
-| BR-010: shared accessible dashboard | Compare rendered source IDs, group requests, relationships and coverage with JSON; exercise hostile content, keyboard disclosure, narrow viewport and visible focus. | Self-contained authorized view; further loading/refresh remains a new authorized tool read. |
+| BR-010: shared accessible dashboard | Compare rendered source IDs, group requests, relationships and coverage with JSON. Real Chromium CI exercises keyboard disclosure, internal references, dense histories, narrow viewport, focus, inert hostile content and automated accessibility checks. | Automated browser checks are not a manual screen-reader usability audit. Further loading/refresh remains a new authorized tool read. |
 | BR-008 and selected-population contract | Verify live markers and sequence boundaries; add records after a read and show that no frozen manifest was created or changed. | Retrospective preview/freeze explicitly deferred to existing evaluation/source owners. |
 | Preservation | Run applicable existing Store, registered-tool, build, dashboard and installed-host checks; compare source and evaluation state before/after navigation. | No source mutation, Stage 3 change, Evaluator dispatch or new raw capture. |
 
@@ -256,6 +333,15 @@ The PR's exact revision and receipts are the authority for executed checks. This
 design and its proposed scenarios do not themselves prove test or installed-host
 success. Preserve failed checks and qualification limitations in that delivery
 record rather than converting the initial increment into full #227 acceptance.
+
+The original 776-record measurement compared exhaustive old pagination with a
+favorable history path. It is not evidence of an improvement over #251: a concern
+filter followed by a source-Session query retrieves the same two records in two
+calls. Qualification retains that counterexample and adds competing-finding
+scenarios, actual returned bytes, local elapsed time and repeated projection
+reads. No latency improvement, model-token savings or unfamiliar-agent
+comprehension is inferred from those scripted measurements. Measure repeated
+whole-scope assembly before considering caching or another persistence owner.
 
 ## Navigation, selection and freezing
 

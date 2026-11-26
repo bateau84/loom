@@ -134,6 +134,10 @@ const specs = [
   { name: "history", description: TOOL_HELP.history, input: preserveInput({
     operation: { const: "read" }, action_id: str, session_id: str,
     branch_ref: { type: "string", minLength: 1, maxLength: 4096 }, record_id: str,
+    match: { type: "string", minLength: 1, maxLength: 200 },
+    record_kinds: { type: "array", minItems: 1, maxItems: RECORD_KINDS.length, uniqueItems: true, items: choice(...RECORD_KINDS) },
+    verdict: choice("pass", "fail", "inconclusive"), source_session_id: str, node_id: str,
+    plan_revision: { type: "integer", minimum: 1 }, has_gaps: { type: "boolean" },
     after: num, through: num, branch_offset: { type: "integer", minimum: 0, maximum: 100000 }, limit: { type: "integer", minimum: 1, maximum: 50 },
     response_format: choice("json", "markdown", "html"),
   }, ["operation"]) },
@@ -458,7 +462,8 @@ export default Plugin.define({
             let result: unknown
             switch (spec.name) {
               case "history": {
-                const allowed = ["operation", "action_id", "session_id", "branch_ref", "record_id", "after", "through", "branch_offset", "limit", "response_format"]
+                const allowed = ["operation", "action_id", "session_id", "branch_ref", "record_id", "match", "record_kinds", "verdict",
+                  "source_session_id", "node_id", "plan_revision", "has_gaps", "after", "through", "branch_offset", "limit", "response_format"]
                 if (input.operation !== "read" || Object.keys(input).some(key => !allowed.includes(key)))
                   throw new Error("Unsupported engineering history operation or field")
                 if (input.response_format !== undefined && !["json", "markdown", "html"].includes(String(input.response_format)))
@@ -1241,7 +1246,9 @@ export default Plugin.define({
               }
             }
             if (evidenceResources.size) {
-              if (Buffer.byteLength(content, "utf8") > 262144) throw new Error("Evidence response exceeds 262144 bytes; reduce the page or selected fields")
+              if (Buffer.byteLength(content, "utf8") > 262144) throw new Error(spec.name === "history"
+                ? "History response exceeds 262144 bytes; reduce limit or narrow the filters or scope"
+                : "Evidence response exceeds 262144 bytes; reduce the page or selected fields")
               await evidenceSourceCheck?.()
               for (const session of evidenceSessions) await evidenceSession(session)
               // The serialized response and all source/location work precede the

@@ -1,0 +1,52 @@
+name: Engineering history browser qualification
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  chromium:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      EXPECT_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+      LOOM_HISTORY_BROWSER_DEPS: ${{ runner.temp }}/loom-history-browser-deps
+      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/loom-history-browser-browsers
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .bun-version
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - name: Typecheck synthetic registered-tool browser fixtures
+        run: >-
+          ./node_modules/.bin/tsc --noEmit --ignoreConfig --target ES2022 --module NodeNext
+          --moduleResolution NodeNext --strict --skipLibCheck --types bun,node
+          tests/engineering-history-browser/generate.ts
+      - name: Install pinned test-only browser and accessibility tools outside plugin dependencies
+        run: >-
+          npm install --prefix "$LOOM_HISTORY_BROWSER_DEPS" --ignore-scripts --no-audit --no-fund
+          playwright@1.65.1 @axe-core/playwright@4.14.1
+      - name: Install Chromium on the isolated CI runner
+        run: node "$LOOM_HISTORY_BROWSER_DEPS/node_modules/playwright/cli.js" install --with-deps chromium
+      - name: Generate actual registered-tool HTML, JSON and Markdown from shared adversarial histories
+        run: bun tests/engineering-history-browser/generate.ts "$RUNNER_TEMP/loom-history-browser-fixtures"
+      - name: Qualify native keyboard, references, layout, accessibility and inertness in Chromium
+        run: node tests/engineering-history-browser/qualify.mjs "$RUNNER_TEMP/loom-history-browser-fixtures" "$RUNNER_TEMP/loom-history-browser-report"
+      - name: Verify production dependencies remain unchanged
+        run: git diff --exit-code -- package.json bun.lock
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: engineering-history-browser-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            ${{ runner.temp }}/loom-history-browser-fixtures/
+            ${{ runner.temp }}/loom-history-browser-report/
+          if-no-files-found: warn
+          retention-days: 7

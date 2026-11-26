@@ -9,12 +9,14 @@ function fixture(): EngineeringHistoryView {
   const counts: EngineeringHistoryCounts = { records: 2, sessions: 1, observations: 0, concerns: 1,
     reported_completions: 0, reported_reopens: 0, reported_passes: 1, reported_failures: 0, reported_inconclusive: 0, observed_tool_errors: 0,
     observation_starts: 0, paired_finishes: 0, verified_outcomes: null, native_dispatches: null,
+    capture_gap_records: 0, unestablished_finishes: 0, ambiguous_scope_records: 0, unavailable_scope_records: 0,
     by_kind: { concern: 1, assessment: 1 } }
   const records: EngineeringHistoryView["records"] = [
     { ref: "record:concern", branch_ref: "branch:session", kind: "concern", sequence: 4,
       session_id: "session-a", agent: "reviewer", created_at: "2026-11-25T10:00:00Z", meaning: "authored",
       title: "Initial coarse failure", excerpt: "The original failure remains unexplained.", excerpt_truncated: false,
       verdict: null, verification: "authored claim; not independently verified", work_ref: null, observation: null,
+      fingerprint: null, expand: { session_id: "session-a", record_id: "concern", through: 7 },
       source: { store_id: "store-a", record_id: "concern", session_id: "session-a", sequence: 4, sha256: "a".repeat(64),
         tool: "loom_record", query: { operation: "query", source_session_id: "session-a", record_id: "concern" },
         authority: "reference-only; retrieval requires current source permission" }, gaps: [] },
@@ -22,22 +24,27 @@ function fixture(): EngineeringHistoryView {
       session_id: "session-a", agent: "reviewer", created_at: "2026-11-25T10:30:00Z", meaning: "authored",
       title: "Corrected-head partial verification", excerpt: "Both named subtests pass on the corrected head; suite coverage is separate.", excerpt_truncated: true,
       verdict: "pass", verification: "authored claim; not independently verified", work_ref: null, observation: null,
+      fingerprint: null, expand: { session_id: "session-a", record_id: "assessment", through: 7 },
       source: { store_id: "store-a", record_id: "assessment", session_id: "session-a", sequence: 7, sha256: "b".repeat(64),
         tool: "loom_record", query: { operation: "query", source_session_id: "session-a", record_id: "assessment" },
         authority: "reference-only; retrieval requires current source permission" }, gaps: [{ code: "partial-scope", detail: "Named subtests only." }] },
   ]
   const branch: EngineeringHistoryView["branches"][number] = { ref: "branch:session", kind: "session", title: "Restore freshness",
     meaning: "observed-session-group", work_ref: null, node_id: null, session_id: "session-a", counts,
+    parent_ref: null, child_count: 0, historical_scope: null,
     first_sequence: 4, last_sequence: 7, historical_node: null, gaps: [{ code: "no-work-binding", detail: "No historical Plan binding is established." }],
     expand: { session_id: "session-a", branch_ref: "branch:session", through: 7 } }
   return { format: "loom-engineering-history/v1", scope: { session_id: "session-a" }, store_id: "store-a",
     boundary: { live: true, observed_through: 7, current_through: 9, membership: "append-bound only; not a frozen retrospective population" },
     intent: { title: "Restore freshness", goal: null, meaning: "session-scope", action_revision: null }, intended_plan: null,
+    mode: "branch", selection: {}, ancestors: [], related_branches: [],
     totals: counts, branches: [branch], selected_branch: branch, highlights: [records[0]!], records,
     relationships: [{ from: records[1]!.ref, to: records[0]!.ref, kind: "cites-observation", meaning: "authored",
       source_record_id: "assessment", target: "included", qualification: "Citation alone does not establish resolution." }],
-    coverage: { ledger: "complete-within-boundary", branch_count: 3, branches_returned: 1, branches_omitted: 2,
-      records_returned: 2, records_omitted: 4, next_after: 7, next_branch_offset: 1,
+    coverage: { ledger: "complete-within-boundary", branch_count: 3, total_branch_count: 3, branches_returned: 1, branches_omitted: 2,
+      related_branches_omitted: 0,
+      page_limit: 20,
+      records_returned: 2, records_omitted: 4, next_after: 7, next_branch_offset: 1, matching_records: 6, matching_branches: 3,
       gaps: [{ code: "native-originals-unavailable", detail: "Native originals require a supported authorized source." }] } }
 }
 
@@ -62,10 +69,10 @@ test("dashboard preserves shared identities, authored outcomes, gaps and bounded
     expect(html).toContain(record.source.sha256)
     expect(html).toContain(record.source.record_id)
   }
-  expect(html).toContain('&quot;branch_ref&quot;: &quot;branch:session&quot;')
-  expect(html).toContain('&quot;through&quot;: 7')
-  expect(html).toContain('&quot;after&quot;: 7')
-  expect(html).toContain('&quot;branch_offset&quot;: 1')
+  expect(html).toContain('"branch_ref": "branch:session"')
+  expect(html).toContain('"through": 7')
+  expect(html).toContain('"after": 7')
+  expect(html).toContain('"branch_offset": 1')
   expect(html.match(/id="branch-1"/g)).toHaveLength(1)
   expect(html.match(/id="record-1"/g)).toHaveLength(1)
   expect(html).toContain('href="#record-1"')
@@ -73,7 +80,7 @@ test("dashboard preserves shared identities, authored outcomes, gaps and bounded
 
 test("dashboard remains navigable with no Plan and distinguishes current intent from historical bindings", () => {
   const view = fixture()
-  expect(renderEngineeringHistoryHTML(view)).toContain("No Plan is included in this scope. Recorded work remains navigable")
+  expect(renderEngineeringHistoryHTML(view)).toContain("No current Plan projection is included in this read. Recorded work remains navigable")
   view.intent = { title: "Correction", goal: "Preserve restore freshness", meaning: "current-authored-action", action_revision: 6 }
   view.intended_plan = { revision: 4, nodes: [{ id: "new-task", kind: "task", title: "Current renamed work" }], nodes_total: 3, nodes_omitted: 2,
     projection: "identity-and-title", read: { tool: "loom_plan", query: { operation: "read", action_id: "action-a", revision: 4 } },
@@ -130,6 +137,51 @@ test("projected Plan preserves included parent hierarchy and identifies missing 
   expect(html).not.toContain('id="plan-node-4"')
 })
 
+test("selected hierarchy preserves parent navigation, exact requests and qualified related groups", () => {
+  const view = fixture(), selected = view.selected_branch!
+  const parent = { ...selected, ref: "branch:parent", title: "Historical release phase", kind: "historical-node" as const,
+    meaning: "historical-plan-structure" as const, child_count: 1,
+    expand: { session_id: "session-a", branch_ref: "branch:parent", through: 7 } }
+  const child = { ...selected, ref: "branch:child", title: "Recorded message", kind: "message" as const,
+    meaning: "observed-message-group" as const, parent_ref: selected.ref,
+    expand: { session_id: "session-a", branch_ref: "branch:child", through: 7 } }
+  const related = { ...selected, ref: "branch:related", title: "Separate historical binding",
+    gaps: [{ code: "same-fingerprint-not-resolution", detail: "The shared fingerprint does not establish resolution." }],
+    expand: { session_id: "session-a", branch_ref: "branch:related", through: 7 } }
+  selected.parent_ref = parent.ref
+  selected.child_count = 1
+  view.ancestors = [parent]
+  view.branches = [child]
+  view.related_branches = [related]
+  const html = renderEngineeringHistoryHTML(view), markdown = renderEngineeringHistoryMarkdown(view)
+  expect(html).toContain("Path to selected work")
+  expect(html).toContain('<details class="card" open><summary id="branch-2">')
+  expect(html).toContain('<div class="work-children"><details class="card"><summary id="branch-3">')
+  expect(html).toContain('Recorded parent: <a href="#branch-1">')
+  expect(html).toContain("Related recorded groups")
+  for (const branch of [parent, selected, child, related]) {
+    expect(html).toContain(branch.ref)
+    expect(markdown).toContain(JSON.stringify(branch.ref))
+  }
+  expect(html).toContain(related.gaps[0]!.detail)
+  expect(markdown).toContain(related.gaps[0]!.detail)
+})
+
+test("discovery continuations retain the complete normalized selection and append boundary", () => {
+  const view = fixture()
+  view.mode = "discovery"
+  view.selected_branch = null
+  view.selection = { match: "freshness regression", record_kinds: ["qa", "assessment"], verdict: "fail",
+    source_session_id: "session-a", node_id: "old-task", plan_revision: 2, has_gaps: true }
+  const html = renderEngineeringHistoryHTML(view), markdown = renderEngineeringHistoryMarkdown(view)
+  expect(html).toContain("6 matching records in 3 matching leaf groups")
+  const continuation = { operation: "read", ...view.scope, through: 7, limit: 20, ...view.selection, after: 7 }
+  const htmlJSON = JSON.stringify(continuation, null, 2)
+  expect(html).toContain(htmlJSON)
+  expect(markdown).toContain(JSON.stringify(continuation, null, 2).split("\n").map(line => "    " + line).join("\n"))
+  expect(html).not.toContain('"branch_ref": "branch:session",\n  &quot;after&quot;')
+})
+
 test("dashboard uses native keyboard disclosures and semantic responsive landmarks", () => {
   const html = renderEngineeringHistoryHTML(fixture())
   expect(html).toContain('<html lang="en">')
@@ -141,7 +193,10 @@ test("dashboard uses native keyboard disclosures and semantic responsive landmar
   expect(html).toContain('@media(forced-colors:active)')
   expect(html).toContain('@media(max-width:600px)')
   expect(html).not.toContain('onclick=')
-  expect(html).not.toContain('tabindex="-1"')
+  expect(html).toContain('id="record-1-source" tabindex="-1"')
+  expect(html).toContain('href="#record-1-source"')
+  expect(html).toContain('<section class="panel" tabindex="-1" id="overview"')
+  expect(html).not.toMatch(/tabindex="[1-9]/)
   expect(html).not.toContain('<script')
 })
 
@@ -185,11 +240,15 @@ test("dense Store history fits default and minimum HTML pages without duplicatin
     const html = renderEngineeringHistoryHTML(view)
     expect(Buffer.byteLength(html, "utf8")).toBeLessThanOrEqual(ENGINEERING_HISTORY_LIMITS.responseBytes)
     expect(JSON.stringify(view)).toBe(original)
-    expect(html.match(/<li id="relationship-\d+">/g)).toHaveLength(view.relationships.length)
+    expect(html.match(/<li id="relationship-\d+" tabindex="-1">/g)).toHaveLength(view.relationships.length)
     for (const [index, relationship] of view.relationships.entries()) {
       const id = `relationship-${index + 1}`
-      const row = html.match(new RegExp(`<li id="${id}">([\\s\\S]*?)</li>`))![1]!
-      for (const value of Object.values(relationship)) expect(row).toContain(value)
+      const row = html.match(new RegExp(`<li id="${id}" tabindex="-1">([\\s\\S]*?)</li>`))![1]!
+      const { qualification, ...identity } = relationship
+      for (const value of Object.values(identity)) expect(row).toContain(value)
+      const qualificationNumber = [...new Set(view.relationships.map(item => item.qualification))].indexOf(qualification) + 1
+      expect(row).toContain(`href="#qualification-${qualificationNumber}"`)
+      expect(html).toContain(`<dt id="qualification-${qualificationNumber}" tabindex="-1">Qualification ${qualificationNumber}</dt><dd>${qualification}</dd>`)
       expect(html.match(new RegExp(`id="${id}"`, "g"))).toHaveLength(1)
       expect(html).toContain(`href="#${id}"`)
     }
@@ -202,7 +261,7 @@ test("dense Store history fits default and minimum HTML pages without duplicatin
     const minimum = store.engineeringHistory.read({ action_id: action.id, limit: 1 })
     const minimalHTML = renderEngineeringHistoryHTML(minimum)
     expect(Buffer.byteLength(minimalHTML, "utf8")).toBeLessThanOrEqual(ENGINEERING_HISTORY_LIMITS.responseBytes)
-    expect(minimalHTML.match(/<li id="relationship-\d+">/g)).toHaveLength(minimum.relationships.length)
+    expect(minimalHTML.match(/<li id="relationship-\d+" tabindex="-1">/g)).toHaveLength(minimum.relationships.length)
     expect(minimum.relationships.length).toBeGreaterThan(0)
 
     // Escaping expands legal prose. The minimum shared page must remain useful
@@ -215,7 +274,10 @@ test("dense Store history fits default and minimum HTML pages without duplicatin
     const escapedHTML = renderEngineeringHistoryHTML(escaped)
     expect(Buffer.byteLength(escapedHTML, "utf8")).toBeLessThanOrEqual(ENGINEERING_HISTORY_LIMITS.responseBytes)
     expect(escapedHTML).toContain("&amp;".repeat(16000))
-    expect(escapedHTML).toContain("&quot;&lt;&amp;")
-    expect(escapedHTML.match(/<li id="relationship-\d+">/g)).toHaveLength(escaped.relationships.length)
+    expect(escapedHTML).toContain('"&lt;&amp;')
+    expect(escapedHTML).toContain("Preview shortened; the complete projected excerpt is in the record disclosure.")
+    for (const record of escaped.highlights) if (record.excerpt !== null)
+      expect(escapedHTML).toContain(record.excerpt.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]!))
+    expect(escapedHTML.match(/<li id="relationship-\d+" tabindex="-1">/g)).toHaveLength(escaped.relationships.length)
   } finally { db.close() }
 })

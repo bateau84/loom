@@ -15,6 +15,15 @@ separate from historical WorkRefs. Native originals, objective/review expansion,
 frozen retrospective selections and production Evaluator authority remain
 separate work. See [the delivery boundary](learning-engineering-history.md).
 
+**PR #252 review corrections:** Added selective history discovery before result
+limits, actionable historical Plan ancestry and observed/analytical Session
+groups. Preserved captured attribution gaps, work-scope uncertainty, agent-context
+and skill-load provenance, with qualified same-fingerprint associations for
+unversioned authored reports. Focused reads omit unrelated overview context.
+Replaced the exhaustive-pagination efficiency claim with optimized existing-tool
+baselines and competing-finding fixtures. Added real-browser CI for the document
+dashboard; exact executed results remain in the PR's revision-specific receipts.
+
 ## 2026-11-25
 
 **PR #251 field disclosure correction:** Exact native-source reads now omit
