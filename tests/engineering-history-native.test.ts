@@ -132,6 +132,24 @@ test("discovery filters combine without promoting fingerprint-only reports into 
   } finally { db.close() }
 })
 
+test("expanding a trajectory preserves unestablished observation pairing", () => {
+  const { db, store, action } = fixture()
+  try {
+    const focus = { action_id: action.id }
+    const start = store.observe(actor("worker"), focus, { phase: "started", tool: "read" })
+    const finish = store.observe(actor("worker"), focus, { phase: "finished", tool: "read", start_id: start.id,
+      attribution: "ambiguous-host-call; pairing unestablished", status: "completed" })
+    const trajectory = store.engineeringHistory.read({ action_id: action.id, record_id: finish.id, related: true })
+    const projected = trajectory.records.find(record => record.source.record_id === finish.id)!
+    const expanded = store.engineeringHistory.read(projected.expand)
+    for (const view of [trajectory, expanded]) {
+      expect(view.records.find(record => record.source.record_id === finish.id)!.observation!.finish_pairing).toBe("unestablished")
+      expect(view.relationships.some(edge => edge.source_record_id === finish.id && edge.kind === "references-observation-start")).toBe(true)
+      expect(view.relationships.some(edge => edge.source_record_id === finish.id && edge.kind === "paired-observation")).toBe(false)
+    }
+  } finally { db.close() }
+})
+
 test("ambiguous work scope exposes only bounded candidate identities supported inside the requested scope", () => {
   const { db, store, action } = fixture()
   try {
@@ -636,7 +654,9 @@ test("record and branch paging does not shrink independent representative, relat
     const small = store.engineeringHistory.read({ action_id: action.id, limit: 1 })
     expect(usual.highlights).toHaveLength(6)
     expect(usual.relationships).toHaveLength(80)
-    expect(small.highlights.map(({ expand, ...record }) => record)).toEqual(usual.highlights.map(({ expand, ...record }) => record))
+    expect(small.highlights.map(({ expand, trajectory, ...record }) => record)).toEqual(usual.highlights.map(({ expand, trajectory, ...record }) => record))
+    expect(small.highlights.every(record => record.trajectory.limit === 1)).toBe(true)
+    expect(usual.highlights.every(record => record.trajectory.limit === 20)).toBe(true)
     expect(small.highlights.filter(record => record.meaning === "authored").map(record => record.verdict).sort()).toEqual(["fail", "fail", "pass", "pass"])
     expect(small.relationships).toEqual(usual.relationships)
     expect(small.branches).toHaveLength(1)

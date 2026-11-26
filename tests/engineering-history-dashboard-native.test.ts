@@ -17,6 +17,7 @@ function fixture(): EngineeringHistoryView {
       title: "Initial coarse failure", excerpt: "The original failure remains unexplained.", excerpt_truncated: false,
       verdict: null, verification: "authored claim; not independently verified", work_ref: null, observation: null,
       fingerprint: null, expand: { session_id: "session-a", record_id: "concern", through: 7 },
+      trajectory: { session_id: "session-a", record_id: "concern", related: true, through: 7 },
       source: { store_id: "store-a", record_id: "concern", session_id: "session-a", sequence: 4, sha256: "a".repeat(64),
         tool: "loom_record", query: { operation: "query", source_session_id: "session-a", record_id: "concern" },
         authority: "reference-only; retrieval requires current source permission" }, gaps: [] },
@@ -25,6 +26,7 @@ function fixture(): EngineeringHistoryView {
       title: "Corrected-head partial verification", excerpt: "Both named subtests pass on the corrected head; suite coverage is separate.", excerpt_truncated: true,
       verdict: "pass", verification: "authored claim; not independently verified", work_ref: null, observation: null,
       fingerprint: null, expand: { session_id: "session-a", record_id: "assessment", through: 7 },
+      trajectory: { session_id: "session-a", record_id: "assessment", related: true, through: 7 },
       source: { store_id: "store-a", record_id: "assessment", session_id: "session-a", sequence: 7, sha256: "b".repeat(64),
         tool: "loom_record", query: { operation: "query", source_session_id: "session-a", record_id: "assessment" },
         authority: "reference-only; retrieval requires current source permission" }, gaps: [{ code: "partial-scope", detail: "Named subtests only." }] },
@@ -38,6 +40,11 @@ function fixture(): EngineeringHistoryView {
     boundary: { live: true, observed_through: 7, current_through: 9, membership: "append-bound only; not a frozen retrospective population" },
     intent: { title: "Restore freshness", goal: null, meaning: "session-scope", action_revision: null }, intended_plan: null,
     mode: "branch", selection: {}, ancestors: [], related_branches: [],
+    connections: { objectives: [], reviews: [], coverage: { objectives_omitted: 0, reviews_omitted: 0, relationships_omitted: 0, page: "summary",
+      review_access: "caller-owned only; prepared evaluations excluded", membership: "explicit source associations; not inferred causation" }, gaps: [] },
+    navigation: { repeat: { session_id: "session-a", branch_ref: "branch:session", through: 7, limit: 20 },
+      next_records: { session_id: "session-a", branch_ref: "branch:session", through: 7, limit: 20, after: 7 },
+      next_branches: { session_id: "session-a", branch_ref: "branch:session", through: 7, limit: 20, branch_offset: 1 }, next_connections: null, next_relationships: null },
     totals: counts, branches: [branch], selected_branch: branch, highlights: [records[0]!], records,
     relationships: [{ from: records[1]!.ref, to: records[0]!.ref, kind: "cites-observation", meaning: "authored",
       source_record_id: "assessment", target: "included", qualification: "Citation alone does not establish resolution." }],
@@ -242,6 +249,9 @@ test("discovery continuations retain the complete normalized selection and appen
   view.selected_branch = null
   view.selection = { match: "freshness regression", record_kinds: ["qa", "assessment"], verdict: "fail",
     source_session_id: "session-a", node_id: "old-task", plan_revision: 2, has_gaps: true }
+  view.navigation = { repeat: { ...view.scope, through: 7, limit: 20, ...view.selection },
+    next_records: { ...view.scope, through: 7, limit: 20, ...view.selection, after: 7 },
+    next_branches: { ...view.scope, through: 7, limit: 20, ...view.selection, branch_offset: 1 }, next_connections: null, next_relationships: null }
   const html = renderEngineeringHistoryHTML(view), markdown = renderEngineeringHistoryMarkdown(view)
   expect(html).toContain("6 matching records in 3 matching leaf groups")
   const continuation = { operation: "read", ...view.scope, through: 7, limit: 20, ...view.selection, after: 7 }
@@ -314,7 +324,8 @@ test("dense Store history fits default and minimum HTML pages without duplicatin
       const id = `relationship-${index + 1}`
       const row = html.match(new RegExp(`<li id="${id}" tabindex="-1">([\\s\\S]*?)</li>`))![1]!
       const { qualification, ...identity } = relationship
-      for (const value of Object.values(identity)) expect(row).toContain(value)
+      for (const value of Object.values(identity)) if (typeof value === "string") expect(row).toContain(value)
+      if (relationship.provenance) expect(html).toContain(JSON.stringify(relationship.provenance, null, 2))
       const qualificationNumber = [...new Set(view.relationships.map(item => item.qualification))].indexOf(qualification) + 1
       expect(row).toContain(`href="#qualification-${qualificationNumber}"`)
       expect(html).toContain(`<dt id="qualification-${qualificationNumber}" tabindex="-1">Qualification ${qualificationNumber}</dt><dd>${qualification}</dd>`)

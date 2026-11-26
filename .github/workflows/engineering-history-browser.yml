@@ -30,7 +30,7 @@ jobs:
         run: >-
           ./node_modules/.bin/tsc --noEmit --ignoreConfig --target ES2022 --module NodeNext
           --moduleResolution NodeNext --strict --skipLibCheck --types bun,node
-          tests/engineering-history-browser/generate.ts
+          tests/engineering-history-browser/generate.ts tests/engineering-trajectory-reader.ts
       - name: Install pinned test-only browser and accessibility tools outside plugin dependencies
         run: >-
           npm install --prefix "$LOOM_HISTORY_BROWSER_DEPS" --ignore-scripts --no-audit --no-fund

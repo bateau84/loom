@@ -198,7 +198,8 @@ test("pre-authorization contributor limits return no protected count or threshol
     expect(failure).toBeInstanceOf(Error)
     expect((failure as Error).message).toBe("Engineering history scope unavailable")
     expect((failure as Error).message).not.toMatch(/2000|2001|count|exceed|private_|threshold/)
-    expect(f.permissionRequests).toHaveLength(2)
+    expect(f.permissionRequests).toHaveLength(3)
+    expect(f.permissionRequests[2].resources.some((resource: string) => resource.endsWith("ledger.sqlite"))).toBe(true)
   } finally { db.close(); await f.close() }
 })
 
