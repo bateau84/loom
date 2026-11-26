@@ -23,6 +23,9 @@ unversioned authored reports. Focused reads omit unrelated overview context.
 Replaced the exhaustive-pagination efficiency claim with optimized existing-tool
 baselines and competing-finding fixtures. Added real-browser CI for the document
 dashboard; exact executed results remain in the PR's revision-specific receipts.
+Review follow-ups preserve related-group omission counts and distinguish filtered
+descendants from immediate children in the documents. Historical definition
+hydration now accounts for cumulative source reads before each bounded read.
 
 ## 2026-11-25
 

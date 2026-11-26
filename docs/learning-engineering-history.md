@@ -176,6 +176,10 @@ pagination; this is selective retrieval, not a promise that every investigation
 fits in one call. Matching counts, global scope totals and omitted rows/children
 are distinct. A focused branch read omits unrelated global ranked branches and
 the current intended Plan while retaining its relevant ancestry and associations.
+Filtered branch reads list matching leaves, which can be deeper descendants of
+the selected group. Their recorded parents remain explicit; expanding a match
+recovers its complete historical path. Ordinary branch reads return immediate
+children. Related fingerprint groups have their own included and omitted counts.
 
 The scope is bounded at 100,000 ledger records and 64 MiB of stored record bodies;
 the returned representation is bounded at 262,144 UTF-8 bytes. Oversized scopes

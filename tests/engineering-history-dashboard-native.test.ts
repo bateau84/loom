@@ -78,6 +78,27 @@ test("dashboard preserves shared identities, authored outcomes, gaps and bounded
   expect(html).toContain('href="#record-1"')
 })
 
+test("HTML preserves omitted related-group coverage from real historical definitions", () => {
+  const db = new Database(":memory:"), store = new Store(db), author = { session_id: "source", agent: "author" }
+  try {
+    const action = store.create("Stable work contract", "Preserve revision uncertainty", author)
+    for (let revision = 0; revision < 22; revision++) {
+      store.savePlan(action.id, revision, [{ id: "task", kind: "task", title: "The same recorded task" }], author)
+      if (!revision) store.select(author.session_id, { action_id: action.id, node_id: "task" })
+      store.startObservation(author, { phase: "started", tool: "read" })
+    }
+    const result = store.record(author, { action_id: action.id, node_id: "task" }, { kind: "result", statement: "Authored report without a unique revision" })
+    const view = store.engineeringHistory.read({ action_id: action.id, record_id: result.id })
+    expect(view.related_branches).toHaveLength(20)
+    expect(view.coverage.related_branches_omitted).toBe(2)
+    const html = renderEngineeringHistoryHTML(view), markdown = renderEngineeringHistoryMarkdown(view)
+    expect(html).toContain("20 related groups included; 2 omitted")
+    expect(html).toContain("locate additional eligible groups")
+    expect(html).toContain('"related_branches_omitted": 2')
+    expect(markdown).toContain('"related_branches_omitted": 2')
+  } finally { db.close() }
+})
+
 test("dashboard remains navigable with no Plan and distinguishes current intent from historical bindings", () => {
   const view = fixture()
   expect(renderEngineeringHistoryHTML(view)).toContain("No current Plan projection is included in this read. Recorded work remains navigable")
@@ -165,6 +186,54 @@ test("selected hierarchy preserves parent navigation, exact requests and qualifi
   }
   expect(html).toContain(related.gaps[0]!.detail)
   expect(markdown).toContain(related.gaps[0]!.detail)
+})
+
+test("filtered historical descendants are presented as matching leaves rather than immediate children", () => {
+  const db = new Database(":memory:"), store = new Store(db), author = { session_id: "source", agent: "author" }
+  try {
+    const action = store.create("Nested historical work", "Preserve recorded ancestry during discovery", author)
+    store.savePlan(action.id, 0, [
+      { id: "phase", kind: "phase", title: "Release phase" },
+      { id: "wave", kind: "wave", parent: "phase", title: "Verification wave" },
+      { id: "task", kind: "task", parent: "wave", title: "Restore task" },
+      { id: "subtask", kind: "subtask", parent: "task", title: "Freshness subtask" },
+    ], author)
+    store.select(author.session_id, { action_id: action.id, node_id: "subtask" })
+    const observation = store.startObservation(author, { phase: "started", tool: "needle-tool" })
+    const record = store.engineeringHistory.read({ action_id: action.id, record_id: observation.id })
+    const phase = record.ancestors.find(branch => branch.node_id === "phase")!
+    const immediate = store.engineeringHistory.read(phase.expand)
+    expect(immediate.branches[0]!.node_id).toBe("wave")
+    expect(immediate.branches[0]!.parent_ref).toBe(phase.ref)
+    expect(renderEngineeringHistoryHTML(immediate)).toContain('<h3>Returned child groups</h3><div class="work-children">')
+
+    const filtered = store.engineeringHistory.read({ ...phase.expand, match: "needle-tool" })
+    expect(filtered.mode).toBe("discovery")
+    expect(filtered.selected_branch!.ref).toBe(phase.ref)
+    expect(filtered.branches).toHaveLength(1)
+    const leaf = filtered.branches[0]!
+    expect(leaf.node_id).toBe("subtask")
+    expect(leaf.parent_ref).not.toBe(phase.ref)
+    const html = renderEngineeringHistoryHTML(filtered), markdown = renderEngineeringHistoryMarkdown(filtered)
+    expect(html).toContain("Matching leaf groups")
+    expect(html).toContain("Matching leaves may be deeper descendants of the selected group.")
+    expect(html).not.toContain("Returned child groups")
+    expect(html).not.toContain('<div class="work-children">')
+    expect(html).toContain(`Recorded parent: <code>${leaf.parent_ref}</code>`)
+    expect(markdown).toContain('"matching_leaf_groups": [')
+    expect(markdown).not.toContain('"returned_children":')
+    const expanded = store.engineeringHistory.read(leaf.expand)
+    expect(expanded.ancestors.map(branch => branch.node_id)).toEqual([null, "phase", "wave", "task"])
+    const selectedLeaf = store.engineeringHistory.read({ ...leaf.expand, match: "needle-tool" })
+    expect(selectedLeaf.branches.map(branch => branch.ref)).toEqual([leaf.ref])
+    const leafHTML = renderEngineeringHistoryHTML(selectedLeaf)
+    expect(leafHTML).toContain("Matching leaf groups")
+    expect(leafHTML).not.toContain("No matching leaf groups are included")
+    expect(leafHTML.match(/<span class="summary-title">Freshness subtask<\/span>/g)).toHaveLength(1)
+    const noMatch = store.engineeringHistory.read({ ...leaf.expand, match: "absent-tool" })
+    expect(noMatch.coverage.matching_records).toBe(0)
+    expect(renderEngineeringHistoryHTML(noMatch)).toContain("No matching leaf groups are included")
+  } finally { db.close() }
 })
 
 test("discovery continuations retain the complete normalized selection and append boundary", () => {
