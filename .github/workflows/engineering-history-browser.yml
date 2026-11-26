@@ -10,8 +10,6 @@ jobs:
     timeout-minutes: 15
     env:
       EXPECT_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-      LOOM_HISTORY_BROWSER_DEPS: ${{ runner.temp }}/loom-history-browser-deps
-      PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/loom-history-browser-browsers
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -23,6 +21,10 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
+      - name: Set isolated browser paths after runner allocation
+        shell: bash
+        run: |
+          printf 'LOOM_HISTORY_BROWSER_DEPS=%s/loom-history-browser-deps\nPLAYWRIGHT_BROWSERS_PATH=%s/loom-history-browser-browsers\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - run: bun install --frozen-lockfile
       - name: Typecheck synthetic registered-tool browser fixtures
         run: >-
