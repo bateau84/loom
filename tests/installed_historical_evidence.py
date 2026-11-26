@@ -682,6 +682,17 @@ def assert_connected_history(discovery, connected, first_page, continuation, mar
             "qualification": "actual installed registered tools; controlled scripted provider; no unfamiliar-agent comprehension claim"}
 
 
+def read_connection_pages(scenario, reader: str, origin: dict, label: str) -> list[dict]:
+    """Follow one owner chain without replacing the caller's native cursor receipts."""
+    connection_pages, current = [], origin
+    while current.get("navigation", {}).get("next_connections") is not None:
+        require(len(connection_pages) < 8, "Connected owner pagination did not terminate within its known population")
+        current = scenario.read(reader, "history", {"operation": "read", **current["navigation"]["next_connections"]},
+                                "connected-history-owner-" + label + "-" + str(len(connection_pages) + 1))
+        connection_pages.append(current)
+    return connection_pages
+
+
 class HistoricalScenario(ReviewScenario):
     def __init__(self, host, root):
         super().__init__(host, root)
@@ -1026,13 +1037,7 @@ def run(args) -> dict:
                                                    "connected-history-ready-continuation")
                     owner_continuations = {}
                     for label, origin in (("connected", connected), ("first_page", connected_page), ("continuation", connected_next)):
-                        pages, current = [], origin
-                        while current.get("navigation", {}).get("next_connections") is not None:
-                            require(len(pages) < 8, "Connected owner pagination did not terminate within its known population")
-                            current = scenario.read(reader, "history", {"operation": "read", **current["navigation"]["next_connections"]},
-                                                    "connected-history-owner-" + label + "-" + str(len(pages) + 1))
-                            pages.append(current)
-                        owner_continuations[label] = pages
+                        owner_continuations[label] = read_connection_pages(scenario, reader, origin, label)
                     require(owner_continuations["connected"], "Connected review fan-out did not return a continuation")
                     owner_render_query = {"operation": "read", **owner_continuations["connected"][0]["navigation"]["repeat"]}
                     owner_continuations["markdown"] = scenario.read(reader, "history", {**owner_render_query, "response_format": "markdown"},

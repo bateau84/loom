@@ -266,11 +266,21 @@ file hashes remained unchanged through the review. A valid 289,188-byte complete
 mandate still rejects at the history response ceiling; the owner read succeeds.
 This is an explicit bounded failure, not a silently incomplete mandate.
 
-The assembled local gates passed **438 core tests, 862 native tests and 302
+The assembled local gates passed **438 core tests, 862 native tests and 304
 Python tests**, project and qualification typechecks, and the production build.
 The complete Stage 3 batch/hash and historical source preservation checks remain
 in those gates. Hosted installed-native and Chromium receipts are revision-bound
 in the draft delivery PR; local source/render checks do not replace them.
+
+The first hosted run at `0ba5de7` passed the new seven-review continuation and
+source-denial checks, then exposed a qualification-harness variable collision:
+owner pages replaced saved native-child cursor pages before a later denial test.
+The follow-up isolates owner traversal and retains the original native cursor,
+source-integrity and no-Evaluator-effect checks. Its regression covers an empty
+final owner chain, exact returned requests and the existing termination bound.
+That failed run is not a successful installed-history receipt; the corrected
+harness requires a complete new hosted run. Production source hashes did not
+change in this follow-up.
 
 #### Dense unplanned history and overlap
 

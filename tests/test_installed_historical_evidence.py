@@ -11,7 +11,7 @@ from installed_historical_evidence import (
     assert_connected_history,
     assert_evidence_permission_denial, assert_exact_field_envelope,
     assert_history_discovery, assert_history_navigation, assert_history_renderings,
-    assert_read_only_effects, encoded, physical_generation_oracle, synthetic_transfer,
+    assert_read_only_effects, encoded, physical_generation_oracle, read_connection_pages, synthetic_transfer,
 )
 from test_installed_learning_stage4 import driver_plan, driver_receipts
 
@@ -361,6 +361,48 @@ class HistoryPermissionDenialOracleTest(unittest.TestCase):
                     blocked["rules"][0]["effect"] = "allow"
                 with self.assertRaisesRegex(RuntimeError, "expected read resource"):
                     assert_evidence_permission_denial(denial, self.resource, ["FROST_47", "hidden-record-id"])
+
+
+class ConnectionPageTraversalTest(unittest.TestCase):
+    def test_owner_traversals_retain_independent_receipts_when_the_final_chain_is_empty(self):
+        base = {"action_id": "action", "record_id": "finding", "related": True, "limit": 5,
+                "through": 42, "owner_boundary": {"review_requests": 7}, "owner_version": "b" * 64}
+        first_query = {**base, "connection_cursor": "owner-first"}
+        second_query = {**base, "connection_cursor": "owner-second"}
+        first = {"navigation": {"repeat": first_query, "next_connections": second_query}}
+        terminal = {"navigation": {"repeat": second_query, "next_connections": None}}
+        origins = {"connected": {"navigation": {"next_connections": first_query}}, "first_page": first,
+                   "continuation": terminal}
+        before = deepcopy(origins)
+        calls = []
+
+        class Scenario:
+            def read(self, reader, tool, query, label):
+                calls.append((reader, tool, deepcopy(query), label))
+                return deepcopy({"owner-first": first, "owner-second": terminal}[query["connection_cursor"]])
+
+        owner_pages = {label: read_connection_pages(Scenario(), "reader", origin, label)
+                       for label, origin in origins.items()}
+        self.assertEqual(owner_pages, {"connected": [first, terminal], "first_page": [terminal], "continuation": []})
+        self.assertEqual(calls, [
+            ("reader", "history", {"operation": "read", **first_query}, "connected-history-owner-connected-1"),
+            ("reader", "history", {"operation": "read", **second_query}, "connected-history-owner-connected-2"),
+            ("reader", "history", {"operation": "read", **second_query}, "connected-history-owner-first_page-1"),
+        ])
+        self.assertEqual(origins, before)
+
+    def test_unterminated_owner_chain_keeps_the_existing_bounded_failure(self):
+        calls = []
+        origin = {"navigation": {"next_connections": {"connection_cursor": "loop"}}}
+
+        class Scenario:
+            def read(self, *args):
+                calls.append(args)
+                return origin
+
+        with self.assertRaisesRegex(RuntimeError, "did not terminate within its known population"):
+            read_connection_pages(Scenario(), "reader", origin, "connected")
+        self.assertEqual(len(calls), 8)
 
 
 class ConnectedHistoryOracleTest(unittest.TestCase):
