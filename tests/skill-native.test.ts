@@ -91,6 +91,8 @@ test("skill guidance retains current evidence, coordination and recovery boundar
   const { content } = await loomSkill()
   for (const text of [
     "loom_agents", "loom_action", "loom_plan", "loom_context", "loom_record", "loom_assessment", "loom_qa",
+    "loom_history", "source.query", "Historical WorkRefs", "not a frozen population", "response_format:json",
+    "source_session_id", "Raw fields and input/output matching are caller-context only",
     "A conversation needs no Action", "An Action needs no Plan", "not a scheduler",
     "complete node list", "Action's separate current revision", "original",
     "work_ref", "contract_match:null", "next_after", "session_only:true",
@@ -135,24 +137,29 @@ test("bundled JSON examples execute with real returned identities against regist
   try {
     const skill = f.skills.get(LOOM_SKILL_ID)
     const inputs = [...skill.content.matchAll(/```json\n([\s\S]*?)\n```/g)].map(match => JSON.parse(match[1]))
-    expect(inputs).toHaveLength(7)
+    expect(inputs).toHaveLength(8)
     const action = (await f.invoke("action", inputs[0])).result
     const replace = (input: unknown) => JSON.parse(JSON.stringify(input).replaceAll("ACTION_ID", action.id).replaceAll("TASK_ID", "task"))
     expect((await f.invoke("plan", replace(inputs[1]))).result.revision).toBe(0)
     await f.invoke("plan", { operation: "save", action_id: action.id, expected_revision: 0, nodes: [{ id: "task", kind: "task", title: "Fixture task" }] })
     expect((await f.invoke("context", replace(inputs[2]))).result.task.id).toBe("task")
-    const result = (await f.invoke("record", { operation: "add", action_id: action.id, kind: "result", statement: "Fixture only; no external work was performed." })).result
+    const result = (await f.invoke("record", { operation: "add", action_id: action.id, kind: "result", statement: "Fixture only; a timeout was observed; no external work was performed." })).result
     const query = { ...replace(inputs[3]), record_id: result.id }
     expect((await f.invoke("record", query)).result.items[0].id).toBe(result.id)
-    const question = (await f.invoke("record", inputs[4], "unselected-asker")).result
+    const discovered = (await f.invoke("history", replace(inputs[4]))).result
+    expect(discovered.mode).toBe("discovery")
+    expect(discovered.records.map((item: any) => item.source.record_id)).toContain(result.id)
+    const source = discovered.records.find((item: any) => item.source.record_id === result.id).source.query
+    expect((await f.invoke("record", { ...source, response_format: "json" })).result.items[0].data.statement).toBe(result.data.statement)
+    const question = (await f.invoke("record", inputs[5], "unselected-asker")).result
     expect(question.action_id).toBeUndefined()
     expect(question.dispatch.status).toBe("admission-observed")
     expect(question.dispatch.target_agent).toBe("investigator")
     const child = question.dispatch.target_session_id
-    const answer = (await f.invoke("record", { ...inputs[5], question_id: question.id }, child, "investigator")).result
-    expect(answer.data.context_attachments).toEqual(inputs[5].context_attachments)
+    const answer = (await f.invoke("record", { ...inputs[6], question_id: question.id }, child, "investigator")).result
+    expect(answer.data.context_attachments).toEqual(inputs[6].context_attachments)
     expect(answer.session_id).toBe(child)
-    const history = (await f.invoke("record", replace(inputs[6]))).result
+    const history = (await f.invoke("record", replace(inputs[7]))).result
     expect(history.format).toBe("loom-full-thread/v1")
     expect(history.markdown).toContain("Full stored thread")
   } finally { await f.close() }

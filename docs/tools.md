@@ -20,7 +20,7 @@ useful, not simply because work takes multiple steps.
 | --- | --- |
 | `loom_agents` | Existing native roster, roles, configuration/capture diagnostics |
 | `loom_action` | Create/list/update a goal, or read native Session inventory and archive status |
-| `loom_trace` | Inspect authorized original Session messages and child identities; state coverage gaps |
+| `loom_trace` | Inspect permitted Session structure, child identities, tool-part metadata and exact fields; state coverage gaps |
 | `loom_history` | Start with a compact recorded-work overview; expand historical branches and render the same authorized view as JSON, Markdown or HTML |
 | `loom_insights` | Read bounded observational Action/project ledger metadata; no success-rate claims |
 | `loom_objective` | Recover one source-linked objective, child-agent handbacks, runtime checks and corrective attempts |
@@ -34,6 +34,9 @@ useful, not simply because work takes multiple steps.
 | `loom_qa` | Load an installed skill’s QA.md; requires the enabled caller’s qa role |
 
 Structured responses remain JSON text with `result` and optional `config_errors`.
+All `loom_record` query views accept explicit `response_format:"json"`; it is
+already the default except for `full_thread`. Markdown is supported only for
+`full_thread`; omit `response_format` for record writes.
 `loom_history` defaults to JSON and returns document text directly for explicit
 `response_format:"markdown"` or `"html"`.
 The Assessment/QA loaders and `loom_record` `view:full_thread` return
@@ -291,7 +294,9 @@ or task association is optional; concerns need no verdict. State suspected versu
 unknowns. Documented, outside-task and handed-off do not mean resolved. General
 routes blockers through existing native coordination; critic consolidates
 patterns with source Action and record IDs, or Session and record IDs for
-Session-scoped concerns. Read the latter via `full_thread` with `session_id`.
+Session-scoped concerns. Read a known Session record with `source_session_id`
+and `record_id`, subject to native evidence permissions. Use `loom_history` for
+selective discovery; use `full_thread` only when complete stored history is needed.
 Discover actual roster IDs; built-in coordination/qa guidance carries those
 responsibilities respectively, without creating or renaming agents.
 
@@ -422,7 +427,9 @@ to try delivery. Read [full outcome details](collaboration.md) (section **One-sh
 | `thread` | Required question_id; optional matching action_id; full question plus paged answers; `after`/`next_after`; no selection required |
 | `full_thread` | Explicit Action/node OR Session; `cursor`/`next_cursor`; no selection fallback |
 
-Views other than ledger default to 20, max 50. For full stored relational history:
+Views other than ledger default to 20, max 50. Prefer `loom_history` when
+investigating unfamiliar work, and direct record IDs when known. For deliberately
+complete stored relational history:
 
 ```json
 {"operation":"query","view":"full_thread","action_id":"ACTION_ID","node_id":"TASK_ID","limit":20}

@@ -9,7 +9,7 @@ export async function loomSkill() {
   return {
     id: LOOM_SKILL_ID,
     name: "Loom",
-    description: "Use when working with Loom Actions, Plans, task context, evidence, completion, handoffs, Assessment or QA. Not general engineering guidance.",
+    description: "Use for Loom Actions, Plans, context, handoffs, concerns, questions, reviews and progressive engineering history or exact evidence retrieval. Not general engineering guidance.",
     path,
     content: await readFile(path, "utf8"),
     // V2 uses this to advertise metadata, NOT to inject the full guide eagerly.

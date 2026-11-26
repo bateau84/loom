@@ -11,125 +11,94 @@ Loom retains intent/history, not a scheduler. Roles restrict companion loaders.
 | --- | --- |
 | `loom_agents` | Native IDs, roles and diagnostics; no permission grants. |
 | `loom_action` | Goals and Session inventory; state labels are not execution controls or proof. |
-| `loom_trace` | Read-only Session and direct-child evidence, with coverage limits. |
+| `loom_trace` | Authorized Session structure, tool-part metadata and permitted fields. |
+| `loom_history` | Discover/expand work; shared JSON, Markdown and HTML dashboard. |
 | `loom_plan` | Read/replace optional nodes; no dispatch or skill loading. |
 | `loom_context` | Select work, pin a result handoff or limit prior opinions during independent review. |
 | `loom_record` | Store/query concerns, claims, results, reviews, progress, questions and history. |
-| `loom_review` | Protected review mandates and evidence links; no unqualified native delivery. |
-| `loom_insights` | Read bounded observations and source IDs; not an objective verdict. |
+| `loom_review` | Protected mandates, evidence links and Evaluator preparation; no unqualified delivery. |
+| `loom_insights` | Observations, deterministic evaluations, preparation/admission; no genuine reasoning. |
 | `loom_objective` | Link original goal sources, attempts and verification; no proof. |
 | `loom_trends` | Compare source-started objectives with frozen membership and evidence bounds; no inferred exposure or agent grade. |
 | `loom_tweak` | Store fingerprinted tweak proposals and trials; no activation. |
 | `loom_assessment` | Load ASSESSMENT.md; requires configured assessment role. |
 | `loom_qa` | Load QA.md; requires configured qa role. |
 
-Tool search supplies syntax. JSON outputs contain `result` and optional `config_errors`.
-Assessment/QA and `full_thread` return Markdown; parse only JSON.
-Code Mode: join lenses into one string (arrays escape newlines); inspect Promise.allSettled failures. Await writes.
+Tool search supplies syntax and callable paths. JSON contains `result` and optional `config_errors`. Record queries accept `response_format:json`; omit format on writes. Assessment/QA and `full_thread` default to Markdown; `loom_history` defaults to JSON and accepts Markdown/HTML. Parse only JSON; join Markdown lenses into one string. Await writes; inspect Promise.allSettled failures.
 
 ## Start or resume work
 
-Use Actions for cross-agent/Session continuity and Plans for meaningful dependencies, distinct tasks or resumption needs. Ordinary chat needs neither.
+Actions support cross-agent/Session continuity; Plans meaningful dependencies, distinct tasks or resumption needs. Chat needs neither.
 
-Use `loom_agents {}`: match `agents[].roles` to `role_descriptions`.
-Check `available`/`enabled`; delegate natively.
-
-Reuse handed-off Action IDs or find via `loom_action` list. To create an Action:
+Use `loom_agents {}`: match `agents[].roles` to `role_descriptions`; check `available`/`enabled` and delegate natively. Reuse Action IDs or list them (next_offset). Create an Action:
 
 ```json
 {"operation":"create","title":"Explain a setting","goal":"Produce a source-backed explanation with its limitations."}
 ```
 
-`result.id` is the Action ID. `loom_action sessions` lists local Sessions, not execution proof.
-
-Read the Plan before edits:
+`result.id` is Action ID. Action sessions lists native Sessions, not execution proof. Read the Plan before edits:
 
 ```json
 {"operation":"read","action_id":"ACTION_ID"}
 ```
 
-Save the complete node list with Plan `expected_revision` (0 initially); preserve IDs and reconcile conflicts. Action updates use the Action's separate current revision. Plan `saved_by` identifies its native author.
+Save the complete node list with `expected_revision` (0 initially); preserve IDs, reconcile conflicts. Action updates use the Action's separate current revision. Plan `saved_by` identifies author. Use `outcome` for capability, `criteria` for proof, `context` for scope/limits. Phases/waves group intended work; dependencies express order, not scheduling.
 
-Use `outcome` for milestone capability, `criteria` for proof, and `context` for contribution to the Action goal and limits. Phases group; waves schedule. Hierarchy is optional.
+Delegated planning: select, read/save Plan, return next outcome, proof and Action/revision/node IDs. Chat/docs are not Plan storage. Without Action ID, propose only. Report failed saves.
 
-For delegated planning, select via `loom_context`, read/save via `loom_plan`, then return the next outcome and proof strategy with Action/revision/node IDs for General to verify. Chat/`docs/plan/` is not Plan storage. Without an Action ID, propose without creating one. Report failed saves.
-
-Explicitly select the work before performing it:
+Select before work:
 
 ```json
 {"action_id":"ACTION_ID","node_id":"TASK_ID"}
 ```
 
-Retain `work_ref`, the definition actually worked against. Give native delegates
-the Action/task IDs, goal, constraints, record IDs and original reference.
-Each child selects its own work; selection is not inherited.
+Retain original `work_ref`. Give delegates Action/task IDs, goal, constraints, record IDs and reference. Each child selects its own work; selection is not inherited.
 
 ### Handoffs and independent first review
 
-Record `kind:result` handoffs with goal/revision, decisions, evidence/limits, learning and next step. Pass the ID, not chat. Pin same-Action `handoff_id`; read with `loom_record` using `action_id`+`record_id` (no `node_id`). A pointer does not prove completion.
+Record `kind:result` handoffs: goal/revision, decisions, evidence/limits, learning, next step. Pass ID, not chat. Pin same-Action `handoff_id`; read exact record. A pointer does not prove completion.
 
-For independent Assessment, start a fresh Session and select `mode:"independent"` before reading opinions. Without an Action, context is Session-only and no selection is saved. Action-linked independent mode withholds Loom history, but cannot erase native messages, task text or earlier conversation. Record original findings before switching to continuation to reconcile prior work. Without an Action, query Session history with `session_only:true`. Mode persists; default is continuation. Save failure leaves the old mode. See [handoff limits and recovery](../../../docs/handoffs.md).
+For independent Assessment, start a fresh Session and select `mode:"independent"` before reading opinions. This withholds history from context, not explicit reads or native messages/task text. Without Action, no selection is saved. Record original findings before switching to continuation and reconciling prior opinions. Mode persists; default continuation. Save failure leaves old mode.
 
 ## Read evidence before using conclusions
 
-Context is bounded and may contain excerpts. Read full material records before
-using their conclusions, especially their conditions, uncertainty and failures.
-To retrieve a dependency record, name the Action without a node filter:
+Context is bounded. Read full records before relying on material conclusions. For known Action records:
 
 ```json
-{"operation":"query","action_id":"ACTION_ID","record_id":"RECORD_ID"}
+{"operation":"query","action_id":"ACTION_ID","record_id":"RECORD_ID","response_format":"json"}
 ```
 
-A record ID may inherit a task filter; empty results prove no absence.
-Follow ledger `next_after` as `after` until null; Action lists use `next_offset`.
-Read exact records for full statements. `contract_match:null` means unknown;
-matching work definitions do not prove code correctness.
+Omit node filter. Without Action ID, selection may apply. For known Session records use `source_session_id`+`record_id` with native read permission. Empty results prove no absence. `contract_match:null` means unknown; matches do not prove correctness.
 
-Use `add`: `result` preserves useful work; `claim` states supported conclusions.
-Retain sources, qualifications, unknowns and next steps, not activity logs.
-`evidence_ids` must cite same-Action host observations for Action records,
-or unscoped observations from the same Session for Session-only records.
-`artifact_refs` are pointers, not proof. Missing evidence stays missing.
+### Investigate historical work selectively
 
-Observations hold identity/digests, not raw input/output. Missing or unpaired
-observations prove neither success nor failure. `session_only:true` on a query
-reads the caller's Session history, including Action-linked records. On an
-`add`, it forces Session scope for all five record kinds, even with a
-selected Action; without selection, Session scope is the default. Neither
-use accepts work IDs.
-Do not record credentials or secrets: explicit text is not redacted.
+Use `loom_history` for a known Action or Session. With a known question, search before paging:
+
+```json
+{"operation":"read","action_id":"ACTION_ID","match":"timeout"}
+```
+
+Use `session_id` instead for Session scope. Combine literal `match` with category, verdict, Session, node, revision or gap selectors. Follow `expand` with operation:read; retain selectors/`through` with `next_after` or `next_branch_offset`. Use `source.query` via `loom_record` for exact originals. Historical WorkRefs differ from current Plan; without Plan use observed groups or labelled chronology. Highlights aren't exhaustive; counts cover recorded activity. Claims/reviews aren't verification. Preserve failures, contradictions and gaps. References grant no access; scope and contributor permissions apply. Native originals, protected review/objective links and frozen populations remain separate. `through` is an append bound, not a frozen population. Enumerate ledger/thread only for completeness; ledger next_after as after.
+
+`add`: result preserves work, claim states conclusions. Retain sources, qualifications, unknowns and next steps, not activity logs. `evidence_ids` cite same-Action observations or same-Session unscoped observations for Session records. `artifact_refs` are pointers, not proof.
+
+Observations hold identities/digests, not raw bodies. Missing/unpaired observations prove neither success nor failure. `session_only:true` query reads caller history including Action-linked records; add forces Session scope (default without selection). Neither accepts work IDs. Never record credentials or secrets: explicit text is not redacted.
 
 ## Preserve and route concerns
 
-Every agent records task concerns with `kind:concern` and a factual `statement`.
-Distinguish suspected from confirmed and give its sources or unknowns.
-Documented, outside-task or handed-off is not resolved. General routes
-blockers; critic compares patterns without pretending to dispatch agents.
-Use actual configured roles. Cite Action+record IDs, or Session+record IDs for unscoped concerns.
-Read Action records by `action_id`+`record_id` (no `node_id`);
-Session records by `full_thread`+`session_id`.
-Concern IDs are not observation `evidence_ids`. Append follow-ups rather
-than altering history. No automatic escalation or execution gates.
+Every agent records task concerns (kind:concern) with suspected/confirmed status, support and unknowns. Documented/handed-off is not resolved. General routes blockers; critic compares patterns, not dispatches. Cite Action+record or Session+record IDs; read originals as above. Concern IDs are not observation evidence_ids. Append follow-ups; no automatic escalation or gates.
 
 ## Complete, review and reopen honestly
 
-Report completion with `loom_record complete`, the original `work_ref`, and the
-actual outcome. Do not fetch a newer reference to make old work look current.
-`result` alone is not completion. Check `view:progress`; changed contracts may
-need reconfirmation, while unrelated replanning does not erase history.
+`loom_record complete` needs original `work_ref` and actual outcome; never substitute a newer reference. Result alone is not completion. Check `view:progress`; changed contracts may need reconfirmation, unrelated replanning does not erase history. Completion never completes parent/Action or proves acceptance.
 
-Completion never completes parent/Action or proves acceptance. Select review skills from actual work, not only producer pointers. Assessment checks conformance; QA seeks hidden failures. Load exact IDs with `loom_assessment` or `loom_qa`; role and native permission are required, not an Action/Plan/receipt. Missing companions return `available:false`, never SKILL.md. A lens load or reported pass does not establish independent acceptance. Record real `pass`/`fail`/`inconclusive` findings via `loom_record`. Without Action, findings stay with Session; `session_only:true` overrides selection and Session evidence must cite unscoped observations. No gate is created.
+Choose review skills independently. Assessment checks conformance; QA challenges failures. `loom_assessment`/`loom_qa` use exact IDs, role and native permission, not Action/Plan/receipt. Load ASSESSMENT.md/QA.md; missing returns `available:false`, never SKILL.md. Lens load or reported pass does not establish independent acceptance. Record actual pass/fail/inconclusive findings; no gate.
 
-`reopen` appends a reason without erasing history or undoing native side effects.
-Update Action state separately; paused/cancelled labels do not stop execution.
+`reopen` appends reason, not undo. Update Action state separately; paused/cancelled labels do not stop execution.
 
 ## Questions: route material unknowns
 
-Investigate facts within your responsibility. For input owned elsewhere,
-use `loom_record ask`, not a concern/handoff. Before a choice
-changes the goal, scope, promised behavior or accepted risk, ask its owner;
-do not treat a recorded assumption as authorization. Route scope to dispatcher,
-specialist judgment to role/agent, intent/approval to user. Do not manufacture OQs.
+Investigate facts within your responsibility. Use `loom_record ask` for input owned elsewhere, not a concern/handoff. If a choice changes the goal, scope, promised behavior or accepted risk, ask its owner; do not treat a recorded assumption as authorization. Scope: dispatcher; judgment: role/agent; intent/approval: user. Do not manufacture OQs.
 
 Ask needs `question`, `blocking`, and one of typed `recipient`, verified
 `session_id`, or legacy `to_agent`. Recipient: agent/role (requires id)
@@ -166,23 +135,17 @@ answer to try delivery. Historical records are readable; assignment/delivery vie
 
 ## Deep retrospective evidence
 
-`loom_trace timeline` reads only caller post-compaction context; other Sessions need authorized exports. `loom_trace children` lists direct children. Follow `next_cursor`. Code Mode may hide nested calls; `include_text:true` masks only best effort. Cite IDs and gaps; never store raw transcripts or secrets.
+Use `loom_trace`: timeline (caller post-compaction context or authorized export), children (direct; historical access needs permission), parts (tool metadata), source (exact fields). Raw fields and input/output matching are caller-context only; export/cross-Session reads permit structural/status/dispatch data under authority. Follow `next_cursor`; pin source/part hashes. Native history incomplete; export authenticity unverified. Code Mode may hide nested calls; masking is best effort. Cite IDs/gaps; never store raw transcripts or secrets.
 
 ## Complete stored history
+
+For deliberately complete relational ledger history:
 
 ```json
 {"operation":"query","view":"full_thread","action_id":"ACTION_ID","node_id":"TASK_ID","limit":20}
 ```
 
-Alternatively use `session_id`, never with Action/node; there is no selected
-scope fallback. Reads the authorized Loom Store, not native Session bodies or
-other projects. Membership follows authorship and direct question/answer links,
-not notices or assumed agent identity.
-
-`full_thread` returns Markdown with scope and `next_cursor`; JSON mode returns
-`result.format`, `markdown`, `scope` and cursor. Follow the same scope until null
-(limit 20, max 50). Oversized records advance only on their final part. Cursors
-depend on scope/location/version, not a snapshot; invalid data fails without advancing.
+Alternatively `session_id`, never Action/node; no selection fallback. Local authorized Store, not native bodies. Membership follows authorship/direct question-answer links, not notices or agent names. `full_thread` defaults to Markdown with scope/`next_cursor`; JSON wraps these in `result`. Follow same scope until null (limit 20, max 50); oversized records advance only on final part. Cursor binds scope/location/version, not a snapshot. Invalid data fails without advancing.
 
 ## Recover without guessing
 
@@ -191,4 +154,4 @@ and retained history. Explicitly select a current task, select Action-only conte
 or call `loom_context` with `{"clear":true}`. Do not infer a replacement task from
 a similar title. `loom_context` with `{}` reads this Session's existing selection.
 
-Successful context reads survive selection-save failures. Inspect `selection.status:"save-failed"` and `persisted` (saved reference, null or "unknown"); later injection follows persisted state. A failed clear throws; unreadable context is not missing-task recovery. Explicit Plan/ledger reads do not modify selection. Do not assume the selection changed after an error unless confirmed. Native permissions still apply. Pass honest evidence and limits, not approval claims. See [handoff recovery](../../../docs/handoffs.md).
+Context reads survive selection-save failure. Inspect `selection.status:"save-failed"` and `persisted` (reference, null or "unknown"); injection follows persisted state. Failed clear throws; unreadable context is not missing-task recovery. Explicit Plan/ledger reads do not select work. Do not assume the selection changed after an error. Native permissions apply. Pass evidence and limits, not approval claims.
