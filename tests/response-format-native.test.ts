@@ -92,11 +92,71 @@ test("full_thread defaults to Markdown with scope/cursor while structured output
     expect(next).toContain("Second finding")
     expect(next).toContain("**Next cursor:** none (end of this read)")
     expect(JSON.parse(await raw(f, "record", { ...input, response_format: "json" })).result.next_cursor).toBe(json.result.next_cursor)
-    await expect(raw(f, "record", { operation: "query", action_id: action.id, response_format: "json" })).rejects.toThrow("only supported for full_thread")
+    expect(await raw(f, "record", { ...input, response_format: "markdown" })).toBe(md)
     await expect(raw(f, "record", { ...input, response_format: "xml" })).rejects.toThrow("must be markdown or json")
     const ledger = JSON.parse(await raw(f, "record", { operation: "query", action_id: action.id }))
     expect(ledger.result.items).toHaveLength(2)
     expect(JSON.parse(await raw(f, "action", { operation: "list" })).result.items[0].id).toBe(action.id)
+  } finally { await f.close() }
+})
+
+test("explicit JSON preserves every structured record query and rejects unsupported formats before writes", async () => {
+  const f = await registeredLoom()
+  try {
+    const action = (await f.invoke("action", { operation: "create", title: "Format compatibility", goal: "Read a known record" })).result
+    await f.invoke("plan", { operation: "save", action_id: action.id, expected_revision: 0,
+      nodes: [{ id: "task", kind: "task", title: "Read evidence" }] })
+    const record = (await f.invoke("record", { operation: "add", action_id: action.id, node_id: "task",
+      kind: "result", statement: "Original finding" })).result
+    const question = (await f.invoke("record", { operation: "ask", action_id: action.id,
+      to_agent: "manual", question: "Which limit applies?", blocking: false })).result
+    for (const fields of [
+      { action_id: action.id },
+      { action_id: action.id, record_id: record.id },
+      { view: "ledger", action_id: action.id, record_id: record.id },
+      { view: "progress", action_id: action.id },
+      { view: "questions", action_id: action.id },
+      { view: "thread", question_id: question.id },
+      { view: "inbox" },
+      { session_only: true },
+    ]) {
+      const input = { operation: "query", ...fields }
+      const implicit = await raw(f, "record", input)
+      const explicit = await raw(f, "record", { ...input, response_format: "json" })
+      expect(JSON.parse(explicit)).toEqual(JSON.parse(implicit))
+      await expect(raw(f, "record", { ...input, response_format: "markdown" })).rejects.toThrow("markdown is only supported for full_thread")
+    }
+    const exact = JSON.parse(await raw(f, "record", { operation: "query", action_id: action.id,
+      record_id: record.id, response_format: "json" }))
+    expect(exact.result.items[0]).toMatchObject({ id: record.id, data: { statement: "Original finding" } })
+    const before = await raw(f, "record", { operation: "query", action_id: action.id })
+    for (const response_format of ["json", "markdown"])
+      await expect(raw(f, "record", { operation: "add", action_id: action.id,
+        kind: "result", statement: "Must not be saved", response_format })).rejects.toThrow("only supported for queries")
+    expect(await raw(f, "record", { operation: "query", action_id: action.id })).toBe(before)
+  } finally { await f.close() }
+})
+
+test("explicit JSON preserves projected evidence bytes and native permission checks", async () => {
+  const f = await registeredLoom()
+  try {
+    const record = (await f.invoke("record", { operation: "add", session_only: true, kind: "result",
+      statement: "Original", artifact_refs: ["PRIVATE-UNSELECTED-REFERENCE"] })).result
+    const input = { operation: "query", source_session_id: "s", record_id: record.id,
+      projection: "fields", fields: ["statement"] }
+    const implicit = await raw(f, "record", input)
+    const resources = f.permissionRequests.at(-1).resources
+    f.permissionRequests.length = 0
+    const explicit = await raw(f, "record", { ...input, response_format: "json" })
+    expect(explicit).toBe(implicit)
+    expect(JSON.parse(explicit).result.items[0].data).toEqual({ statement: "Original" })
+    expect(explicit).not.toContain("PRIVATE-UNSELECTED-REFERENCE")
+    expect(f.permissionRequests.at(-1).resources).toEqual(resources)
+    expect(f.permissionRequests.at(-1).metadata.view_sha256).toBe(createHash("sha256").update(explicit).digest("hex"))
+    f.permission.beforeReturn = async () => {
+      if (f.permissionRequests.at(-1).metadata?.view_sha256) throw new Error("format test disclosure denied")
+    }
+    await expect(raw(f, "record", { ...input, response_format: "json" })).rejects.toThrow("format test disclosure denied")
   } finally { await f.close() }
 })
 

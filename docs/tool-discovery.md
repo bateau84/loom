@@ -47,9 +47,9 @@ authority; it does not create an automatic escalation or approval gate.
 and answer (never an `attachments` alias), manual native handling after fail-closed
 question dispatch, first-answer-only best-effort resume and explicit-scope/cursor
 `full_thread`. Retired assignment/delivery operations and views are not advertised.
-The private `loom_review` reader preserves original review mandates and historical membership. Typed `loom_record ask` accepts structured reviews, persists and prepares them, then withholds protected delivery under the current host limits. See the [Stage 2 integration contract](learning-review-stage2.md). There are eleven core tools, or thirteen with review companions enabled.
+The private `loom_review` reader preserves original review mandates and historical membership. Typed `loom_record ask` accepts structured reviews, persists and prepares them, then withholds protected delivery under the current host limits. See the [Stage 2 integration contract](learning-review-stage2.md). Fourteen tools are registered; Assessment/QA loaders require the configured role and native permission.
 
-The separate source-linked objective index remains optional; it does not dispatch work or create a new execution engine. Live descriptions are syntax authority;
+Use `loom_history` for selective historical investigation and its expansion/exact-source requests instead of exhaustive ledger paging. `loom_record` remains the direct reader for known records; all query views accept explicit JSON. The source-linked objective index remains optional and does not dispatch work. Live descriptions are syntax authority;
 the bundled on-demand guide teaches use without eager full-guide injection.
 
 ## Await work whose result matters

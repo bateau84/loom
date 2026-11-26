@@ -203,7 +203,7 @@ const specs = [
   { name: "action", description: TOOL_HELP.action, input: obj({ operation: choice("list", "create", "update", "sessions"), action_id: str, title: str, goal: str, state: choice("active", "paused", "completed", "cancelled"), expected_revision: num, offset: num, archived: { type: "boolean" }, cursor: { type: "string", minLength: 1, maxLength: 4096 }, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation"]) },
   { name: "plan", description: TOOL_HELP.plan, input: obj({ operation: choice("read", "save"), action_id: str, revision: num, expected_revision: num, nodes: { type: "array", maxItems: 300, items: obj({ id: str, kind: choice("phase", "wave", "task", "subtask"), title: str, parent: str, depends_on: list, outcome: str, context: str, criteria: list, roles: list, skills: list, agent: str }, ["id", "kind", "title"]) } }, ["operation", "action_id"]) },
   { name: "context", description: TOOL_HELP.context, input: obj({ action_id: str, node_id: str, clear: { type: "boolean" }, mode: choice("continuation", "independent"), handoff_id: { type: ["string", "null"] } }) },
-  { name: "record", description: TOOL_HELP.record, input: { ...obj({ operation: choice("add", "query", "complete", "reopen", "ask", "answer", "bind-respondent"), view: choice("ledger", "progress", "questions", "inbox", "thread", "full_thread"), response_format: choice("markdown", "json"), cursor: str, work_ref: workRefInput, ...askInput, ...answerInput, ...bindInput, respondent: str, question_state: choice("open", "answered", "all"), offset: num, action_id: str, node_id: str, kind: choice("claim", "result", "concern", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num,
+  { name: "record", description: TOOL_HELP.record, input: { ...obj({ operation: choice("add", "query", "complete", "reopen", "ask", "answer", "bind-respondent"), view: choice("ledger", "progress", "questions", "inbox", "thread", "full_thread"), response_format: { ...choice("markdown", "json"), description: "Query only. JSON for every query; Markdown only for full_thread (its default)." }, cursor: str, work_ref: workRefInput, ...askInput, ...answerInput, ...bindInput, respondent: str, question_state: choice("open", "answered", "all"), offset: num, action_id: str, node_id: str, kind: choice("claim", "result", "concern", "assessment", "qa"), statement: str, evidence_ids: list, artifact_refs: list, verdict: choice("pass", "fail", "inconclusive"), record_id: str, session_only: { type: "boolean" }, after: num,
       projection: choice("metadata", "fields"), source_session_id: str, through: num,
       fields: { type: "array", minItems: 1, maxItems: RECORD_FIELDS.length, uniqueItems: true, items: choice(...RECORD_FIELDS) },
       record_kinds: { type: "array", minItems: 1, maxItems: RECORD_KINDS.length, uniqueItems: true, items: choice(...RECORD_KINDS) },
@@ -239,6 +239,10 @@ const specs = [
           limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation", "view"]),
         oneOf: [{ required: ["action_id"], not: { required: ["session_id"] } }, { required: ["session_id"], not: { anyOf: [{ required: ["action_id"] }, { required: ["node_id"] }] } }],
       } },
+      { if: { properties: { response_format: choice("markdown", "json") }, required: ["response_format"] },
+        then: { properties: { operation: { const: "query" } } } },
+      { if: { properties: { response_format: { const: "markdown" } }, required: ["response_format"] },
+        then: { properties: { view: { const: "full_thread" } }, required: ["view"] } },
     ] } },
 ] as const
 
@@ -973,7 +977,8 @@ export default Plugin.define({
                 if (input.review !== undefined && input.operation !== "ask") throw new Error("review is only supported for a typed ask")
                 if (input.response_format !== undefined) {
                   if (input.response_format !== "markdown" && input.response_format !== "json") throw new Error("response_format must be markdown or json")
-                  if (input.operation !== "query" || input.view !== "full_thread") throw new Error("response_format is only supported for full_thread queries")
+                  if (input.operation !== "query") throw new Error("response_format is only supported for queries")
+                  if (input.response_format === "markdown" && input.view !== "full_thread") throw new Error("response_format markdown is only supported for full_thread queries; use json")
                 }
                 // Reject retired protocol fields even when a caller bypasses schema validation.
                 if (["assign", "authorize-continuation", "withdraw-continuation", "retry-delivery"].includes(String(input.operation))

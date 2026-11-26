@@ -63,6 +63,11 @@ test('injection preserves native system parts and is idempotent across agent swi
  injectInstructions(parts, config(), 'custom'); injectInstructions(parts, config(), 'custom'); assert.equal(parts.length, 2); assert.equal(parts[0], native)
  injectInstructions(parts, config(), 'unconfigured'); assert.deepEqual(parts, [native])
 })
+test('bounded guidance points historical investigations to discovery and known-record reads', () => {
+ const c = mergeConfig(config(), { instructions: { max_chars: 2000 } }); const g = guidance(c, 'custom')
+ assert.match(g, /loom_history to discover and expand/); assert.match(g, /loom_record for known IDs/)
+ assert.ok(g.length <= 2000)
+})
 test('instruction budget reports omitted roles', () => {
  const c = mergeConfig(config(), { instructions: { max_chars: 2000 }, roles: { planning: { instructions: 'x'.repeat(4000) } } })
  const g = guidance(c, 'custom'); assert.ok(g.length <= 2000); assert.match(g, /omitted/)

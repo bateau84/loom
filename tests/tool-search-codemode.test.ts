@@ -145,6 +145,18 @@ test("actual Code Mode allSettled preserves an independent write and exposes the
     expect(saved).toHaveLength(1)
     expect(saved[0].id).toBe(result.value[1].record_id)
     expect(saved[0].data.statement).toBe(good.statement)
+    // Reproduce the failed agent request through Code Mode, including the parallel Plan read.
+    const read = await Effect.runPromise(runtime.execute(`
+      const [rev, p] = await Promise.all([
+        tools.loom.record({operation:"query",action_id:${JSON.stringify(action.id)},record_id:${JSON.stringify(saved[0].id)},response_format:"json"}),
+        tools.loom.plan({operation:"read",action_id:${JSON.stringify(action.id)}})
+      ]);
+      return {record: JSON.parse(rev).result.items[0], nodes: JSON.parse(p).result.nodes};
+    `))
+    expect(read.ok).toBe(true)
+    expect(read.value.record.id).toBe(saved[0].id)
+    expect(read.value.record.data.statement).toBe(good.statement)
+    expect(read.value.nodes).toEqual([])
   } finally { await f.close() }
 })
 
