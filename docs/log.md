@@ -4,6 +4,29 @@ type: Log
 
 # Update Log
 
+## 2026-11-26
+
+**Layered engineering history (#227):** Added a Store-owned live projection and
+the `loom_history` reader for compact Action/Session overviews, historical work
+branches, authored assessments, source references and explicit coverage. JSON,
+Markdown and the first self-contained HTML dashboard share the same model and
+scope/contributing-Session permission checks. Current intended Plans remain
+separate from historical WorkRefs. Native originals, objective/review expansion,
+frozen retrospective selections and production Evaluator authority remain
+separate work. See [the delivery boundary](learning-engineering-history.md).
+
+**PR #252 review corrections:** Added selective history discovery before result
+limits, actionable historical Plan ancestry and observed/analytical Session
+groups. Preserved captured attribution gaps, work-scope uncertainty, agent-context
+and skill-load provenance, with qualified same-fingerprint associations for
+unversioned authored reports. Focused reads omit unrelated overview context.
+Replaced the exhaustive-pagination efficiency claim with optimized existing-tool
+baselines and competing-finding fixtures. Added real-browser CI for the document
+dashboard; exact executed results remain in the PR's revision-specific receipts.
+Review follow-ups preserve related-group omission counts and distinguish filtered
+descendants from immediate children in the documents. Historical definition
+hydration now accounts for cumulative source reads before each bounded read.
+
 ## 2026-11-25
 
 **PR #251 field disclosure correction:** Exact native-source reads now omit

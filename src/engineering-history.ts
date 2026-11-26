@@ -1,0 +1,683 @@
+import { createHash } from "node:crypto"
+import { checkedRef, workReference, type WorkRef } from "./collaboration.js"
+import { canonical, ProcessingBudget, ProcessingLimitError, PROCESSING_LIMITS, uid, type PlanNode, type RecordKind } from "./model.js"
+import { RECORD_KINDS, type SQL, type Store } from "./store.js"
+
+export type EngineeringHistoryScope = { action_id: string } | { session_id: string }
+export type EngineeringHistorySelection = {
+  match?: string; record_kinds?: RecordKind[]; verdict?: "pass" | "fail" | "inconclusive";
+  source_session_id?: string; node_id?: string; plan_revision?: number; has_gaps?: boolean;
+}
+export type EngineeringHistoryQuery = EngineeringHistorySelection & {
+  action_id?: string; session_id?: string; branch_ref?: string; record_id?: string;
+  through?: number; after?: number; limit?: number; branch_offset?: number;
+}
+export type EngineeringHistoryCounts = {
+  records: number; sessions: number; observations: number; concerns: number;
+  observed_tool_errors: number;
+  reported_completions: number; reported_reopens: number; reported_passes: number; reported_failures: number;
+  reported_inconclusive: number; observation_starts: number; paired_finishes: number;
+  capture_gap_records: number; unestablished_finishes: number; ambiguous_scope_records: number; unavailable_scope_records: number;
+  verified_outcomes: null; native_dispatches: null;
+  by_kind: Partial<Record<RecordKind, number>>;
+}
+export type EngineeringHistoryGap = { code: string; detail: string }
+export type EngineeringHistorySource = {
+  store_id: string; record_id: string; session_id: string; sequence: number; sha256: string;
+  tool: "loom_record"; query: { operation: "query"; action_id?: string; source_session_id?: string; session_only?: boolean; record_id: string };
+  authority: "reference-only; retrieval requires current source permission";
+}
+export type EngineeringHistoryWorkScope =
+  | { status: "established"; work_ref: WorkRef }
+  | { status: "unscoped" }
+  | { status: "unknown"; reason: "source-missing" | "history-unavailable" | "processing-limit" | "not-observed"; detail: string | null; detail_excerpted: boolean }
+  | { status: "ambiguous"; candidates: WorkRef[]; observation_ids: string[]; candidates_complete: false; candidates_omitted: number; observation_ids_omitted: number }
+  | { status: "unavailable"; reason: "absent" | "unsupported" }
+export type EngineeringHistoryObservation = {
+  tool: string | null; phase: string | null; status: string | null; elapsed_ms: number | null; start_id: string | null;
+  capture_gap: boolean | null; attribution: string | null; attribution_excerpted: boolean;
+  finish_pairing: "paired" | "unestablished" | "not-applicable"; work_scope: EngineeringHistoryWorkScope;
+  message_id: string | null; call_id: string | null; correlation_key: string | null; observer_epoch: string | null;
+  input_digest: string | null; result_digest: string | null; agent_id: string | null; skill_id: string | null; lens: string | null;
+  content_sha256: string | null; context_system_sha256: string | null; rendered_sha256: string | null; registry_content_sha256: string | null;
+  registered_content_present: boolean | null; source: string | null; qualification: string | null; qualification_excerpted: boolean;
+}
+export type EngineeringHistoryRecord = {
+  ref: string; branch_ref: string; kind: RecordKind; sequence: number; session_id: string; agent: string; created_at: string;
+  meaning: "observed" | "authored"; title: string; excerpt: string | null; excerpt_truncated: boolean;
+  verdict: string | null; verification: "recorded observation; engineering outcome not established" | "authored claim; not independently verified";
+  work_ref: WorkRef | null; fingerprint: string | null; expand: EngineeringHistoryQuery;
+  observation: EngineeringHistoryObservation | null;
+  source: EngineeringHistorySource; gaps: EngineeringHistoryGap[];
+}
+export type EngineeringHistoryBranch = {
+  ref: string; kind: "historical-work" | "unversioned-node" | "session" | "historical-plan" | "historical-node" | "message" | "chronology"; title: string;
+  meaning: "recorded-work-binding" | "unversioned-association" | "observed-session-group" | "historical-plan-structure" | "observed-message-group" | "analytical-chronology";
+  work_ref: WorkRef | null; node_id: string | null; session_id: string | null;
+  parent_ref: string | null; child_count: number; historical_scope: { action_revision: number; plan_revision: number } | null;
+  counts: EngineeringHistoryCounts; first_sequence: number; last_sequence: number;
+  historical_node: PlanNode | null; gaps: EngineeringHistoryGap[];
+  expand: EngineeringHistoryQuery;
+}
+export type EngineeringHistoryRelationship = {
+  from: string; to: string; kind: "cites-observation" | "paired-observation" | "answers-question" | "reopens-completion" | "follows-reopen";
+  meaning: "observed" | "authored"; source_record_id: string;
+  target: "included" | "in-scope-not-included" | "unresolved";
+  qualification: string;
+}
+export type EngineeringHistoryView = {
+  format: "loom-engineering-history/v1";
+  mode: "overview" | "discovery" | "branch" | "record"; selection: EngineeringHistorySelection;
+  scope: EngineeringHistoryScope; store_id: string;
+  boundary: { live: true; observed_through: number; current_through: number; membership: "append-bound only; not a frozen retrospective population" };
+  intent: { title: string; goal: string | null; meaning: "current-authored-action" | "session-scope"; action_revision: number | null };
+  intended_plan: { revision: number; nodes: PlanNode[]; nodes_total: number; nodes_omitted: number; projection: "identity-and-title";
+    read: { tool: "loom_plan"; query: { operation: "read"; action_id: string; revision: number } };
+    meaning: "current-intended-structure; not historical execution membership" } | null;
+  totals: EngineeringHistoryCounts;
+  branches: EngineeringHistoryBranch[]; selected_branch: EngineeringHistoryBranch | null;
+  ancestors: EngineeringHistoryBranch[]; related_branches: EngineeringHistoryBranch[];
+  highlights: EngineeringHistoryRecord[]; records: EngineeringHistoryRecord[]; relationships: EngineeringHistoryRelationship[];
+  coverage: {
+    ledger: "complete-within-boundary"; page_limit: number; branch_count: number; branches_returned: number; branches_omitted: number;
+    total_branch_count: number; matching_records: number; matching_branches: number; related_branches_omitted: number;
+    records_returned: number; records_omitted: number; next_after: number | null; next_branch_offset: number | null;
+    gaps: EngineeringHistoryGap[];
+  };
+}
+
+export const ENGINEERING_HISTORY_LIMITS = Object.freeze({ records: 100000, storedBytes: 64 * 1024 * 1024,
+  responseBytes: 262144, branches: 20, highlights: 18, relationships: 20, planNodes: 20, excerptChars: 600 })
+
+type Row = { seq: number; id: string; data_bytes: number; group_key: string }
+type Metadata = Row & { action_id: string | null; node_id: string | null; session_id: string; kind: RecordKind; fingerprint: string | null;
+  verdict: string | null; phase: string | null; status: string | null; attribution: string | null; capture_gap: number | null;
+  scope_status: string; message_id: string | null; landmark_title: string | null; matched: number }
+type GroupKey = ["work", WorkRef] | ["node", string | null, string] | ["session", string]
+  | ["plan", number, number] | ["structure", number, number, string] | ["message", string, string] | ["chronology", string, string | null]
+  | ["fingerprint", string | null, string, string]
+type BranchNode = { key: string; parent: string | null; children: Set<string>; rows: Metadata[];
+  kind: EngineeringHistoryBranch["kind"]; meaning: EngineeringHistoryBranch["meaning"]; title: string;
+  work_ref: WorkRef | null; node_id: string | null; session_id: string | null; historical_node: PlanNode | null;
+  historical_scope: EngineeringHistoryBranch["historical_scope"]; gaps: EngineeringHistoryGap[]; counts?: EngineeringHistoryCounts }
+const hash = (text: string) => createHash("sha256").update(text).digest("hex")
+const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v)
+const integer = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0
+const small = (v: unknown, max = 200): string | null => typeof v === "string" && v.length <= max ? v : null
+const digest = (v: unknown): string | null => typeof v === "string" && /^[a-f0-9]{64}$/.test(v) ? v : null
+const gap = (code: string, detail: string): EngineeringHistoryGap => ({ code, detail })
+const selectionFields = ["match", "record_kinds", "verdict", "source_session_id", "node_id", "plan_revision", "has_gaps"] as const
+const selectedFilters = (query: EngineeringHistoryQuery): EngineeringHistorySelection => Object.fromEntries(selectionFields.flatMap(name =>
+  query[name] === undefined ? [] : [[name, name === "record_kinds" ? RECORD_KINDS.filter(kind => query.record_kinds!.includes(kind)) : query[name]]]))
+
+function queryScope(query: EngineeringHistoryQuery): EngineeringHistoryScope {
+  if (!object(query) || Object.keys(query).some(k => !["action_id", "session_id", "branch_ref", "record_id", "through", "after", "limit", "branch_offset", ...selectionFields].includes(k)))
+    throw new Error("Unsupported engineering history query")
+  if ((query.action_id === undefined) === (query.session_id === undefined)) throw new Error("History needs exactly one explicit Action or Session")
+  for (const name of ["through", "after"] as const) if (query[name] !== undefined && !integer(query[name])) throw new Error(`Invalid history ${name}`)
+  if (query.after !== undefined && query.through !== undefined && query.after > query.through) throw new Error("History after exceeds through boundary")
+  if (query.limit !== undefined && (!integer(query.limit) || query.limit < 1 || query.limit > 50)) throw new Error("History limit must be 1-50")
+  if (query.record_id !== undefined) uid(query.record_id, "record_id")
+  if (query.record_id !== undefined && query.branch_ref !== undefined) throw new Error("Select one history branch or record")
+  if (query.match !== undefined && (typeof query.match !== "string" || !query.match.trim() || query.match.length > 200)) throw new Error("History match must be 1-200 characters")
+  if (query.record_kinds !== undefined && (!Array.isArray(query.record_kinds) || query.record_kinds.length === 0
+    || query.record_kinds.some(kind => !RECORD_KINDS.includes(kind)) || new Set(query.record_kinds).size !== query.record_kinds.length)) throw new Error("Invalid history record_kinds")
+  if (query.verdict !== undefined && !["pass", "fail", "inconclusive"].includes(query.verdict)) throw new Error("Invalid history verdict")
+  for (const name of ["source_session_id", "node_id"] as const) if (query[name] !== undefined) uid(query[name], name)
+  if (query.plan_revision !== undefined && (!integer(query.plan_revision) || query.plan_revision === 0)) throw new Error("Invalid history plan_revision")
+  if (query.has_gaps !== undefined && typeof query.has_gaps !== "boolean") throw new Error("Invalid history has_gaps")
+  const filtering = selectionFields.some(name => query[name] !== undefined)
+  if (query.after !== undefined && (query.record_id !== undefined || query.branch_ref === undefined && !filtering)) throw new Error("History after requires a selected branch or discovery filters")
+  if (query.after !== undefined && query.through === undefined) throw new Error("Record continuation requires the history through boundary")
+  if (query.branch_offset !== undefined && (!integer(query.branch_offset) || query.branch_offset > 100000)) throw new Error("Invalid history branch_offset")
+  if (query.branch_offset !== undefined && query.record_id !== undefined) throw new Error("branch_offset only applies to branch lists")
+  if (query.branch_offset && query.through === undefined) throw new Error("Branch continuation requires the overview through boundary")
+  return query.action_id !== undefined ? { action_id: uid(query.action_id, "action_id") } : { session_id: uid(query.session_id, "session_id") }
+}
+const scopeSQL = (scope: EngineeringHistoryScope) => "action_id" in scope
+  ? { where: "action_id=?", id: scope.action_id } : { where: "session_id=?", id: scope.session_id }
+const compactNode = (node: PlanNode): PlanNode => ({ id: node.id, kind: node.kind, title: node.title, ...(node.parent ? { parent: node.parent } : {}) })
+
+// Discovery is literal ASCII-folded substring matching over authored prose and
+// named observed metadata, not native bodies, semantic search or relevance proof.
+// Paths are fixed; user values always remain SQL parameters (including % and _).
+const searchablePaths = ["statement", "question", "answer", "tool", "phase", "status", "attribution", "message_id", "call_id", "skill_id", "agent_id", "lens", "source", "observation", "work_scope.reason", "work_scope.detail"]
+function discoverySQL(query: EngineeringHistorySelection): { where: string; args: unknown[] } {
+  const parts: string[] = [], args: unknown[] = []
+  if (query.match !== undefined) {
+    parts.push(`instr(lower(${searchablePaths.map(path => `CASE WHEN json_type(data,'$.data.${path}')='text' THEN json_extract(data,'$.data.${path}') ELSE '' END`).join(" || char(10) || ")}),lower(?))>0`)
+    args.push(query.match)
+  }
+  if (query.record_kinds) { parts.push(`kind IN (${query.record_kinds.map(() => "?").join(",")})`); args.push(...query.record_kinds) }
+  if (query.verdict !== undefined) { parts.push("kind IN ('assessment','qa') AND verdict=?"); args.push(query.verdict) }
+  if (query.source_session_id !== undefined) { parts.push("session_id=?"); args.push(query.source_session_id) }
+  if (query.node_id !== undefined) { parts.push("node_id=?"); args.push(query.node_id) }
+  if (query.plan_revision !== undefined) { parts.push("json_extract(group_key,'$[0]')='work' AND json_extract(group_key,'$[1].plan_revision')=?"); args.push(query.plan_revision) }
+  if (query.has_gaps !== undefined) { parts.push("has_gaps=?"); args.push(query.has_gaps ? 1 : 0) }
+  return { where: parts.length ? parts.map(part => `(${part})`).join(" AND ") : "1", args }
+}
+const materialKinds = new Set<RecordKind>(["concern", "result", "assessment", "qa", "completion", "reopen", "question"])
+const rowHasGap = (row: Metadata) => row.kind === "observation" && (row.capture_gap === 1 || row.phase === "finished" && row.attribution !== "captured-at-start"
+  || ["unknown", "ambiguous", "unavailable"].includes(row.scope_status))
+function countRows(rows: Metadata[]): EngineeringHistoryCounts {
+  const count: EngineeringHistoryCounts = { records: rows.length, sessions: new Set(rows.map(row => row.session_id)).size, observations: 0, concerns: 0,
+    observed_tool_errors: 0, reported_completions: 0, reported_reopens: 0, reported_passes: 0, reported_failures: 0, reported_inconclusive: 0,
+    observation_starts: 0, paired_finishes: 0, capture_gap_records: 0, unestablished_finishes: 0, ambiguous_scope_records: 0, unavailable_scope_records: 0,
+    verified_outcomes: null, native_dispatches: null, by_kind: {} }
+  for (const row of rows) {
+    count.by_kind[row.kind] = (count.by_kind[row.kind] ?? 0) + 1
+    if (row.kind === "concern") count.concerns++
+    if (row.kind === "completion") count.reported_completions++
+    if (row.kind === "reopen") count.reported_reopens++
+    if (row.kind === "assessment" || row.kind === "qa") {
+      if (row.verdict === "pass") count.reported_passes++
+      if (row.verdict === "fail") count.reported_failures++
+      if (row.verdict === "inconclusive") count.reported_inconclusive++
+    }
+    if (row.kind !== "observation") continue
+    count.observations++
+    if (row.status === "error") count.observed_tool_errors++
+    if (row.phase === "started") count.observation_starts++
+    if (row.phase === "finished") {
+      if (row.attribution === "captured-at-start") count.paired_finishes++
+      else count.unestablished_finishes++
+    }
+    if (row.capture_gap === 1) count.capture_gap_records++
+    if (row.scope_status === "ambiguous") count.ambiguous_scope_records++
+    if (row.scope_status === "unavailable") count.unavailable_scope_records++
+  }
+  return count
+}
+
+/** A live, read-only projection of the existing Loom source owner. Consumers must
+ * authorize scope and all contributing Sessions before calling read, and recheck
+ * that same resource union before disclosure. This class is not an authority. */
+export class EngineeringHistory {
+  constructor(private store: Store, private db: SQL) {}
+
+  /** Metadata-only authorization preflight. No body hydration or returned counts.
+   * The current contributor union is deliberately a superset of an append-bound read. */
+  authorizationSessions(query: EngineeringHistoryQuery): string[] {
+    const scope = queryScope(query), sql = scopeSQL(scope)
+    const rows = this.db.prepare(`SELECT DISTINCT session_id FROM ledger WHERE ${sql.where} ORDER BY session_id LIMIT 2001`).all(sql.id) as { session_id: string }[]
+    if (rows.length > 2000) throw new ProcessingLimitError("history contributor set exceeds 2000 Sessions; use a narrower Session scope")
+    const result = new Set(rows.map(row => uid(row.session_id, "source Session")))
+    if ("session_id" in scope) result.add(scope.session_id)
+    else {
+      // Plan labels are authored by their saver. Preserve the same Session deny
+      // boundary even when the author has not written a ledger record.
+      const authors = this.db.prepare(`SELECT DISTINCT json_extract(data,'$.saved_by.session_id') AS session_id
+        FROM plans WHERE action_id=? AND json_type(data,'$.saved_by.session_id')='text' LIMIT 2001`).all(scope.action_id) as { session_id: string }[]
+      if (authors.length > 2000) throw new ProcessingLimitError("history Plan author set exceeds 2000 Sessions")
+      for (const author of authors) result.add(uid(author.session_id, "Plan author Session"))
+    }
+    if (result.size > 2000) throw new ProcessingLimitError("history contributor set exceeds 2000 Sessions")
+    return [...result].sort()
+  }
+
+  private prefix(where: string): string {
+    return `WITH source AS MATERIALIZED (
+      SELECT seq,id,action_id,session_id,kind,octet_length(data) AS data_bytes,data
+      FROM ledger WHERE ${where} AND seq<=?
+    ), fields AS (
+      SELECT *,json_extract(data,'$.node_id') AS node_id,json_extract(data,'$.data.verdict') AS verdict,
+        json_extract(data,'$.data.phase') AS phase,json_extract(data,'$.data.start_id') AS start_id,json_extract(data,'$.data.status') AS status,
+        CASE WHEN json_type(data,'$.fingerprint')='text' AND length(json_extract(data,'$.fingerprint'))=64
+          AND json_extract(data,'$.fingerprint') NOT GLOB '*[^a-f0-9]*' THEN json_extract(data,'$.fingerprint') END AS fingerprint,
+        CASE WHEN json_type(data,'$.data.attribution')='text' THEN substr(json_extract(data,'$.data.attribution'),1,201) END AS attribution,
+        CASE WHEN json_type(data,'$.data.capture_gap') IN ('true','false') THEN json_extract(data,'$.data.capture_gap') END AS capture_gap,
+        CASE WHEN json_type(data,'$.data.message_id')='text' AND length(json_extract(data,'$.data.message_id')) BETWEEN 1 AND 200
+          THEN json_extract(data,'$.data.message_id') END AS message_id,
+        CASE WHEN json_type(data,'$.data.statement')='text' THEN substr(json_extract(data,'$.data.statement'),1,160)
+          WHEN json_type(data,'$.data.question')='text' THEN substr(json_extract(data,'$.data.question'),1,160) END AS landmark_title,
+        CASE WHEN kind<>'observation' AND json_type(data,'$.data.work_ref')='object' THEN json_extract(data,'$.data.work_ref')
+          WHEN kind='observation' AND json_type(data,'$.data.work_scope')='object'
+          AND json_extract(data,'$.data.work_scope.status')='established'
+          AND (SELECT COUNT(*) FROM json_each(data,'$.data.work_scope'))=2
+          AND NOT EXISTS (SELECT 1 FROM json_each(data,'$.data.work_scope') WHERE key NOT IN ('status','work_ref'))
+          AND json_type(data,'$.data.work_scope.work_ref')='object' THEN json_extract(data,'$.data.work_scope.work_ref') END AS wr
+      FROM source
+    ), grouped AS (
+      SELECT *,CASE WHEN wr IS NOT NULL
+        AND (SELECT COUNT(*) FROM json_each(wr))=5
+        AND NOT EXISTS (SELECT 1 FROM json_each(wr) WHERE key NOT IN ('action_id','node_id','action_revision','plan_revision','hash'))
+        AND json_type(wr,'$.action_id')='text' AND json_type(wr,'$.node_id')='text'
+        AND json_extract(wr,'$.action_id') IS action_id
+        AND json_extract(wr,'$.node_id') IS node_id
+        AND length(action_id) BETWEEN 1 AND 120 AND action_id GLOB '[A-Za-z0-9]*' AND action_id NOT GLOB '*[^A-Za-z0-9_.:-]*'
+        AND length(node_id) BETWEEN 1 AND 120 AND node_id GLOB '[A-Za-z0-9]*' AND node_id NOT GLOB '*[^A-Za-z0-9_.:-]*'
+        AND json_type(wr,'$.action_revision')='integer' AND json_extract(wr,'$.action_revision') BETWEEN 1 AND 9007199254740991
+        AND json_type(wr,'$.plan_revision')='integer' AND json_extract(wr,'$.plan_revision') BETWEEN 1 AND 9007199254740991
+        AND json_type(wr,'$.hash')='text' AND length(json_extract(wr,'$.hash'))=64
+        AND json_extract(wr,'$.hash') NOT GLOB '*[^a-f0-9]*'
+        THEN json_array('work',json(wr))
+        WHEN node_id IS NOT NULL THEN json_array('node',action_id,node_id)
+        ELSE json_array('session',session_id) END AS group_key
+      FROM fields
+    ), qualified AS (
+      SELECT *,CASE
+        WHEN json_extract(group_key,'$[0]')='work' THEN 'established'
+        WHEN json_type(data,'$.data.work_scope')='object' AND json_extract(data,'$.data.work_scope.status')='unscoped'
+          AND (SELECT COUNT(*) FROM json_each(data,'$.data.work_scope'))=1 THEN 'unscoped'
+        WHEN json_type(data,'$.data.work_scope')='object' AND json_extract(data,'$.data.work_scope.status')='unknown'
+          AND NOT EXISTS (SELECT 1 FROM json_each(data,'$.data.work_scope') WHERE key NOT IN ('status','reason','detail'))
+          AND json_extract(data,'$.data.work_scope.reason') IN ('source-missing','history-unavailable','processing-limit','not-observed')
+          AND (json_type(data,'$.data.work_scope.detail') IS NULL OR json_type(data,'$.data.work_scope.detail')='text') THEN 'unknown'
+        WHEN json_type(data,'$.data.work_scope')='object' AND json_extract(data,'$.data.work_scope.status')='ambiguous'
+          AND NOT EXISTS (SELECT 1 FROM json_each(data,'$.data.work_scope') WHERE key NOT IN ('status','candidates','observation_ids'))
+          AND json_type(data,'$.data.work_scope.candidates')='array' AND json_type(data,'$.data.work_scope.observation_ids')='array' THEN 'ambiguous'
+        ELSE 'unavailable' END AS scope_status
+      FROM grouped
+    ), metadata AS (
+      SELECT *,CASE WHEN kind='observation' AND (capture_gap=1 OR (phase='finished' AND attribution IS NOT 'captured-at-start')
+        OR scope_status IN ('unknown','ambiguous','unavailable')) THEN 1 ELSE 0 END AS has_gaps FROM qualified
+    ) `
+  }
+
+  private branchRef(scope: EngineeringHistoryScope, key: string): string {
+    return Buffer.from(JSON.stringify({ v: 1, store: this.store.reviews.storeID, scope, key })).toString("base64url")
+  }
+  private branchKey(scope: EngineeringHistoryScope, ref: string): string {
+    const fail = () => new Error("History branch reference is malformed or belongs to another source/scope")
+    if (typeof ref !== "string" || ref.length > 4096 || !/^[A-Za-z0-9_-]+$/.test(ref)) throw fail()
+    let value: unknown
+    try { value = JSON.parse(Buffer.from(ref, "base64url").toString("utf8")) } catch { throw fail() }
+    if (!object(value) || value.v !== 1 || value.store !== this.store.reviews.storeID || typeof value.key !== "string"
+      || canonical(value.scope) !== canonical(scope) || this.branchRef(scope, value.key) !== ref) throw fail()
+    return value.key
+  }
+
+  /** Build navigation only from bounded source metadata and exact saved WorkRefs.
+   * Containers aggregate their recorded descendants; their existence is never an
+   * assertion that the parent contract ran. Nothing here writes or caches history. */
+  private tree(scope: EngineeringHistoryScope, rows: Metadata[], definitionBytes: number): Map<string, BranchNode> {
+    const nodes = new Map<string, BranchNode>()
+    // Reuse exact definitions only within this read snapshot. Reserve the bytes
+    // before asking the source owner to parse them. resolveWork reads the Plan
+    // twice and the current Action three times (including Store.plan's checks).
+    const definitions = new Map<string, ReturnType<Store["collaboration"]["resolveWork"]>>()
+    const make = (key: string, value: Partial<BranchNode> & Pick<BranchNode, "kind" | "meaning" | "title">): BranchNode => {
+      const existing = nodes.get(key)
+      if (existing) return existing
+      const node: BranchNode = { key, parent: null, children: new Set(), rows: [], work_ref: null, node_id: null, session_id: null,
+        historical_node: null, historical_scope: null, gaps: [], ...value }
+      nodes.set(key, node)
+      return node
+    }
+    for (const keyText of new Set(rows.map(row => row.group_key))) {
+      const key = JSON.parse(keyText) as GroupKey
+      if (key[0] === "work") {
+        const work_ref = checkedRef(key[1])
+        const node = make(keyText, { kind: "historical-work", meaning: "recorded-work-binding", work_ref, node_id: work_ref.node_id,
+          historical_scope: { action_revision: work_ref.action_revision, plan_revision: work_ref.plan_revision },
+          title: `Work ${work_ref.node_id} · Plan revision ${work_ref.plan_revision}` })
+        if (!("action_id" in scope)) {
+          node.gaps.push(gap("action-definition-not-in-scope", "Historical Action and Plan content requires a separate authorized Action-scoped read."))
+          continue
+        }
+        const definitionKey = JSON.stringify([work_ref.action_revision, work_ref.plan_revision]), prior = definitions.get(definitionKey)
+        if (!prior) {
+          const reservation = this.db.prepare(`SELECT
+            2*COALESCE((SELECT octet_length(data) FROM plans WHERE action_id=? AND revision=?),0)
+            +3*COALESCE((SELECT octet_length(data) FROM actions WHERE id=?),0)
+            +COALESCE((SELECT octet_length(data) FROM action_versions WHERE action_id=? AND revision=?),0) AS bytes`)
+            .get(scope.action_id, work_ref.plan_revision, scope.action_id, scope.action_id, work_ref.action_revision) as { bytes: number }
+          definitionBytes += reservation.bytes
+          if (!integer(definitionBytes) || definitionBytes > ENGINEERING_HISTORY_LIMITS.storedBytes)
+            throw new ProcessingLimitError("engineering history historical definitions exceed the bounded read; use a narrower Session scope")
+        }
+        try {
+          const definition = prior ?? this.store.collaboration.resolveWork(work_ref)
+          if (prior && workReference(prior.action, prior.plan, work_ref.node_id).hash !== work_ref.hash) throw new Error("Historical WorkRef does not match its exact definition")
+          const byID = new Map(definition.plan.nodes.map(item => [item.id, item])), historicalNode = byID.get(work_ref.node_id)
+          if (!historicalNode) throw new Error("Historical node is unavailable")
+          const resolved = { ...definition, node: historicalNode }
+          definitions.set(definitionKey, definition)
+          node.historical_node = compactNode(resolved.node); node.title = resolved.node.title
+          node.gaps.push(gap("historical-definition-projected", "Historical node identity, kind, title and parent are shown. Read the exact Plan revision for contract fields, dependencies and acceptance criteria."))
+          const revisions = node.historical_scope!
+          const plan = make(JSON.stringify(["plan", revisions.action_revision, revisions.plan_revision]), { kind: "historical-plan", meaning: "historical-plan-structure",
+            title: `Historical Plan ${revisions.plan_revision} · Action revision ${revisions.action_revision}`, historical_scope: revisions,
+            gaps: [gap("structure-not-execution", "This saved Plan structure contains recorded descendant work. A container is not evidence that its own contract executed or completed.")] })
+          let parent = plan.key, cursor = resolved.node.parent
+          const ancestors: PlanNode[] = [], seen = new Set<string>([resolved.node.id])
+          while (cursor) {
+            if (seen.has(cursor) || ancestors.length >= 300) throw new Error("Historical Plan ancestry is invalid")
+            seen.add(cursor)
+            const ancestor = byID.get(cursor)
+            if (!ancestor) throw new Error("Historical Plan ancestor is unavailable")
+            ancestors.unshift(ancestor); cursor = ancestor.parent
+          }
+          for (const ancestor of ancestors) {
+            const container = make(JSON.stringify(["structure", revisions.action_revision, revisions.plan_revision, ancestor.id]), {
+              kind: "historical-node", meaning: "historical-plan-structure", title: ancestor.title, parent, node_id: ancestor.id,
+              historical_node: compactNode(ancestor), historical_scope: revisions,
+              gaps: [gap("structure-not-execution", "This exact saved ancestor organizes recorded descendant work; it is not an execution, assignment or completion claim.")] })
+            parent = container.key
+          }
+          node.parent = parent
+        } catch {
+          node.historical_node = null
+          node.gaps.push(gap("historical-definition-unavailable", "The exact recorded WorkRef definition could not be resolved; no current Plan definition was substituted."))
+        }
+      } else if (key[0] === "node") make(keyText, { kind: "unversioned-node", meaning: "unversioned-association", node_id: key[2],
+        title: `Unversioned activity · ${key[2]}`, gaps: [gap("historical-binding-unknown", "Node association lacks a supported exact historical WorkRef. It is not assigned to the latest Plan.")] })
+      else if (key[0] === "session") make(keyText, { kind: "session", meaning: "observed-session-group", session_id: key[1], title: `Session ${key[1]}`,
+        gaps: [gap("session-group-not-invocation", "This is an observed Session group. It can contain multiple dispatches or objectives; neither membership nor invocation count is inferred.")] })
+    }
+    // A node can have both direct recorded work and recorded descendants. Keep
+    // the direct binding as a separate child of its historical structure node.
+    for (const node of nodes.values()) if (node.work_ref && node.parent) {
+      const ref = node.work_ref, container = nodes.get(JSON.stringify(["structure", ref.action_revision, ref.plan_revision, ref.node_id]))
+      if (container) { node.parent = container.key; node.title = `Direct activity · ${node.title}` }
+    }
+    const landmarks = new Map<string, Metadata>()
+    for (const row of rows) {
+      const base = nodes.get(row.group_key)!
+      if (base.kind === "unversioned-node" && row.fingerprint) {
+        const contract = make(JSON.stringify(["fingerprint", row.action_id, row.node_id, row.fingerprint]), {
+          kind: "unversioned-node", meaning: "unversioned-association", parent: base.key, node_id: row.node_id,
+          title: `Recorded contract · ${row.node_id} · ${row.fingerprint.slice(0, 12)}`,
+          gaps: [...base.gaps, gap("source-work-fingerprint", `These source records explicitly carry subject fingerprint ${row.fingerprint}. It can remain equal across Plan revisions and unrelated edits; it does not identify an exact Plan revision, invocation or execution.`)] })
+        row.group_key = contract.key
+      } else if (base.kind === "session") {
+        let child: BranchNode
+        if (row.kind === "observation" && row.message_id) child = make(JSON.stringify(["message", row.session_id, row.message_id]), {
+          kind: "message", meaning: "observed-message-group", title: `Recorded message ${row.message_id}`, parent: base.key, session_id: row.session_id,
+          gaps: [gap("message-group-not-invocation", "Observations share the recorded host message identity within this Session. A message is not a dispatch, objective or complete native transcript.")] })
+        else {
+          if (materialKinds.has(row.kind)) landmarks.set(row.session_id, row)
+          const landmark = landmarks.get(row.session_id)
+          child = make(JSON.stringify(["chronology", row.session_id, landmark?.id ?? null]), {
+            kind: "chronology", meaning: "analytical-chronology", parent: base.key, session_id: row.session_id,
+            title: landmark ? `From ${landmark.kind} · ${landmark.landmark_title ?? `sequence ${landmark.seq}`}` : "Chronology before an authored landmark",
+            gaps: [gap("analytical-chronology-not-execution", "Records without a recorded message identity are grouped by Session sequence, from this authored landmark until the next material authored landmark. This analytical navigation does not infer an attempt, execution phase, cause or objective.")] })
+        }
+        row.group_key = child.key
+      }
+    }
+    for (const node of nodes.values()) if (node.parent) nodes.get(node.parent)!.children.add(node.key)
+    for (const row of rows) {
+      let node: BranchNode | undefined = nodes.get(row.group_key)
+      while (node) { node.rows.push(row); node = node.parent ? nodes.get(node.parent) : undefined }
+    }
+    for (const [key, node] of nodes) if (!node.rows.length) nodes.delete(key)
+    return nodes
+  }
+
+  private branch(scope: EngineeringHistoryScope, node: BranchNode, through: number, limit: number): EngineeringHistoryBranch {
+    const ref = this.branchRef(scope, node.key)
+    return { ref, kind: node.kind, title: node.title, meaning: node.meaning, work_ref: node.work_ref, node_id: node.node_id, session_id: node.session_id,
+      parent_ref: node.parent ? this.branchRef(scope, node.parent) : null, child_count: node.children.size, historical_scope: node.historical_scope,
+      counts: node.counts ??= countRows(node.rows), first_sequence: node.rows[0].seq, last_sequence: node.rows.at(-1)!.seq,
+      historical_node: node.historical_node, gaps: [...node.gaps], expand: { ...scope, branch_ref: ref, through, limit } }
+  }
+
+  private ranked(nodes: BranchNode[]): BranchNode[] {
+    const keys = ["reported_failures", "observed_tool_errors", "reported_reopens", "concerns", "reported_inconclusive", "reported_completions"] as const
+    for (const node of nodes) node.counts ??= countRows(node.rows)
+    return nodes.sort((a, b) => {
+      for (const key of keys) { const delta = b.counts![key] - a.counts![key]; if (delta) return delta }
+      return b.rows.at(-1)!.seq - a.rows.at(-1)!.seq || a.key.localeCompare(b.key)
+    })
+  }
+
+  private observationScope(data: Record<string, unknown>, row: Metadata, available: Map<string, Metadata>): EngineeringHistoryWorkScope {
+    const raw = data.work_scope
+    if (!object(raw)) return { status: "unavailable", reason: raw === undefined ? "absent" : "unsupported" }
+    if (row.scope_status === "established") return { status: "established", work_ref: checkedRef((JSON.parse(row.group_key) as ["work", WorkRef])[1]) }
+    if (row.scope_status === "unscoped") return { status: "unscoped" }
+    if (row.scope_status === "unknown") {
+      const detail = typeof raw.detail === "string" ? raw.detail : null
+      return { status: "unknown", reason: raw.reason as "source-missing" | "history-unavailable" | "processing-limit" | "not-observed",
+        detail: detail?.slice(0, 200) ?? null, detail_excerpted: detail !== null && detail.length > 200 }
+    }
+    if (row.scope_status === "ambiguous" && Array.isArray(raw.candidates) && Array.isArray(raw.observation_ids)) {
+      // An arbitrary stored pointer cannot expose an outside source identity.
+      // Candidate WorkRefs require a supporting, already in-scope start row;
+      // the source's bounded possibilities never become an exhaustive set.
+      const observation_ids = [...new Set(raw.observation_ids.slice(0, 20).filter((id): id is string => {
+        const target = typeof id === "string" ? available.get(id) : undefined
+        return !!target && target.kind === "observation" && target.phase === "started"
+      }))]
+      const supported = new Set(observation_ids.flatMap(id => {
+        const target = available.get(id)!
+        return target.scope_status === "established" ? [canonical((JSON.parse(target.group_key) as ["work", WorkRef])[1])] : []
+      }))
+      const candidates: WorkRef[] = [], seen = new Set<string>()
+      for (const value of raw.candidates.slice(0, 20)) {
+        try {
+          const candidate = checkedRef(value as WorkRef), key = canonical(candidate)
+          if (supported.has(key) && !seen.has(key)) { seen.add(key); candidates.push(candidate) }
+        } catch { /* Unsupported source shapes remain omitted, never normalized. */ }
+      }
+      return { status: "ambiguous", candidates, observation_ids, candidates_complete: false,
+        candidates_omitted: raw.candidates.length - candidates.length, observation_ids_omitted: raw.observation_ids.length - observation_ids.length }
+    }
+    return { status: "unavailable", reason: "unsupported" }
+  }
+
+  private project(scope: EngineeringHistoryScope, rows: Metadata[], through: number, available: Map<string, Metadata>, limit: number): EngineeringHistoryRecord[] {
+    const records = this.store.hydrateLedger(rows), keyed = new Map(rows.map(row => [row.seq, row.group_key]))
+    return records.map(record => {
+      const { sequence, ...original } = record
+      const source: EngineeringHistorySource = { store_id: this.store.reviews.storeID, record_id: uid(record.id), session_id: uid(record.session_id),
+        sequence, sha256: hash(canonical(original, new ProcessingBudget(PROCESSING_LIMITS.recordChars))), tool: "loom_record",
+        query: { operation: "query", ...("action_id" in scope ? { action_id: scope.action_id } : {}), source_session_id: record.session_id, record_id: record.id },
+        authority: "reference-only; retrieval requires current source permission" }
+      if (!object(record.data)) throw new Error("Stored history record has invalid data")
+      const observed = record.kind === "observation", rawText = !observed ? record.data.statement ?? record.data.question ?? record.data.answer : undefined
+      const text = typeof rawText === "string" ? rawText : null, key = keyed.get(sequence)!
+      const metadata = available.get(record.id)!
+      let work_ref: WorkRef | null = null
+      const parsed = JSON.parse(key) as GroupKey
+      if (parsed[0] === "work") work_ref = checkedRef(parsed[1])
+      const phase = small(record.data.phase), tool = small(record.data.tool), status = small(record.data.status)
+      const gaps = [gap("originals-not-expanded", "Original native messages, tool bodies and external artifacts are not resolved by this projection; follow separately authorized source readers.")]
+      const attribution = typeof record.data.attribution === "string" ? record.data.attribution : null
+      const qualification = typeof record.data.observation === "string" ? record.data.observation : null
+      const work_scope = observed ? this.observationScope(record.data, metadata, available) : null
+      if (observed && rowHasGap(metadata)) gaps.push(gap("observation-coverage-gap", "The recorded capture continuity, finish attribution or work scope is incomplete or ambiguous. These are record counts, not counts of independent gap incidents."))
+      if (work_scope?.status === "ambiguous") gaps.push(gap("ambiguous-work-scope", "Only bounded candidate identities supported by observations inside this authorized scope and append boundary are shown. They are possibilities, not established work membership or an exhaustive set."))
+      if (work_scope?.status === "unavailable") gaps.push(gap("observation-scope-unavailable", "No supported frozen work scope was recorded. Current selection and current Plan were not substituted."))
+      const start = typeof record.data.start_id === "string" ? available.get(record.data.start_id) : undefined
+      return { ref: `loom-record:${encodeURIComponent(this.store.reviews.storeID)}:${encodeURIComponent(record.id)}`,
+        branch_ref: this.branchRef(scope, key), kind: record.kind, sequence, session_id: record.session_id, agent: record.agent, created_at: record.created_at,
+        meaning: observed ? "observed" : "authored", title: observed ? [tool, phase].filter(Boolean).join(" · ") || "Recorded observation" : record.kind,
+        excerpt: text?.slice(0, ENGINEERING_HISTORY_LIMITS.excerptChars) ?? null, excerpt_truncated: text !== null && text.length > ENGINEERING_HISTORY_LIMITS.excerptChars,
+        verdict: small(record.data.verdict, 64), verification: observed ? "recorded observation; engineering outcome not established" : "authored claim; not independently verified",
+        work_ref, fingerprint: digest(record.fingerprint), expand: { ...scope, branch_ref: this.branchRef(scope, key), through, limit }, observation: observed ? { tool, phase, status,
+          elapsed_ms: typeof record.data.duration_ms === "number" && Number.isFinite(record.data.duration_ms) && record.data.duration_ms >= 0 ? record.data.duration_ms : null,
+          start_id: start?.kind === "observation" && start.phase === "started" ? start.id : null,
+          capture_gap: typeof record.data.capture_gap === "boolean" ? record.data.capture_gap : null,
+          attribution: attribution?.slice(0, 200) ?? null, attribution_excerpted: attribution !== null && attribution.length > 200,
+          finish_pairing: phase !== "finished" ? "not-applicable" : attribution === "captured-at-start" ? "paired" : "unestablished",
+          work_scope: work_scope!, message_id: small(record.data.message_id), call_id: small(record.data.call_id), correlation_key: small(record.data.correlation_key),
+          observer_epoch: small(record.data.observer_epoch), input_digest: digest(record.data.input_digest), result_digest: digest(record.data.result_digest),
+          agent_id: small(record.data.agent_id), skill_id: small(record.data.skill_id), lens: small(record.data.lens),
+          content_sha256: digest(record.data.content_sha256), context_system_sha256: digest(record.data.context_system_sha256),
+          rendered_sha256: digest(record.data.rendered_sha256), registry_content_sha256: digest(record.data.registry_content_sha256),
+          registered_content_present: typeof record.data.registered_content_present === "boolean" ? record.data.registered_content_present : null,
+          source: small(record.data.source), qualification: qualification?.slice(0, 600) ?? null, qualification_excerpted: qualification !== null && qualification.length > 600,
+        } : null, source, gaps }
+    })
+  }
+
+  read(query: EngineeringHistoryQuery): EngineeringHistoryView {
+    const scope = queryScope(query), sql = scopeSQL(scope), limit = query.limit ?? ENGINEERING_HISTORY_LIMITS.branches
+    const selectedKey = query.branch_ref === undefined ? undefined : this.branchKey(scope, query.branch_ref)
+    this.db.exec("BEGIN")
+    try {
+      const overview = query.branch_ref === undefined && query.record_id === undefined
+        && !selectionFields.some(name => query[name] !== undefined)
+      // The intent read hydrates one Action. Only the overview needs today's
+      // Plan; Store.plan also reads that Action. Reserve all of those bytes
+      // before hydration and carry them into the historical-definition budget.
+      const definitionBytes = "action_id" in scope ? (this.db.prepare(`SELECT
+        ?*COALESCE((SELECT octet_length(data) FROM actions WHERE id=?),0)
+        +?*COALESCE((SELECT octet_length(data) FROM plans WHERE action_id=? ORDER BY revision DESC LIMIT 1),0) AS bytes`)
+        .get(overview ? 2 : 1, scope.action_id, overview ? 1 : 0, scope.action_id) as { bytes: number }).bytes : 0
+      if (!integer(definitionBytes) || definitionBytes > ENGINEERING_HISTORY_LIMITS.storedBytes)
+        throw new ProcessingLimitError("engineering history historical definitions exceed the bounded read; use a narrower Session scope")
+      const action = "action_id" in scope ? this.store.action(scope.action_id) : undefined
+      const plan = action && overview ? this.store.plan(action.id) : undefined
+      const current = this.db.prepare(`SELECT COALESCE(MAX(seq),0) AS sequence FROM ledger WHERE ${sql.where}`).get(sql.id) as { sequence: number }
+      const through = query.through ?? current.sequence
+      if (through > current.sequence) throw new Error("History through boundary exceeds the current scope")
+      const reserve = this.db.prepare(`SELECT COUNT(*) AS records,COALESCE(SUM(octet_length(data)),0) AS bytes,
+        COALESCE(MAX(octet_length(data)),0) AS max_bytes FROM ledger WHERE ${sql.where} AND seq<=?`).get(sql.id, through) as { records: number; bytes: number; max_bytes: number }
+      if (reserve.records > ENGINEERING_HISTORY_LIMITS.records || reserve.bytes > ENGINEERING_HISTORY_LIMITS.storedBytes
+        || reserve.max_bytes > PROCESSING_LIMITS.recordChars * 3) throw new ProcessingLimitError("engineering history source exceeds its bounded read; use a narrower Session scope")
+      const invalid = this.db.prepare(`SELECT 1 FROM ledger WHERE ${sql.where} AND seq<=? AND (typeof(data) IS NOT 'text' OR NOT json_valid(data)
+        OR json_type(data) IS NOT 'object' OR json_type(data,'$.data') IS NOT 'object'
+        OR json_type(data,'$.id') IS NOT 'text' OR json_type(data,'$.session_id') IS NOT 'text' OR json_type(data,'$.kind') IS NOT 'text'
+        OR json_type(data,'$.agent') IS NOT 'text' OR length(json_extract(data,'$.agent')) NOT BETWEEN 1 AND 200
+        OR json_type(data,'$.created_at') IS NOT 'text' OR length(json_extract(data,'$.created_at')) NOT BETWEEN 1 AND 64
+        OR length(id) NOT BETWEEN 1 AND 120 OR id NOT GLOB '[A-Za-z0-9]*' OR id GLOB '*[^A-Za-z0-9_.:-]*'
+        OR length(session_id) NOT BETWEEN 1 AND 120 OR session_id NOT GLOB '[A-Za-z0-9]*' OR session_id GLOB '*[^A-Za-z0-9_.:-]*'
+        OR kind NOT IN (${RECORD_KINDS.map(kind => `'${kind}'`).join(",")})
+        OR json_extract(data,'$.id') IS NOT id OR json_extract(data,'$.session_id') IS NOT session_id
+        OR json_extract(data,'$.action_id') IS NOT action_id OR json_extract(data,'$.kind') IS NOT kind) LIMIT 1`).get(sql.id, through)
+      if (invalid) throw new Error("Stored history source is invalid; projection withheld")
+      const selection = selectedFilters(query), filtering = Object.keys(selection).length > 0, filter = discoverySQL(selection)
+      const rows = this.db.prepare(this.prefix(sql.where) + `SELECT seq,id,data_bytes,group_key,action_id,node_id,session_id,kind,fingerprint,
+        verdict,phase,status,attribution,capture_gap,scope_status,message_id,landmark_title,CASE WHEN ${filter.where} THEN 1 ELSE 0 END AS matched
+        FROM metadata ORDER BY seq`).all(sql.id, through, ...filter.args) as Metadata[]
+      const tree = this.tree(scope, rows, definitionBytes), available = new Map(rows.map(row => [row.id, row]))
+      const exact = query.record_id ? available.get(query.record_id) : undefined
+      if (query.record_id && (!exact || !exact.matched)) throw new Error("History record is unavailable in the selected source scope and boundary")
+      const effectiveKey = exact?.group_key ?? selectedKey, selectedNode = effectiveKey === undefined ? undefined : tree.get(effectiveKey)
+      if (effectiveKey !== undefined && !selectedNode) throw new Error("History branch is unavailable in this source scope and boundary")
+      const selected_branch = selectedNode ? this.branch(scope, selectedNode, through, limit) : null
+      const matching = (selectedNode?.rows ?? rows).filter(row => row.matched), matchingKeys = new Set(matching.map(row => row.group_key))
+      const candidates = this.ranked(filtering ? [...matchingKeys].map(key => tree.get(key)!)
+        : selectedNode ? [...selectedNode.children].map(key => tree.get(key)!) : [...tree.values()].filter(node => node.parent === null))
+      const branchOffset = query.branch_offset ?? 0
+      const branches = candidates.slice(branchOffset, branchOffset + limit).map(node => this.branch(scope, node, through, limit))
+      const ancestors: EngineeringHistoryBranch[] = []
+      let parent = selectedNode?.parent
+      while (parent) { const node = tree.get(parent)!; ancestors.unshift(this.branch(scope, node, through, limit)); parent = node.parent }
+      // Equal subject fingerprints compare the same stored Action/node contract.
+      // They cannot select a Plan revision, invocation, assignment or outcome.
+      const fingerprints = new Set((selectedNode?.rows ?? []).flatMap(row => row.fingerprint ? [JSON.stringify([row.action_id, row.node_id, row.fingerprint])] : []))
+      const selectedKeys = new Set(selectedNode?.rows.map(row => row.group_key) ?? [])
+      const relatedNodes = selectedNode ? this.ranked([...tree.values()].filter(node => node.children.size === 0 && !selectedKeys.has(node.key)
+        && node.rows.some(row => row.fingerprint && fingerprints.has(JSON.stringify([row.action_id, row.node_id, row.fingerprint]))))) : []
+      const related_branches = relatedNodes.slice(0, ENGINEERING_HISTORY_LIMITS.branches).map(node => {
+        const branch = this.branch(scope, node, through, limit)
+        branch.gaps.push(gap("same-work-fingerprint", "Some source records share an explicitly recorded subject fingerprint for the same Action and node. This compares the work contract; it does not establish an exact Plan revision, execution identity, assignment, completion or cause."))
+        return branch
+      })
+      // Fixed independent representative lanes do not change when callers page
+      // one child or one record at a time. Gaps have their own visible lane.
+      const laneRows = new Map<string, Metadata[]>()
+      for (const row of matching) {
+        const lane = (row.kind === "assessment" || row.kind === "qa") && row.verdict === "fail" ? "failure"
+          : row.kind === "observation" && row.status === "error" ? "tool-error"
+          : row.kind === "reopen" ? "reopen" : row.kind === "concern" ? "concern"
+          : (row.kind === "assessment" || row.kind === "qa") && row.verdict === "inconclusive" ? "inconclusive"
+          : row.kind === "completion" ? "completion" : row.kind === "result" ? "result"
+          : (row.kind === "assessment" || row.kind === "qa") && row.verdict === "pass" ? "pass" : null
+        for (const category of [...(lane ? [lane] : []), ...(rowHasGap(row) ? ["gap"] : [])]) {
+          const items = laneRows.get(category) ?? []; items.push(row); if (items.length > 2) items.shift(); laneRows.set(category, items)
+        }
+      }
+      const highRows = [...new Map([...laneRows.values()].flat().map(row => [row.id, row])).values()].sort((a, b) => a.seq - b.seq)
+        .slice(0, ENGINEERING_HISTORY_LIMITS.highlights)
+      const highlights = this.project(scope, highRows, through, available, limit)
+      let recordRows: Metadata[] = [], next_after: number | null = null
+      if (exact) recordRows = [exact]
+      else if (selectedNode || filtering) {
+        const eligible = matching.filter(row => row.seq > (query.after ?? 0))
+        recordRows = eligible.slice(0, limit)
+        if (eligible.length > limit) next_after = recordRows.at(-1)!.seq
+      }
+      // One canonical projected object per source identity. A record displayed in
+      // both the highlight and detail lanes must carry the same qualifications.
+      const included = new Map(highlights.map(record => [record.source.record_id, record]))
+      const records = this.project(scope, recordRows, through, available, limit).map(record => {
+        const existing = included.get(record.source.record_id)
+        if (existing) return existing
+        included.set(record.source.record_id, record)
+        return record
+      })
+      const relationships = this.relationships(scope, through, [...included.values()], ENGINEERING_HISTORY_LIMITS.relationships)
+      const returned = included.size
+      const view: EngineeringHistoryView = {
+        format: "loom-engineering-history/v1", mode: query.record_id ? "record" : filtering ? "discovery" : selectedNode ? "branch" : "overview", selection,
+        scope, store_id: this.store.reviews.storeID,
+        boundary: { live: true, observed_through: through, current_through: current.sequence, membership: "append-bound only; not a frozen retrospective population" },
+        intent: { title: action?.title ?? `Session ${"session_id" in scope ? scope.session_id : ""}`, goal: action?.goal ?? null,
+          meaning: action ? "current-authored-action" : "session-scope", action_revision: action?.revision ?? null },
+        intended_plan: !selectedNode && !filtering && plan && plan.revision > 0 ? { revision: plan.revision, nodes: plan.nodes.slice(0, ENGINEERING_HISTORY_LIMITS.planNodes).map(compactNode),
+          nodes_total: plan.nodes.length, nodes_omitted: Math.max(0, plan.nodes.length - ENGINEERING_HISTORY_LIMITS.planNodes), projection: "identity-and-title",
+          read: { tool: "loom_plan", query: { operation: "read", action_id: action!.id, revision: plan.revision } },
+          meaning: "current-intended-structure; not historical execution membership" } : null,
+        totals: countRows(rows), branches, selected_branch, ancestors, related_branches, highlights, records, relationships,
+        coverage: { ledger: "complete-within-boundary", page_limit: limit, branch_count: candidates.length, total_branch_count: tree.size,
+          matching_records: matching.length, matching_branches: matchingKeys.size, related_branches_omitted: Math.max(0, relatedNodes.length - related_branches.length),
+          branches_returned: branches.length, branches_omitted: candidates.length - branches.length,
+          records_returned: returned, records_omitted: Math.max(0, matching.length - returned), next_after,
+          next_branch_offset: branchOffset + branches.length < candidates.length ? branchOffset + branches.length : null,
+          gaps: [gap("ledger-coverage-only", "Counts cover this authorized Loom ledger scope only. Unrecorded native activity, child Sessions and objective membership are unknown."),
+            gap("representative-highlights", `Highlights select at most two recent records per significant category, including coverage gaps, independently of the page limit. They are representatives, not a complete chronology. Relationship detail is limited to ${ENGINEERING_HISTORY_LIMITS.relationships} references per included record; omissions are qualified on that record.`),
+            gap("literal-discovery", "Discovery filters scan all eligible records inside this authorized scope and append boundary before paging. match is literal ASCII-folded substring search over authored prose and named observed metadata, not native bodies, semantic search or a guarantee of relevance."),
+            gap("claims-not-verification", "Completion, assessments and QA verdicts remain authored claims. No aggregate proves successful delivery or resolves a concern."),
+            gap("native-originals-unavailable", "This view does not read native history, assignments, model reasoning or tool bodies. Exact native originals retain their existing source-owner limitations."),
+            gap("review-objective-not-expanded", "Private review manifests and authored objective relationships are not expanded by a ledger read; use their separately authorized readers."),
+            gap("live-not-frozen", "through pins ledger append membership only. Current Action/Plan intent may change. This is not an immutable retrospective population or Evaluator authorization."),
+            ...(candidates.length > branches.length ? [gap("branches-omitted", "Only this page of immediate children or matching leaves is returned. Whole-scope totals remain complete. Retain scope, filters, selected branch and through when following next_branch_offset, or use discovery to locate omitted eligible evidence directly.")] : [])] }
+      }
+      const oversized = () => new ProcessingLimitError("engineering history response exceeds 262144 bytes; narrow the discovery filters or Session scope, or try a smaller page limit")
+      let encoded: string
+      try { encoded = canonical(view, new ProcessingBudget(ENGINEERING_HISTORY_LIMITS.responseBytes)) }
+      catch (error) { if (error instanceof ProcessingLimitError) throw oversized(); throw error }
+      if (Buffer.byteLength(encoded, "utf8") > ENGINEERING_HISTORY_LIMITS.responseBytes) throw oversized()
+      this.db.exec("COMMIT")
+      return view
+    } catch (error) { this.db.exec("ROLLBACK"); throw error }
+  }
+
+  private relationships(scope: EngineeringHistoryScope, through: number, records: EngineeringHistoryRecord[], limit: number): EngineeringHistoryRelationship[] {
+    const sql = scopeSQL(scope), included = new Map(records.map(record => [record.source.record_id, record.ref]))
+    const result: EngineeringHistoryRelationship[] = []
+    for (const record of records) {
+      // The projected identity was validated in this same scope/snapshot. Read
+      // that exact Session record without rehydrating the Action for every edge
+      // source; relationship targets below still use the original scope.
+      const original = this.store.records({ session_id: record.source.session_id, record_id: record.source.record_id, through, limit: 1 }).items[0]
+      if (!original || original.sequence !== record.sequence || "action_id" in scope && original.action_id !== scope.action_id)
+        throw new Error("History relationship source disappeared or changed scope")
+      const candidates: Array<{ id: string; kind: "cites-observation" | "paired-observation" | "answers-question" | "previous-progress-report" }> = []
+      if (Array.isArray(original.data.evidence_ids)) for (const id of original.data.evidence_ids.slice(0, 100))
+        if (typeof id === "string") candidates.push({ id, kind: "cites-observation" })
+      if (original.kind === "observation" && typeof original.data.start_id === "string") candidates.push({ id: original.data.start_id, kind: "paired-observation" })
+      if (original.kind === "answer" && typeof original.data.question_id === "string") candidates.push({ id: original.data.question_id, kind: "answers-question" })
+      if (original.kind === "reopen" && typeof original.data.previous_report_id === "string") candidates.push({ id: original.data.previous_report_id, kind: "previous-progress-report" })
+      if (candidates.length > limit) record.gaps.push(gap("relationships-omitted", `${candidates.length - limit} additional authored relationship references are omitted from this bounded projection; inspect the exact source record.`))
+      let unresolved = 0
+      for (const candidate of candidates.slice(0, limit)) {
+        // Do not return a target identity merely because a record named it.
+        // Only in-scope source-owned rows can produce a resolved edge.
+        const target = this.db.prepare(`SELECT id,kind FROM ledger WHERE ${sql.where} AND seq<=? AND id=?`).get(sql.id, through, candidate.id) as { id: string; kind: string } | undefined
+        // The stored previous_report_id can name either kind of progress report.
+        // Preserve that exact edge; do not jump over a reopening to a completion.
+        const kind = candidate.kind === "previous-progress-report"
+          ? target?.kind === "completion" ? "reopens-completion" : target?.kind === "reopen" ? "follows-reopen" : null
+          : candidate.kind
+        const targetKind = kind === "answers-question" ? "question" : kind === "reopens-completion" ? "completion" : kind === "follows-reopen" ? "reopen" : "observation"
+        if (!target || kind === null || target.kind !== targetKind) { unresolved++; continue }
+        result.push({ from: record.ref, to: included.get(target.id) ?? `loom-record:${encodeURIComponent(this.store.reviews.storeID)}:${encodeURIComponent(target.id)}`,
+          kind, meaning: kind === "paired-observation" ? "observed" : "authored", source_record_id: record.source.record_id,
+          target: included.has(target.id) ? "included" : "in-scope-not-included",
+          qualification: kind === "cites-observation" ? "An authored evidence citation, not proof of correctness, correction or verification."
+            : kind === "paired-observation" ? "The observer recorded this start/finish pair; it does not establish objective membership or outcome."
+              : kind === "reopens-completion" ? "An authored reopening of the referenced completion report; it is not independently verified failure, resolution or a new historical WorkRef."
+              : kind === "follows-reopen" ? "An authored follow-up to the referenced reopening; it does not establish a new completion, resolution or independently verified outcome."
+              : "An authored answer to a stored question; response is not resolution or approval." })
+      }
+      if (unresolved) record.gaps.push(gap("relationships-unresolved", `${unresolved} authored relationship references could not be resolved inside this selected source scope and boundary. No outside target identities or existence claims are disclosed.`))
+    }
+    return result
+  }
+}

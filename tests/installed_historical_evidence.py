@@ -45,12 +45,35 @@ CHECKS = {
     "revoked-discovery-inspection-disclosure-and-file-read-denied",
     "source-change-and-cursor-scope-denied",
     "native-inline-and-split-export-normalization",
+    "layered-history-top-down-selective-original",
+    "layered-history-discovery-outside-overview",
+    "layered-history-shared-document-and-dashboard",
+    "layered-history-derived-source-and-scope-denials",
     "historical-sources-unchanged-and-no-evaluator-effects",
 }
 
 
 def encoded(value) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def assert_evidence_permission_denial(denial: dict, resource: str, protected_values: list[str]) -> None:
+    """Require the intended native denial and inspect what it returned."""
+    error = denial.get("error")
+    blocked = error.get("error") if isinstance(error, dict) else None
+    require(denial.get("status") == "error" and isinstance(blocked, dict)
+            and blocked.get("_tag") == "Permission.BlockedError" and blocked.get("permission") == "read"
+            and resource in blocked.get("resources", [])
+            and any(isinstance(rule, dict) and rule.get("action") == "read"
+                    and rule.get("resource") == resource and rule.get("effect") == "deny"
+                    for rule in blocked.get("rules", [])),
+            "Native evidence denial did not enforce the expected read resource")
+    # execute.after also carries the caller's original input. A searched marker
+    # there is not a source disclosure. Inspect both complete returned surfaces,
+    # including nested diagnostics and any nested field itself named "input".
+    response = {key: denial[key] for key in ("result", "error") if key in denial}
+    require(not any(value in encoded(response) for value in protected_values),
+            "Denied evidence response disclosed protected source content")
 
 
 def sha(path: Path) -> str:
@@ -191,7 +214,7 @@ def assert_read_only_effects(observed: list[dict], readers: set[str], plans: lis
             and item.get("model", {}).get("providerID") == "question-fixture" for item in requests),
             "Historical reading caused a non-reader or external model request")
     require(not any(event["type"] == "tool-before" and event["data"].get("tool") not in
-                    ("execute", "loom_trace", "loom.trace", "loom_record", "loom.record") for event in observed),
+                    ("execute", "loom_trace", "loom.trace", "loom_record", "loom.record", "loom_history", "loom.history") for event in observed),
             "Historical reading invoked an unexpected tool or native dispatch")
     require(not any(event["type"] == "native-event" and
                     (event["data"].get("type") in ("session.created", "session.synthetic")
@@ -203,6 +226,9 @@ def assert_read_only_effects(observed: list[dict], readers: set[str], plans: lis
         if event["type"] == "tool-before" and event["data"].get("tool") in ("loom_record", "loom.record"):
             require(event["data"].get("input", {}).get("operation") == "query",
                     "Historical read phase mutated a Loom record")
+        if event["type"] == "tool-before" and event["data"].get("tool") in ("loom_history", "loom.history"):
+            require(event["data"].get("input", {}).get("operation") == "read",
+                    "Historical read phase attempted a non-read history operation")
     return {**assert_driver_invocations(observed, plans), "evaluator_dispatches": 0,
             "historical_recipient_requests": 0, "instruction_mutations": 0,
             "qualification": "local scripted provider only; genuine Evaluator reasoning remains UNPROVEN"}
@@ -233,6 +259,110 @@ def assert_exact_field_envelope(response_text: str, expected_fields: dict, nativ
             "unselected_inventory_metadata": "absent", "resolution_status": source["status"]}
 
 
+def assert_history_navigation(overview: dict, expanded: dict, exact: dict, original: dict) -> dict:
+    """Compare actual navigation output with the separately observed authored record."""
+    require(overview.get("format") == expanded.get("format") == "loom-engineering-history/v1",
+            "History navigation did not use the shared representation")
+    require(overview.get("scope") == expanded.get("scope") == {"action_id": original["action_id"]}
+            and overview.get("store_id") == expanded.get("store_id")
+            and isinstance(overview.get("store_id"), str), "History changed its authorized source namespace")
+    require(overview.get("intended_plan") is None and expanded.get("intended_plan") is None,
+            "Unplanned history invented a Plan")
+    for view in (overview, expanded):
+        require(view.get("boundary", {}).get("live") is True
+                and "not a frozen retrospective population" in view["boundary"].get("membership", "")
+                and view.get("totals", {}).get("verified_outcomes") is None
+                and view["totals"].get("native_dispatches") is None,
+                "History promoted authored claims or missing native evidence into verified facts")
+        require({"ledger-coverage-only", "native-originals-unavailable", "live-not-frozen"}
+                <= {item["code"] for item in view.get("coverage", {}).get("gaps", [])},
+                "History omitted its source or frozen-population qualifications")
+    selected = [item for item in overview.get("highlights", []) if item["source"]["record_id"] == original["id"]]
+    require(len(selected) == 1 and selected[0].get("excerpt") == original["data"]["statement"],
+            "Top-down overview did not expose the original failure claim")
+    subject = selected[0]
+    require(expanded.get("selected_branch", {}).get("ref") == subject["branch_ref"]
+            and overview["boundary"]["observed_through"] == expanded["boundary"]["observed_through"],
+            "Selective history expansion changed branch identity or append boundary")
+    require(any(item["source"]["record_id"] == original["id"] for item in expanded.get("records", [])),
+            "Selected history branch omitted its original failure record")
+    require(subject.get("meaning") == "authored" and subject.get("verification") == "authored claim; not independently verified",
+            "Original failure claim became a host-verified diagnosis")
+    source = subject["source"]
+    require(source.get("query") == {"operation": "query", "action_id": original["action_id"],
+                                   "source_session_id": original["session_id"], "record_id": original["id"]},
+            "History original request lost the separately authorized source Session")
+    require(source.get("sha256") == hashlib.sha256(encoded(original).encode()).hexdigest(),
+            "History original fingerprint does not identify the observed authored record")
+    items = exact.get("items", [])
+    require(len(items) == 1 and {key: value for key, value in items[0].items() if key != "sequence"} == original,
+            "History source request did not return the exact original authored record")
+    return {"scope": overview["scope"], "source_store_id": overview["store_id"],
+            "selected_record_id": original["id"], "selected_branch_ref": subject["branch_ref"],
+            "observed_through": overview["boundary"]["observed_through"], "supported_reads": 3,
+            "preknown_child_or_record_ids_supplied": False, "selection_basis": "original failure marker in returned highlights",
+            "qualification": "controlled installed mechanics; no unfamiliar-model or private-history acceptance"}
+
+
+def assert_history_discovery(overview: dict, discovery: dict, expanded: dict, exact: dict, original: dict) -> dict:
+    """Require a hidden original, a content-selected result, and actual nested navigation."""
+    require(original["id"] not in encoded(overview) and overview.get("coverage", {}).get("branches_omitted", 0) > 0,
+            "Discovery fixture did not place its target outside the initial overview")
+    require(discovery.get("mode") == "discovery" and discovery.get("selection", {}).get("match")
+            and not any(key in discovery["selection"] for key in ("source_session_id", "record_id", "branch_ref")),
+            "Selective discovery used preknown target identities instead of the question terms")
+    for view in (discovery, expanded):
+        require(view.get("format") == overview.get("format") == "loom-engineering-history/v1"
+                and view.get("scope") == overview.get("scope") == {"action_id": original["action_id"]}
+                and view.get("store_id") == overview.get("store_id")
+                and view.get("boundary", {}).get("observed_through") == overview["boundary"]["observed_through"],
+                "Selective discovery changed the namespace, scope or append boundary")
+    matches = [item for item in discovery.get("records", []) if item["source"]["record_id"] == original["id"]]
+    require(len(matches) == 1 and discovery.get("coverage", {}).get("matching_records") == 1,
+            "Selective discovery did not return the exact matching original")
+    subject = matches[0]
+    require(expanded.get("selected_branch", {}).get("ref") == subject["branch_ref"]
+            and expanded.get("ancestors") and expanded.get("intended_plan") is None
+            and any(item["source"]["record_id"] == original["id"] for item in expanded.get("records", [])),
+            "Selected discovery branch lost its nested ancestry or returned unrelated current context")
+    require(subject.get("excerpt") == original["data"]["statement"] and subject.get("meaning") == "authored"
+            and subject.get("verification") == "authored claim; not independently verified",
+            "Selective history changed or certified the authored finding")
+    require(subject["source"].get("query") == {"operation": "query", "action_id": original["action_id"],
+            "source_session_id": original["session_id"], "record_id": original["id"]}
+            and subject["source"].get("sha256") == hashlib.sha256(encoded(original).encode()).hexdigest(),
+            "Selective history lost original identity, permission scope or digest")
+    require(len(exact.get("items", [])) == 1
+            and {key: value for key, value in exact["items"][0].items() if key != "sequence"} == original,
+            "Selective history source request did not return the exact original")
+    return {"target_absent_from_overview": True, "preknown_child_or_record_ids_supplied": False,
+            "scope": overview["scope"], "selected_record_id": original["id"], "supported_reads": 4,
+            "observed_through": overview["boundary"]["observed_through"], "ancestor_count": len(expanded["ancestors"]),
+            "qualification": "controlled installed selective retrieval; not unfamiliar-agent comprehension or a speed claim"}
+
+
+def assert_history_renderings(view: dict, markdown: str, html: str) -> dict:
+    require(markdown.startswith("# Engineering history\n") and html.startswith("<!doctype html>"),
+            "History did not return the requested document/dashboard formats")
+    included = {record["source"]["record_id"]: record for record in [*view["highlights"], *view["records"]]}
+    references = {view["store_id"], *(record["source"]["record_id"] for record in included.values()),
+                  *(record["source"]["sha256"] for record in included.values()),
+                  *(branch["ref"] for branch in view["branches"])}
+    for text in (markdown, html):
+        require(all(reference in text for reference in references),
+                "A history rendering omitted or changed shared source or navigation identities")
+        require(all(item["code"] in text for item in view["coverage"]["gaps"]),
+                "A history rendering omitted shared coverage qualifications")
+        require("not a frozen retrospective selection" in text
+                and "authored claim; not independently verified" in text,
+                "A history rendering promoted a live read or authored claim")
+    require("<details" in html and "<summary" in html and "default-src 'none'" in html
+            and "<script" not in html, "History dashboard introduced active fetching or lost native disclosure controls")
+    return {"shared_record_identities": len(included), "shared_branch_references": len(view["branches"]),
+            "coverage_codes_preserved": len(view["coverage"]["gaps"]), "network_or_script_capability": False,
+            "qualification": "actual installed rendered text; visual and keyboard usability checked separately"}
+
+
 class HistoricalScenario(ReviewScenario):
     def __init__(self, host, root):
         super().__init__(host, root)
@@ -251,7 +381,14 @@ class HistoricalScenario(ReviewScenario):
     def read(self, actor, tool, query, label):
         start = len(events(self.root))
         began = time.monotonic()
-        value = self.invoke(actor, tool, query)
+        rendered = tool == "history" and query.get("response_format") in ("markdown", "html")
+        if rendered:
+            # Keep the actual native tool text. The inherited JSON-only invoke
+            # helper is inappropriate for a document or dashboard response.
+            self.command(actor, "return await tools.loom.history(" + encoded(query) + ")")
+            value = None
+        else:
+            value = self.invoke(actor, tool, query)
         elapsed = time.monotonic() - began
         observed = events(self.root)[start:]
         before = [event for event in observed if event["type"] == "tool-before"
@@ -259,11 +396,14 @@ class HistoricalScenario(ReviewScenario):
         after = [event for event in observed if event["type"] == "tool-after"
                  and event["data"].get("tool") in ("loom_" + tool, "loom." + tool)]
         require(len(before) == len(after) == 1 and call_key(before[0]["data"]) is not None
-                and call_key(before[0]["data"]) == call_key(after[0]["data"]),
+                and call_key(before[0]["data"]) == call_key(after[0]["data"])
+                and after[0]["data"].get("status") == "completed",
                 "Registered read receipt does not bind one exact native call")
         content = after[0]["data"]["result"]["content"]
         returned_text = content if isinstance(content, str) else "\n".join(
             part["text"] for part in content if part["type"] == "text")
+        if rendered:
+            value = returned_text
         size = len(returned_text.encode())
         require(size <= MAX_RESPONSE_BYTES, "Registered evidence response exceeds its public bound")
         require(after[0]["at"] >= before[0]["at"], "Native receipt clock reversed; latency unavailable")
@@ -412,6 +552,28 @@ def run(args) -> dict:
                     grandchildren = [request(host, "POST", "/api/session", {"parentID": fillers[0], "agent": "reviewer",
                         "title": "Synthetic grandchild", "location": {"directory": str(project)}})["id"] for _ in range(3)]
                     owned.update(grandchildren)
+                    # A separate Action preserves the original five-record/source
+                    # controls while exercising new selectors in the installed host.
+                    # All sources are authored through registered tools, before the
+                    # read-only phase and the native-source immutability snapshot.
+                    discovery_action = scenario.invoke(parent, "action", {"operation": "create",
+                        "title": "Synthetic competing findings", "goal": "Investigate the early FROST_47 failure"})
+                    hidden_original = scenario.invoke(parent, "record", {"operation": "add", "action_id": discovery_action["id"],
+                        "kind": "concern", "statement": "FROST_47 early timeout; attribution remains unproven."})
+                    scenario.invoke(parent, "record", {"operation": "add", "action_id": discovery_action["id"],
+                        "kind": "result", "statement": "FROST_47 rerun passed unchanged code; correction verification remains incomplete."})
+                    for index, session in enumerate(fillers[:24]):
+                        competing = [{"operation": "add", "action_id": discovery_action["id"], **record} for record in (
+                            {"kind": "concern", "statement": f"Unrelated queue {index} reports a newer concern."},
+                            {"kind": "assessment", "verdict": "fail", "statement": f"Unrelated queue {index} failed its scoped check."},
+                            {"kind": "result", "statement": f"Unrelated queue {index} reports a later result."},
+                        )]
+                        receipts = scenario.command(session, "return [" + ",".join(
+                            "await tools.loom.record(" + encoded(query) + ")" for query in competing) + "]")
+                        authored = [event for event in receipts if event["type"] == "tool-after"
+                                    and event["data"].get("tool") in ("loom_record", "loom.record")]
+                        require(len(authored) == 3 and all(event["data"].get("status") == "completed" for event in authored),
+                                "Installed discovery fixture did not author its competing findings")
                     idle(host, [parent, *children])
                     originals = {session: native_export(host, owned, session) for session in (parent, *children)}
                     inline = import_inline_control(host, owned, project, originals[parent])
@@ -427,6 +589,8 @@ def run(args) -> dict:
                         "participating_children": children, "direct_children": DIRECT_CHILDREN, "grandchildren": grandchildren,
                         "same_revision_nonparticipant": fillers[0], "action": action["id"], "record_ids": [item["id"] for item in records],
                         "dispatches": dispatches, "imported_control": imported,
+                        "discovery_action": discovery_action["id"], "discovery_competing_sessions": 24,
+                        "discovery_target_record_id": hidden_original["id"],
                         "authored_support": "five claims with empty evidence_ids; no objective registration or Loom assignment/delivery"}
                     read_start = len(events(root))
                     scenario.invocation_plan = []
@@ -483,6 +647,49 @@ def run(args) -> dict:
                         "source_session_id": fillers[0], "record_kinds": ["result", "qa", "assessment"]}, "unrelated-same-revision-control")
                     require(empty["items"] == [], "Same-revision nonparticipant inherited Action source records")
                     check("exact-five-records-four-source-sessions", records=5, source_sessions=4, through=through)
+
+                    history_query = {"operation": "read", "action_id": action["id"]}
+                    history = scenario.read(reader, "history", history_query, "layered-history-overview")
+                    # Select from returned meaning, not a supplied child or record ID.
+                    failure = [item for item in history["highlights"]
+                               if (item.get("excerpt") or "").startswith("SYNTHETIC_ORIGINAL_FAILURE:")]
+                    require(len(failure) == 1, "History overview did not reveal one original-failure branch")
+                    expanded = scenario.read(reader, "history", {"operation": "read", **failure[0]["expand"]},
+                                             "layered-history-selected-branch")
+                    history_original = scenario.read(reader, failure[0]["source"]["tool"].removeprefix("loom_"),
+                                                     failure[0]["source"]["query"], "layered-history-exact-original")
+                    navigation = assert_history_navigation(history, expanded, history_original, records[0])
+                    require(history["totals"]["reported_passes"] == 3
+                            and not any(session in encoded(history) for session in fillers + grandchildren),
+                            "History changed authored verdict counts or inferred unrecorded native membership")
+                    check("layered-history-top-down-selective-original", **navigation)
+
+                    bounded_history_query = {**history_query, "through": history["boundary"]["observed_through"]}
+                    history_markdown = scenario.read(reader, "history", {**bounded_history_query, "response_format": "markdown"},
+                                                     "layered-history-document")
+                    history_html = scenario.read(reader, "history", {**bounded_history_query, "response_format": "html"},
+                                                 "layered-history-dashboard")
+                    check("layered-history-shared-document-and-dashboard",
+                          **assert_history_renderings(history, history_markdown, history_html))
+
+                    discovery_overview = scenario.read(reader, "history", {"operation": "read", "action_id": discovery_action["id"]},
+                                                       "layered-discovery-initial-overview")
+                    discovery_query = {"operation": "read", "action_id": discovery_action["id"], "match": "FROST_47",
+                                       "record_kinds": ["concern"], "through": discovery_overview["boundary"]["observed_through"]}
+                    discovered = scenario.read(reader, "history", discovery_query, "layered-discovery-question-terms")
+                    matches = [item for item in discovered["records"] if "FROST_47" in (item.get("excerpt") or "")]
+                    require(len(matches) == 1, "Installed selective discovery did not identify the requested finding")
+                    discovered_branch = scenario.read(reader, "history", {"operation": "read", **matches[0]["expand"]},
+                                                      "layered-discovery-nested-branch")
+                    discovered_original = scenario.read(reader, "record", matches[0]["source"]["query"], "layered-discovery-original")
+                    discovery_receipt = assert_history_discovery(discovery_overview, discovered, discovered_branch,
+                                                                discovered_original, hidden_original)
+                    discovery_markdown = scenario.read(reader, "history", {**discovery_query, "response_format": "markdown"},
+                                                       "layered-discovery-document")
+                    discovery_html = scenario.read(reader, "history", {**discovery_query, "response_format": "html"},
+                                                   "layered-discovery-dashboard")
+                    check("layered-history-discovery-outside-overview", **discovery_receipt,
+                          competing_sessions=24, rendering=assert_history_renderings(discovered, discovery_markdown, discovery_html))
 
                     inventories = {}
                     for label, session in (("split", parent), ("inline", imported)):
@@ -622,6 +829,44 @@ def run(args) -> dict:
                     require(len(restored["items"]) == 4, "Policy restoration did not restore authorized structural reading")
                     check("revoked-discovery-inspection-disclosure-and-file-read-denied", revocations=4, timing="between completed retrievals")
 
+                    history_denials = 0
+                    for resource, response_format in (
+                        (f"loom:evidence:discover:action:{action['id']}", "json"),
+                        (f"loom:evidence:inspect:session:{records[0]['session_id']}:view:engineering-history", "markdown"),
+                        (f"loom:evidence:disclose:session:{records[0]['session_id']}:view:engineering-history:recipient:{reader}", "html"),
+                    ):
+                        policy(resource)
+                        denial = scenario.denied(reader, "history", {**bounded_history_query, "response_format": response_format})
+                        assert_evidence_permission_denial(denial, resource,
+                            [claim[2] for claim in claims] + [record["id"] for record in records])
+                        history_denials += 1
+                        set_policy(allow)
+                    filtered_history_denials = 0
+                    for response_format in ("json", "markdown", "html"):
+                        resource = f"loom:evidence:inspect:session:{fillers[23]}:view:engineering-history"
+                        policy(resource)
+                        denial = scenario.denied(reader, "history", {**discovery_query, "response_format": response_format})
+                        assert_evidence_permission_denial(denial, resource, ["FROST_47", hidden_original["id"]])
+                        filtered_history_denials += 1
+                        set_policy(allow)
+                    # The shared view grants no original-record authority. Follow the
+                    # exact request emitted above under an explicit original denial.
+                    policy(f"loom:evidence:inspect:session:{records[0]['session_id']}:record:{records[0]['id']}:view:record-full")
+                    scenario.denied(reader, "record", failure[0]["source"]["query"])
+                    set_policy(allow)
+                    scenario.denied(reader, "history", {"operation": "read", "session_id": records[0]["session_id"],
+                                                       "branch_ref": failure[0]["branch_ref"]}, "scope")
+                    session_history = scenario.read(reader, "history", {"operation": "read", "session_id": records[0]["session_id"]},
+                                                    "layered-history-session-scope")
+                    require(session_history["scope"] == {"session_id": records[0]["session_id"]}
+                            and session_history["intent"]["goal"] is None and session_history["intended_plan"] is None
+                            and action["title"] not in encoded(session_history),
+                            "Session history read linked Action intent without Action authority")
+                    check("layered-history-derived-source-and-scope-denials", derived_denials=history_denials,
+                          filtered_nonmatching_contributor_denials=filtered_history_denials,
+                          original_denials=1, mismatched_branch_scope=1, session_scope_withholds_action_content=True,
+                          timing="native policy changed between completed reads; in-flight final-assertion denial covered by registered-tool tests")
+
                     scenario.denied(second_reader, "trace", {**children_query, "cursor": pages[0]["next_cursor"]}, "cursor")
                     scenario.denied(reader, "trace", {**children_query, "session_id": imported, "cursor": pages[0]["next_cursor"]}, "cursor")
                     saved = export_files["split"].read_bytes()
@@ -651,7 +896,7 @@ def run(args) -> dict:
                         "driver_elapsed_ms": round(sum(item["driver_elapsed_ms"] for item in scenario.retrievals), 3),
                         "maximum_response_bytes": max(item["response_bytes"] for item in scenario.retrievals),
                         "negative_control_calls": sum(event["type"] == "tool-after" and event["data"].get("status") == "error"
-                            and event["data"].get("tool") in ("loom_trace", "loom.trace", "loom_record", "loom.record") for event in read_receipts),
+                            and event["data"].get("tool") in ("loom_trace", "loom.trace", "loom_record", "loom.record", "loom_history", "loom.history") for event in read_receipts),
                         "cost_claim": "No reliable token-cost estimate or baseline reduction is asserted."}
                     (output / "retrievals.json").write_text(json.dumps(scenario.retrievals, indent=2) + "\n")
                     (output / "retrievals.json").chmod(0o600)

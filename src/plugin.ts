@@ -15,6 +15,8 @@ import { Observer } from "./context.js"
 import { resolveContextSelection, workContext } from "./work-context.js"
 import { digest, uid, PROCESSING_LIMITS, type Actor, type Focus } from "./model.js"
 import { renderFullHistory } from "./history-renderer.js"
+import { type EngineeringHistoryQuery, type EngineeringHistoryView } from "./engineering-history.js"
+import { renderEngineeringHistoryHTML, renderEngineeringHistoryMarkdown } from "./engineering-history-dashboard.js"
 import { fullThreadMarkdown } from "./response-format.js"
 import { Store, RECORD_FIELDS, RECORD_KINDS, type SQL, type RecordQuery } from "./store.js"
 import { Learning } from "./learning.js"
@@ -129,6 +131,16 @@ const evaluatorPrepareInput = { operation: { const: "prepare-evaluation" }, batc
   budget_policy: { anyOf: [evaluatorPolicyInput, { type: "null" }] } }
 const specs = [
   { name: "agents", description: TOOL_HELP.agents, input: obj({}) },
+  { name: "history", description: TOOL_HELP.history, input: preserveInput({
+    operation: { const: "read" }, action_id: str, session_id: str,
+    branch_ref: { type: "string", minLength: 1, maxLength: 4096 }, record_id: str,
+    match: { type: "string", minLength: 1, maxLength: 200 },
+    record_kinds: { type: "array", minItems: 1, maxItems: RECORD_KINDS.length, uniqueItems: true, items: choice(...RECORD_KINDS) },
+    verdict: choice("pass", "fail", "inconclusive"), source_session_id: str, node_id: str,
+    plan_revision: { type: "integer", minimum: 1 }, has_gaps: { type: "boolean" },
+    after: num, through: num, branch_offset: { type: "integer", minimum: 0, maximum: 100000 }, limit: { type: "integer", minimum: 1, maximum: 50 },
+    response_format: choice("json", "markdown", "html"),
+  }, ["operation"]) },
   { name: "review", description: TOOL_HELP.review, input: {
     ...preserveInput({ operation: choice("freeze", "read", "issue", "prepare", "prepare-evaluation", "relate", "work"), request: reviewRequestInput, request_id: str, authorization_ref: str,
       batch_id: str, method: evaluatorMethodInput, budget_policy: evaluatorPrepareInput.budget_policy,
@@ -449,6 +461,58 @@ export default Plugin.define({
             }
             let result: unknown
             switch (spec.name) {
+              case "history": {
+                const allowed = ["operation", "action_id", "session_id", "branch_ref", "record_id", "match", "record_kinds", "verdict",
+                  "source_session_id", "node_id", "plan_revision", "has_gaps", "after", "through", "branch_offset", "limit", "response_format"]
+                if (input.operation !== "read" || Object.keys(input).some(key => !allowed.includes(key)))
+                  throw new Error("Unsupported engineering history operation or field")
+                if (input.response_format !== undefined && !["json", "markdown", "html"].includes(String(input.response_format)))
+                  throw new Error("History response_format must be json, markdown or html")
+                if ((input.action_id === undefined) === (input.session_id === undefined))
+                  throw new Error("Engineering history requires exactly one explicit action_id or session_id")
+                const { operation: _operation, response_format: _format, ...query } = input
+                const scope = input.action_id !== undefined
+                  ? "action:" + evidenceID(input.action_id, "action_id")
+                  : "session:" + evidenceID(input.session_id, "session_id")
+                await beginEvidence(scope, ["engineering-history"], ["engineering-history"])
+                if (input.session_id !== undefined) {
+                  const sourceSession = uid(input.session_id, "session_id")
+                  await evidenceSession(sourceSession); evidenceSessions.add(sourceSession)
+                }
+                const historyScope = store.captureScope()
+                const historyContributors = (requested: EngineeringHistoryQuery) => {
+                  try { return store.engineeringHistory.authorizationSessions(requested) }
+                  // Contributor discovery is an internal permission preflight. Its
+                  // failures must not expose a protected cardinality threshold,
+                  // Plan author or source-store detail before source grants exist.
+                  catch { throw new Error("Engineering history scope unavailable") }
+                }
+                const sourceSessions = historyContributors(query as EngineeringHistoryQuery)
+                // Action discovery permits locating contributors, not disclosing their
+                // content or even derived counts. Each contributing Session must grant
+                // the same derived view before the projector inspects its records.
+                for (const sourceSession of sourceSessions) {
+                  const sourceScope = "session:" + evidenceID(sourceSession, "source Session")
+                  evidenceResources.add(`loom:evidence:discover:${sourceScope}`)
+                  evidenceResources.add(`loom:evidence:inspect:${sourceScope}:view:engineering-history`)
+                  evidenceResources.add(`loom:evidence:disclose:${sourceScope}:view:engineering-history:recipient:${evidenceID(actor.session_id, "recipient Session")}`)
+                }
+                await assertEvidence([...evidenceResources])
+                // Permission hooks can await while records are appended. Never inspect
+                // a newly participating Session under an earlier contributor grant.
+                const authorizedSessions = new Set(sourceSessions)
+                if (store.captureScope() !== historyScope || historyContributors(query as EngineeringHistoryQuery)
+                  .some(session => !authorizedSessions.has(session)))
+                  throw new Error("Engineering history source membership changed; restart the read")
+                const view = store.engineeringHistory.read(query as EngineeringHistoryQuery)
+                evidenceSourceCheck = async () => {
+                  if (store.captureScope() !== historyScope || historyContributors({ ...query,
+                    through: view.boundary.observed_through } as EngineeringHistoryQuery).some(session => !authorizedSessions.has(session)))
+                    throw new Error("Engineering history source membership changed; restart the read")
+                }
+                result = view
+                break
+              }
               case "review": {
                 const allowed = input.operation === "prepare-evaluation" ? ["operation", "batch_id", "method", "budget_policy"]
                   : input.operation === "freeze" ? ["operation", "request"]
@@ -1162,7 +1226,13 @@ export default Plugin.define({
               result = { ...page, items: page.items.map(r => "data" in r ? ({ ...r, data: typeof r.data.statement === "string" && r.data.statement.length > 600
                 ? { ...r.data, statement: r.data.statement.slice(0,600), truncated: true, read_full: "Pass this record_id to loom_record query" } : r.data }) : r) }
             }
-            const content = JSON.stringify({ result, ...diagnostics })
+            // All presentations are derived from one view and enter the same final
+            // authorization path. Hash the actual returned bytes, including HTML.
+            const content = spec.name === "history" && input.response_format === "html"
+              ? renderEngineeringHistoryHTML(result as EngineeringHistoryView)
+              : spec.name === "history" && input.response_format === "markdown"
+                ? renderEngineeringHistoryMarkdown(result as EngineeringHistoryView)
+                : JSON.stringify({ result, ...diagnostics })
             if (spec.name === "trace" && Buffer.byteLength(content, "utf8") > 262144)
               throw new Error("Trace response exceeds the 262144-byte limit; reduce limit or disable include_text")
             if (spec.name === "record" && input.view === "full_thread") {
@@ -1176,7 +1246,9 @@ export default Plugin.define({
               }
             }
             if (evidenceResources.size) {
-              if (Buffer.byteLength(content, "utf8") > 262144) throw new Error("Evidence response exceeds 262144 bytes; reduce the page or selected fields")
+              if (Buffer.byteLength(content, "utf8") > 262144) throw new Error(spec.name === "history"
+                ? "History response exceeds 262144 bytes; reduce limit or narrow the filters or scope"
+                : "Evidence response exceeds 262144 bytes; reduce the page or selected fields")
               await evidenceSourceCheck?.()
               for (const session of evidenceSessions) await evidenceSession(session)
               // The serialized response and all source/location work precede the

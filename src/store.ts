@@ -1,5 +1,6 @@
 import { Collaboration, checkedRef, workReference, type WorkRef } from "./collaboration.js"
 import { FullHistory } from "./history.js"
+import { EngineeringHistory } from "./engineering-history.js"
 import { ReviewRequests } from "./review-requests.js"
 import { randomUUID } from "node:crypto"
 import { realpathSync } from "node:fs"
@@ -81,6 +82,7 @@ const nonempty = (s: unknown, label: string, max = 16000): string => {
 export class Store {
   readonly collaboration: Collaboration
   readonly history: FullHistory
+  readonly engineeringHistory: EngineeringHistory
   readonly reviews: ReviewRequests
   constructor(private db: SQL, _projectScope = "") {
     const version = db.prepare("PRAGMA user_version").get() as { user_version: number }
@@ -111,6 +113,7 @@ export class Store {
       this.collaboration = new Collaboration(this, db)
       this.history = new FullHistory(this, db)
       this.reviews = new ReviewRequests(this, db, version.user_version === 2)
+      this.engineeringHistory = new EngineeringHistory(this, db)
       db.exec("PRAGMA user_version=2")
       db.exec("COMMIT")
     } catch (error) { db.exec("ROLLBACK"); throw error }

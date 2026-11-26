@@ -1,6 +1,17 @@
 /** Registered discovery help. No guide-file read or extra tool call is required. */
 export const TOOL_EXAMPLES = {
   agents: [{}],
+  history: [
+    { operation: "read", action_id: "ACTION_ID" },
+    { operation: "read", session_id: "SESSION_ID" },
+    { operation: "read", action_id: "ACTION_ID", match: "timeout", record_kinds: ["concern", "assessment"] },
+    { operation: "read", session_id: "SESSION_ID", has_gaps: true },
+    { operation: "read", action_id: "ACTION_ID", branch_ref: "BRANCH_REF", through: 100, limit: 20 },
+    { operation: "read", action_id: "ACTION_ID", record_id: "RECORD_ID" },
+    { operation: "read", action_id: "ACTION_ID", branch_offset: 20, through: 100 },
+    { operation: "read", action_id: "ACTION_ID", response_format: "markdown" },
+    { operation: "read", action_id: "ACTION_ID", response_format: "html" },
+  ],
   review: [
     { operation: "freeze", request: { format: "loom-review-request/v1", request_id: "REVIEW_REQUEST_ID",
       mandate: { question: "Assess correctness of the exact cited artifact.", dimensions: ["correctness"],
@@ -99,6 +110,12 @@ export const TOOL_EXAMPLES = {
 export type LoomToolName = keyof typeof TOOL_EXAMPLES
 
 const entries: Record<LoomToolName, { summary: string; usage: string; returns: string; caution: string }> = {
+  history: {
+    summary: "Discover relevant engineering history, navigate historical work structure, and retrieve exact source records.",
+    usage: "read requires exactly one explicit action_id or session_id. Discover across eligible history before paging with match (literal ASCII-folded substring, 1-200 chars), record_kinds, verdict, source_session_id, node_id, plan_revision (established WorkRefs only), or has_gaps. Filters combine with AND; omitted highlights are not absent history. Follow returned branch/record.expand with operation:read. Ancestors navigate saved historical Plan structure or observed Session/message groups; fingerprint links do not establish a revision or invocation. limit=1-50 pages records/branches. Follow next_after or next_branch_offset retaining selectors and through; through pins ledger append membership. response_format defaults json; markdown and html return documents. HTML expands included groups; deeper reads require returned tool requests. Save via a separately authorized file writer.",
+    returns: "Shared identities, authored intent, historical ancestry, matching records/branches, same-fingerprint associations, captured attribution/provenance, qualified authored/observed relationships and exact loom_record source requests. Focused reads omit unrelated branches/current Plan. Coverage distinguishes scoped totals, matches and omissions. Native history, objective membership and independent verification remain explicit gaps. JSON wraps result; markdown/html return rendered text.",
+    caution: "Read-only local Loom Store. Discover/inspect/disclose engineering-history grants are required for requested scope AND all contributing Sessions; any denial withholds the complete view. References do not grant original retrieval or delivery. Every presentation passes the same final permission assertion on exact returned bytes, not an atomic revocation/source-release fence. No native transcript access, default raw capture, execution, frozen selection or independent verification. Session views never expand linked Action/Plan metadata. Historical bindings never use today's Plan. Live append-bound reads are not immutable retrospective populations. Counts describe recorded activity, not native totals. Response limit 262144 UTF-8 bytes; reduce limit or narrow filters/scope if exceeded.",
+  },
   review: {
     summary: "Preserve an original review mandate and frozen subjects; reconstruct qualified private evidence.",
     usage: "freeze takes loom-review-request/v1 with original mandate, recipient, exact members and rechecks. mandate.currentness=current-at-issue-claim preserves an original freshness requirement; otherwise scope is historical. read: request_id, limit 1-50, after/relationship_after/issue_after from next cursors. work: historical member Action/Plan. issue: intent/outcomes, optional authorization_ref, after=next_outcome_sequence. relate: own source_record_id/member_ids; recheck finding_ids name prior findings/corrections. prepare: canonical initial intent only. prepare-evaluation: Stage3 batch_id, complete declared loom-evaluator-method/v1 method (see input schema), budget_policy=null or exact id/revision/sha256. Requires capture=automatic and both stores' read permission. Creates durable preparation; inspect its returned batch_id through insights evaluation-preparation. Typed record ask accepts the same review question/recipient.",
@@ -182,10 +199,12 @@ export const TOOL_HELP = Object.fromEntries(Object.entries(entries).map(([name, 
       ? [input.recipient.kind === "dispatcher" ? "Ask example context: child Session only." : "Ask example context: primary Session."] : []),
     JSON.stringify(input),
   ]),
-  name === "record"
+  name === "history"
+    ? 'JSON is the default. response_format:markdown or html returns document text directly; do not JSON.parse those formats. Use the exact callable path returned by search.'
+    : name === "record"
     ? 'JSON text contains result/config_errors; full_thread defaults to Markdown (response_format:json opts in). In Code Mode, JSON.parse only JSON results; use search’s exact callable path.'
     : 'The tool returns JSON text with a result field and optional config_errors. In Code Mode, parse that text once with JSON.parse; use the exact callable path returned by search.',
   'Await writes before using IDs or ending Code Mode. For independent calls use Promise.allSettled and inspect every outcome; sequence dependent calls.',
 ].join('\n')])) as Record<LoomToolName, string>
 
-export const LOOM_NAMESPACE_HELP = "Loom routes Open Questions (OQs) and remembers Actions, plans, context and evidence. Search namespace loom for ask/answer via record, usage and examples. Execution and permissions stay native."
+export const LOOM_NAMESPACE_HELP = "Loom routes Open Questions (OQs) and remembers Actions, plans, context and evidence. Start historical investigations with history for overview and branch expansion; use record and trace for exact sources. Search namespace loom for ask/answer via record, usage and examples. Execution and permissions stay native."

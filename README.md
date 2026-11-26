@@ -56,8 +56,15 @@ See the [alpha policy and evidence limits](docs/operating-policy.md),
 [coordination direction](docs/coordination.md) and
 [manual stopped-writers backup/restore](docs/manual-backup-restore.md).
 
+For recorded engineering work, `loom_history` provides a compact Action or
+Session overview, selective branch expansion, and shared Markdown/HTML views.
+The [read-only history dashboard](docs/learning-engineering-history.md) expands
+included details locally; further reads use the displayed authorized tool
+requests. It is an explicit read snapshot, not an automatically refreshed UI.
+
 Advanced storage recovery, maintenance/capacity modes, strict WAL-growth quotas,
-scheduling, dashboards and legacy import are deferred, not alpha prerequisites.
+scheduling, a continuously connected dashboard and legacy import are deferred,
+not alpha prerequisites.
 No history-size or whole-process resource guarantee is advertised. The Action
 `paused`, `cancelled` and `completed` labels record intent/progress; they do not
 interrupt an OpenCode session or certify successful delivery.

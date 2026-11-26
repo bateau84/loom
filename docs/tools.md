@@ -1,12 +1,12 @@
 ---
 type: API Reference
-title: "Thirteen tools, optional structure"
+title: "Fourteen tools, optional structure"
 description: "Documents Loom tools, input contracts, scopes and failure semantics."
 tags: [loom, tools, api]
 timestamp: 2026-10-24T00:00:00Z
 ---
 
-# Thirteen tools, optional structure
+# Fourteen tools, optional structure
 
 Loom retains goals, context and attributed history. OpenCode owns execution,
 native delegation, skills, models and permissions. A conversation needs no Action;
@@ -21,6 +21,7 @@ useful, not simply because work takes multiple steps.
 | `loom_agents` | Existing native roster, roles, configuration/capture diagnostics |
 | `loom_action` | Create/list/update a goal, or read native Session inventory and archive status |
 | `loom_trace` | Inspect authorized original Session messages and child identities; state coverage gaps |
+| `loom_history` | Start with a compact recorded-work overview; expand historical branches and render the same authorized view as JSON, Markdown or HTML |
 | `loom_insights` | Read bounded observational Action/project ledger metadata; no success-rate claims |
 | `loom_objective` | Recover one source-linked objective, child-agent handbacks, runtime checks and corrective attempts |
 | `loom_trends` | Compare a bounded, explicitly selected objective population over source-start and reporting windows; no causal verdict |
@@ -33,6 +34,8 @@ useful, not simply because work takes multiple steps.
 | `loom_qa` | Load an installed skill’s QA.md; requires the enabled caller’s qa role |
 
 Structured responses remain JSON text with `result` and optional `config_errors`.
+`loom_history` defaults to JSON and returns document text directly for explicit
+`response_format:"markdown"` or `"html"`.
 The Assessment/QA loaders and `loom_record` `view:full_thread` return
 **Markdown by default**, because they contain readable documents or history.
 Use `response_format:"json"` on those calls for the original JSON envelope,
@@ -42,6 +45,67 @@ returning an array (which Code Mode JSON-escapes), and surface each failed call.
 Direct tool calls already return Markdown. Await writes before using IDs or ending the script. Sequence dependent
 calls. Use `Promise.allSettled` for independent calls and inspect every outcome;
 this is not an atomic multi-write transaction. Use the exact callable search path.
+
+## Progressive engineering history
+
+Start with one known Action or Session, without enumerating child Sessions:
+
+```json
+{"operation":"read","action_id":"ACTION_ID"}
+```
+
+```json
+{"operation":"read","session_id":"SESSION_ID"}
+```
+
+To find older work outside the initial overview, use question terms and known
+categories. Selectors run over the eligible authorized scope before paging:
+
+```json
+{"operation":"read","action_id":"ACTION_ID","match":"timeout","record_kinds":["concern","assessment"]}
+```
+
+`match` is a literal ASCII-case-insensitive substring (1–200 characters), not a
+wildcard or semantic search. Optional `verdict`, `source_session_id`, `node_id`,
+`plan_revision` and `has_gaps` selectors combine with AND. `plan_revision` matches
+established WorkRefs only; fingerprints cannot establish a report's exact Plan
+revision. `has_gaps:true` discovers recorded attribution or work-scope gaps.
+
+Call `loom_history` with `operation:"read"` plus a returned branch or record's
+`expand` query to inspect that group. Historical Plan revisions have actionable
+ancestor containers; Sessions contain observed message groups or explicitly
+analytical chronology. Related branches can share a captured subject fingerprint
+without asserting the same revision or invocation.
+
+Keep selectors and `through` when paging matching/branch records with
+`after:coverage.next_after`, or immediate children with
+`branch_offset:coverage.next_branch_offset`. New work appears on a fresh read;
+these bounds are not frozen retrospective membership. `record_id` retrieves that
+record with branch context. Exact original references contain the separately
+authorized `loom_record` query. Focused reads omit unrelated global branches and
+the current intended Plan; coverage distinguishes scoped totals, matches and
+omissions.
+
+The JSON, Markdown and HTML dashboard share identifiers, relationships and
+coverage. The dashboard expands included content with native disclosure controls;
+deeper requests are shown as copyable tool inputs. It has no network requests,
+automatic refresh, default file write or separate persistence. An explicit save
+uses the host's authorized file writer.
+
+The requested scope and every contributing Session require native discovery,
+inspection and disclosure permission for `engineering-history`. Every format is
+bounded and passes the final assertion on its exact returned bytes. A denied
+contributor withholds the entire view, including a contributor excluded by the
+selection filters. A reference grants neither original-source
+access nor delivery to another recipient.
+
+Counts cover recorded Loom activity. Completion and passing assessments remain
+authored claims; verified outcomes and native dispatch totals remain unknown.
+Current intended Plans are distinct from exact historical WorkRef branches.
+Session views do not expand linked Action or Plan content. Native messages,
+protected review/objective relations, and frozen retrospective populations have
+their existing independent owners. See [the shared contract and remaining
+boundaries](learning-engineering-history.md).
 
 
 ## Source-linked whole-objective history

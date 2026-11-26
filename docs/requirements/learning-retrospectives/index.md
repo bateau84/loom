@@ -2,6 +2,8 @@
 
 **Status:** Draft requirements authored against the user-accepted architecture in [PR #233](https://github.com/bateau84/loom/pull/233), for independent requirements assessment. No requirements are claimed implemented. The concept's independent architecture GO does not constitute implementation or requirements acceptance.
 
+**Later authority:** The accepted [native evidence specification](../../learning-native-evidence-spec.md) records acceptance of the original BR/QS/OC baseline; earlier proposed labels remain historical. The operator's 2026-11-26 #227 assignment adds BR-010 and QS-006 for shared layered engineering history. These are accepted product targets, not a claim that every layer or original-source boundary is implemented. See the [bounded architecture and delivery mapping](../../learning-engineering-history.md).
+
 ## Intended behavior
 
 Loom should record permitted work evidence with the correct Session, agent, dispatch and historical Task scope, so a later Reviewer knows what it really assessed—even when one review covers 100 tasks or multiple Sessions. While engineering proceeds, Loom should opportunistically process new evidence, retain attributable provisional reports, and build **whole-objective and multi-Session retrospectives** automatically. The overall history matters more than local Task success claims.
@@ -21,6 +23,7 @@ There is **no automatic skill/agent/directive mutation**, no built-in directive 
 - [BR-007 — Prioritize whole-work and longitudinal learning](br-007-prioritize-whole-work-learning.md)
 - [BR-008 — Persist revisable evaluation history](br-008-persist-revisable-evaluation-history.md)
 - [BR-009 — Present controlled system-improvement recommendations](br-009-present-controlled-system-improvements.md)
+- [BR-010 — Navigate layered engineering history](br-010-layered-engineering-history.md)
 
 ## Quality Scenarios
 
@@ -29,6 +32,7 @@ There is **no automatic skill/agent/directive mutation**, no built-in directive 
 - [QS-003 — Synthesize large frozen populations without omission](qs-003-synthesize-large-frozen-populations.md)
 - [QS-004 — Protect derived reports under restricted source access](qs-004-protect-derived-reports.md)
 - [QS-005 — Bound optional automatic analysis](qs-005-bound-background-analysis.md)
+- [QS-006 — Progressive history navigation](qs-006-progressive-history-navigation.md)
 
 ## Obligation Contracts
 

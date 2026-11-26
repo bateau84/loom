@@ -7,6 +7,12 @@ timestamp: 2026-11-12T00:00:00Z
 ---
 # Change log
 
+## 2026-11-26
+
+- Record the operator's accepted #227 product direction as BR-010 and QS-006: shared human/agent/document history, Plan-aware and Plan-independent structure, selective navigation, qualified evidence and source-derived authorization.
+- Preserve the original BR/QS/OC meaning and reference the accepted native specification's authority clarification.
+- Link the first bounded ledger-navigation architecture. Native originals, review/objective integration, frozen selected populations and full #227 qualification remain separately tracked dependencies; requirement text is not executed verification.
+
 ## 2026-11-12
 
 - Initial draft of 9 Behavioral Requirements, 5 Quality Scenarios and 4 Obligation Contracts from user-accepted AOS learning intent and reviewed architecture PR #233.
