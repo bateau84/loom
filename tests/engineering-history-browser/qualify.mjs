@@ -27,7 +27,8 @@ assert.equal(manifest.format, "loom-engineering-history-browser-fixtures/v1")
 assert.equal(manifest.head, process.env.EXPECT_HEAD, "Fixtures must come from the exact qualified head")
 assert.ok(manifest.fixtures.length >= 6, "Qualify adversarial planned/unplanned discovery and expansion")
 for (const name of ["planned-overview", "planned-discovery", "planned-selected", "planned-historical", "planned-children",
-  "unplanned-overview", "unplanned-discovery", "unplanned-selected", "unplanned-children", "unplanned-children-next", "dense-hostile"])
+  "unplanned-overview", "unplanned-discovery", "unplanned-selected", "unplanned-children", "unplanned-children-next", "dense-hostile",
+  "trajectory-discovery", "trajectory-connected", "trajectory-page", "trajectory-page-next"])
   assert.ok(manifest.fixtures.some(fixture => fixture.name === name), `Required browser scene: ${name}`)
 const sha256 = value => createHash("sha256").update(value).digest("hex")
 const canonical = value => JSON.stringify(value, (_, item) => item && typeof item === "object" && !Array.isArray(item)
@@ -119,15 +120,36 @@ try {
           assert.ok(markdown.includes(value), `Markdown contains ${value}`)
         }
         for (const value of fixture.required_text) assert.ok(text.includes(value), `Required view text: ${value}`)
-        for (const relationship of view.relationships) for (const value of Object.values(relationship))
-          assert.ok(text.includes(value), `Complete relationship value: ${value}`)
+        const values = value => value && typeof value === "object" ? Object.values(value).flatMap(values) : [value]
+        for (const relationship of view.relationships) for (const value of values(relationship))
+          assert.ok(text.includes(String(value)), `Complete relationship value: ${value}`)
+        for (const source of fixture.owner_sources ?? []) for (const value of [source.ref, source.sha256, source.tool])
+          assert.ok(text.includes(value) && markdown.includes(value), `Original relationship owner: ${value}`)
+        if (view.mode === "trajectory") {
+          assert.equal(await page.getByRole("heading", { name: "Intended Plan", exact: true }).count(), 0)
+          assert.equal(await page.getByRole("heading", { name: "Significant recorded work", exact: true }).count(), 0)
+          assert.ok(text.includes("Connected trajectory"))
+          for (const review of view.connections.reviews) {
+            assert.ok(text.includes("Exact requested scope and recheck targets"))
+            assert.ok(text.includes("Observed and authored evidence scope"))
+            for (const exclusion of review.request.mandate.exclusions) assert.ok(text.includes(exclusion))
+            assert.ok(text.includes(`${review.relationships_omitted} omitted`))
+          }
+        }
         for (const record of [...view.highlights, ...view.records]) if (record.excerpt !== null)
           assert.ok(text.includes(record.excerpt), "The complete projected excerpt remains present after shortening the overview preview")
         const parsedRequests = (await page.locator("pre > code").allTextContents()).flatMap(value => {
           try { return [JSON.parse(value)] } catch { return [] }
         })
-        for (const request of fixture.history_requests) assert.ok(parsedRequests.some(value => canonical(value) === canonical(request)),
-          `Copyable exact expansion request ${canonical(request)}`)
+        const markdownRequests = [...markdown.matchAll(/(?:^|\n)((?:    [^\n]*\n)+)/g)].flatMap(match => {
+          try { return [JSON.parse(match[1].split("\n").map(line => line.slice(4)).join("\n"))] } catch { return [] }
+        })
+        for (const request of fixture.history_requests) {
+          assert.ok(parsedRequests.some(value => canonical(value) === canonical(request)),
+            `Copyable exact HTML expansion request ${canonical(request)}`)
+          assert.ok(markdownRequests.some(value => canonical(value) === canonical(request)),
+            `Copyable exact Markdown expansion request ${canonical(request)}`)
+        }
         const structure = await page.evaluate(() => ({
           unsafe: document.querySelectorAll("script,iframe,frame,object,embed,img,video,audio,form,input,button,link,base").length,
           handlers: [...document.querySelectorAll("*")].flatMap(element => [...element.attributes].filter(attr => /^on/i.test(attr.name))),
@@ -224,6 +246,26 @@ try {
         }
         return { highlighted_link: await link.count(), relationship_link: await relationship.count(),
           qualification_link: await qualification.count() }
+      })
+      await check("owner and attribution links preserve keyboard navigation", async () => {
+        const followed = []
+        for (const kind of ["objective", "review", "provenance"]) {
+          const link = page.locator(`.relationships a[href^='#${kind}-']`).first()
+          if (!await link.count()) continue
+          const href = await link.getAttribute("href"), target = page.locator(href)
+          await link.press("Enter")
+          await page.waitForFunction(id => document.activeElement?.id === id, href.slice(1))
+          await inViewport(target)
+          if (await target.evaluate(element => element.tagName === "SUMMARY")) {
+            await keyboardToggle(target, "Enter", true)
+            if (kind === "review") await screenshot("review-request-and-evidence-scope")
+            await keyboardToggle(target, "Space", false)
+          }
+          followed.push({ kind, href })
+        }
+        if (fixture.name === "trajectory-connected")
+          assert.deepEqual(followed.map(item => item.kind), ["objective", "review", "provenance"])
+        return followed
       })
       await page.evaluate(() => scrollTo(0, 0))
       await screenshot("overview-desktop")

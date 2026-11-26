@@ -6,6 +6,15 @@ type: Log
 
 ## 2026-11-26
 
+**Connected engineering trajectories (#227):** Composed existing ObjectiveIndex,
+ReviewRequests and Store/Observer relationships into focused history navigation.
+Added optional attributed source relations, objective roots, exact requested
+review/recheck scope and ready continuation requests. JSON, Markdown and HTML
+retain the same source meanings and boundaries. Legacy Stage 3 source hashes and
+complete batches remain stable. Live trajectories are not frozen evaluation
+subjects; production Evaluator dispatch remains disabled. See
+[the integration and qualification boundaries](learning-connected-trajectories.md).
+
 **Layered engineering history (#227):** Added a Store-owned live projection and
 the `loom_history` reader for compact Action/Session overviews, historical work
 branches, authored assessments, source references and explicit coverage. JSON,

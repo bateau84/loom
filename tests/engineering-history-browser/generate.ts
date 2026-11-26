@@ -8,6 +8,7 @@ import type { EngineeringHistoryQuery, EngineeringHistoryView } from "../../src/
 import { digest } from "../../src/model.js"
 import { Store } from "../../src/store.js"
 import { engineeringHistoryScenario, type RegisteredHistoryFixture } from "../helpers/engineering-history-scenarios.js"
+import { engineeringTrajectoryFixture } from "../helpers/engineering-trajectory-fixture.js"
 import { registeredLoom } from "../helpers/registered-loom.js"
 
 assert.ok(process.argv[2], "Usage: bun generate.ts FRESH_OUTPUT_DIRECTORY")
@@ -23,12 +24,13 @@ const manifest = { format: "loom-engineering-history-browser-fixtures/v1", head,
   boundaries: [] as Array<Record<string, unknown>> }
 for (const path of ["src/engineering-history.ts", "src/engineering-history-dashboard.ts", "src/plugin.ts",
   "tests/helpers/registered-loom.ts", "tests/helpers/engineering-history-scenarios.ts", "tests/engineering-history-browser/generate.ts",
+  "tests/helpers/engineering-trajectory-fixture.ts", "src/engineering-trajectories.ts", "src/objectives.ts", "src/review-requests.ts",
   "tests/engineering-history-browser/qualify.mjs", ".github/workflows/engineering-history-browser.yml"])
   manifest.source_sha256[path] = sha256(await readFile(path, "utf8"))
 
-const execute = async (f: RegisteredHistoryFixture, query: EngineeringHistoryQuery, response_format: "json" | "html" | "markdown") => {
+const execute = async (f: RegisteredHistoryFixture, query: EngineeringHistoryQuery, response_format: "json" | "html" | "markdown", reader = "browser-fixture-reader") => {
   const response = await f.tools.get("history").execute({ operation: "read", ...query, response_format }, {
-    sessionID: "browser-fixture-reader", agent: "author", messageID: "browser-history-read", id: "browser-history-read",
+    sessionID: reader, agent: "author", messageID: "browser-history-read", id: "browser-history-read",
     signal: new AbortController().signal,
   })
   assert.equal(typeof response.content, "string")
@@ -38,13 +40,13 @@ const execute = async (f: RegisteredHistoryFixture, query: EngineeringHistoryQue
 }
 const records = (view: EngineeringHistoryView) => [...new Map([...view.highlights, ...view.records].map(record => [record.ref, record])).values()]
 async function save(f: RegisteredHistoryFixture, name: string, query: EngineeringHistoryQuery,
-  options: { dense?: boolean; hostile_text?: string[] } = {}) {
+  options: { dense?: boolean; hostile_text?: string[]; reader_session?: string } = {}) {
   // Freeze the append boundary before comparing the three public formats.
-  const initial = JSON.parse((await execute(f, query, "json")).content).result as EngineeringHistoryView
+  const initial = JSON.parse((await execute(f, query, "json", options.reader_session)).content).result as EngineeringHistoryView
   assert.equal(initial.format, "loom-engineering-history/v1")
-  const request = { ...query, through: initial.boundary.observed_through }
+  const request = initial.navigation.repeat
   const render = async (format: "json" | "html" | "markdown") => {
-    try { return await execute(f, request, format) }
+    try { return await execute(f, request, format, options.reader_session) }
     catch (cause) { throw new Error(`Registered browser fixture ${name} failed for ${format}`, { cause }) }
   }
   const json = await render("json"), html = await render("html"), markdown = await render("markdown")
@@ -57,19 +59,22 @@ async function save(f: RegisteredHistoryFixture, name: string, query: Engineerin
   const branches = [...new Map([...view.ancestors, ...(view.selected_branch ? [view.selected_branch] : []),
     ...view.branches, ...view.related_branches].map(branch => [branch.ref, branch])).values()]
   const history_requests: object[] = [...branches.map(branch => ({ operation: "read", ...branch.expand })),
-    ...included.map(record => ({ operation: "read", ...record.expand }))]
-  const continueRequest = { operation: "read", ...view.scope, through: view.boundary.observed_through,
-    limit: view.coverage.page_limit, ...view.selection, ...(view.selected_branch ? { branch_ref: view.selected_branch.ref } : {}) }
-  if (view.mode === "discovery") history_requests.push(continueRequest)
-  if (view.coverage.next_after !== null) history_requests.push({ ...continueRequest, after: view.coverage.next_after })
-  if (view.coverage.next_branch_offset !== null) history_requests.push({ ...continueRequest, branch_offset: view.coverage.next_branch_offset })
+    ...included.map(record => ({ operation: "read", ...record.expand })),
+    ...included.map(record => ({ operation: "read", ...record.trajectory })),
+    ...view.connections.objectives.map(item => ({ operation: "read", ...item.expand })),
+    { operation: "read", ...view.navigation.repeat }]
+  if (view.navigation.next_records) history_requests.push({ operation: "read", ...view.navigation.next_records })
+  if (view.navigation.next_branches) history_requests.push({ operation: "read", ...view.navigation.next_branches })
   for (const [extension, response] of Object.entries({ json, html, markdown }))
     await writeFile(join(output, `${name}.${extension === "markdown" ? "md" : extension}`), response.content)
   manifest.fixtures.push({ name, request: { operation: "read", ...request }, ...options,
     json: `${name}.json`, html: `${name}.html`, markdown: `${name}.md`,
     sha256: { json: sha256(json.content), html: sha256(html.content), markdown: sha256(markdown.content) },
     disclosure_sha256: { json: json.disclosure, html: html.disclosure, markdown: markdown.disclosure },
-    required_text: [view.store_id, view.boundary.membership, ...view.coverage.gaps.map(gap => gap.detail)],
+    required_text: [view.store_id, view.boundary.membership, ...view.coverage.gaps.map(gap => gap.detail),
+      ...view.connections.objectives.map(item => item.objective.label),
+      ...view.connections.reviews.flatMap(item => [item.request.mandate.question, ...item.request.mandate.exclusions])],
+    owner_sources: [...view.connections.objectives, ...view.connections.reviews].map(item => ({ ref: item.ref, ...item.source })),
     sources: included.map(record => ({ ref: record.ref, record_id: record.source.record_id, sha256: record.source.sha256 })),
     history_requests,
   })
@@ -134,6 +139,26 @@ try {
         through: discovery.boundary.observed_through })
     } finally { await scenario.close() }
   }
+
+  const trajectory = await engineeringTrajectoryFixture({ records: 24000, directory: join(state, "trajectory") })
+  try {
+    const owner = { reader_session: trajectory.sessions.reader }
+    const discovery = await save(trajectory.f, "trajectory-discovery", { action_id: trajectory.action.id, match: trajectory.search }, owner)
+    assert.equal(discovery.records.length, 1, "The vocabulary-varied fixture has one initial match")
+    const seed = discovery.records[0]!
+    const connected = await save(trajectory.f, "trajectory-connected", seed.trajectory, owner)
+    assert.equal(connected.mode, "trajectory")
+    assert.equal(connected.records.length, 20)
+    assert.equal(connected.connections.reviews.length, 2)
+    assert.ok(!connected.records.some(record => record.source.record_id === trajectory.unrelated.id))
+    const page = await save(trajectory.f, "trajectory-page", { ...seed.trajectory, limit: 5 }, owner)
+    assert.ok(page.navigation.next_records)
+    const continued = await save(trajectory.f, "trajectory-page-next", page.navigation.next_records, owner)
+    assert.equal(continued.navigation.repeat.record_id, seed.source.record_id)
+    assert.equal(continued.navigation.repeat.related, true)
+    assert.deepEqual(continued.boundary.owners, page.boundary.owners)
+    assert.equal(continued.boundary.owner_version, page.boundary.owner_version)
+  } finally { await trajectory.close() }
 
   // Supplemental dense/hostile material is stored through the same registered
   // product and read back by loom_history. It does not replace the shared cases.

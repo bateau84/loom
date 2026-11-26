@@ -15,13 +15,15 @@ import { Observer } from "./context.js"
 import { resolveContextSelection, workContext } from "./work-context.js"
 import { digest, uid, PROCESSING_LIMITS, type Actor, type Focus } from "./model.js"
 import { renderFullHistory } from "./history-renderer.js"
-import { type EngineeringHistoryQuery, type EngineeringHistoryView } from "./engineering-history.js"
+import { engineeringHistoryScope, type EngineeringHistoryQuery, type EngineeringHistoryView } from "./engineering-history.js"
+import type { EngineeringHistoryOwners } from "./engineering-trajectories.js"
 import { renderEngineeringHistoryHTML, renderEngineeringHistoryMarkdown } from "./engineering-history-dashboard.js"
 import { fullThreadMarkdown } from "./response-format.js"
 import { Store, RECORD_FIELDS, RECORD_KINDS, type SQL, type RecordQuery } from "./store.js"
 import { Learning } from "./learning.js"
 import { EVALUATION_READS, registerAutomaticLearning, type AutomaticLearningRuntime } from "./learning-runtime.js"
-import type { ObjectiveSource, ObjectivePhase } from "./objectives.js"
+import { OBJECTIVE_RELATIONS, type ObjectiveSource, type ObjectivePhase, type ObjectiveRelation, type ObjectiveHistorySelection } from "./objectives.js"
+import type { ReviewHistorySelection } from "./review-requests.js"
 import { QUESTION_CHOICE_LIMITS, QUESTION_DISPATCH, questionRecipient } from "./collaboration.js"
 import { questionRoute, sendQuestion, type NativeModel, type QuestionRoute } from "./question-routing.js"
 import { resumeAnswer } from "./answer-resume.js"
@@ -132,13 +134,15 @@ const evaluatorPrepareInput = { operation: { const: "prepare-evaluation" }, batc
 const specs = [
   { name: "agents", description: TOOL_HELP.agents, input: obj({}) },
   { name: "history", description: TOOL_HELP.history, input: preserveInput({
-    operation: { const: "read" }, action_id: str, session_id: str,
+    operation: { const: "read" }, action_id: str, session_id: str, objective_id: str, related: { type: "boolean" },
     branch_ref: { type: "string", minLength: 1, maxLength: 4096 }, record_id: str,
     match: { type: "string", minLength: 1, maxLength: 200 },
     record_kinds: { type: "array", minItems: 1, maxItems: RECORD_KINDS.length, uniqueItems: true, items: choice(...RECORD_KINDS) },
     verdict: choice("pass", "fail", "inconclusive"), source_session_id: str, node_id: str,
     plan_revision: { type: "integer", minimum: 1 }, has_gaps: { type: "boolean" },
     after: num, through: num, branch_offset: { type: "integer", minimum: 0, maximum: 100000 }, limit: { type: "integer", minimum: 1, maximum: 50 },
+    owner_boundary: preserveInput({ objective_links: { anyOf: [num, { type: "null" }] }, review_requests: num, review_relationships: num },
+      ["objective_links", "review_requests", "review_relationships"]), owner_version: { type: "string", pattern: "^[a-f0-9]{64}$" },
     response_format: choice("json", "markdown", "html"),
   }, ["operation"]) },
   { name: "review", description: TOOL_HELP.review, input: {
@@ -181,6 +185,7 @@ const specs = [
       confidence: choice("supported", "uncertain"),
       assessment: choice("reported-done", "reported-failed", "pass", "fail", "inconclusive", "confirm", "reject"),
       related_sequence: { type: "integer", minimum: 1 },
+      relation: choice(...OBJECTIVE_RELATIONS),
       gap_reason: choice("missing-child", "compacted", "denied-access", "opaque-tool", "missing-source", "unknown"),
       note: { type: "string", maxLength: 800 },
       cursor: { type: "string", minLength: 1, maxLength: 512 },
@@ -466,32 +471,73 @@ export default Plugin.define({
             let result: unknown
             switch (spec.name) {
               case "history": {
-                const allowed = ["operation", "action_id", "session_id", "branch_ref", "record_id", "match", "record_kinds", "verdict",
-                  "source_session_id", "node_id", "plan_revision", "has_gaps", "after", "through", "branch_offset", "limit", "response_format"]
+                const allowed = ["operation", "action_id", "session_id", "objective_id", "branch_ref", "record_id", "related", "match", "record_kinds", "verdict",
+                  "source_session_id", "node_id", "plan_revision", "has_gaps", "after", "through", "branch_offset", "limit", "owner_boundary", "owner_version", "response_format"]
                 if (input.operation !== "read" || Object.keys(input).some(key => !allowed.includes(key)))
                   throw new Error("Unsupported engineering history operation or field")
                 if (input.response_format !== undefined && !["json", "markdown", "html"].includes(String(input.response_format)))
                   throw new Error("History response_format must be json, markdown or html")
-                if ((input.action_id === undefined) === (input.session_id === undefined))
-                  throw new Error("Engineering history requires exactly one explicit action_id or session_id")
-                const { operation: _operation, response_format: _format, ...query } = input
+                if ([input.action_id, input.session_id, input.objective_id].filter(value => value !== undefined).length !== 1)
+                  throw new Error("Engineering history requires exactly one explicit action_id, session_id or objective_id")
+                const { operation: _operation, response_format: _format, ...rawQuery } = input
+                const query = rawQuery as EngineeringHistoryQuery
+                engineeringHistoryScope(query)
                 const scope = input.action_id !== undefined
                   ? "action:" + evidenceID(input.action_id, "action_id")
-                  : "session:" + evidenceID(input.session_id, "session_id")
+                  : input.session_id !== undefined ? "session:" + evidenceID(input.session_id, "session_id")
+                    : "objective:" + evidenceID(input.objective_id, "objective_id")
                 await beginEvidence(scope, ["engineering-history"], ["engineering-history"])
+                // These are the existing private source-file owners, not grants
+                // inferred from a history reference. Prepared reviews are excluded.
+                evidenceResources.add(filename)
+                if (learning) evidenceResources.add(learningFilename)
+                await assertEvidence([...evidenceResources])
+                if (query.objective_id !== undefined && !learning) requiredLearning()
                 if (input.session_id !== undefined) {
                   const sourceSession = uid(input.session_id, "session_id")
                   await evidenceSession(sourceSession); evidenceSessions.add(sourceSession)
                 }
                 const historyScope = store.captureScope()
+                const objectiveSelection = (requested: EngineeringHistoryQuery): ObjectiveHistorySelection => ({
+                  ...(requested.action_id === undefined ? {} : { action_id: requested.action_id }),
+                  ...(requested.session_id === undefined ? {} : { session_id: requested.session_id }),
+                  ...(requested.objective_id === undefined ? {} : { objective_id: requested.objective_id }),
+                  ...(requested.through === undefined ? {} : { ledger_through: requested.through }),
+                  ...(requested.owner_boundary?.objective_links === undefined || requested.owner_boundary.objective_links === null ? {} : { link_through: requested.owner_boundary.objective_links }),
+                })
+                const reviewSelection = (requested: EngineeringHistoryQuery, recordIDs?: string[]): ReviewHistorySelection => ({
+                  ...(requested.action_id === undefined ? {} : { action_id: requested.action_id }),
+                  ...(requested.session_id === undefined ? {} : { session_id: requested.session_id }),
+                  ...(requested.objective_id === undefined ? {} : { record_ids: recordIDs ?? [] }),
+                  ...(requested.through === undefined ? {} : { through: requested.through }),
+                  ...(requested.owner_boundary === undefined ? {} : { request_through: requested.owner_boundary.review_requests,
+                    relationship_through: requested.owner_boundary.review_relationships }),
+                })
                 const historyContributors = (requested: EngineeringHistoryQuery) => {
-                  try { return store.engineeringHistory.authorizationSessions(requested) }
+                  try {
+                    const objectives = learning?.objectives.historySources(objectiveSelection(requested))
+                    const recordIDs = requested.objective_id !== undefined && objectives
+                      ? store.engineeringHistory.objectiveEvidenceSources(objectives.ledger_record_ids, objectives.ledger_through) : objectives?.ledger_record_ids
+                    const reviews = store.reviews.historySources(actor, reviewSelection(requested, recordIDs))
+                    const contributors = new Set([...store.engineeringHistory.authorizationSessions(requested, recordIDs),
+                      ...(objectives?.contributors ?? []), ...reviews.contributors])
+                    if (contributors.size > 2000) throw new Error("History contributor bound exceeded")
+                    return { contributors: [...contributors].sort(), objectives, reviews, recordIDs }
+                  }
                   // Contributor discovery is an internal permission preflight. Its
                   // failures must not expose a protected cardinality threshold,
                   // Plan author or source-store detail before source grants exist.
                   catch { throw new Error("Engineering history scope unavailable") }
                 }
-                const sourceSessions = historyContributors(query as EngineeringHistoryQuery)
+                const sources = historyContributors(query)
+                if (query.owner_boundary && (query.owner_boundary.objective_links === null) !== (sources.objectives === undefined))
+                  throw new Error("History objective owner availability changed; restart the read")
+                // Pin each append owner independently. The resulting live boundary
+                // is explicitly not EvaluationStore membership or an execution grant.
+                query.through ??= sources.objectives?.ledger_through ?? sources.reviews.through
+                query.owner_boundary ??= { objective_links: sources.objectives?.link_through ?? null,
+                  review_requests: sources.reviews.request_through, review_relationships: sources.reviews.relationship_through }
+                const sourceSessions = sources.contributors
                 // Action discovery permits locating contributors, not disclosing their
                 // content or even derived counts. Each contributing Session must grant
                 // the same derived view before the projector inspects its records.
@@ -505,14 +551,26 @@ export default Plugin.define({
                 // Permission hooks can await while records are appended. Never inspect
                 // a newly participating Session under an earlier contributor grant.
                 const authorizedSessions = new Set(sourceSessions)
-                if (store.captureScope() !== historyScope || historyContributors(query as EngineeringHistoryQuery)
+                if (store.captureScope() !== historyScope || historyContributors(query).contributors
                   .some(session => !authorizedSessions.has(session)))
                   throw new Error("Engineering history source membership changed; restart the read")
-                const view = store.engineeringHistory.read(query as EngineeringHistoryQuery)
+                const ownerSnapshots = (): EngineeringHistoryOwners => {
+                  const objectives = learning?.objectives.historySnapshot(objectiveSelection(query))
+                  const recordIDs = query.objective_id !== undefined && objectives
+                    ? store.engineeringHistory.objectiveEvidenceSources(objectives.ledger_record_ids, objectives.ledger_through) : objectives?.ledger_record_ids
+                  const reviews = store.reviews.historySnapshot(actor, reviewSelection(query, recordIDs))
+                  const version = digest({ store: store.reviews.storeID, scope, boundary: query.owner_boundary,
+                    objectives: objectives?.content_digest ?? null, reviews: reviews.content_digest,
+                    ...(query.objective_id === undefined ? {} : { original_evidence: recordIDs }) })
+                  return { objectives, reviews, record_ids: recordIDs, boundary: query.owner_boundary!, version }
+                }
+                const owners = ownerSnapshots()
+                const view = store.engineeringHistory.read(query, owners)
                 evidenceSourceCheck = async () => {
                   if (store.captureScope() !== historyScope || historyContributors({ ...query,
-                    through: view.boundary.observed_through } as EngineeringHistoryQuery).some(session => !authorizedSessions.has(session)))
+                    through: view.boundary.observed_through }).contributors.some(session => !authorizedSessions.has(session)))
                     throw new Error("Engineering history source membership changed; restart the read")
+                  if (ownerSnapshots().version !== owners.version) throw new Error("Engineering history relationship sources changed; restart the read")
                 }
                 result = view
                 break
@@ -865,6 +923,7 @@ export default Plugin.define({
                     source, confidence: input.confidence as "supported" | "uncertain" | undefined,
                     assessment: input.assessment as "reported-done" | "reported-failed" | "pass" | "fail" | "inconclusive" | "confirm" | "reject" | undefined,
                     related_sequence: input.related_sequence as number | undefined,
+                    relation: input.relation as ObjectiveRelation | undefined,
                     gap_reason: input.gap_reason as "missing-child" | "compacted" | "denied-access" | "opaque-tool" | "missing-source" | "unknown" | undefined,
                     note: input.note as string | undefined,
                   })

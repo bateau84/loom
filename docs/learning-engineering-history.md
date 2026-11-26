@@ -8,6 +8,13 @@ timestamp: 2026-11-26T00:00:00Z
 
 # Layered engineering history
 
+The ledger-navigation design delivered by #252 is extended by
+[connected engineering trajectories](learning-connected-trajectories.md):
+ObjectiveIndex and requester-owned review relationships now join the shared
+representation, with attributed retrospective associations and separate owner
+append fences. The original evidence, disclosure and evaluation boundaries below
+remain controlling.
+
 ## Decision and delivery boundary
 
 Give humans and agents the same compact map of recorded engineering work. A
@@ -247,12 +254,12 @@ complete coverage. Typed question/answer references preserve their existing
 meaning. Omitted and unresolved references remain qualified; do not fetch or expose
 a different scope merely because a record names it.
 
-Existing review relationships and ObjectiveIndex links have their own authority:
+Existing review relationships and ObjectiveIndex links retain their own authority:
 an authored objective is interpretation, and a review's requested, supplied,
-retrieved, cited and claimed-inspected evidence are different. The initial ledger
-projection must identify missing integration rather than flatten these records
-into fabricated correction/verification links. Their later inclusion requires
-the existing authorized readers and exact source identities.
+retrieved, cited and claimed-inspected evidence are different. The connected
+trajectory increment composes their bounded authorized snapshots and exact
+source identities. It preserves those differences instead of flattening them
+into fabricated correction/verification links.
 
 Representative selection must not let abundant observations displace all
 assessments or concerns. Complete authorized totals are distinct from the bounded
@@ -366,8 +373,9 @@ authorizes provider transfer or execution.
 - OpenCode owns a supported complete-history reader, original native
   assignments/message parts and current recipient-specific protected release.
 - Existing review and ObjectiveIndex owners retain exact mandates, typed
-  correction/recheck relationships and authored objective membership; later
-  navigation integration must preserve their permissions and qualifications.
+  correction/recheck relationships and authored objective associations. The
+  trajectory integration preserves their permissions and qualifications;
+  cross-requester private review disclosure remains unsupported.
 - Existing Git/CI integrations own original pinned object/run/attempt/job/artifact
   resolution. A reference here is neither retrieval nor verification.
 - EvaluationStore and preparation/source owners own a distinct frozen selected

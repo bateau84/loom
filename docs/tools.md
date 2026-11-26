@@ -51,7 +51,7 @@ this is not an atomic multi-write transaction. Use the exact callable search pat
 
 ## Progressive engineering history
 
-Start with one known Action or Session, without enumerating child Sessions:
+Start with one known Action, Session or objective, without enumerating child Sessions:
 
 ```json
 {"operation":"read","action_id":"ACTION_ID"}
@@ -59,6 +59,10 @@ Start with one known Action or Session, without enumerating child Sessions:
 
 ```json
 {"operation":"read","session_id":"SESSION_ID"}
+```
+
+```json
+{"operation":"read","objective_id":"OBJECTIVE_ID"}
 ```
 
 To find older work outside the initial overview, use question terms and known
@@ -74,20 +78,46 @@ wildcard or semantic search. Optional `verdict`, `source_session_id`, `node_id`,
 established WorkRefs only; fingerprints cannot establish a report's exact Plan
 revision. `has_gaps:true` discovers recorded attribution or work-scope gaps.
 
+After finding a relevant record, call `loom_history` with `operation:"read"`
+plus its `trajectory` query. It follows explicit objective, review and original
+evidence relationships even when related records use different words. The query
+replaces the discovery text with the exact seed while retaining scope, page size
+and source boundaries. The equivalent new request is:
+
+```json
+{"operation":"read","action_id":"ACTION_ID","record_id":"RECORD_ID","related":true}
+```
+
 Call `loom_history` with `operation:"read"` plus a returned branch or record's
 `expand` query to inspect that group. Historical Plan revisions have actionable
 ancestor containers; Sessions contain observed message groups or explicitly
 analytical chronology. Related branches can share a captured subject fingerprint
 without asserting the same revision or invocation.
 
-Keep selectors and `through` when paging matching/branch records with
-`after:coverage.next_after`, or immediate children with
-`branch_offset:coverage.next_branch_offset`. New work appears on a fresh read;
+Use `navigation.next_records` or `navigation.next_branches` with
+`operation:"read"` for continuation. These ready queries retain scope, selectors,
+seed, `through`, `owner_boundary`, `owner_version` and limit. The separate owner
+bounds exclude later objective/review appends; a changed relationship view fails
+instead of silently restarting. New work appears on a fresh read;
 these bounds are not frozen retrospective membership. `record_id` retrieves that
 record with branch context. Exact original references contain the separately
 authorized `loom_record` query. Focused reads omit unrelated global branches and
 the current intended Plan; coverage distinguishes scoped totals, matches and
 omissions.
+
+The shared `connections` groups preserve attributed ObjectiveIndex links and
+applicable requester-owned review mandates. Requested members/rechecks remain
+separate from observed/retrieved/cited/claimed-inspected scope and declared
+outcomes. Candidate, rejected and superseding interpretations retain their
+original sources. A scoped pass is not full release acceptance. Other Sessions'
+private review manifests and Evaluator preparations are not disclosed or counted.
+Optional typed associations use the existing `loom_objective link` operation:
+`relation` is supports, contradicts, addresses, assesses, supersedes or contests,
+with an earlier distinct ledger source selected by `related_sequence`.
+`link-correction` still confirms/rejects an objective association only. These are
+authored interpretations, not native dispatch provenance or proof of causation.
+
+See [connected trajectory contracts and boundaries](learning-connected-trajectories.md).
 
 The JSON, Markdown and HTML dashboard share identifiers, relationships and
 coverage. The dashboard expands included content with native disclosure controls;

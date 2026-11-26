@@ -170,8 +170,8 @@ test("human core-tool walkthrough examples use canonical collaboration and real 
   try {
     const doc = await readFile(new URL("../docs/tools.md", import.meta.url), "utf8")
     const examples = [...doc.matchAll(/```json\n([\s\S]*?)\n```/g)].map(match => JSON.parse(match[1]))
-    expect(examples).toHaveLength(11)
-    const [actionOverview, sessionOverview, historyDiscovery, ...inputs] = examples
+    expect(examples).toHaveLength(13)
+    const [actionOverview, sessionOverview, objectiveOverview, historyDiscovery, connectedHistory, ...inputs] = examples
     expect(inputs).toHaveLength(8)
     const action = (await f.invoke("action", inputs[0])).result
     const replace = (input: unknown) => JSON.parse(JSON.stringify(input).replaceAll("ACTION_ID", action.id).replaceAll("TASK_ID", "task"))
@@ -205,6 +205,13 @@ test("human core-tool walkthrough examples use canonical collaboration and real 
     const discovered = (await f.invoke("history", replace(historyDiscovery))).result
     expect(discovered.mode).toBe("discovery")
     expect(discovered.records.map((item: any) => item.source.record_id)).toEqual([timeout.id])
+    const objective = (await f.invoke("objective", { operation: "create", source_type: "ledger-record", source_id: timeout.id,
+      label: "Investigate the documented timeout" })).result
+    const objectiveView = (await f.invoke("history", { ...objectiveOverview, objective_id: objective.id })).result
+    expect(objectiveView.records.map((item: any) => item.source.record_id)).toEqual([timeout.id])
+    const trajectory = (await f.invoke("history", { ...replace(connectedHistory), record_id: timeout.id })).result
+    expect(trajectory.mode).toBe("trajectory")
+    expect(trajectory.records.map((item: any) => item.source.record_id)).toEqual([timeout.id])
     for (const input of [inputs[5], inputs[6]]) expect(input).not.toHaveProperty("attachments")
   } finally { await f.close() }
 })

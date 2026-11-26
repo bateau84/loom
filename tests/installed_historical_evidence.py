@@ -11,8 +11,10 @@ import argparse
 import base64
 from contextlib import closing
 import hashlib
+from html import unescape
 import json
 from pathlib import Path
+import re
 import secrets
 import shutil
 import sqlite3
@@ -49,6 +51,7 @@ CHECKS = {
     "layered-history-discovery-outside-overview",
     "layered-history-shared-document-and-dashboard",
     "layered-history-derived-source-and-scope-denials",
+    "connected-history-owner-relations-and-frozen-review-scope",
     "historical-sources-unchanged-and-no-evaluator-effects",
 }
 
@@ -363,6 +366,159 @@ def assert_history_renderings(view: dict, markdown: str, html: str) -> dict:
             "qualification": "actual installed rendered text; visual and keyboard usability checked separately"}
 
 
+def prepare_connected_history(scenario, requester: str) -> dict:
+    """Author a separate, modest no-Plan population through registered owners."""
+    action = scenario.invoke(requester, "action", {"operation": "create", "title": "Synthetic connected test correction",
+        "goal": "Follow explicit relationships while keeping the historical cause and whole release acceptance unproven."})
+    claims = [
+        ("finding", "concern", None, "CEDAR_187: the first a1 CI assertion failed; the original scheduling order was not captured."),
+        ("diagnosis", "assessment", "inconclusive", "A stale-index defect is a candidate interpretation; the original cause remains unproven."),
+        ("rerun", "qa", "pass", "The unchanged a1 rerun passed; this does not establish why its predecessor failed."),
+        ("correction", "result", None, "The b2 test-only correction controls the old-row and replacement-row ordering."),
+        ("assessment", "assessment", "pass", "The scoped b2 assessment reports both controlled checks passed; complete release acceptance is excluded."),
+        ("merge", "result", None, "The corrected b2 tree was merged; delivery does not establish full release acceptance."),
+        ("release", "concern", None, "Overall issue 182 still requires the installed release matrix, migration, cancellation and repair checks."),
+        ("unrelated", "result", None, "An unlinked formatter check in the same Session also passed on b2."),
+    ]
+    records = {}
+    for key, kind, verdict, statement in claims:
+        records[key] = scenario.invoke(requester, "record", {"operation": "add", "action_id": action["id"],
+            "kind": kind, "statement": statement, "evidence_ids": [], **({"verdict": verdict} if verdict else {})})
+    unrelated = records.pop("unrelated")
+    objective = scenario.invoke(requester, "objective", {"operation": "create", "source_type": "ledger-record",
+        "source_id": records["finding"]["id"], "label": "Qualify the bounded test correction"})
+    links = {}
+    for key, phase, related, extra in (
+        ("finding", "environment-failure", None, {}),
+        ("diagnosis", "coordination", "finding", {"confidence": "uncertain",
+            "note": "Candidate diagnosis only; the original scheduling order was not captured."}),
+        ("rerun", "verification", "diagnosis", {"assessment": "pass", "relation": "contests"}),
+        ("correction", "coordination", "finding", {"relation": "addresses"}),
+        ("assessment", "verification", "correction", {"assessment": "pass", "relation": "assesses"}),
+        ("merge", "outcome", "correction", {"assessment": "pass"}),
+        ("release", "coverage-gap", "assessment", {"gap_reason": "missing-source",
+            "note": "The bounded assessment does not cover the remaining release requirements."}),
+    ):
+        links[key] = scenario.invoke(requester, "objective", {"operation": "link", "objective_id": objective["id"],
+            "phase": phase, "source_type": "ledger-record", "source_id": records[key]["id"],
+            **({"related_sequence": links[related]["sequence"]} if related else {}), **extra})
+
+    def review(request_id, member_id, record, digest, prior=None, rechecks=None):
+        return {"format": "loom-review-request/v1", "request_id": request_id,
+            "mandate": {"question": "Assess only the exact synthetic " + member_id + " artifact.",
+                "dimensions": ["test correctness"], "criteria": [{"text": "Keep historical cause unproven.", "source_ref": record["id"]}],
+                "mode": "independent-recheck" if prior else "independent",
+                "inclusions": [member_id], "exclusions": ["complete issue 182 release acceptance", "original a1 execution order"]},
+            "intended_recipient": {"agent": "reviewer", "session_id": None},
+            "members": [{"member_id": member_id, "work_ref": None, "producing_attempt_refs": [],
+                "artifact_refs": [{"locator": "fixture://connected/" + member_id,
+                    "version": {"kind": "sha256", "value": digest * 64}, "content_ref": None}],
+                "prior_review_request_id": prior, "membership_source_refs": [record["id"]],
+                "gaps": [{"reason": "source-missing", "source_ref": None}]}], "rechecks": rechecks or []}
+
+    initial = review("connected-initial-" + secrets.token_hex(8), "a1-test", records["finding"], "a")
+    require(scenario.invoke(requester, "review", {"operation": "freeze", "request": initial})["status"] == "created",
+            "Installed connected fixture did not freeze the original request")
+    finding = scenario.invoke(requester, "review", {"operation": "relate", "request_id": initial["request_id"],
+        "relationship": "finding", "source_record_id": records["finding"]["id"], "member_ids": ["a1-test"]})
+    correction = scenario.invoke(requester, "review", {"operation": "relate", "request_id": initial["request_id"],
+        "relationship": "correction", "source_record_id": records["correction"]["id"], "member_ids": ["a1-test"], "supersedes": finding["id"]})
+    scoped = review("connected-scoped-" + secrets.token_hex(8), "b2-test", records["correction"], "b", initial["request_id"],
+        [{"request_id": initial["request_id"], "finding_ids": [correction["id"]]}])
+    require(scenario.invoke(requester, "review", {"operation": "freeze", "request": scoped})["status"] == "created",
+            "Installed connected fixture did not freeze the scoped recheck")
+    scenario.invoke(requester, "review", {"operation": "relate", "request_id": scoped["request_id"],
+        "relationship": "claimed-inspected", "source_record_id": records["assessment"]["id"], "member_ids": ["b2-test"]})
+    return {"action": action, "objective": objective, "records": records, "unrelated": unrelated,
+            "reviews": [initial, scoped], "requester": requester, "correction_relationship": correction["id"]}
+
+
+def assert_connected_history(discovery, connected, first_page, continuation, markdown, html, fixture) -> dict:
+    """Check the new path against independent setup receipts, without graph/DB access."""
+    originals = {item["id"]: item for item in fixture["records"].values()}
+    require(discovery.get("mode") == "discovery" and discovery.get("selection", {}).get("match") == "CEDAR_187"
+            and len(discovery.get("records", [])) == 1
+            and discovery["records"][0]["source"]["record_id"] == fixture["records"]["finding"]["id"],
+            "Connected discovery did not select the finding from its question terms")
+    seed = discovery["records"][0]
+    require(seed.get("trajectory") == connected.get("navigation", {}).get("repeat")
+            and connected.get("mode") == "trajectory" and not connected.get("highlights") and not connected.get("branches"),
+            "Connected navigation did not follow the ready focused trajectory request")
+    for view in (connected, first_page, continuation):
+        require(view.get("scope") == {"action_id": fixture["action"]["id"]} and view.get("intended_plan") is None
+                and view.get("totals", {}).get("verified_outcomes") is None and view["totals"].get("native_dispatches") is None
+                and all(item.get("work_ref") is None for item in view.get("records", [])),
+                "Connected no-Plan history invented work provenance or verified acceptance")
+        for item in view["records"]:
+            original = originals.get(item["source"]["record_id"])
+            require(original is not None and item["source"].get("sha256") == hashlib.sha256(encoded(original).encode()).hexdigest()
+                    and item.get("excerpt") == original["data"]["statement"] and item.get("meaning") == "authored"
+                    and item["source"].get("query") == {"operation": "query", "action_id": fixture["action"]["id"],
+                        "source_session_id": original["session_id"], "record_id": original["id"]},
+                    "Connected history lost an original, admitted unrelated work, or changed an authored claim")
+    require({item["source"]["record_id"] for item in connected["records"]} == set(originals),
+            "Connected history omitted an applicable authored original")
+    selected = {item["source"]["record_id"]: item["ref"] for item in connected["records"]}
+    objectives = connected.get("connections", {}).get("objectives", [])
+    require(len(objectives) == 1 and objectives[0]["objective"]["id"] == fixture["objective"]["id"]
+            and objectives[0].get("links_omitted") == 0
+            and any(item.get("source_id") == fixture["records"]["diagnosis"]["id"] and item.get("confidence") == "uncertain"
+                    for item in objectives[0].get("links", [])),
+            "Connected history lost the existing objective owner or promoted a candidate diagnosis")
+    for kind, source, target in (("addresses", "correction", "finding"), ("assesses", "assessment", "correction")):
+        require(any(edge.get("kind") == kind and edge.get("from") == selected[fixture["records"][source]["id"]]
+                    and edge.get("to") == selected[fixture["records"][target]["id"]] and edge.get("meaning") == "authored"
+                    and edge.get("provenance", {}).get("author_session") == fixture["requester"]
+                    for edge in connected.get("relationships", [])), "Connected history lost an attributed exact typed relationship")
+    reviews = {item["request"]["request_id"]: item for item in connected.get("connections", {}).get("reviews", [])}
+    require(set(reviews) == {item["request_id"] for item in fixture["reviews"]}, "Connected history lost its applicable review owners")
+    for expected in fixture["reviews"]:
+        group = reviews[expected["request_id"]]
+        require(all(group["request"].get(key) == expected[key] for key in ("mandate", "members", "rechecks"))
+                and group["request"].get("requester", {}).get("session_id") == fixture["requester"]
+                and group.get("frozen_work_membership") == [] and group.get("relationships_omitted") == 0
+                and group.get("qualification", {}).get("native_review_binding", {}).get("status") == "unknown"
+                and all(item.get("review_binding", {}).get("status") == "unknown" for item in group["relationships"]),
+                "Connected review changed exact artifact scope, exclusions, recheck target or native qualification")
+    require(any(edge.get("kind") == "requested-recheck-target"
+                and edge.get("source_record_id") == fixture["records"]["correction"]["id"]
+                and edge.get("provenance", {}).get("id") == fixture["correction_relationship"]
+                for edge in connected["relationships"]), "Recheck did not retain the exact requested correction relationship")
+    next_request = first_page.get("navigation", {}).get("next_records")
+    require(next_request is not None and continuation.get("navigation", {}).get("repeat") == next_request
+            and next_request.get("limit") == 5 and next_request.get("related") is True
+            and next_request.get("record_id") == seed["source"]["record_id"]
+            and all(next_request.get(key) == first_page["navigation"]["repeat"].get(key)
+                    for key in ("action_id", "through", "owner_boundary", "owner_version"))
+            and not any(key in next_request for key in ("match", "record_kinds", "branch_ref")),
+            "Connected continuation lost its complete scope, seed or owner boundary")
+    pages = [item["source"]["record_id"] for view in (first_page, continuation) for item in view["records"]]
+    require(len(pages) == len(set(pages)) and set(pages) == set(originals)
+            and continuation["navigation"].get("next_records") is None, "Connected continuation duplicated or omitted originals")
+    rendering = assert_history_renderings(first_page, markdown, html)
+    parsed = []
+    for text in (re.findall(r"<pre><code>([\s\S]*?)</code></pre>", html),
+                 re.findall(r"(?:^|\n)((?:    [^\n]*\n)+)", markdown)):
+        values = []
+        for block in text:
+            try:
+                values.append(json.loads(unescape(block) if block.startswith(("{", "[")) else
+                                         "\n".join(line[4:] for line in block.splitlines())))
+            except (json.JSONDecodeError, ValueError):
+                pass
+        parsed.append(values)
+    for query in (first_page["navigation"]["repeat"], next_request, *(item["trajectory"] for item in first_page["records"])):
+        require(all({"operation": "read", **query} in values for values in parsed),
+                "Connected document/dashboard changed a copyable trajectory request")
+    for expected in fixture["reviews"]:
+        for value in (expected["request_id"], *expected["mandate"]["exclusions"]):
+            require(value in markdown and value in html, "Connected document/dashboard lost review identity or exclusions")
+    return {"selected_records": len(originals), "review_requests": len(reviews), "preknown_record_ids_supplied": False,
+            "no_plan_or_workref_invented": True, "native_review_binding": "unknown", "complete_release_acceptance": "not established",
+            "source_claims_unchanged": True, "ready_continuation_preserved": True, "rendering": rendering,
+            "qualification": "actual installed registered tools; controlled scripted provider; no unfamiliar-agent comprehension claim"}
+
+
 class HistoricalScenario(ReviewScenario):
     def __init__(self, host, root):
         super().__init__(host, root)
@@ -574,7 +730,8 @@ def run(args) -> dict:
                                     and event["data"].get("tool") in ("loom_record", "loom.record")]
                         require(len(authored) == 3 and all(event["data"].get("status") == "completed" for event in authored),
                                 "Installed discovery fixture did not author its competing findings")
-                    idle(host, [parent, *children])
+                    connected_fixture = prepare_connected_history(scenario, reader)
+                    idle(host, [parent, reader, *children])
                     originals = {session: native_export(host, owned, session) for session in (parent, *children)}
                     inline = import_inline_control(host, owned, project, originals[parent])
                     imported = inline["info"]["id"]
@@ -591,7 +748,10 @@ def run(args) -> dict:
                         "dispatches": dispatches, "imported_control": imported,
                         "discovery_action": discovery_action["id"], "discovery_competing_sessions": 24,
                         "discovery_target_record_id": hidden_original["id"],
-                        "authored_support": "five claims with empty evidence_ids; no objective registration or Loom assignment/delivery"}
+                        "connected_action": connected_fixture["action"]["id"], "connected_author": reader,
+                        "connected_original_record_ids": [item["id"] for item in connected_fixture["records"].values()],
+                        "authored_support": "original five-record Action: empty evidence_ids; no objective registration or Loom assignment/delivery",
+                        "connected_support": "separate no-Plan Action; attributed objective links and requester-owned artifact review scopes; no native review execution"}
                     read_start = len(events(root))
                     scenario.invocation_plan = []
 
@@ -690,6 +850,25 @@ def run(args) -> dict:
                                                    "layered-discovery-dashboard")
                     check("layered-history-discovery-outside-overview", **discovery_receipt,
                           competing_sessions=24, rendering=assert_history_renderings(discovered, discovery_markdown, discovery_html))
+
+                    connected_discovery = scenario.read(reader, "history", {"operation": "read",
+                        "action_id": connected_fixture["action"]["id"], "match": "CEDAR_187", "record_kinds": ["concern"]},
+                        "connected-history-question-terms")
+                    require(len(connected_discovery.get("records", [])) == 1, "Connected fixture did not discover one initial finding")
+                    connected_query = {"operation": "read", **connected_discovery["records"][0]["trajectory"]}
+                    connected = scenario.read(reader, "history", connected_query, "connected-history-related-trajectory")
+                    connected_page = scenario.read(reader, "history", {**connected_query, "limit": 5}, "connected-history-first-page")
+                    require(connected_page.get("navigation", {}).get("next_records"), "Connected fixture did not expose continuation")
+                    connected_next = scenario.read(reader, "history", {"operation": "read", **connected_page["navigation"]["next_records"]},
+                                                   "connected-history-ready-continuation")
+                    connected_render_query = {"operation": "read", **connected_page["navigation"]["repeat"]}
+                    connected_markdown = scenario.read(reader, "history", {**connected_render_query, "response_format": "markdown"},
+                                                       "connected-history-document")
+                    connected_html = scenario.read(reader, "history", {**connected_render_query, "response_format": "html"},
+                                                   "connected-history-dashboard")
+                    check("connected-history-owner-relations-and-frozen-review-scope",
+                          **assert_connected_history(connected_discovery, connected, connected_page, connected_next,
+                                                     connected_markdown, connected_html, connected_fixture))
 
                     inventories = {}
                     for label, session in (("split", parent), ("inline", imported)):
