@@ -29,7 +29,7 @@ test("public plugin advertises the skill without a role, Action or eager guide i
   try {
     expect([...f.skills.keys()]).toEqual([LOOM_SKILL_ID])
     expect(f.skills.get(LOOM_SKILL_ID)).toEqual(await loomSkill())
-    expect([...f.tools.keys()].sort()).toEqual(["action", "agents", "assessment", "context", "insights", "objective", "plan", "qa", "record", "review", "trace", "trends", "tweak"])
+    expect([...f.tools.keys()].sort()).toEqual(["action", "agents", "assessment", "context", "history", "insights", "objective", "plan", "qa", "record", "review", "trace", "trends", "tweak"])
     expect((await f.invoke("action", { operation: "list" })).result.items).toEqual([])
     expect((await f.invoke("context", {})).result.selected).toBeNull()
     const event = { sessionID: "s", agent: "author", system: [] as any[], messages: [], tools: {}, options: {} }
@@ -162,7 +162,9 @@ test("human core-tool walkthrough examples use canonical collaboration and real 
   const f = await registeredLoom()
   try {
     const doc = await readFile(new URL("../docs/tools.md", import.meta.url), "utf8")
-    const inputs = [...doc.matchAll(/```json\n([\s\S]*?)\n```/g)].map(match => JSON.parse(match[1]))
+    const examples = [...doc.matchAll(/```json\n([\s\S]*?)\n```/g)].map(match => JSON.parse(match[1]))
+    expect(examples).toHaveLength(10)
+    const [actionOverview, sessionOverview, ...inputs] = examples
     expect(inputs).toHaveLength(8)
     const action = (await f.invoke("action", inputs[0])).result
     const replace = (input: unknown) => JSON.parse(JSON.stringify(input).replaceAll("ACTION_ID", action.id).replaceAll("TASK_ID", "task"))
@@ -186,6 +188,11 @@ test("human core-tool walkthrough examples use canonical collaboration and real 
     expect(history.markdown).toContain(question.id)
     expect(history.markdown).toContain(answer.id)
     expect(history.next_cursor).toBeNull()
+    const overview = (await f.invoke("history", replace(actionOverview))).result
+    expect(overview.highlights.some((item: any) => item.source.record_id === concern.id)).toBe(true)
+    const sessionView = (await f.invoke("history", { ...sessionOverview, session_id: "s" })).result
+    expect(sessionView.scope).toEqual({ session_id: "s" })
+    expect(sessionView.intent.goal).toBeNull()
     for (const input of [inputs[5], inputs[6]]) expect(input).not.toHaveProperty("attachments")
   } finally { await f.close() }
 })

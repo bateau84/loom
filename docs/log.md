@@ -4,6 +4,17 @@ type: Log
 
 # Update Log
 
+## 2026-11-26
+
+**Layered engineering history (#227):** Added a Store-owned live projection and
+the `loom_history` reader for compact Action/Session overviews, historical work
+branches, authored assessments, source references and explicit coverage. JSON,
+Markdown and the first self-contained HTML dashboard share the same model and
+scope/contributing-Session permission checks. Current intended Plans remain
+separate from historical WorkRefs. Native originals, objective/review expansion,
+frozen retrospective selections and production Evaluator authority remain
+separate work. See [the delivery boundary](learning-engineering-history.md).
+
 ## 2026-11-25
 
 **PR #251 field disclosure correction:** Exact native-source reads now omit

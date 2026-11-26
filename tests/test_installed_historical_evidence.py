@@ -1,5 +1,6 @@
 """Counterexamples for historical qualification oracles; not installed-host acceptance."""
 from copy import deepcopy
+import hashlib
 import json
 from pathlib import Path
 import sqlite3
@@ -7,7 +8,8 @@ import tempfile
 import unittest
 
 from installed_historical_evidence import (
-    assert_exact_field_envelope, assert_read_only_effects, physical_generation_oracle, synthetic_transfer,
+    assert_exact_field_envelope, assert_history_navigation, assert_history_renderings,
+    assert_read_only_effects, encoded, physical_generation_oracle, synthetic_transfer,
 )
 from test_installed_learning_stage4 import driver_plan, driver_receipts
 
@@ -118,12 +120,22 @@ class ReadOnlyEffectOracleTest(unittest.TestCase):
         for added in (
             {"type": "tool-before", "data": {"tool": "subagent"}},
             {"type": "tool-before", "data": {"tool": "loom_record", "input": {"operation": "add"}}},
+            {"type": "tool-before", "data": {"tool": "loom_history", "input": {"operation": "freeze"}}},
+            {"type": "tool-before", "data": {"tool": "loom.history", "input": {}}},
             {"type": "native-event", "data": {"type": "session.created"}},
             {"type": "native-event", "data": {"type": "session.inbox.enqueued", "data": {"item": {"type": "synthetic"}}}},
             {"type": "provider-inputs", "data": {"notices": ["unexpected resume"]}},
         ):
             with self.subTest(added=added), self.assertRaises(RuntimeError):
                 assert_read_only_effects(self.receipts() + [added], {"owner"}, driver_plan())
+
+    def test_only_history_read_is_admitted_to_the_existing_effect_oracle(self):
+        for tool in ("loom_history", "loom.history"):
+            with self.subTest(tool=tool):
+                result = assert_read_only_effects(self.receipts() + [
+                    {"type": "tool-before", "data": {"tool": tool, "input": {"operation": "read"}}},
+                ], {"owner"}, driver_plan())
+                self.assertEqual(result["evaluator_dispatches"], 0)
 
     def test_synthetic_transfer_does_not_widen_shared_host_access(self):
         for method, path, body in (
@@ -175,6 +187,83 @@ class SelectiveFieldEnvelopeOracleTest(unittest.TestCase):
         response["result"]["part"]["status"] = "completed"
         with self.assertRaisesRegex(RuntimeError, "unselected part metadata"):
             assert_exact_field_envelope(json.dumps(response), fields, "completed")
+
+
+class HistoryNavigationOracleTest(unittest.TestCase):
+    def fixture(self):
+        # These dictionaries challenge the oracle only. Product qualification
+        # must obtain actual views and originals from the installed tools.
+        original = {"id": "failure", "action_id": "action", "session_id": "child", "agent": "reviewer",
+                    "kind": "result", "created_at": "2026-11-26T00:00:00Z",
+                    "data": {"statement": "SYNTHETIC_ORIGINAL_FAILURE: unchanged failure", "evidence_ids": []}}
+        source = {"record_id": "failure", "store_id": "store", "session_id": "child",
+                  "sha256": hashlib.sha256(encoded(original).encode()).hexdigest(),
+                  "query": {"operation": "query", "action_id": "action", "source_session_id": "child", "record_id": "failure"}}
+        subject = {"source": source, "branch_ref": "branch", "excerpt": original["data"]["statement"],
+                   "meaning": "authored", "verification": "authored claim; not independently verified"}
+        overview = {"format": "loom-engineering-history/v1", "scope": {"action_id": "action"}, "store_id": "store",
+                    "intended_plan": None, "boundary": {"live": True, "observed_through": 9,
+                                                       "membership": "append-bound only; not a frozen retrospective population"},
+                    "totals": {"verified_outcomes": None, "native_dispatches": None},
+                    "highlights": [subject], "records": [], "branches": [{"ref": "branch"}],
+                    "coverage": {"gaps": [{"code": code} for code in
+                                          ("ledger-coverage-only", "native-originals-unavailable", "live-not-frozen")]}}
+        expanded = deepcopy(overview)
+        expanded.update(selected_branch={"ref": "branch"}, records=[deepcopy(subject)])
+        return overview, expanded, {"items": [{"sequence": 9, **deepcopy(original)}]}, original
+
+    def test_actual_original_and_scoped_navigation_are_required(self):
+        inputs = self.fixture()
+        result = assert_history_navigation(*inputs)
+        self.assertEqual(result["supported_reads"], 3)
+        self.assertFalse(result["preknown_child_or_record_ids_supplied"])
+        inputs[2]["items"][0]["data"]["statement"] = "ADJACENT_SUCCESS_IS_NOT_THE_FAILURE"
+        with self.assertRaisesRegex(RuntimeError, "exact original"):
+            assert_history_navigation(*inputs)
+
+    def test_scope_and_original_permission_downgrades_are_rejected(self):
+        for mutation in ("branch", "store", "source-session", "digest", "boundary", "plan"):
+            with self.subTest(mutation=mutation):
+                overview, expanded, exact, original = self.fixture()
+                if mutation == "branch":
+                    expanded["selected_branch"]["ref"] = "adjacent"
+                elif mutation == "store":
+                    expanded["store_id"] = "foreign"
+                elif mutation == "source-session":
+                    del overview["highlights"][0]["source"]["query"]["source_session_id"]
+                elif mutation == "digest":
+                    overview["highlights"][0]["source"]["sha256"] = "0" * 64
+                elif mutation == "boundary":
+                    expanded["boundary"]["observed_through"] = 10
+                else:
+                    overview["intended_plan"] = {"revision": 1}
+                with self.assertRaises(RuntimeError):
+                    assert_history_navigation(overview, expanded, exact, original)
+
+    def test_authored_success_and_missing_native_counts_cannot_be_certified(self):
+        for key, value in (("verified_outcomes", 1), ("native_dispatches", 4)):
+            with self.subTest(key=key):
+                inputs = self.fixture()
+                inputs[0]["totals"][key] = value
+                with self.assertRaisesRegex(RuntimeError, "verified facts"):
+                    assert_history_navigation(*inputs)
+
+    def renderings(self, view):
+        identity = "\n".join([view["store_id"], view["highlights"][0]["source"]["record_id"],
+                               view["highlights"][0]["source"]["sha256"], view["branches"][0]["ref"],
+                               *(gap["code"] for gap in view["coverage"]["gaps"])])
+        shared = identity + "\nnot a frozen retrospective selection\nauthored claim; not independently verified"
+        return ("# Engineering history\n" + shared,
+                "<!doctype html><meta content=\"default-src 'none'\"><details><summary>Read</summary>" + shared + "</details>")
+
+    def test_rendering_qualification_rejects_lost_sources_or_active_scripts(self):
+        view = self.fixture()[0]
+        markdown, html = self.renderings(view)
+        self.assertEqual(assert_history_renderings(view, markdown, html)["shared_record_identities"], 1)
+        for changed in (html.replace(view["highlights"][0]["source"]["sha256"], "adjacent"),
+                        html.replace("native-originals-unavailable", ""), html + "<script>fetch('/source')</script>"):
+            with self.subTest(changed=changed), self.assertRaises(RuntimeError):
+                assert_history_renderings(view, markdown, changed)
 
 
 if __name__ == "__main__":

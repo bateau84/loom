@@ -22,7 +22,8 @@ a Session can contribute to several Actions. Ordinary conversation creates none.
 | Loom | Action/Plan/context, observations and attributed history, questions/answers, bundled usage guide |
 | OpenCode | Sessions, execution, native delegation/return, skills and authority |
 
-There are five tools, no scheduler, workflow gate, dashboard, custom permission
+The [public tools](tools.md) include a shared history projection with a read-only
+HTML dashboard. There is no new HTTP server, workflow gate, custom permission
 parser or mandatory review pipeline. `.loom.yaml` maps native IDs to roles and
 optional coordination descriptions; transient guidance does not rewrite agents
 or grant permissions. General skills remain external; do not restore removed
@@ -127,7 +128,7 @@ See [installed validation](installed-host-validation.md) and
 host and SDK target. Historical 2.0.29 work is not a compatibility profile.
 Installed-host boot and installed-question qualification are separate evidence.
 
-Scheduling, dashboards, automatic parent completion, legacy import, retention and
+Scheduling, continuously connected dashboards, automatic parent completion, legacy import, retention and
 elaborate maintenance are deferred, not prerequisites. E remains partial. Draft
 status and separate integration/activation authority remain; docs/tests do not
 authorize watched-checkout/config changes, restart, paid inference or publication.
