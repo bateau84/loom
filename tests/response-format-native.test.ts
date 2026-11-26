@@ -125,6 +125,9 @@ test("explicit JSON preserves every structured record query and rejects unsuppor
       const explicit = await raw(f, "record", { ...input, response_format: "json" })
       expect(JSON.parse(explicit)).toEqual(JSON.parse(implicit))
       await expect(raw(f, "record", { ...input, response_format: "markdown" })).rejects.toThrow("markdown is only supported for full_thread")
+      // A presentation option must not relax the collaboration view's own field allowlist.
+      if (fields.view && fields.view !== "ledger")
+        await expect(raw(f, "record", { ...input, response_format: "json", kind: "result" })).rejects.toThrow(`kind is not supported by query:${fields.view}`)
     }
     const exact = JSON.parse(await raw(f, "record", { operation: "query", action_id: action.id,
       record_id: record.id, response_format: "json" }))

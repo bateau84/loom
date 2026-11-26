@@ -1207,7 +1207,9 @@ export default Plugin.define({
                   break
                 }
                 if (["complete", "reopen"].includes(String(input.operation)) || (input.operation === "query" && input.view !== undefined && input.view !== "ledger")) {
-                  result = store.collaboration.execute(actor, input, focus)
+                  // Presentation was validated above; collaboration owns only the query fields.
+                  const { response_format: _responseFormat, ...query } = input
+                  result = store.collaboration.execute(actor, input.operation === "query" ? query : input, focus)
                   break
                 }
                 if (input.operation === "query") result = store.records({ action_id: input.session_only ? undefined : focus?.action_id,
