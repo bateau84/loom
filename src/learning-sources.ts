@@ -52,6 +52,11 @@ export class LearningSources {
       ? this.learningDB.prepare("SELECT rowid AS sequence,* FROM learning_objectives WHERE id=? AND author_session=?").get(id, session)
       : this.learningDB.prepare("SELECT l.* FROM learning_objective_links l JOIN learning_objectives o ON o.id=l.objective_id WHERE l.sequence=? AND l.author_session=? AND o.author_session=?").get(id, session, session)) as Record<string, unknown> | undefined
     if (!row) return null
+    // The additive ObjectiveIndex column adds no meaning to historical links
+    // when absent. Preserve their exact pre-migration canonical source bytes,
+    // so a completed Stage 3 batch does not lose otherwise unchanged originals.
+    // Explicit typed relations remain part of a new source's identity.
+    if (kind === "objective-link" && row.relation === null) delete row.relation
     const sequence = Number(row.sequence)
     return { ref: { kind, id, session_id: session, revision: String(sequence), sha256: digest(row), required: true }, value: row, sequence }
   }
