@@ -267,10 +267,12 @@ pending planned/unplanned recheck manifests, preflight metadata allocation and
 observation-pairing consistency across expansion. Twelve contributor-denial
 counterchecks covered original authors, correction authors, objective creators
 and association authors across JSON, Markdown and HTML, with zero objective
-body hydration before denial. No material review finding remained open on the
-checked implementation hashes.
+body hydration before denial. The installed oracle additionally requires the
+exact setup relationship receipts, so empty or substituted review evidence
+cannot qualify from mandate checks alone. No material review finding remained
+open on the checked implementation and qualification scope.
 
-The assembled local gates passed: **438 core tests, 844 native tests, 297 Python
+The assembled local gates passed: **438 core tests, 844 native tests, 299 Python
 tests**, project typecheck and the production module build. The native suite
 includes the legacy complete Stage 3 batch/hash preservation regression. A
 separate registered no-Plan fixture selected seven authored originals and two

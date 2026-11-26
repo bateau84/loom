@@ -427,10 +427,15 @@ def prepare_connected_history(scenario, requester: str) -> dict:
         [{"request_id": initial["request_id"], "finding_ids": [correction["id"]]}])
     require(scenario.invoke(requester, "review", {"operation": "freeze", "request": scoped})["status"] == "created",
             "Installed connected fixture did not freeze the scoped recheck")
-    scenario.invoke(requester, "review", {"operation": "relate", "request_id": scoped["request_id"],
+    inspected = scenario.invoke(requester, "review", {"operation": "relate", "request_id": scoped["request_id"],
         "relationship": "claimed-inspected", "source_record_id": records["assessment"]["id"], "member_ids": ["b2-test"]})
+    relationships = {"finding": finding, "correction": correction, "claimed-inspected": inspected}
+    require(all(item.get("status") == "created" and isinstance(item.get("id"), str) for item in relationships.values())
+            and len({item["id"] for item in relationships.values()}) == 3,
+            "Installed connected fixture did not register three distinct evidence relationships")
     return {"action": action, "objective": objective, "records": records, "unrelated": unrelated,
-            "reviews": [initial, scoped], "requester": requester, "correction_relationship": correction["id"]}
+            "reviews": [initial, scoped], "requester": requester, "review_relationships": relationships,
+            "correction_relationship": correction["id"]}
 
 
 def assert_connected_history(discovery, connected, first_page, continuation, markdown, html, fixture) -> dict:
@@ -472,14 +477,49 @@ def assert_connected_history(discovery, connected, first_page, continuation, mar
                     for edge in connected.get("relationships", [])), "Connected history lost an attributed exact typed relationship")
     reviews = {item["request"]["request_id"]: item for item in connected.get("connections", {}).get("reviews", [])}
     require(set(reviews) == {item["request_id"] for item in fixture["reviews"]}, "Connected history lost its applicable review owners")
+    expected_basis = {}
+    initial, scoped = fixture["reviews"]
+    for kind, source_key, request in (("finding", "finding", initial), ("correction", "correction", initial),
+                                      ("claimed-inspected", "assessment", scoped)):
+        source, receipt = fixture["records"][source_key], fixture["review_relationships"][kind]
+        # All these setup writes use the same native requester and agent. Their
+        # actual authored source receipts independently identify that producer.
+        expected = {"format": "loom-review-relationship/v1", "id": receipt["id"], "request_id": request["request_id"],
+            "relationship": kind, "source_record_id": source["id"], "member_ids": [request["members"][0]["member_id"]],
+            "author": {"session_id": fixture["requester"], "agent": source["agent"]},
+            "source_producer": {"session_id": source["session_id"], "agent": source["agent"]},
+            "relationship_attribution": {"status": "unknown", "reason": "authored-association-unverified"},
+            "review_binding": {"status": "unknown", "reason": "unsupported-host-boundary"}}
+        if kind == "correction":
+            expected["supersedes"] = fixture["review_relationships"]["finding"]["id"]
+        if "verdict" in source["data"]:
+            expected.update(declared_verdict=source["data"]["verdict"], verdict_scope="authored; not proof of whole-request coverage")
+        expected_basis.setdefault(request["request_id"], {})[receipt["id"]] = expected
     for expected in fixture["reviews"]:
         group = reviews[expected["request_id"]]
         require(all(group["request"].get(key) == expected[key] for key in ("mandate", "members", "rechecks"))
                 and group["request"].get("requester", {}).get("session_id") == fixture["requester"]
                 and group.get("frozen_work_membership") == [] and group.get("relationships_omitted") == 0
-                and group.get("qualification", {}).get("native_review_binding", {}).get("status") == "unknown"
-                and all(item.get("review_binding", {}).get("status") == "unknown" for item in group["relationships"]),
+                and group.get("qualification", {}).get("native_review_binding", {}).get("status") == "unknown",
                 "Connected review changed exact artifact scope, exclusions, recheck target or native qualification")
+    for view in (connected, first_page, continuation):
+        included = {item["source"]["record_id"] for item in view["records"]}
+        groups = {item["request"]["request_id"]: item for item in view.get("connections", {}).get("reviews", [])}
+        for request_id, basis in expected_basis.items():
+            expected = {key: item for key, item in basis.items() if item["source_record_id"] in included}
+            group = groups.get(request_id)
+            require(not expected or group is not None, "Connected review omitted an applicable evidence owner")
+            if group is None:
+                continue
+            actual = group.get("relationships")
+            require(isinstance(actual, list) and all(isinstance(item, dict) and isinstance(item.get("id"), str) for item in actual)
+                    and len(actual) == len(expected) and {item["id"] for item in actual} == set(expected),
+                    "Connected review omitted, duplicated or substituted its registered evidence relationships")
+            for item in actual:
+                require(type(item.get("sequence")) is int and item["sequence"] > 0
+                        and item.get("source_availability") == "record-available"
+                        and {key: value for key, value in item.items() if key not in ("sequence", "source_availability")} == expected[item["id"]],
+                        "Connected review changed its exact evidence basis, attribution or scope")
     require(any(edge.get("kind") == "requested-recheck-target"
                 and edge.get("source_record_id") == fixture["records"]["correction"]["id"]
                 and edge.get("provenance", {}).get("id") == fixture["correction_relationship"]
@@ -510,10 +550,21 @@ def assert_connected_history(discovery, connected, first_page, continuation, mar
     for query in (first_page["navigation"]["repeat"], next_request, *(item["trajectory"] for item in first_page["records"])):
         require(all({"operation": "read", **query} in values for values in parsed),
                 "Connected document/dashboard changed a copyable trajectory request")
+    def relationship_objects(value):
+        if isinstance(value, dict):
+            return ([value] if value.get("format") == "loom-review-relationship/v1" else
+                    [item for child in value.values() for item in relationship_objects(child)])
+        return [item for child in value for item in relationship_objects(child)] if isinstance(value, list) else []
+    rendered_basis = [relationship_objects(values) for values in parsed]
+    for group in first_page["connections"]["reviews"]:
+        for item in group["relationships"]:
+            require(all(item in values for values in rendered_basis),
+                    "Connected document/dashboard omitted or changed its registered review evidence basis")
     for expected in fixture["reviews"]:
         for value in (expected["request_id"], *expected["mandate"]["exclusions"]):
             require(value in markdown and value in html, "Connected document/dashboard lost review identity or exclusions")
-    return {"selected_records": len(originals), "review_requests": len(reviews), "preknown_record_ids_supplied": False,
+    return {"selected_records": len(originals), "review_requests": len(reviews), "review_relationships": sum(map(len, expected_basis.values())),
+            "preknown_record_ids_supplied": False,
             "no_plan_or_workref_invented": True, "native_review_binding": "unknown", "complete_release_acceptance": "not established",
             "source_claims_unchanged": True, "ready_continuation_preserved": True, "rendering": rendering,
             "qualification": "actual installed registered tools; controlled scripted provider; no unfamiliar-agent comprehension claim"}
