@@ -13,7 +13,7 @@ export type EngineeringHistorySelection = {
 export type EngineeringHistoryQuery = EngineeringHistorySelection & {
   action_id?: string; session_id?: string; objective_id?: string; branch_ref?: string; record_id?: string; related?: boolean;
   through?: number; after?: number; limit?: number; branch_offset?: number;
-  owner_boundary?: EngineeringHistoryOwnerBoundary; owner_version?: string;
+  owner_boundary?: EngineeringHistoryOwnerBoundary; owner_version?: string; connection_cursor?: string;
 }
 export type EngineeringHistoryCounts = {
   records: number; sessions: number; observations: number; concerns: number;
@@ -72,7 +72,7 @@ export type EngineeringHistoryRelationship = {
 }
 export type EngineeringHistoryView = {
   format: "loom-engineering-history/v1";
-  mode: "overview" | "discovery" | "branch" | "record" | "trajectory"; selection: EngineeringHistorySelection;
+  mode: "overview" | "discovery" | "branch" | "record" | "trajectory" | "connections"; selection: EngineeringHistorySelection;
   scope: EngineeringHistoryScope; store_id: string;
   boundary: { live: true; observed_through: number; current_through: number; membership: "append-bound only; not a frozen retrospective population";
     owners?: EngineeringHistoryOwnerBoundary; owner_version?: string };
@@ -85,7 +85,8 @@ export type EngineeringHistoryView = {
   ancestors: EngineeringHistoryBranch[]; related_branches: EngineeringHistoryBranch[];
   highlights: EngineeringHistoryRecord[]; records: EngineeringHistoryRecord[]; relationships: EngineeringHistoryRelationship[];
   connections: EngineeringHistoryConnections;
-  navigation: { repeat: EngineeringHistoryQuery; next_records: EngineeringHistoryQuery | null; next_branches: EngineeringHistoryQuery | null };
+  navigation: { repeat: EngineeringHistoryQuery; next_records: EngineeringHistoryQuery | null; next_branches: EngineeringHistoryQuery | null;
+    next_connections: EngineeringHistoryQuery | null; next_relationships: EngineeringHistoryQuery | null };
   coverage: {
     ledger: "complete-within-boundary"; page_limit: number; branch_count: number; branches_returned: number; branches_omitted: number;
     total_branch_count: number; matching_records: number; matching_branches: number; related_branches_omitted: number;
@@ -108,18 +109,110 @@ type BranchNode = { key: string; parent: string | null; children: Set<string>; r
   kind: EngineeringHistoryBranch["kind"]; meaning: EngineeringHistoryBranch["meaning"]; title: string;
   work_ref: WorkRef | null; node_id: string | null; session_id: string | null; historical_node: PlanNode | null;
   historical_scope: EngineeringHistoryBranch["historical_scope"]; gaps: EngineeringHistoryGap[]; counts?: EngineeringHistoryCounts }
+type LedgerRelationshipFields = { id: string; kind: RecordKind; action_id: string | null; session_id: string;
+  node_id?: unknown; phase?: unknown; attribution?: unknown; evidence_ids?: unknown; start_id?: unknown; question_id?: unknown; previous_report_id?: unknown;
+  assignment_id?: unknown; assignment_id_type?: unknown; primary_session_id?: unknown; worker_session_id?: unknown; work_ref?: unknown }
+type LedgerReference = { id: string; kind: string; meaning: "authored" | "observed"; qualification: string }
+const assignmentFields = `CASE WHEN json_type(data,'$.data.assignment_id')='text' AND length(json_extract(data,'$.data.assignment_id'))<=120
+    THEN json_extract(data,'$.data.assignment_id') END AS assignment_id,
+  json_type(data,'$.data.assignment_id') AS assignment_id_type,
+  CASE WHEN json_type(data,'$.node_id')='text' AND length(json_extract(data,'$.node_id'))<=120
+    THEN json_extract(data,'$.node_id') END AS node_id,
+  CASE WHEN json_type(data,'$.data.primary_session_id')='text' AND length(json_extract(data,'$.data.primary_session_id'))<=120
+    THEN json_extract(data,'$.data.primary_session_id') END AS primary_session_id,
+  CASE WHEN json_type(data,'$.data.worker_session_id')='text' AND length(json_extract(data,'$.data.worker_session_id'))<=120
+    THEN json_extract(data,'$.data.worker_session_id') END AS worker_session_id,
+  CASE WHEN json_type(data,'$.data.work_ref')='object' AND octet_length(json_extract(data,'$.data.work_ref'))<=1024
+    THEN json_extract(data,'$.data.work_ref') END AS work_ref`
+const relationshipFields = `id,kind,action_id,session_id,
+  json_extract(data,'$.data.phase') AS phase,json_extract(data,'$.data.attribution') AS attribution,
+  json_extract(data,'$.data.evidence_ids') AS evidence_ids,json_extract(data,'$.data.start_id') AS start_id,
+  json_extract(data,'$.data.question_id') AS question_id,json_extract(data,'$.data.previous_report_id') AS previous_report_id,
+  ${assignmentFields}`
+const boundedRelationshipIdentity = () => `typeof(id)='text' AND length(id) BETWEEN 1 AND 120
+  AND typeof(session_id)='text' AND length(session_id) BETWEEN 1 AND 120
+  AND (action_id IS NULL OR typeof(action_id)='text' AND length(action_id) BETWEEN 1 AND 120)
+  AND kind IN (${RECORD_KINDS.map(kind => `'${kind}'`).join(",")})`
 const hash = (text: string) => createHash("sha256").update(text).digest("hex")
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v)
 const integer = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0
 const small = (v: unknown, max = 200): string | null => typeof v === "string" && v.length <= max ? v : null
 const digest = (v: unknown): string | null => typeof v === "string" && /^[a-f0-9]{64}$/.test(v) ? v : null
 const gap = (code: string, detail: string): EngineeringHistoryGap => ({ code, detail })
+
+function matchesHistoricalAssignment(assignment: LedgerRelationshipFields | undefined, worker: LedgerRelationshipFields): boolean {
+  if (assignment?.kind !== "assignment" || assignment.id === worker.id || assignment.action_id !== worker.action_id
+    || typeof assignment.assignment_id !== "string" || worker.assignment_id_type !== null && worker.assignment_id !== assignment.assignment_id
+    || assignment.primary_session_id !== assignment.session_id || assignment.worker_session_id !== worker.session_id
+    || assignment.primary_session_id === assignment.worker_session_id
+    || typeof assignment.work_ref !== "string" || typeof worker.work_ref !== "string") return false
+  try {
+    const requested = checkedRef(JSON.parse(assignment.work_ref)), reported = checkedRef(JSON.parse(worker.work_ref))
+    return requested.action_id === assignment.action_id && requested.node_id === assignment.node_id
+      && reported.action_id === worker.action_id && reported.node_id === worker.node_id && canonical(requested) === canonical(reported)
+  } catch { return false } // Malformed legacy associations cannot manufacture an edge.
+}
+
+/** Resolve only the supported references actually recorded by this source. The
+ * caller supplies its authorized target population; failure never exposes a
+ * target identity. Both objective closure and ordinary/trajectory projection
+ * use these same kind, pairing and historical assignment checks. */
+function ledgerReferences(source: LedgerRelationshipFields, target: (id: string, historicalWork?: boolean) => LedgerRelationshipFields | undefined,
+  assignment: () => LedgerRelationshipFields | undefined): { resolved: LedgerReference[]; unresolved: number; omitted: number } {
+  const candidates: Array<{ id: string; kind: string }> = [], resolved: LedgerReference[] = []
+  let unresolved = 0, omitted = 0
+  if (typeof source.evidence_ids === "string") {
+    const ids: unknown = JSON.parse(source.evidence_ids)
+    if (Array.isArray(ids)) {
+      for (const id of ids.slice(0, 100)) if (typeof id === "string") candidates.push({ id, kind: "cites-observation" })
+      omitted = ids.slice(100).filter(id => typeof id === "string").length
+    }
+  }
+  if (source.kind === "observation" && typeof source.start_id === "string") candidates.push({ id: source.start_id,
+    kind: source.phase === "finished" && source.attribution === "captured-at-start" ? "paired-observation" : "references-observation-start" })
+  if (source.kind === "answer" && typeof source.question_id === "string") candidates.push({ id: source.question_id, kind: "answers-question" })
+  if (source.kind === "reopen" && typeof source.previous_report_id === "string") candidates.push({ id: source.previous_report_id, kind: "previous-progress-report" })
+  for (const candidate of candidates) {
+    const original = target(candidate.id)
+    const kind = candidate.kind === "previous-progress-report"
+      ? original?.kind === "completion" ? "reopens-completion" : original?.kind === "reopen" ? "follows-reopen" : null : candidate.kind
+    const targetKind = kind === "answers-question" ? "question" : kind === "reopens-completion" ? "completion" : kind === "follows-reopen" ? "reopen" : "observation"
+    const start = kind === "paired-observation" || kind === "references-observation-start"
+    const sameSourceScope = original && (source.action_id ? original.action_id === source.action_id
+      : original.action_id === null && original.session_id === source.session_id)
+    if (!original || !sameSourceScope || original.id === source.id || kind === null || original.kind !== targetKind || start && original.phase !== "started") { unresolved++; continue }
+    resolved.push({ id: original.id, kind, meaning: start ? "observed" : "authored",
+      qualification: kind === "cites-observation" ? "An authored evidence citation, not proof of correctness, correction or verification."
+        : kind === "paired-observation" ? "The observer recorded this start/finish pair; it does not establish objective membership or outcome."
+          : kind === "references-observation-start" ? "The observation names this start, but captured-at-start finish pairing is unestablished. No native attempt provenance is inferred."
+            : kind === "reopens-completion" ? "An authored reopening of the referenced completion report; it is not independently verified failure, resolution or a new historical WorkRef."
+              : kind === "follows-reopen" ? "An authored follow-up to the referenced reopening; it does not establish a new completion, resolution or independently verified outcome."
+                : "An authored answer to a stored question; response is not resolution or approval." })
+  }
+  if ((source.kind === "completion" || source.kind === "question") && typeof source.assignment_id === "string") {
+    const original = assignment()
+    if (matchesHistoricalAssignment(original, source) && original) resolved.push({ id: original.id,
+      kind: source.kind === "completion" ? "historical-assignment-completion" : "historical-assignment-question", meaning: "authored",
+      qualification: source.kind === "completion"
+        ? "This historical completion explicitly names the saved assignment and its exact WorkRef, from the recorded worker Session. It is an authored completion, not native dispatch provenance or verified success."
+        : "This historical question explicitly names the saved assignment and its exact WorkRef, from the recorded worker Session. It is an authored association, not native dispatch provenance, approval or resolution." })
+    else unresolved++
+  }
+  if (source.kind === "assignment" && typeof source.question_id === "string") {
+    const question = target(source.question_id, true), original = typeof source.assignment_id === "string" ? assignment() : undefined
+    if (original?.id === source.id && question?.kind === "question" && question.assignment_id_type === null && matchesHistoricalAssignment(source, question))
+      resolved.push({ id: question.id, kind: "historical-assignment-question", meaning: "authored",
+        qualification: "This historical assignment explicitly names the recorded worker question and its exact WorkRef. It is requested work association, not native dispatch provenance, approval or resolution." })
+    else unresolved++
+  }
+  return { resolved, unresolved, omitted }
+}
 const selectionFields = ["match", "record_kinds", "verdict", "source_session_id", "node_id", "plan_revision", "has_gaps"] as const
 const selectedFilters = (query: EngineeringHistoryQuery): EngineeringHistorySelection => Object.fromEntries(selectionFields.flatMap(name =>
   query[name] === undefined ? [] : [[name, name === "record_kinds" ? RECORD_KINDS.filter(kind => query.record_kinds!.includes(kind)) : query[name]]]))
 
 export function engineeringHistoryScope(query: EngineeringHistoryQuery): EngineeringHistoryScope {
-  if (!object(query) || Object.keys(query).some(k => !["action_id", "session_id", "objective_id", "branch_ref", "record_id", "related", "through", "after", "limit", "branch_offset", "owner_boundary", "owner_version", ...selectionFields].includes(k)))
+  if (!object(query) || Object.keys(query).some(k => !["action_id", "session_id", "objective_id", "branch_ref", "record_id", "related", "through", "after", "limit", "branch_offset", "owner_boundary", "owner_version", "connection_cursor", ...selectionFields].includes(k)))
     throw new Error("Unsupported engineering history query")
   if ([query.action_id, query.session_id, query.objective_id].filter(value => value !== undefined).length !== 1) throw new Error("History needs exactly one explicit Action, Session or objective")
   for (const name of ["through", "after"] as const) if (query[name] !== undefined && !integer(query[name])) throw new Error(`Invalid history ${name}`)
@@ -151,6 +244,9 @@ export function engineeringHistoryScope(query: EngineeringHistoryQuery): Enginee
     if (query.through === undefined) throw new Error("Owner boundaries require the ledger through boundary")
   }
   if (query.owner_version !== undefined && (!digest(query.owner_version) || query.owner_boundary === undefined)) throw new Error("Invalid history owner version")
+  if (query.connection_cursor !== undefined && (typeof query.connection_cursor !== "string" || query.connection_cursor.length > 2048
+    || !/^[A-Za-z0-9_-]+$/.test(query.connection_cursor) || query.through === undefined))
+    throw new Error("Connection continuation requires a valid cursor and the original through boundary")
   return query.action_id !== undefined ? { action_id: uid(query.action_id, "action_id") }
     : query.session_id !== undefined ? { session_id: uid(query.session_id, "session_id") } : { objective_id: uid(query.objective_id, "objective_id") }
 }
@@ -217,48 +313,61 @@ export class EngineeringHistory {
   constructor(private store: Store, private db: SQL) {}
 
   /** Metadata-only original-evidence closure for an objective seed. Objective
-   * membership stays authored; these additional rows are explicitly cited source
-   * evidence, not newly inferred members. No reverse citation fan-out is used. */
+   * membership stays authored; additional rows are explicitly referenced source
+   * evidence or assignments, not inferred members. No reverse fan-out is used. */
   objectiveEvidenceSources(seedIDs: string[], through: number): string[] {
     if (!integer(through) || seedIDs.length > 10000) throw new ProcessingLimitError("Objective evidence scope exceeds its bounded read")
-    type EvidenceRow = { id: string; kind: string; action_id: string | null; session_id: string;
-      evidence_ids: unknown; start_id: unknown; question_id: unknown; previous_report_id: unknown }
     const included = new Set(seedIDs.map(id => uid(id))), queue = [...included]
     let sourceBytes = 0
     for (let cursor = 0; cursor < queue.length; cursor++) {
-      const size = this.db.prepare("SELECT octet_length(data) AS bytes FROM ledger WHERE id=? AND seq<=?")
-        .get(queue[cursor], through) as { bytes: number } | undefined
-      if (!size || !integer(size.bytes) || size.bytes > PROCESSING_LIMITS.recordChars * 3)
+      const size = this.db.prepare(`SELECT octet_length(data) AS bytes,${boundedRelationshipIdentity()} AS identity_valid
+        FROM ledger WHERE id=? AND seq<=?`)
+        .get(queue[cursor], through) as { bytes: number; identity_valid: number } | undefined
+      if (!size || size.identity_valid !== 1 || !integer(size.bytes) || size.bytes > PROCESSING_LIMITS.recordChars * 3)
         throw new Error("Objective original evidence unavailable")
       sourceBytes += size.bytes
       if (sourceBytes > ENGINEERING_HISTORY_LIMITS.storedBytes) throw new ProcessingLimitError("Objective evidence exceeds its bounded source bytes")
-      const source = this.db.prepare(`SELECT id,kind,action_id,session_id,
-        json_extract(data,'$.data.evidence_ids') AS evidence_ids,json_extract(data,'$.data.start_id') AS start_id,
-        json_extract(data,'$.data.question_id') AS question_id,json_extract(data,'$.data.previous_report_id') AS previous_report_id
+      const source = this.db.prepare(`SELECT ${relationshipFields}
         FROM ledger WHERE id=? AND seq<=? AND octet_length(data)<=393216 AND json_valid(data)`)
-        .get(queue[cursor], through) as EvidenceRow | undefined
+        .get(queue[cursor], through) as LedgerRelationshipFields | undefined
       if (!source) throw new Error("Objective original evidence unavailable")
-      const references: Array<{ id: string; kinds: string[] }> = []
-      if (typeof source.evidence_ids === "string") {
-        const ids: unknown = JSON.parse(source.evidence_ids)
-        if (!Array.isArray(ids) || ids.length > 100) throw new Error("Objective evidence references unavailable")
-        for (const id of ids) if (typeof id === "string") references.push({ id, kinds: ["observation"] })
+      const sourceScope = scopeSQL(source.action_id ? { action_id: source.action_id } : { session_id: source.session_id })
+      const target = (id: string, historicalWork = false): LedgerRelationshipFields | undefined => {
+        const row = this.db.prepare(`SELECT id,kind,action_id,session_id,${historicalWork ? `${assignmentFields},` : ""}
+          CASE WHEN json_type(data,'$.data.phase')='text' AND length(json_extract(data,'$.data.phase'))<=64
+            THEN json_extract(data,'$.data.phase') END AS phase FROM ledger WHERE ${sourceScope.where}
+            ${source.action_id ? "" : "AND action_id IS NULL"} AND id=? AND seq<=?
+            AND ${boundedRelationshipIdentity()} AND octet_length(data)<=393216 AND json_valid(data)`)
+          .get(sourceScope.id, id, through) as LedgerRelationshipFields | undefined
+        return row
       }
-      if (source.kind === "observation" && typeof source.start_id === "string") references.push({ id: source.start_id, kinds: ["observation"] })
-      if (source.kind === "answer" && typeof source.question_id === "string") references.push({ id: source.question_id, kinds: ["question"] })
-      if (source.kind === "reopen" && typeof source.previous_report_id === "string") references.push({ id: source.previous_report_id, kinds: ["completion", "reopen"] })
-      for (const reference of references) {
+      const references = ledgerReferences(source, target, () => {
+        const id = this.assignmentOriginalID(source, through)
+        if (!id || !target(id)) return undefined
+        return this.db.prepare(`SELECT id,kind,action_id,session_id,${assignmentFields}
+          FROM ledger WHERE id=? AND seq<=? AND octet_length(data)<=393216 AND json_valid(data)`)
+          .get(id, through) as LedgerRelationshipFields | undefined
+      })
+      if (references.omitted) throw new Error("Objective evidence references unavailable")
+      for (const reference of references.resolved) {
         if (included.has(reference.id)) continue
-        const target = this.db.prepare("SELECT id,kind,action_id,session_id FROM ledger WHERE id=? AND seq<=?")
-          .get(reference.id, through) as Pick<EvidenceRow, "id" | "kind" | "action_id" | "session_id"> | undefined
-        if (!target || !reference.kinds.includes(target.kind)
-          || (source.action_id ? target.action_id !== source.action_id : target.session_id !== source.session_id)) continue
-        uid(target.id); uid(target.session_id)
+        uid(reference.id)
         if (included.size >= 10000) throw new ProcessingLimitError("Objective evidence scope exceeds 10000 records")
-        included.add(target.id); queue.push(target.id)
+        included.add(reference.id); queue.push(reference.id)
       }
     }
     return [...included].sort()
+  }
+
+  /** Check uniqueness in the source's original Action/Session, never just the
+   * objective subset: an excluded duplicate must not manufacture identity. */
+  private assignmentOriginalID(source: LedgerRelationshipFields, through: number): string | undefined {
+    const scope = scopeSQL(source.action_id ? { action_id: source.action_id } : { session_id: source.session_id })
+    const rows = this.db.prepare(`SELECT CASE WHEN typeof(id)='text' AND length(id) BETWEEN 1 AND 120 THEN id END AS id
+      FROM ledger WHERE ${scope.where} AND seq<=? AND kind='assignment'
+      AND json_type(data,'$.data.assignment_id')='text' AND json_extract(data,'$.data.assignment_id')=? LIMIT 2`)
+      .all(scope.id, through, source.assignment_id) as { id: string | null }[]
+    return rows.length === 1 ? rows[0]!.id ?? undefined : undefined
   }
 
   /** Metadata-only authorization preflight. No body hydration or returned counts.
@@ -573,6 +682,7 @@ export class EngineeringHistory {
 
   read(query: EngineeringHistoryQuery, owners?: EngineeringHistoryOwners): EngineeringHistoryView {
     const scope = engineeringHistoryScope(query), sql = scopeSQL(scope, owners?.record_ids ?? owners?.objectives?.ledger_record_ids), limit = query.limit ?? ENGINEERING_HISTORY_LIMITS.branches
+    const connectionPage = query.connection_cursor !== undefined
     if ("objective_id" in scope && !owners?.objectives) throw new Error("Objective history needs its authorized source owner")
     if (query.owner_boundary && !owners) throw new Error("History owner boundaries require the original source owners")
     if (query.owner_version && query.owner_version !== owners?.version) throw new Error("History relationship sources changed; restart the read")
@@ -580,7 +690,7 @@ export class EngineeringHistory {
     const selectedKey = query.branch_ref === undefined ? undefined : this.branchKey(scope, query.branch_ref)
     this.db.exec("BEGIN")
     try {
-      const overview = !trajectory && query.branch_ref === undefined && query.record_id === undefined
+      const overview = !connectionPage && !trajectory && query.branch_ref === undefined && query.record_id === undefined
         && !selectionFields.some(name => query[name] !== undefined)
       // The intent read hydrates one Action. Only the overview needs today's
       // Plan; Store.plan also reads that Action. Reserve all of those bytes
@@ -616,8 +726,9 @@ export class EngineeringHistory {
         verdict,phase,status,attribution,capture_gap,scope_status,message_id,landmark_title,CASE WHEN ${filter.where} THEN 1 ELSE 0 END AS matched
         FROM metadata ORDER BY seq`).all(sql.id, through, ...filter.args) as Metadata[]
       const tree = this.tree(scope, rows, definitionBytes), available = new Map(rows.map(row => [row.id, row]))
-      const graph = new EngineeringConnections(this.store.reviews.storeID, scope, owners, available)
-      this.legacyConnections(graph, sql, through, available)
+      const graph = new EngineeringConnections(this.store.reviews.storeID, scope, owners,
+        new Map(rows.map(row => [row.id, { id: row.id, seq: row.seq, work_ref: tree.get(row.group_key)?.work_ref ?? null }])))
+      this.legacyConnections(graph, scope, sql, through, available)
       const exact = query.record_id ? available.get(query.record_id) : undefined
       if (query.record_id && (!exact || !exact.matched)) throw new Error("History record is unavailable in the selected source scope and boundary")
       const connected = trajectory ? graph.reachable(query.record_id, "objective_id" in scope ? scope.objective_id : undefined) : null
@@ -628,7 +739,7 @@ export class EngineeringHistory {
       const candidates = trajectory ? [] : this.ranked(filtering ? [...matchingKeys].map(key => tree.get(key)!)
         : selectedNode ? [...selectedNode.children].map(key => tree.get(key)!) : [...tree.values()].filter(node => node.parent === null))
       const branchOffset = query.branch_offset ?? 0
-      const branches = candidates.slice(branchOffset, branchOffset + limit).map(node => this.branch(scope, node, through, limit))
+      const branches = connectionPage ? [] : candidates.slice(branchOffset, branchOffset + limit).map(node => this.branch(scope, node, through, limit))
       const ancestors: EngineeringHistoryBranch[] = []
       let parent = selectedNode?.parent
       while (parent) { const node = tree.get(parent)!; ancestors.unshift(this.branch(scope, node, through, limit)); parent = node.parent }
@@ -659,7 +770,7 @@ export class EngineeringHistory {
       }
       const highRows = [...new Map([...laneRows.values()].flat().map(row => [row.id, row])).values()].sort((a, b) => a.seq - b.seq)
         .slice(0, ENGINEERING_HISTORY_LIMITS.highlights)
-      const highlights = this.project(scope, trajectory ? [] : highRows, through, available, limit)
+      const highlights = this.project(scope, trajectory || connectionPage ? [] : highRows, through, available, limit)
       let recordRows: Metadata[] = [], next_after: number | null = null
       if (exact && !trajectory) recordRows = [exact]
       else if (trajectory || selectedNode || filtering) {
@@ -669,8 +780,9 @@ export class EngineeringHistory {
       }
       // One canonical projected object per source identity. A record displayed in
       // both the highlight and detail lanes must carry the same qualifications.
+      const selectedIDs = new Set([...(trajectory ? [] : highRows), ...recordRows].map(row => row.id))
       const included = new Map(highlights.map(record => [record.source.record_id, record]))
-      const records = this.project(scope, recordRows, through, available, limit).map(record => {
+      const records = this.project(scope, connectionPage ? [] : recordRows, through, available, limit).map(record => {
         const existing = included.get(record.source.record_id)
         if (existing) return existing
         included.set(record.source.record_id, record)
@@ -689,40 +801,45 @@ export class EngineeringHistory {
         Object.assign(record.trajectory, ownerScope)
       }
       for (const branch of [...branches, ...ancestors, ...related_branches, ...(selected_branch ? [selected_branch] : [])]) Object.assign(branch.expand, ownerScope)
-      const connections = graph.project(new Set(included.keys()), limit, { ...scope, through, limit, ...ownerScope })
-      const relationships = trajectory ? graph.projectRelationships(new Set(included.keys()), connections, limit * 6)
-        : [...this.relationships(scope, through, [...included.values()], ENGINEERING_HISTORY_LIMITS.relationships, owners?.record_ids ?? owners?.objectives?.ledger_record_ids),
-          ...graph.projectRelationships(new Set(included.keys()), connections, limit * 4, true)]
-      const repeat: EngineeringHistoryQuery = { ...query, ...scope, through, limit, ...ownerScope }
+      const repeat: EngineeringHistoryQuery = { ...query, ...selection, ...scope, through, limit, ...ownerScope }
+      const { connections, relationships, next_connections, next_relationships } = graph.page(selectedIDs, limit, repeat,
+        trajectory ? null : ENGINEERING_HISTORY_LIMITS.relationships,
+        "action_id" in scope && !trajectory && !filtering && query.record_id === undefined && query.branch_ref === undefined)
+      for (const [id, record] of included) record.gaps.push(...graph.recordGaps(id, relationships))
       const returned = included.size
       const view: EngineeringHistoryView = {
-        format: "loom-engineering-history/v1", mode: trajectory ? "trajectory" : query.record_id ? "record" : filtering ? "discovery" : selectedNode ? "branch" : "overview", selection,
+        format: "loom-engineering-history/v1", mode: connectionPage ? "connections" : trajectory ? "trajectory" : query.record_id ? "record" : filtering ? "discovery" : selectedNode ? "branch" : "overview", selection,
         scope, store_id: this.store.reviews.storeID,
         boundary: { live: true, observed_through: through, current_through: current.sequence, membership: "append-bound only; not a frozen retrospective population",
           ...(owners ? { owners: owners.boundary, owner_version: owners.version } : {}) },
-        intent: { title: action?.title ?? ("objective_id" in scope ? owners?.objectives?.objectives.find(item => item.id === scope.objective_id)?.label ?? "Authored objective" : `Session ${"session_id" in scope ? scope.session_id : ""}`), goal: trajectory ? null : action?.goal ?? null,
+        intent: { title: action?.title ?? ("objective_id" in scope ? owners?.objectives?.objectives.find(item => item.id === scope.objective_id)?.label ?? "Authored objective" : `Session ${"session_id" in scope ? scope.session_id : ""}`), goal: trajectory || connectionPage ? null : action?.goal ?? null,
           meaning: action ? "current-authored-action" : "objective_id" in scope ? "authored-objective" : "session-scope", action_revision: action?.revision ?? null },
-        intended_plan: !selectedNode && !filtering && plan && plan.revision > 0 ? { revision: plan.revision, nodes: plan.nodes.slice(0, ENGINEERING_HISTORY_LIMITS.planNodes).map(compactNode),
+        intended_plan: !connectionPage && !selectedNode && !filtering && plan && plan.revision > 0 ? { revision: plan.revision, nodes: plan.nodes.slice(0, ENGINEERING_HISTORY_LIMITS.planNodes).map(compactNode),
           nodes_total: plan.nodes.length, nodes_omitted: Math.max(0, plan.nodes.length - ENGINEERING_HISTORY_LIMITS.planNodes), projection: "identity-and-title",
           read: { tool: "loom_plan", query: { operation: "read", action_id: action!.id, revision: plan.revision } },
           meaning: "current-intended-structure; not historical execution membership" } : null,
-        totals: countRows(trajectory ? matching : rows), branches, selected_branch, ancestors, related_branches, highlights, records, relationships, connections,
-        navigation: { repeat, next_records: next_after === null ? null : { ...repeat, after: next_after },
-          next_branches: branchOffset + branches.length < candidates.length ? { ...repeat, branch_offset: branchOffset + branches.length } : null },
-        coverage: { ledger: "complete-within-boundary", page_limit: limit, branch_count: candidates.length, total_branch_count: tree.size,
-          matching_records: matching.length, matching_branches: matchingKeys.size, related_branches_omitted: Math.max(0, relatedNodes.length - related_branches.length),
-          branches_returned: branches.length, branches_omitted: candidates.length - branches.length,
-          records_returned: returned, records_omitted: Math.max(0, matching.length - returned), next_after,
-          next_branch_offset: branchOffset + branches.length < candidates.length ? branchOffset + branches.length : null,
-          gaps: [gap("ledger-coverage-only", trajectory ? "Counts describe the selected connected sources. Explicit citations reach original evidence without making it authored objective membership. Unrecorded native activity and complete objective coverage remain unknown."
+        totals: countRows(connectionPage ? rows.filter(row => selectedIDs.has(row.id)) : trajectory ? matching : rows), branches,
+        selected_branch: connectionPage ? null : selected_branch, ancestors: connectionPage ? [] : ancestors,
+        related_branches: connectionPage ? [] : related_branches, highlights, records, relationships, connections,
+        navigation: { repeat, next_records: connectionPage || next_after === null ? null : { ...repeat, after: next_after },
+          next_branches: !connectionPage && branchOffset + branches.length < candidates.length ? { ...repeat, branch_offset: branchOffset + branches.length } : null,
+          next_connections, next_relationships },
+        coverage: { ledger: "complete-within-boundary", page_limit: limit, branch_count: connectionPage ? 0 : candidates.length, total_branch_count: connectionPage ? 0 : tree.size,
+          matching_records: connectionPage ? selectedIDs.size : matching.length, matching_branches: connectionPage ? 0 : matchingKeys.size,
+          related_branches_omitted: connectionPage ? 0 : Math.max(0, relatedNodes.length - related_branches.length),
+          branches_returned: branches.length, branches_omitted: connectionPage ? 0 : candidates.length - branches.length,
+          records_returned: returned, records_omitted: Math.max(0, (connectionPage ? selectedIDs.size : matching.length) - returned), next_after: connectionPage ? null : next_after,
+          next_branch_offset: !connectionPage && branchOffset + branches.length < candidates.length ? branchOffset + branches.length : null,
+          gaps: [gap("ledger-coverage-only", connectionPage ? "This page expands relationships for the original selected source references. Record bodies and the global overview are not repeated; use the retained context request for them."
+            : trajectory ? "Counts describe the selected connected sources. Explicit citations reach original evidence without making it authored objective membership. Unrecorded native activity and complete objective coverage remain unknown."
             : "Counts cover this authorized Loom ledger scope only. Unrecorded native activity, child Sessions and complete objective membership are unknown."),
-            ...(trajectory ? [] : [gap("representative-highlights", `Highlights select at most two recent records per significant category, including coverage gaps, independently of the page limit. They are representatives, not a complete chronology. Relationship detail is limited to ${ENGINEERING_HISTORY_LIMITS.relationships} references per included record; omissions are qualified on that record.`),
+            ...(trajectory || connectionPage ? [] : [gap("representative-highlights", `Highlights select at most two recent records per significant category, including coverage gaps, independently of the page limit. They are representatives, not a complete chronology. Relationship detail is limited to ${ENGINEERING_HISTORY_LIMITS.relationships} references per included record; omissions are qualified on that record.`),
               gap("literal-discovery", "Discovery filters scan all eligible records inside this authorized scope and append boundary before paging. match is literal ASCII-folded substring search over authored prose and named observed metadata, not native bodies, semantic search or a guarantee of relevance.")]),
             gap("claims-not-verification", "Completion, assessments and QA verdicts remain authored claims. No aggregate proves successful delivery or resolves a concern."),
             gap("native-originals-unavailable", "This view does not read native history, assignments, model reasoning or tool bodies. Exact native originals retain their existing source-owner limitations."),
             ...connections.gaps,
             gap("live-not-frozen", "through and owner_boundary fence append membership in their separate owners; owner_version detects changed relationship views. Current Action/Plan intent may change. These are live navigation boundaries, not an immutable evaluation population or authority."),
-            ...(candidates.length > branches.length ? [gap("branches-omitted", "Only this page of immediate children or matching leaves is returned. Whole-scope totals remain complete. Retain scope, filters, selected branch and through when following next_branch_offset, or use discovery to locate omitted eligible evidence directly.")] : [])] }
+            ...(!connectionPage && candidates.length > branches.length ? [gap("branches-omitted", "Only this page of immediate children or matching leaves is returned. Whole-scope totals remain complete. Retain scope, filters, selected branch and through when following next_branch_offset, or use discovery to locate omitted eligible evidence directly.")] : [])] }
       }
       const oversized = () => new ProcessingLimitError("engineering history response exceeds 262144 bytes; narrow the discovery filters or Session scope, or try a smaller page limit")
       let encoded: string
@@ -736,104 +853,35 @@ export class EngineeringHistory {
 
   /** Resolve explicit ledger relationships in both directions. The fixed field
    * projection does not hydrate statements or use wording/time as an edge. */
-  private legacyConnections(graph: EngineeringConnections, sql: { where: string; id: string }, through: number, available: Map<string, Metadata>) {
-    const fields = this.db.prepare(`SELECT id,kind,session_id,
-      json_extract(data,'$.data.evidence_ids') AS evidence_ids,
-      json_extract(data,'$.data.start_id') AS start_id,
-      json_extract(data,'$.data.question_id') AS question_id,
-      json_extract(data,'$.data.previous_report_id') AS previous_report_id,
-      json_extract(data,'$.data.assignment_id') AS assignment_id,
-      json_extract(data,'$.data.primary_session_id') AS primary_session_id,
-      json_extract(data,'$.data.worker_session_id') AS worker_session_id,
-      json_extract(data,'$.data.work_ref') AS work_ref
+  private legacyConnections(graph: EngineeringConnections, scope: EngineeringHistoryScope,
+    sql: { where: string; id: string }, through: number, available: Map<string, Metadata>) {
+    const fields = this.db.prepare(`SELECT ${relationshipFields}
       FROM ledger WHERE ${sql.where} AND seq<=? AND (
         json_type(data,'$.data.evidence_ids')='array' OR json_type(data,'$.data.start_id')='text'
         OR json_type(data,'$.data.question_id')='text' OR json_type(data,'$.data.previous_report_id')='text'
-        OR json_type(data,'$.data.assignment_id')='text')`).all(sql.id, through) as Array<{
-      id: string; kind: RecordKind; session_id: string; evidence_ids: unknown; start_id: unknown; question_id: unknown;
-      previous_report_id: unknown; assignment_id: unknown; primary_session_id: unknown; worker_session_id: unknown; work_ref: unknown }>
-    const assignments = new Map<string, typeof fields[number]>()
-    const duplicates = new Set<string>()
+        OR json_type(data,'$.data.assignment_id')='text'
+        OR kind='question' AND json_type(data,'$.data.work_ref')='object')`).all(sql.id, through) as LedgerRelationshipFields[]
+    const byID = new Map(fields.map(item => [item.id, item]))
+    const assignments = new Map<string, string>(), duplicates = new Set<string>()
+    const assignmentKey = (item: LedgerRelationshipFields) => JSON.stringify([item.action_id,
+      item.action_id ? null : item.session_id, item.assignment_id])
     for (const item of fields) if (item.kind === "assignment" && typeof item.assignment_id === "string") {
-      if (assignments.has(item.assignment_id)) duplicates.add(item.assignment_id)
-      assignments.set(item.assignment_id, item)
+      const key = assignmentKey(item)
+      if (assignments.has(key)) duplicates.add(key)
+      assignments.set(key, item.id)
     }
     for (const item of fields) {
-      if (typeof item.evidence_ids === "string") {
-        const ids: unknown = JSON.parse(item.evidence_ids)
-        if (Array.isArray(ids)) for (const id of ids.slice(0, 100)) if (typeof id === "string" && available.get(id)?.kind === "observation")
-          graph.addRecord(item.id, id, "cites-observation", "authored", "An authored citation of the original observation; correctness and causal effect are not established.")
-      }
-      if (item.kind === "observation" && typeof item.start_id === "string" && available.get(item.start_id)?.phase === "started") {
-        const paired = available.get(item.id)?.phase === "finished" && available.get(item.id)?.attribution === "captured-at-start"
-        graph.addRecord(item.id, item.start_id, paired ? "paired-observation" : "references-observation-start", "observed", paired
-          ? "The observer recorded this start/finish association; it does not establish objective membership or engineering success."
-          : "The observation names this start, but captured-at-start finish pairing is unestablished. No native attempt provenance is inferred.")
-      }
-      if (item.kind === "answer" && typeof item.question_id === "string" && available.get(item.question_id)?.kind === "question")
-        graph.addRecord(item.id, item.question_id, "answers-question", "authored", "An authored answer to the recorded question; response is not resolution or approval.")
-      if (item.kind === "reopen" && typeof item.previous_report_id === "string") {
-        const kind = available.get(item.previous_report_id)?.kind
-        if (kind === "completion" || kind === "reopen") graph.addRecord(item.id, item.previous_report_id,
-          kind === "completion" ? "reopens-completion" : "follows-reopen", "authored", "The source explicitly references this earlier progress report; it does not independently prove failure or resolution.")
-      }
-      if (item.kind === "completion" && typeof item.assignment_id === "string" && !duplicates.has(item.assignment_id)) {
-        const assignment = assignments.get(item.assignment_id)
-        if (!assignment || assignment.primary_session_id !== assignment.session_id || assignment.worker_session_id !== item.session_id
-          || assignment.primary_session_id === assignment.worker_session_id || typeof assignment.work_ref !== "string" || typeof item.work_ref !== "string") continue
-        try {
-          const original = checkedRef(JSON.parse(assignment.work_ref)), actual = checkedRef(JSON.parse(item.work_ref))
-          if (canonical(original) === canonical(actual)) graph.addRecord(item.id, assignment.id, "historical-assignment-completion", "authored",
-            "This historical completion explicitly names the saved assignment and its exact WorkRef, from the recorded worker Session. It is an authored completion, not native dispatch provenance or verified success.")
-        } catch { /* Malformed legacy associations cannot manufacture an edge. */ }
-      }
+      const references = ledgerReferences(item, id => available.has(id) ? byID.get(id) ?? available.get(id) : undefined, () => {
+        const key = assignmentKey(item)
+        // Objective roots can contain only a subset of the original Action.
+        // Uniqueness must still include an assignment omitted from that subset.
+        const id = "objective_id" in scope ? this.assignmentOriginalID(item, through)
+          : duplicates.has(key) ? undefined : assignments.get(key)
+        return id && available.has(id) ? byID.get(id) : undefined
+      })
+      graph.recordReferences(item.id, references.unresolved, references.omitted)
+      for (const reference of references.resolved)
+        graph.addRecord(item.id, reference.id, reference.kind, reference.meaning, reference.qualification)
     }
-  }
-
-  private relationships(scope: EngineeringHistoryScope, through: number, records: EngineeringHistoryRecord[], limit: number, objectiveRecords?: string[]): EngineeringHistoryRelationship[] {
-    const sql = scopeSQL(scope, objectiveRecords), included = new Map(records.map(record => [record.source.record_id, record.ref]))
-    const result: EngineeringHistoryRelationship[] = []
-    for (const record of records) {
-      // The projected identity was validated in this same scope/snapshot. Read
-      // that exact Session record without rehydrating the Action for every edge
-      // source; relationship targets below still use the original scope.
-      const original = this.store.records({ session_id: record.source.session_id, record_id: record.source.record_id, through, limit: 1 }).items[0]
-      if (!original || original.sequence !== record.sequence || "action_id" in scope && original.action_id !== scope.action_id)
-        throw new Error("History relationship source disappeared or changed scope")
-      const candidates: Array<{ id: string; kind: "cites-observation" | "paired-observation" | "references-observation-start" | "answers-question" | "previous-progress-report" }> = []
-      if (Array.isArray(original.data.evidence_ids)) for (const id of original.data.evidence_ids.slice(0, 100))
-        if (typeof id === "string") candidates.push({ id, kind: "cites-observation" })
-      if (original.kind === "observation" && typeof original.data.start_id === "string") candidates.push({ id: original.data.start_id,
-        kind: original.data.phase === "finished" && original.data.attribution === "captured-at-start" ? "paired-observation" : "references-observation-start" })
-      if (original.kind === "answer" && typeof original.data.question_id === "string") candidates.push({ id: original.data.question_id, kind: "answers-question" })
-      if (original.kind === "reopen" && typeof original.data.previous_report_id === "string") candidates.push({ id: original.data.previous_report_id, kind: "previous-progress-report" })
-      if (candidates.length > limit) record.gaps.push(gap("relationships-omitted", `${candidates.length - limit} additional authored relationship references are omitted from this bounded projection; inspect the exact source record.`))
-      let unresolved = 0
-      for (const candidate of candidates.slice(0, limit)) {
-        // Do not return a target identity merely because a record named it.
-        // Only in-scope source-owned rows can produce a resolved edge.
-        const target = this.db.prepare(`SELECT id,kind,json_extract(data,'$.data.phase')='started' AS observation_start
-          FROM ledger WHERE ${sql.where} AND seq<=? AND id=?`).get(sql.id, through, candidate.id) as { id: string; kind: string; observation_start: number | null } | undefined
-        // The stored previous_report_id can name either kind of progress report.
-        // Preserve that exact edge; do not jump over a reopening to a completion.
-        const kind = candidate.kind === "previous-progress-report"
-          ? target?.kind === "completion" ? "reopens-completion" : target?.kind === "reopen" ? "follows-reopen" : null
-          : candidate.kind
-        const targetKind = kind === "answers-question" ? "question" : kind === "reopens-completion" ? "completion" : kind === "follows-reopen" ? "reopen" : "observation"
-        const startReference = kind === "paired-observation" || kind === "references-observation-start"
-        if (!target || kind === null || target.kind !== targetKind || startReference && target.observation_start !== 1) { unresolved++; continue }
-        result.push({ from: record.ref, to: included.get(target.id) ?? `loom-record:${encodeURIComponent(this.store.reviews.storeID)}:${encodeURIComponent(target.id)}`,
-          kind, meaning: startReference ? "observed" : "authored", source_record_id: record.source.record_id,
-          target: included.has(target.id) ? "included" : "in-scope-not-included",
-          qualification: kind === "cites-observation" ? "An authored evidence citation, not proof of correctness, correction or verification."
-            : kind === "paired-observation" ? "The observer recorded this start/finish pair; it does not establish objective membership or outcome."
-              : kind === "references-observation-start" ? "The observation names this start, but captured-at-start finish pairing is unestablished. No native attempt provenance is inferred."
-              : kind === "reopens-completion" ? "An authored reopening of the referenced completion report; it is not independently verified failure, resolution or a new historical WorkRef."
-              : kind === "follows-reopen" ? "An authored follow-up to the referenced reopening; it does not establish a new completion, resolution or independently verified outcome."
-              : "An authored answer to a stored question; response is not resolution or approval." })
-      }
-      if (unresolved) record.gaps.push(gap("relationships-unresolved", `${unresolved} authored relationship references could not be resolved inside this selected source scope and boundary. No outside target identities or existence claims are disclosed.`))
-    }
-    return result
   }
 }

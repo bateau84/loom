@@ -40,11 +40,11 @@ function fixture(): EngineeringHistoryView {
     boundary: { live: true, observed_through: 7, current_through: 9, membership: "append-bound only; not a frozen retrospective population" },
     intent: { title: "Restore freshness", goal: null, meaning: "session-scope", action_revision: null }, intended_plan: null,
     mode: "branch", selection: {}, ancestors: [], related_branches: [],
-    connections: { objectives: [], reviews: [], coverage: { objectives_omitted: 0, reviews_omitted: 0, relationships_omitted: 0,
+    connections: { objectives: [], reviews: [], coverage: { objectives_omitted: 0, reviews_omitted: 0, relationships_omitted: 0, page: "summary",
       review_access: "caller-owned only; prepared evaluations excluded", membership: "explicit source associations; not inferred causation" }, gaps: [] },
     navigation: { repeat: { session_id: "session-a", branch_ref: "branch:session", through: 7, limit: 20 },
       next_records: { session_id: "session-a", branch_ref: "branch:session", through: 7, limit: 20, after: 7 },
-      next_branches: { session_id: "session-a", branch_ref: "branch:session", through: 7, limit: 20, branch_offset: 1 } },
+      next_branches: { session_id: "session-a", branch_ref: "branch:session", through: 7, limit: 20, branch_offset: 1 }, next_connections: null, next_relationships: null },
     totals: counts, branches: [branch], selected_branch: branch, highlights: [records[0]!], records,
     relationships: [{ from: records[1]!.ref, to: records[0]!.ref, kind: "cites-observation", meaning: "authored",
       source_record_id: "assessment", target: "included", qualification: "Citation alone does not establish resolution." }],
@@ -251,7 +251,7 @@ test("discovery continuations retain the complete normalized selection and appen
     source_session_id: "session-a", node_id: "old-task", plan_revision: 2, has_gaps: true }
   view.navigation = { repeat: { ...view.scope, through: 7, limit: 20, ...view.selection },
     next_records: { ...view.scope, through: 7, limit: 20, ...view.selection, after: 7 },
-    next_branches: { ...view.scope, through: 7, limit: 20, ...view.selection, branch_offset: 1 } }
+    next_branches: { ...view.scope, through: 7, limit: 20, ...view.selection, branch_offset: 1 }, next_connections: null, next_relationships: null }
   const html = renderEngineeringHistoryHTML(view), markdown = renderEngineeringHistoryMarkdown(view)
   expect(html).toContain("6 matching records in 3 matching leaf groups")
   const continuation = { operation: "read", ...view.scope, through: 7, limit: 20, ...view.selection, after: 7 }

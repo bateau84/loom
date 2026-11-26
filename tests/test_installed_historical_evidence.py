@@ -371,7 +371,7 @@ class ConnectedHistoryOracleTest(unittest.TestCase):
         originals = {name: {"id": name, "action_id": "connected", "session_id": "owner", "agent": "general",
             "data": {"statement": name + " scoped authored claim", **({"verdict": "pass"} if name == "assessment" else {})}}
             for name in names}
-        boundary = {"objective_links": 8, "review_requests": 2, "review_relationships": 3}
+        boundary = {"objective_links": 8, "review_requests": 7, "review_relationships": 3}
         query = {"action_id": "connected", "record_id": "finding", "related": True, "through": 8, "limit": 20,
                  "owner_boundary": boundary, "owner_version": "b" * 64}
         records = [{"ref": "loom-record:store:" + name, "work_ref": None, "meaning": "authored",
@@ -380,9 +380,16 @@ class ConnectedHistoryOracleTest(unittest.TestCase):
                 "query": {"operation": "query", "action_id": "connected", "source_session_id": "owner", "record_id": name}},
             "trajectory": {**query, "record_id": name}} for name, original in originals.items()]
         reviews = [{"request_id": name, "mandate": {"question": name, "exclusions": ["complete issue 182 release acceptance"]},
-            "members": [{"member_id": name + "-member", "work_ref": None, "artifact_refs": [{"locator": "fixture:" + name}]}],
+            "members": [{"member_id": name + "-member", "work_ref": None, "artifact_refs": [{"locator": "fixture:" + name}],
+                         "prior_review_request_id": "initial" if name == "scoped" else None}],
             "rechecks": [{"request_id": "initial", "finding_ids": ["correction-link"]}] if name == "scoped" else []}
             for name in ("initial", "scoped")]
+        for index in range(5):
+            name = "pending-" + str(index)
+            reviews.append({"request_id": name, "mandate": {"question": "Pending exact prior review comparison",
+                "exclusions": ["complete issue 182 release acceptance"]}, "rechecks": [],
+                "members": [{"member_id": name + "-member", "work_ref": None, "artifact_refs": [],
+                             "producing_attempt_refs": [], "membership_source_refs": [], "prior_review_request_id": "scoped"}]})
         fixture = {"records": originals, "action": {"id": "connected"}, "objective": {"id": "objective"},
                    "reviews": reviews, "requester": "owner", "correction_relationship": "correction-link",
                    "review_relationships": {kind: {"status": "created", "id": kind + "-link"}
@@ -399,17 +406,29 @@ class ConnectedHistoryOracleTest(unittest.TestCase):
                 **({"supersedes": "finding-link"} if kind == "correction" else {}),
                 **({"declared_verdict": "pass", "verdict_scope": "authored; not proof of whole-request coverage"}
                    if kind == "claimed-inspected" else {})})
-        groups = [{"request": {**deepcopy(review), "requester": {"session_id": "owner"}}, "frozen_work_membership": [],
+        groups = [{"ref": "loom-review:store:" + review["request_id"],
+            "request": {**deepcopy(review), "requester": {"session_id": "owner"}}, "frozen_work_membership": [],
             "relationships_omitted": 0, "relationships": deepcopy([item for item in basis if item["request_id"] == review["request_id"]]),
-            "qualification": {"native_review_binding": {"status": "unknown"}}} for review in reviews]
+            "qualification": {"native_review_binding": {"status": "unknown"}},
+            "details": {**deepcopy(query), "connection_cursor": "detail-" + review["request_id"]},
+            "source": {"tool": "loom_review", "sha256": "source-" + review["request_id"],
+                       "query": {"operation": "read", "request_id": review["request_id"]}}} for review in reviews]
         edges = [{"kind": kind, "from": "loom-record:store:" + source, "to": "loom-record:store:" + target,
             "meaning": "authored", "provenance": {"author_session": "owner"}} for kind, source, target in
             (("addresses", "correction", "finding"), ("assesses", "assessment", "correction"))]
         edges.append({"kind": "requested-recheck-target", "source_record_id": "correction", "provenance": {"id": "correction-link"}})
+        for review in reviews[1:]:
+            member = review["members"][0]
+            edges.append({"kind": "requested-prior-review", "from": "loom-review:store:" + review["request_id"],
+                "to": "loom-review:store:" + member["prior_review_request_id"], "meaning": "authored", "source_record_id": None,
+                "provenance": {"owner": "review", "id": review["request_id"] + ":" + member["member_id"],
+                               "author_session": "owner", "author_agent": "general"}})
         connected = {"format": "loom-engineering-history/v1", "mode": "trajectory", "scope": {"action_id": "connected"},
             "store_id": "store", "intended_plan": None, "totals": {"verified_outcomes": None, "native_dispatches": None},
             "highlights": [], "branches": [], "records": records, "navigation": {"repeat": query}, "relationships": edges,
-            "coverage": {"gaps": [{"code": "live-not-frozen"}]}, "connections": {"reviews": groups,
+            "boundary": {"observed_through": 8, "owners": deepcopy(boundary), "owner_version": "b" * 64},
+            "coverage": {"gaps": [{"code": "live-not-frozen"}]}, "connections": {"reviews": deepcopy(groups[:5]),
+                "coverage": {"page": "summary", "reviews_omitted": 2},
                 "objectives": [{"objective": {"id": "objective"}, "links_omitted": 0,
                     "links": [{"source_id": "diagnosis", "confidence": "uncertain"}]}]}}
         first = deepcopy(connected)
@@ -417,26 +436,50 @@ class ConnectedHistoryOracleTest(unittest.TestCase):
         first.update(records=deepcopy(records[:5]), navigation={"repeat": {**query, "limit": 5}, "next_records": next_request})
         continuation = deepcopy(connected)
         continuation.update(records=deepcopy(records[5:]), navigation={"repeat": next_request, "next_records": None})
-        for group in continuation["connections"]["reviews"]:
-            group["relationships"] = []
+        continuation["connections"].update(reviews=[], coverage={"page": "summary", "reviews_omitted": 0})
+        owner_continuations = {"continuation": []}
+        for label, root in (("connected", connected), ("first_page", first)):
+            request = {**deepcopy(root["navigation"]["repeat"]), "connection_cursor": "groups-" + label}
+            root["navigation"]["next_connections"] = request
+            page = deepcopy(root)
+            page.update(mode="connections", records=[], highlights=[], branches=[], relationships=[],
+                        navigation={"repeat": deepcopy(request), "next_connections": None})
+            page["connections"] = {"reviews": deepcopy(groups[5:]), "objectives": [],
+                "coverage": {"page": "groups", "reviews_omitted": 0},
+                "context": {"record_refs": [item["ref"] for item in root["records"]], "read": deepcopy(root["navigation"]["repeat"])}}
+            owner_continuations[label] = [page]
         discovery = {"mode": "discovery", "selection": {"match": "CEDAR_187"}, "records": [deepcopy(records[0])]}
         identity = "\n".join(["store", "live-not-frozen", "not a frozen retrospective selection",
-            "authored claim; not independently verified", "initial", "scoped", "complete issue 182 release acceptance",
+            "authored claim; not independently verified", *(review["request_id"] for review in reviews[:5]),
+            "complete issue 182 release acceptance",
             *(record["source"]["record_id"] for record in records), *(record["source"]["sha256"] for record in records)])
         requests = [{"operation": "read", **item} for item in (first["navigation"]["repeat"], next_request,
-                    *(record["trajectory"] for record in first["records"]))]
+                    first["navigation"]["next_connections"], *(record["trajectory"] for record in first["records"]),
+                    *(group["details"] for group in first["connections"]["reviews"]))]
         requests.append(deepcopy(basis))
         markdown = "# Engineering history\n" + identity + "\n\n" + "\n".join(
             "\n".join("    " + line for line in json.dumps(item, indent=2).splitlines()) + "\n" for item in requests)
         html = "<!doctype html><meta content=\"default-src 'none'\"><details><summary>Read</summary>" + identity + "".join(
             "<pre><code>" + json.dumps(item) + "</code></pre>" for item in requests) + "</details>"
-        return [discovery, connected, first, continuation, markdown, html, fixture]
+        owner_page = owner_continuations["connected"][0]
+        owner_requests = [{"operation": "read", **item} for item in (owner_page["navigation"]["repeat"],
+            owner_page["connections"]["context"]["read"], *(group["details"] for group in owner_page["connections"]["reviews"]))]
+        owner_identity = "\n".join(["not a frozen retrospective selection", "complete issue 182 release acceptance",
+            *owner_page["connections"]["context"]["record_refs"], *(value for group in owner_page["connections"]["reviews"]
+                for value in (group["request"]["request_id"], group["ref"], group["source"]["sha256"]))])
+        owner_continuations["markdown"] = "# Engineering history\n" + owner_identity + "\n\n" + "\n".join(
+            "\n".join("    " + line for line in json.dumps(item, indent=2).splitlines()) + "\n" for item in owner_requests)
+        owner_continuations["html"] = "<!doctype html><meta content=\"default-src 'none'\"><details><summary>Read</summary>" + owner_identity + "".join(
+            "<pre><code>" + json.dumps(item) + "</code></pre>" for item in owner_requests) + "</details>"
+        return [discovery, connected, first, continuation, markdown, html, fixture, owner_continuations]
 
     def test_owner_backed_scope_and_preserved_continuation_are_required(self):
         result = assert_connected_history(*self.fixture())
         self.assertEqual(result["selected_records"], 7)
-        self.assertEqual(result["review_requests"], 2)
+        self.assertEqual(result["review_requests"], 7)
         self.assertEqual(result["review_relationships"], 3)
+        self.assertEqual(result["pending_prior_review_requests"], 5)
+        self.assertEqual(result["owner_continuation_pages"], 2)
         self.assertEqual(result["native_review_binding"], "unknown")
         self.assertTrue(result["ready_continuation_preserved"])
 
@@ -542,6 +585,75 @@ class ConnectedHistoryOracleTest(unittest.TestCase):
                 inputs[4] = inputs[4].replace('"related": true', '"related": false')
             with self.subTest(mutation=mutation), self.assertRaises(RuntimeError):
                 assert_connected_history(*inputs)
+
+    def test_pending_prior_review_is_exact_requested_scope_without_invented_evidence(self):
+        for mutation in ("missing-dependency", "wrong-prior", "observed-dependency", "recheck", "inspection", "membership"):
+            inputs = self.fixture()
+            pending = inputs[7]["connected"][0]["connections"]["reviews"][0]
+            edge = inputs[1]["relationships"][-2]
+            if mutation == "missing-dependency":
+                inputs[1]["relationships"].remove(edge)
+            elif mutation == "wrong-prior":
+                edge["to"] = "loom-review:store:initial"
+            elif mutation == "observed-dependency":
+                edge["meaning"] = "observed"
+            elif mutation == "recheck":
+                inputs[1]["relationships"].append({"kind": "requested-recheck", "from": pending["ref"],
+                                                    "to": "loom-review:store:scoped"})
+            elif mutation == "inspection":
+                pending["relationships"] = [deepcopy(inputs[1]["connections"]["reviews"][1]["relationships"][0])]
+            else:
+                pending["frozen_work_membership"] = [{"invented": True}]
+            with self.subTest(mutation=mutation), self.assertRaises(RuntimeError):
+                assert_connected_history(*inputs)
+
+    def test_owner_continuation_cannot_drop_scope_membership_or_terminal_evidence(self):
+        for mutation in ("absent", "cursor", "selector", "scope", "context", "boundary", "body", "duplicate", "missing", "count", "terminal"):
+            inputs = self.fixture()
+            page = inputs[7]["connected"][0]
+            if mutation == "absent":
+                inputs[7]["connected"] = []
+            elif mutation == "cursor":
+                page["navigation"]["repeat"]["connection_cursor"] = "unrelated"
+            elif mutation == "selector":
+                del page["navigation"]["repeat"]["owner_version"]
+            elif mutation == "scope":
+                page["scope"] = {"session_id": "foreign"}
+            elif mutation == "context":
+                page["connections"]["context"]["record_refs"] = ["loom-record:store:unrelated"]
+            elif mutation == "boundary":
+                page["boundary"]["owners"]["review_requests"] = 8
+            elif mutation == "body":
+                page["records"] = [deepcopy(inputs[1]["records"][0])]
+            elif mutation == "duplicate":
+                page["connections"]["reviews"].append(deepcopy(page["connections"]["reviews"][0]))
+            elif mutation == "missing":
+                page["connections"]["reviews"].pop()
+            elif mutation == "count":
+                page["connections"]["coverage"]["reviews_omitted"] = 1
+            else:
+                page["navigation"]["next_connections"] = {**page["navigation"]["repeat"], "connection_cursor": "unread-next"}
+            with self.subTest(mutation=mutation), self.assertRaises(RuntimeError):
+                assert_connected_history(*inputs)
+
+    def test_owner_rendering_must_preserve_ready_context_without_source_repetition(self):
+        for format_name in ("markdown", "html"):
+            for mutation in ("cursor", "context", "source", "body", "overview"):
+                inputs = self.fixture()
+                rendered = inputs[7][format_name]
+                if mutation == "cursor":
+                    rendered = rendered.replace("groups-connected", "changed-cursor")
+                elif mutation == "context":
+                    rendered = rendered.replace('"related": true', '"related": false')
+                elif mutation == "source":
+                    rendered = rendered.replace("source-pending-3", "different-source")
+                elif mutation == "body":
+                    rendered += inputs[6]["records"]["correction"]["data"]["statement"]
+                else:
+                    rendered += "Significant recorded work"
+                inputs[7][format_name] = rendered
+                with self.subTest(format=format_name, mutation=mutation), self.assertRaises(RuntimeError):
+                    assert_connected_history(*inputs)
 
 
 if __name__ == "__main__":

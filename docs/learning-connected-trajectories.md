@@ -37,8 +37,9 @@ the need for separate owner append fences. Those constraints apply below.
 | Objective `link-correction` | A sourced confirm/reject judgment about an objective association. It does not revise the truth of the underlying diagnosis. |
 | Observer start/finish | The recorded association and its pairing qualification. It does not establish objective membership or engineering success. |
 | Authored `evidence_ids` | Citations to original scoped observations. They retain the existing restricted evidence contract. |
-| Historical assignment/completion | An explicit saved assignment reference, worker identity and identical historical WorkRef. It remains an authored completion without fabricated native dispatch provenance. |
+| Historical assignment/completion/question | An explicit saved reference, exact assignment/question identity, worker Session and checked historical WorkRef. Assignment identity must be unique inside the original source scope and append boundary. It remains authored association without fabricated native dispatch provenance. |
 | Review mandate and members | Exactly the frozen requested scope, historical WorkRefs, producing attempts, artifacts, inclusions and exclusions. |
+| Requested work and prior review | Exact frozen constituent WorkRefs can connect to existing original records; explicit prior-review membership connects mandates in either direction. Requested membership does not establish an attempt or inspection. Current Plan descendants and matching revisions alone add no membership. |
 | Review source relationship | Its original attribution: qualified retrieval receipts differ from authored observed/cited/claimed-inspected/finding relationships. Native review binding remains unknown. |
 | Review correction | A sourced correction to the exact earlier review relationship. The original record and membership remain unchanged. |
 | Requested recheck | The later mandate names an earlier finding/correction. It does not establish what the later reviewer actually inspected or resolved. |
@@ -108,23 +109,48 @@ returned form also preserves the observed boundaries.
 Trajectory pages return chronological original-record projections, connected
 objective/review groups and relevant qualified edges. They omit global
 highlights, unrelated branch inventories and the current Plan. The exact frozen
-review mandate remains separate from the selected observed/authored basis;
-omitted relationship details are counted, with the existing owner reader shown.
-Every original retains its source identity, digest and exact record query.
+review mandate remains separate from the selected observed/authored basis.
+Every original retains its source identity, digest, exact record query and
+source-specific unresolved or omitted-reference qualifications.
 
-`navigation.repeat`, `navigation.next_records` and
-`navigation.next_branches` are complete query objects. Add `operation:"read"`;
-do not reconstruct selectors from prose. JSON, Markdown and HTML contain the
-same requests and qualifications. HTML remains an inert authorized document:
-native disclosure controls expand included content; additional reads require the
-shown tool request.
+Copy the returned query and add `operation:"read"`; do not reconstruct selectors
+from prose or edit an opaque `connection_cursor`.
+
+| Returned request | Bounded population |
+| --- | --- |
+| `navigation.repeat` | Replay the same page. |
+| `navigation.next_records` / `navigation.next_branches` | Remaining selected originals or structural branches. |
+| `navigation.next_connections` | Remaining objective/review groups; on an owner-detail page, the remaining details for that owner. |
+| `navigation.next_relationships` | Remaining qualified graph edges, without repeating those returned on the initial page. |
+| Objective/review `details` | Start the complete authorized association/relationship population for that owner, independently of group discovery. |
+
+Connection pages retain the original source references and a
+`connections.context.read` query. They return no record bodies, highlights,
+branch inventory or global Plan. JSON, Markdown and HTML contain the same
+requests and qualifications. HTML remains an inert authorized document: native
+disclosure controls expand included content; additional reads require the shown
+tool request. The original source owners remain available through each group's
+separate `source.query`.
+
+An unfiltered Action overview also discovers caller-owned pending review
+mandates admitted through their exact frozen requested Action scope, even when
+no eligible ledger record yet carries that work. This adds no record or
+trajectory edge and proves no execution or inspection. Record, trajectory,
+branch and discovery reads retain their explicit relationship selection; they
+do not inherit unrelated Action mandates.
 
 For objective roots, the Store follows forward original-evidence citations and
-recorded start/question/progress references under the original source scope.
+recorded start/question/progress/assignment references under the original source
+scope. Ordinary and trajectory reads use the same checked source resolver.
 It does not enumerate the contributing Sessions or follow arbitrary reverse
-citations. Reached observations are **supporting originals**, not newly inferred
-objective members. A historical WorkRef remains exact, while Action/Plan content
-requires its separate Action-scoped read.
+citations. Reached records are **supporting originals**, not newly inferred
+objective members. Historical assignment uniqueness is checked across the
+original Action or unscoped Session at the ledger boundary, not just the linked
+objective subset. Conflicting worker/assignment identities, inconsistent
+row/WorkRef scope, invalid observation phases and unavailable originals retain
+generic source-specific gaps without disclosing outside target identities.
+Session roots never cross their source Session. A historical WorkRef remains
+exact, while Action/Plan content requires its separate Action-scoped read.
 
 ## Authorization and stable continuation
 
@@ -145,6 +171,12 @@ cannot be shown coherently within the selected source scope is omitted whole;
 the view supplies a generic coverage limitation without inventing a complete
 filtered mandate.
 
+Owner selection follows explicit prior-review and requested-recheck dependencies
+in both directions. Every concrete work, attempt, evidence and recheck target
+still has to fit the authorized scope. If a dependency is withheld, its dependent
+manifest is withheld whole, and disconnected prior-only context is pruned.
+Reserved preparation requests never become ordinary history through a dependency.
+
 There are separate live append fences:
 
 | Field | Owner and purpose |
@@ -157,7 +189,11 @@ There are separate live append fences:
 
 New associations or review corrections do not enter an earlier continuation.
 Changed or unavailable bounded owner sources cause a failed read requiring an
-explicit restart. These fields are not permission receipts. An append fence is
+explicit restart. A connection cursor binds its page to the Store, normalized
+original query, selected source identities, ledger/owner fences and owner version.
+Changing a selector or page size requires a new initial read, not reusing that
+cursor. Current source and final disclosure authorization run on every page.
+These fields are not permission receipts. An append fence is
 not an atomic cross-store snapshot, an immutable retrospective population or an
 authorization to send evidence to another Session/provider.
 
@@ -167,6 +203,12 @@ bounded counts/bytes. Limits fail explicitly; clients do not receive a silently
 successful partial traversal. Pages bound returned records/groups, and omitted
 owner detail remains qualified. A smaller scope or the original owner reader is
 available when a legal source is too large for a compact history response.
+Pagination never splits a frozen requested mandate into a misleading partial
+scope. A single valid mandate can therefore still exceed the history response
+ceiling at `limit:1`; that case fails explicitly and needs the existing owner
+reader. Review content digests use the existing bounded owner hash budget so a
+large relationship set can be paged without first hitting an unrelated generic
+hash budget.
 
 ## Frozen retrospective populations remain separate
 
@@ -206,7 +248,129 @@ with their existing owners and prerequisites. No new raw capture, production
 Evaluator execution or automatic instruction changes are introduced. #227 stays
 open; merging this increment requires separate authorization.
 
-### Executed controlled qualification, 2026-11-26
+### Remediation qualification, 2026-11-26
+
+The external review identified four concrete navigation defects. The remediation
+uses one checked original-reference resolver across roots, admits explicit
+review dependencies and frozen requested work through their existing owner,
+provides independent bounded group/edge/detail continuation, and retains each
+record's unresolved and omitted-reference qualifications.
+
+Independent follow-up review ran **53 tests / 1,737 assertions** and additional
+counterexample probes. It cleared F01–F04 within the existing resource limits.
+The probes included 12-group and 12-edge complete traversal, 18 cursor
+rebinding/authorization rejections, mixed-scope dependency pruning, frozen
+constituents after a Plan change, pending requested work without ledger evidence,
+and 1,800 review relationships exhausted in 18 detail pages. Six production/help
+file hashes remained unchanged through the review. A valid 289,188-byte complete
+mandate still rejects at the history response ceiling; the owner read succeeds.
+This is an explicit bounded failure, not a silently incomplete mandate.
+
+The assembled local gates passed **438 core tests, 862 native tests and 302
+Python tests**, project and qualification typechecks, and the production build.
+The complete Stage 3 batch/hash and historical source preservation checks remain
+in those gates. Hosted installed-native and Chromium receipts are revision-bound
+in the draft delivery PR; local source/render checks do not replace them.
+
+#### Dense unplanned history and overlap
+
+The new no-Plan fixture contains 24,000 records, 600 surrounding connected
+evidence groups, 16 reused Sessions, three overlapping objectives, 24 review
+mandates and 72 review relationships. Exhaustive bounded traversal discovers all
+24 reviews and all 72 relationships without losing identities across their
+respective continuation chains. It retains source bytes and excludes a later
+association from already-issued cursors. JSON, Markdown and HTML agree.
+
+Shared evidence has a measurable relevance cost: the Action trajectory contains
+**260 records: 20 core reference originals plus 240 connected surrounding
+records**. The objective-root source selection contains **26**. Neither count
+makes every connected record relevant to the engineering question. Choosing a
+narrower objective is an explicit source selection, not inferred relevance or an
+automatic permission expansion.
+
+The exhaustive qualification made **68 structured reads / 2,023,764 returned
+UTF-8 bytes**, including 26 record pages, eight additional group pages, two edge
+pages and 29 owner-detail pages. Three separate rendering checks returned
+96,044 bytes. Local structured callback time was 62,787.04 ms. This is an
+exhaustiveness/authorization exercise with repeated qualified scopes, not an
+optimized investigator benchmark or production latency claim.
+
+The equivalent-information planned comparison was rerun against exact main
+`d0ff85ee09e5209058206a594f44338e088f3c10` over the same seeded stores. Both paths
+retrieved the same 20 exact originals and applicable objective/review evidence:
+
+| Route | Read calls | Returned UTF-8 bytes | Local callback time |
+| --- | ---: | ---: | ---: |
+| Remediated connected trajectory | 6 | 159,631 | 1,553.71 ms |
+| Competent existing main tools | 9 | 52,489 | 422.90 ms |
+
+Associations were held constant for this comparison. It still shows a call-count
+reduction with higher response volume and local callback cost; it does not
+measure the effort of creating absent associations.
+
+#### Sparse discovery, authoring and a second fresh reader
+
+A separate 24,000-record unplanned case began with **zero objective and review
+associations**. The first investigator received only the Action, engineering
+question and public registered-tool interface. Its initial concern trajectory
+stopped at one record. It reconstructed the sequence with additional vocabulary,
+kind and source queries and manual comparison of issue, revision and artifact
+prose. It rejected an explicitly unrelated formatter result. Three searches
+returned no matches; one broad observation page returned ten exporter distractors.
+
+Before any writes, it supplied its provisional reconstruction. It then created
+one attributed retrospective objective and 11 links through existing operations.
+Three relations express authored `addresses`, `assesses` and `supersedes`;
+the uncited initial CI and retry observations remain **uncertain candidates**.
+Their labels/proximity do not establish the asserted test result, cause,
+dispatch or review membership. No historical review manifest was invented.
+One create request was rejected because a ledger source incorrectly supplied a
+Session qualifier; the corrected request succeeded. There were no evidence
+reads during authoring.
+
+A second fresh investigator received only the same Action/question/interface,
+without the first reader's IDs, notes or report. It used one lexical discovery
+and three trajectory pages, then 14 exact original queries. It reconstructed the
+seven required distinctions and retained the original cause, native review
+binding and overall acceptance as unproved. It separated original observations,
+original authored claims and the new retrospective interpretation.
+
+| Measured phase | Registered calls | Returned UTF-8 bytes | Help/schema calls and bytes |
+| --- | ---: | ---: | --- |
+| Initial sparse discovery | 22 reads | 252,130 | 4 / 38,974 |
+| Retrospective authoring | 13 writes: 12 succeeded, 1 rejected | 12,507 | 0 |
+| Second fresh reader navigation | 18 reads | 132,702 | 2 / 30,496 |
+
+Write requests added 7,288 UTF-8 bytes. Local callback times were 8,390.73 ms for
+discovery, 24.22 ms for authoring and 4,342.50 ms for later navigation; model
+reasoning, setup, transport and help are outside those callback times. These are
+actual exploratory costs, not minimum call counts or statistically comparable
+participant performance. The complete workflow includes the authoring cost;
+post-association navigation alone is not a reconstruction benchmark.
+
+The resulting trajectory selected **18 of the 20 controlled reference originals**.
+It contained all ten authored records and four observation pairs. The first
+investigator did not discover the uncited test-edit start/finish pair, so it was
+not automatically recovered by later navigation. The second reader separately
+retrieved ten authored originals and four finish observations; start records
+were available in the shared projection. The required conceptual distinctions
+were reconstructed, but this is not complete-original discovery. All 24,000
+ledger originals were byte-identical afterward; disposable source state was
+removed. Raw source/qualification hashes and exact requests/response hashes were
+captured by the harness.
+
+The private operator #182/#187 qualification remains **unperformed here**. Its
+original discovery and association cost, protected original retrieval and actual
+local usability remain separate dependencies. The existing tools now support a
+truthful local rehearsal, documented in [testing](testing.md), without exporting
+private originals or enabling Evaluator execution.
+
+### Initial controlled qualification at `1423b03`, 2026-11-26
+
+These are the initial delivery measurements, before the external F01–F04/Q01–Q02
+review. They remain historical evidence for that exact scope. They do not
+qualify unregistered sparse history, dense unplanned owner fan-out or the
+continuation corrections described above.
 
 The scripted comparison loaded the candidate and exact main
 `d0ff85ee09e5209058206a594f44338e088f3c10` callbacks over the **same seeded stores**.
@@ -269,8 +433,10 @@ counterchecks covered original authors, correction authors, objective creators
 and association authors across JSON, Markdown and HTML, with zero objective
 body hydration before denial. The installed oracle additionally requires the
 exact setup relationship receipts, so empty or substituted review evidence
-cannot qualify from mandate checks alone. No material review finding remained
-open on the checked implementation and qualification scope.
+cannot qualify from mandate checks alone. No material finding remained in that
+initial independent review scope. The later external review identified missing
+source closure, pending-review navigation, bounded continuation and source-gap
+cases now covered by the remediation tests.
 
 The assembled local gates passed: **438 core tests, 844 native tests, 299 Python
 tests**, project typecheck and the production module build. The native suite
@@ -279,6 +445,6 @@ separate registered no-Plan fixture selected seven authored originals and two
 artifact-scoped reviews, retaining exact continuation and renderings. The
 installed OpenCode and Chromium workflows provide separate, revision-specific
 execution receipts in the delivery PR; source checks and registered simulated
-callbacks do not substitute for those runs. The large controlled comparison is
-planned work; the no-Plan probes qualify the owner composition without claiming
-an equivalent large planned/unplanned benchmark.
+callbacks do not substitute for those runs. That initial large comparison used
+planned work; its small no-Plan probes did not establish an equivalent large
+planned/unplanned benchmark.

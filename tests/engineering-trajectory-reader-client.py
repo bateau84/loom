@@ -4,6 +4,12 @@ python3 tests/engineering-trajectory-reader-client.py TRANSPORT GET /start
 python3 tests/engineering-trajectory-reader-client.py TRANSPORT GET /tools/history
 python3 tests/engineering-trajectory-reader-client.py TRANSPORT POST /read '{"tool":"history","input":{...}}'
 
+For the sparse candidate qualification only, POST /phase with
+{"phase":"association"}, then POST /write with an actual objective create/link
+request. POST /phase {"phase":"navigation"} ends authoring. These phases measure
+the cost of establishing attributed associations separately from reading them;
+they are not a new Loom workflow or permission boundary.
+
 The bridge counts original callback/help UTF-8 bytes. This transport envelope and
 the terminal newline are not included in those callback measurements.
 """

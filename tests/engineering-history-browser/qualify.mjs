@@ -28,7 +28,8 @@ assert.equal(manifest.head, process.env.EXPECT_HEAD, "Fixtures must come from th
 assert.ok(manifest.fixtures.length >= 6, "Qualify adversarial planned/unplanned discovery and expansion")
 for (const name of ["planned-overview", "planned-discovery", "planned-selected", "planned-historical", "planned-children",
   "unplanned-overview", "unplanned-discovery", "unplanned-selected", "unplanned-children", "unplanned-children-next", "dense-hostile",
-  "trajectory-discovery", "trajectory-connected", "trajectory-page", "trajectory-page-next"])
+  "trajectory-discovery", "trajectory-connected", "trajectory-page", "trajectory-page-next",
+  "connections-source", "connections-groups", "connections-edges", "connections-review", "connections-review-next"])
   assert.ok(manifest.fixtures.some(fixture => fixture.name === name), `Required browser scene: ${name}`)
 const sha256 = value => createHash("sha256").update(value).digest("hex")
 const canonical = value => JSON.stringify(value, (_, item) => item && typeof item === "object" && !Array.isArray(item)
@@ -125,16 +126,30 @@ try {
           assert.ok(text.includes(String(value)), `Complete relationship value: ${value}`)
         for (const source of fixture.owner_sources ?? []) for (const value of [source.ref, source.sha256, source.tool])
           assert.ok(text.includes(value) && markdown.includes(value), `Original relationship owner: ${value}`)
-        if (view.mode === "trajectory") {
+        if (view.mode === "trajectory" || view.mode === "connections") {
           assert.equal(await page.getByRole("heading", { name: "Intended Plan", exact: true }).count(), 0)
           assert.equal(await page.getByRole("heading", { name: "Significant recorded work", exact: true }).count(), 0)
-          assert.ok(text.includes("Connected trajectory"))
+          assert.ok(text.includes(view.mode === "connections" ? "Relationship details" : "Connected trajectory"))
           for (const review of view.connections.reviews) {
             assert.ok(text.includes("Exact requested scope and recheck targets"))
             assert.ok(text.includes("Observed and authored evidence scope"))
             for (const exclusion of review.request.mandate.exclusions) assert.ok(text.includes(exclusion))
             assert.ok(text.includes(`${review.relationships_omitted} omitted`))
           }
+        }
+        if (view.mode === "connections") {
+          assert.deepEqual([view.records, view.highlights, view.branches], [[], [], []])
+          assert.equal(await page.locator("#overview .metrics, .source-index, #assessment details.card").count(), 0,
+            "Relationship pages do not repeat global counts or source record bodies")
+          assert.ok(view.connections.context.record_refs.length)
+          assert.ok(view.navigation.repeat.connection_cursor)
+          for (const ref of view.connections.context.record_refs)
+            assert.ok(text.includes(ref) && markdown.includes(ref), "Omitted source bodies retain their exact selected references")
+          for (const key of ["action_id", "session_id", "record_id", "through", "owner_boundary", "owner_version", "limit"])
+            assert.equal(canonical(view.navigation.repeat[key]), canonical(view.connections.context.read[key]),
+              `Connection continuation preserves source ${key}`)
+          assert.equal(view.connections.context.read.connection_cursor, undefined)
+          assert.ok(!markdown.includes("### Significant recorded work") && !markdown.includes("### Intended Plan"))
         }
         for (const record of [...view.highlights, ...view.records]) if (record.excerpt !== null)
           assert.ok(text.includes(record.excerpt), "The complete projected excerpt remains present after shortening the overview preview")
@@ -198,7 +213,23 @@ try {
         await inViewport(page.locator("#overview"))
         return style
       })
-      await check("source fragment reveals closed details and transfers focus", async () => {
+      if (view.mode === "connections") await check("connection context and owner disclosure preserve keyboard access", async () => {
+        await page.locator("nav[aria-label='History layers'] a[href='#connections']").press("Enter")
+        await page.waitForFunction(() => document.activeElement?.id === "connections")
+        await inViewport(page.locator("#connections"))
+        const summary = page.locator("#connections details > summary").first()
+        assert.equal(await summary.evaluate(element => element.parentElement.open), false)
+        await page.keyboard.press("Tab")
+        assert.equal(await summary.evaluate(element => element === document.activeElement), true)
+        await keyboardToggle(summary, "Enter", true)
+        await inViewport(summary)
+        await screenshot("connection-owner-or-coverage-revealed")
+        await keyboardToggle(summary, "Space", false)
+        return { page: view.connections.coverage.page, selected_source_refs: view.connections.context.record_refs,
+          owner_count: fixture.owner_sources.length, disclosure: await summary.textContent(),
+          original_record_bodies: "omitted; exact return request checked in both formats" }
+      })
+      else await check("source fragment reveals closed details and transfers focus", async () => {
         const sourceLink = page.locator(".source-index a").first()
         assert.ok(await sourceLink.count(), "Fixture includes an original source")
         const href = await sourceLink.getAttribute("href")

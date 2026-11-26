@@ -143,6 +143,7 @@ const specs = [
     after: num, through: num, branch_offset: { type: "integer", minimum: 0, maximum: 100000 }, limit: { type: "integer", minimum: 1, maximum: 50 },
     owner_boundary: preserveInput({ objective_links: { anyOf: [num, { type: "null" }] }, review_requests: num, review_relationships: num },
       ["objective_links", "review_requests", "review_relationships"]), owner_version: { type: "string", pattern: "^[a-f0-9]{64}$" },
+    connection_cursor: { type: "string", minLength: 1, maxLength: 2048 },
     response_format: choice("json", "markdown", "html"),
   }, ["operation"]) },
   { name: "review", description: TOOL_HELP.review, input: {
@@ -472,7 +473,7 @@ export default Plugin.define({
             switch (spec.name) {
               case "history": {
                 const allowed = ["operation", "action_id", "session_id", "objective_id", "branch_ref", "record_id", "related", "match", "record_kinds", "verdict",
-                  "source_session_id", "node_id", "plan_revision", "has_gaps", "after", "through", "branch_offset", "limit", "owner_boundary", "owner_version", "response_format"]
+                  "source_session_id", "node_id", "plan_revision", "has_gaps", "after", "through", "branch_offset", "limit", "owner_boundary", "owner_version", "connection_cursor", "response_format"]
                 if (input.operation !== "read" || Object.keys(input).some(key => !allowed.includes(key)))
                   throw new Error("Unsupported engineering history operation or field")
                 if (input.response_format !== undefined && !["json", "markdown", "html"].includes(String(input.response_format)))

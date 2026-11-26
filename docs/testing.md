@@ -94,6 +94,7 @@ the operator's private history or claim unfamiliar-agent comprehension.
 | `tests/helpers/engineering-trajectory-fixture.ts` | Controlled 24,000-record equivalent of the #182/#187 distinctions, with varied vocabulary, explicit retrospective associations, historical WorkRefs, exact review/recheck scope, empty historical evidence arrays and unrelated same-revision work. Existing registered operations author the meaningful sources; synthetic bulk noise is inserted during setup. No private operator originals. |
 | `tests/engineering-trajectory-reader.ts` | `bun tests/engineering-trajectory-reader.ts /ABS/FRESH_REPORT [24000]` starts a temporary read bridge for an unfamiliar investigator. Give the participant only its `/start`, `/tools/<name>` and `/read` interface; withhold fixture/oracle files. Records exact callback responses, calls, UTF-8 bytes, local elapsed time and source digests. Stop the process or create `/ABS/FRESH_REPORT/STOP` to remove disposable source state. This is a qualification harness, not a shipped service or production authorization boundary. |
 | `tests/engineering-trajectory-reader-client.py` | For executors with isolated localhost namespaces, `python3 tests/engineering-trajectory-reader-client.py /ABS/FRESH_REPORT/transport GET /start` uses the same handler through a shared-file inbox/outbox. Use `GET /tools/history` for help or `POST /read '{"tool":"history","input":{...}}'` for a read. The participant receives only this client and its own responses. Help and registered callback bytes are measured separately; transport envelopes are excluded. |
+| `tests/engineering-history-unplanned-native.test.ts` | Large no-Plan qualification: 24,000 records, 600 connected groups, reused Sessions, overlapping objectives and 24 review mandates. Exhausts separate source/group/edge/owner-detail pages, checks exact identities, append fences, unchanged original bytes and three-format agreement. Reports connected spillover separately from the question's core evidence. `LOOM_HISTORY_MEASURE_DIR=/ABS/REPORT` captures requests, response/source hashes and costs; this exhaustive qualification is not an efficiency benchmark. |
 | `tests/engineering-history-browser/qualify.mjs` | Runs only in isolated GitHub CI: `node tests/engineering-history-browser/qualify.mjs /ABS/FIXTURES /ABS/REPORT`. Uses externally installed pinned Playwright 1.65.1, @axe-core/playwright 4.14.1 and Chromium. Checks Tab/Enter/Space, hidden fragment targets, focus, dense expansion, 390-pixel reflow, semantic/accessibility trees, axe and script/network inertness. Dense parent views use an explicit bounded page size; continuation must retain it. Retains JSON reports, screenshots and accessibility evidence. This is automated browser qualification, not manual assistive-technology usability acceptance. |
 | `.github/workflows/engineering-history-browser.yml` | Checks out the exact candidate, uses read-only repository permissions and pinned action commits, and installs browser dependencies in runner temp without changing production dependencies. Uploads generated synthetic views and browser evidence for seven days. |
 
@@ -109,6 +110,31 @@ measures. The scripted comparison does not establish agent comprehension or a
 production speed/byte saving. The read bridge can also select that baseline for
 a separate participant; do not call a participant unfamiliar after exposing the
 other route or fixture to them.
+
+For sparse historical reconstruction, use
+`LOOM_TRAJECTORY_MODE=sparse bun tests/engineering-trajectory-reader.ts /ABS/FRESH_REPORT 24000`.
+The history begins with zero objective or review associations. Withhold fixture,
+oracle and report files from the participant. Collect their provisional
+reconstruction before moving from `discovery` to `association` through
+`POST /phase`. Only actual `objective create/link` writes are permitted in that
+phase. Require attributed evidence-backed interpretations and retain unknown
+relationships; never manufacture historical native dispatch or review membership.
+Then move to `navigation` and hand the same public interface to a second fresh
+reader. Report discovery reads, authoring reads/writes, subsequent navigation,
+help, errors, UTF-8 bytes and remaining manual correlation separately. Source
+original bytes are checked after all phases and disposable state is removed.
+
+The private operator #182/#187 case remains an operator-local qualification.
+Use the candidate's registered tools in the original authorized Session. First
+save a provisional reconstruction and actual requests/callback byte counts from
+the unmodified originals. Record any necessary attributed association writes in
+a separate log, then give a fresh investigator only the Action and question.
+Follow returned continuation objects verbatim. Score the failing attempt,
+unchanged-code rerun, unproved cause, distinct correction revision, scoped check,
+merge and separate release requirements independently. Retain raw originals and
+private identifiers locally; share only a redacted outcome and aggregate costs.
+This procedure does not authorize new capture, another Session's protected
+originals, historical review invention or Evaluator dispatch.
 
 ## Learning trust, recovery and audit qualification
 
@@ -174,6 +200,9 @@ certify the proposed protected-human receipt interface before it exists.
 | tests/connected-history-owners-native.test.ts | Existing ObjectiveIndex/ReviewRequests owner snapshots, source/author metadata preflight, byte reservations, exact scope withholding, independent append fences, typed retrospective association validation and legacy complete Stage 3 batch/source identity preservation. |
 | tests/engineering-history-trajectories-native.test.ts | Registered discovery-to-trajectory selection, exact originals, scoped review exclusions, same-query JSON/Markdown/HTML, pinned continuation after retrospective appends, foreign-review withholding and controlled equivalent-information comparison. Simulated native host. |
 | tests/engineering-trajectories-projection-native.test.ts | Pending rechecks retain their exact original mandate and members before producing evidence; requested scope cannot become verification or release acceptance. |
+| tests/engineering-history-resolution-native.test.ts | Shared source closure across objective, record and trajectory roots; authentic frozen historical assignment/question contracts; exact worker/WorkRef/scope checks, source-specific unresolved omissions and original-byte preservation. |
+| tests/engineering-history-review-navigation-native.test.ts | Prior-only dependencies, pending exact frozen WorkRefs/constituents, root discovery before ledger evidence, owner/group/edge continuation, scope/version/authority rebinding rejection, mixed-scope pruning and 1,800-relationship bounded owner hashing/detail traversal. |
+| tests/engineering-history-unplanned-native.test.ts | Sparse starting state and large dense no-Plan graph; exact complete continuation populations, overlap spillover, frozen replay, source-byte preservation and JSON/Markdown/HTML agreement. |
 | tests/full-thread-native.test.ts | Registered renderer, scopes, continuation/Unicode and independent mixed-history oracle; no native reads/target execution. |
 | tests/historical-preservation-native.test.ts | Hash-checks/executes authentic historical writer, exact reopen without consent; populated current startup/reads/rejections/legacy answers contact no native delivery API. |
 | tests/manual-backup-restore.test.ts | Published stopped-writer backup/restore, residual WAL, qualified bytes and overwrite/source guards; additionally requires python3 subprocesses and frozen Store. |

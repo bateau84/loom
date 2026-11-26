@@ -8,7 +8,7 @@ import type { EngineeringHistoryQuery, EngineeringHistoryView } from "../../src/
 import { digest } from "../../src/model.js"
 import { Store } from "../../src/store.js"
 import { engineeringHistoryScenario, type RegisteredHistoryFixture } from "../helpers/engineering-history-scenarios.js"
-import { engineeringTrajectoryFixture } from "../helpers/engineering-trajectory-fixture.js"
+import { engineeringTrajectoryFixture, unplannedEngineeringTrajectoryFixture } from "../helpers/engineering-trajectory-fixture.js"
 import { registeredLoom } from "../helpers/registered-loom.js"
 
 assert.ok(process.argv[2], "Usage: bun generate.ts FRESH_OUTPUT_DIRECTORY")
@@ -53,7 +53,13 @@ async function save(f: RegisteredHistoryFixture, name: string, query: Engineerin
   const view = JSON.parse(json.content).result as EngineeringHistoryView
   assert.equal(view.boundary.observed_through, request.through)
   const included = records(view)
-  assert.ok(included.length, "Every browser scene must include real source records")
+  if (view.mode === "connections") {
+    assert.ok(view.connections.context?.record_refs.length, "A connection page retains real selected source references")
+    assert.ok(view.connections.objectives.length + view.connections.reviews.length + view.relationships.length,
+      "A connection page includes an actual owner or relationship")
+    assert.deepEqual([view.records, view.highlights, view.branches], [[], [], []], "Connection pages omit repeated record bodies and overview")
+    assert.ok(view.navigation.repeat.connection_cursor, "Connection pages retain their opaque ready cursor")
+  } else assert.ok(included.length, "Record scenes must include real source records")
   for (const forbidden of ["PRIVATE_RAW_NATIVE_INPUT", "PRIVATE_RAW_NATIVE_RESULT", "PRIVATE_AGENT_INSTRUCTIONS"])
     for (const response of [json, html, markdown]) assert.ok(!response.content.includes(forbidden), `No raw private body: ${forbidden}`)
   const branches = [...new Map([...view.ancestors, ...(view.selected_branch ? [view.selected_branch] : []),
@@ -62,9 +68,13 @@ async function save(f: RegisteredHistoryFixture, name: string, query: Engineerin
     ...included.map(record => ({ operation: "read", ...record.expand })),
     ...included.map(record => ({ operation: "read", ...record.trajectory })),
     ...view.connections.objectives.map(item => ({ operation: "read", ...item.expand })),
+    ...[...view.connections.objectives, ...view.connections.reviews].map(item => ({ operation: "read", ...item.details })),
     { operation: "read", ...view.navigation.repeat }]
   if (view.navigation.next_records) history_requests.push({ operation: "read", ...view.navigation.next_records })
   if (view.navigation.next_branches) history_requests.push({ operation: "read", ...view.navigation.next_branches })
+  if (view.navigation.next_connections) history_requests.push({ operation: "read", ...view.navigation.next_connections })
+  if (view.navigation.next_relationships) history_requests.push({ operation: "read", ...view.navigation.next_relationships })
+  if (view.connections.context) history_requests.push({ operation: "read", ...view.connections.context.read })
   for (const [extension, response] of Object.entries({ json, html, markdown }))
     await writeFile(join(output, `${name}.${extension === "markdown" ? "md" : extension}`), response.content)
   manifest.fixtures.push({ name, request: { operation: "read", ...request }, ...options,
@@ -159,6 +169,48 @@ try {
     assert.deepEqual(continued.boundary.owners, page.boundary.owners)
     assert.equal(continued.boundary.owner_version, page.boundary.owner_version)
   } finally { await trajectory.close() }
+
+  // Bound rendering cost with a modest connected population, while retaining
+  // overlapping objectives, reused Sessions and enough reviews for pagination.
+  const fanout = await unplannedEngineeringTrajectoryFixture({ mode: "connected", records: 500,
+    directory: join(state, "connections") })
+  try {
+    const owner = { reader_session: fanout.sessions.reader }
+    const discovery = JSON.parse((await execute(fanout.f, { action_id: fanout.action.id,
+      match: "Initial reading", record_kinds: ["assessment"] }, "json", owner.reader_session)).content).result as EngineeringHistoryView
+    assert.equal(discovery.records.length, 1, "Discover the multiply reviewed interpretation from its recorded wording")
+    const seed = discovery.records[0]!
+    const source = await save(fanout.f, "connections-source", { ...discovery.navigation.repeat,
+      record_id: seed.source.record_id, match: undefined, record_kinds: undefined, limit: 1 }, owner)
+    assert.equal(source.records[0]?.source.record_id, seed.source.record_id)
+    assert.ok(source.navigation.next_connections, "Review fan-out requires a group continuation")
+    assert.ok(source.navigation.next_relationships, "The selected interpretation requires an edge continuation")
+    const groups = await save(fanout.f, "connections-groups", source.navigation.next_connections, owner)
+    const edges = await save(fanout.f, "connections-edges", source.navigation.next_relationships, owner)
+    assert.equal(groups.connections.coverage.page, "groups")
+    assert.equal(edges.connections.coverage.page, "relationships")
+    assert.deepEqual(groups.relationships, [], "Owner pagination does not repeat graph edges")
+    assert.equal(new Set([...source.relationships, ...edges.relationships].map(edge => JSON.stringify(edge))).size,
+      source.relationships.length + edges.relationships.length, "Edge continuation excludes the first-page edges")
+    const review = source.connections.reviews[0]
+    assert.ok(review, "The discovered interpretation exposes its review owner")
+    const details = await save(fanout.f, "connections-review", review.details, owner)
+    assert.equal(details.connections.coverage.page, "review-relationships")
+    assert.ok(details.navigation.next_connections, "The original review evidence needs its own bounded continuation")
+    const nextDetails = await save(fanout.f, "connections-review-next", details.navigation.next_connections, owner)
+    assert.equal(nextDetails.connections.reviews[0]?.request.request_id, review.request.request_id)
+    const firstIDs = details.connections.reviews.flatMap(item => item.relationships.map(relation => relation.id))
+    const nextIDs = nextDetails.connections.reviews.flatMap(item => item.relationships.map(relation => relation.id))
+    assert.ok(firstIDs.length && nextIDs.length)
+    assert.equal(new Set([...firstIDs, ...nextIDs]).size, firstIDs.length + nextIDs.length)
+    for (const page of [groups, edges, details, nextDetails]) {
+      assert.deepEqual(page.connections.context?.read, source.navigation.repeat)
+      assert.deepEqual(page.connections.context?.record_refs, [seed.ref])
+      assert.deepEqual(page.boundary.owners, source.boundary.owners)
+      assert.equal(page.boundary.owner_version, source.boundary.owner_version)
+      assert.equal(page.boundary.observed_through, source.boundary.observed_through)
+    }
+  } finally { await fanout.close() }
 
   // Supplemental dense/hostile material is stored through the same registered
   // product and read back by loom_history. It does not replace the shared cases.

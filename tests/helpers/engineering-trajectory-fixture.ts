@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { WorkRef } from "../../src/collaboration.js"
+import { Observer } from "../../src/context.js"
+import type { ReviewRequest } from "../../src/review-requests.js"
 import { canonical, digest, type Action, type LedgerRecord, type PlanNode } from "../../src/model.js"
 import { Store } from "../../src/store.js"
 import { registeredLoom } from "./registered-loom.js"
@@ -209,5 +211,187 @@ export async function engineeringTrajectoryFixture(options: { records?: number; 
       originalSnapshot, totalRecords, question: TRAJECTORY_QUESTION, search: TRAJECTORY_SEARCH,
       setupQualification: "Synthetic equivalent; actual registered owners, simulated native host. Review access uses its existing requester Session. No private operator originals or native review-execution attestation.",
       close }
+  } catch (error) { await close(); throw error }
+}
+
+/** A second population over the same registered owners. In sparse mode there
+ * are no objective/review answers to consume: the investigator must discover
+ * the scattered originals and author any retrospective associations explicitly.
+ * Connected mode adds overlapping, attributed objectives and review branches;
+ * its expected component includes documented shared-evidence spillover.
+ * Neither mode creates a Plan, WorkRef, native review or private original.
+ */
+export async function unplannedEngineeringTrajectoryFixture(options: {
+  mode: "sparse" | "connected"; records?: number; directory?: string;
+}) {
+  const totalRecords = options.records ?? 24000
+  if (!Number.isSafeInteger(totalRecords) || totalRecords < 500 || totalRecords > 30000)
+    throw new Error("Unplanned trajectory fixture requires 500-30000 ledger records")
+  const ownsDirectory = options.directory === undefined
+  const directory = options.directory ?? await mkdtemp(join(process.env.LOOM_HISTORY_FIXTURE_ROOT ?? tmpdir(), "loom-unplanned-trajectory-"))
+  await mkdir(directory, { recursive: true })
+  let f: Awaited<ReturnType<typeof registeredLoom>> | undefined, db: Database | undefined
+  const close = async () => {
+    try { db?.close(true); db = undefined; await f?.close() }
+    finally { if (ownsDirectory) await rm(directory, { recursive: true, force: true }) }
+  }
+  try {
+    f = await registeredLoom([], { directory, beforeSetup: async location => {
+      await writeFile(join(location, ".loom.yaml"), "agents: {}\ninstructions: {enabled: false}\nledger: {capture: automatic}\n")
+    } })
+    const host = f
+    db = new Database(join(directory, "state", "loom", "actions-v1", digest({ project: "tool-help", canonical: directory }), "ledger.sqlite"))
+    const store = new Store(db)
+    const sessions = { reader: "review-owner", ci: "build-worker", worker: "test-author", release: "release-owner" }
+    const invoke = async (tool: string, input: unknown, session = sessions.reader) => (await host.invoke(tool, input, session)).result
+    const action = await invoke("action", { operation: "create", title: "Unplanned release investigations",
+      goal: "Preserve original evidence across reused Sessions and separate a scoped test correction from release acceptance." }) as Action
+    const add = async (session: string, kind: "claim" | "result" | "concern" | "assessment", statement: string,
+      extra: { evidence?: LedgerRecord[]; verdict?: "pass" | "fail" | "inconclusive"; artifacts?: string[] } = {}) =>
+      await invoke("record", { operation: "add", action_id: action.id, kind, statement,
+        evidence_ids: extra.evidence?.map(record => record.id) ?? [], artifact_refs: extra.artifacts ?? [],
+        ...(extra.verdict ? { verdict: extra.verdict } : {}) }, session) as LedgerRecord
+    const originals: LedgerRecord[] = []
+    const observed = async (session: string, id: string, status: "completed" | "error") => {
+      store.select(session, { action_id: action.id })
+      const before = (db!.query("SELECT COALESCE(MAX(seq),0) AS sequence FROM ledger").get() as { sequence: number }).sequence
+      const event = { sessionID: session, agent: "author", messageID: `message-${id}`, id, tool: "shell",
+        input: { command: "SYNTHETIC_PRIVATE_COMMAND" } }
+      await host.hooks.get("execute.before")(event)
+      await host.hooks.get("execute.after")({ ...event, status,
+        ...(status === "completed" ? { result: { content: "SYNTHETIC_PRIVATE_OUTPUT" } }
+          : { error: { message: "Controlled assertion failed" } }) })
+      const rows = store.records({ action_id: action.id, after: before, limit: 10 }).items
+      const start = rows.find(record => record.data.phase === "started" && record.data.call_id === id)
+      const finish = rows.find(record => record.data.phase === "finished" && record.data.call_id === id)
+      if (!start || !finish) throw new Error("Registered observer lost an unplanned source attempt")
+      originals.push(start, finish)
+      return { start, finish }
+    }
+    // The surrounding population consists of explicit evidence groups around
+    // shared observed sources, not isolated distractor rows. All sixteen Sessions
+    // are reused; the four trajectory producers also perform independent work.
+    const producers = [...Object.values(sessions), ...Array.from({ length: 12 }, (_, i) => `reused-engineer-${i}`)]
+    const chains: LedgerRecord[][] = []
+    const populationObserver = new Observer(store)
+    let surrounding = 0
+    const populate = (count: number) => {
+      let writing = false
+      try {
+        for (let n = 0; n < count; n++, surrounding++) {
+          const index = Math.floor(surrounding / 40), chain = chains[index] ?? (chains[index] = [])
+          if (chain.length < 2) {
+            if (writing) { db!.exec("COMMIT"); writing = false }
+            const session = producers[index % producers.length]!
+            const event = { sessionID: session, agent: "author", messageID: `exporter-${index}`, id: `exporter-check-${index}`,
+              tool: "shell", input: { fixture: index } }
+            if (!chain.length) {
+              store.select(session, { action_id: action.id })
+              chain.push(populationObserver.before(event))
+            } else {
+              const finish = populationObserver.after({ ...event, status: "completed", result: "SYNTHETIC_EXPORTER_OUTPUT" })
+              if (!finish) throw new Error("Population observer did not retain its original finish")
+              chain.push(finish)
+            }
+            continue
+          }
+          if (!writing) { db!.exec("BEGIN IMMEDIATE"); writing = true }
+          chain.push(store.append({ action_id: action.id, session_id: producers[surrounding % producers.length]!, agent: "author",
+            kind: chain.length % 7 === 0 ? "concern" : "result", data: {
+              statement: `Exporter branch ${index}, check ${chain.length}: recorded follow-up to its cited source; runtime cause and full acceptance remain open.`,
+              evidence_ids: [chain[1]!.id], artifact_refs: [], verification: "agent-reported; not independently validated by Loom" } }))
+        }
+        if (writing) db!.exec("COMMIT")
+      } catch (error) { if (writing) db!.exec("ROLLBACK"); throw error }
+    }
+    // Twenty trajectory originals and one unrelated same-revision control.
+    const chunk = Math.floor((totalRecords - 21) / 9)
+    const request = await add(sessions.reader, "claim", "Investigate the issue 182 CI anomaly and distinguish a test repair from complete release acceptance.")
+    populate(chunk)
+    const original = await observed(sessions.ci, "initial-ci", "error")
+    const finding = await add(sessions.ci, "concern", "Restore freshness: initial CI attempt 1 at a1 expected refresh=true after adding a row, but observed false. Its scheduling order was not recorded.",
+      { artifacts: ["https://example.test/controlled/ci/a1/attempt/1"] })
+    populate(chunk)
+    const initialInterpretation = await add(sessions.reader, "assessment", "Initial reading of issue 182: this may be a stale-index defect. Whether the watcher had already indexed the new row is unknown.", { verdict: "inconclusive" })
+    populate(chunk)
+    const retry = await observed(sessions.ci, "unchanged-retry", "completed")
+    const rerun = await add(sessions.ci, "result", "Attempt 2 for issue 182 passed on unchanged a1 before the patch. It cannot verify the later test correction.",
+      { artifacts: ["https://example.test/controlled/ci/a1/attempt/2"] })
+    populate(chunk)
+    const edit = await observed(sessions.worker, "test-only-edit", "completed")
+    const correction = await add(sessions.worker, "result", "Issue 187 changes only the test at b2: coordinate watcher and probe to cover both valid orderings. Production index behavior is unchanged.",
+      { artifacts: ["https://example.test/controlled/tree/b2"] })
+    const correctionReport = await add(sessions.reader, "result", "The b2 test patch from issue 187 addresses the earlier issue 182 assertion by controlling ordering. It does not reveal the historical failing interleaving.")
+    populate(chunk)
+    const beforeIndex = await observed(sessions.reader, "old-index-order", "completed")
+    const afterIndex = await observed(sessions.reader, "new-index-order", "completed")
+    const recheck = await add(sessions.reader, "assessment", "Scoped b2 verification passes: the old indexed row requires refresh and the updated row correctly returns false. The race check passed for this corrected tree. This does not prove original a1 ordering or full issue 182 acceptance.",
+      { verdict: "pass", evidence: [beforeIndex.finish, afterIndex.finish], artifacts: ["https://example.test/controlled/ci/b2/scoped"] })
+    populate(chunk)
+    const laterInterpretation = await add(sessions.reader, "assessment", "Later interpretation of issue 182: the controlled b2 cases support a plausible test-ordering race. This replaces the stale-index reading as the working explanation, but the original cause remains unproven.", { verdict: "inconclusive" })
+    populate(chunk)
+    const merge = await add(sessions.release, "result", "The issue 187 corrected b2 tree was merged as c3. Delivery of this test correction does not establish complete release acceptance.",
+      { artifacts: ["https://example.test/controlled/tree/c3"] })
+    populate(chunk)
+    const releaseAcceptance = await add(sessions.release, "concern", "Overall issue 182 acceptance still needs the installed release matrix, migration, cancellation and repair checks. Issue 187 assessed only the specified b2 correction.")
+    const unrelated = await add(sessions.reader, "result", "A separate formatter check passed at b2 in this Session. It has no established relationship to issue 182 or issue 187.")
+    const records = { request, finding, initialInterpretation, rerun, correction, correctionReport, recheck, laterInterpretation, merge, releaseAcceptance }
+    originals.push(...Object.values(records))
+    populate(totalRecords - 21 - surrounding)
+    const objectives: Array<{ id: string }> = []
+    const reviewIDs: string[] = [], relationshipIDs: string[] = []
+    const objectiveSources = new Map<string, Set<string>>()
+    if (options.mode === "connected") {
+      const link = async (objective_id: string, record: LedgerRecord, extra: Record<string, unknown> = {}) => {
+        const result = await invoke("objective", { operation: "link", objective_id, phase: "coordination", source_type: "ledger-record", source_id: record.id, ...extra })
+        objectiveSources.get(objective_id)!.add(record.id)
+        return result
+      }
+      for (let i = 0; i < 3; i++) {
+        const source = i === 0 ? request : chains[(i - 1) * 2]![39]!
+        const objective = await invoke("objective", { operation: "create", source_type: "ledger-record", source_id: source.id,
+          label: i === 0 ? "Restored-index anomaly and scoped test repair" : `Exporter acceptance branch ${i}; shared evidence is not shared success` })
+        objectives.push(objective); objectiveSources.set(objective.id, new Set([source.id]))
+        if (i > 0) await link(objective.id, finding, { note: "Explicit attributed shared source; no causation or common acceptance inferred." })
+        for (const chain of chains.slice(i * 2, i * 2 + 2)) await link(objective.id, chain[39]!, { note: "Independent correction branch retained with its original cited evidence." })
+      }
+      const main = objectives[0]!
+      const findingLink = await link(main.id, finding)
+      const diagnosis = await link(main.id, initialInterpretation, { confidence: "uncertain", related_sequence: findingLink.sequence, note: "Historical diagnosis remains a candidate." })
+      const corrected = await link(main.id, correction, { relation: "addresses", related_sequence: findingLink.sequence })
+      await link(main.id, rerun, { relation: "contests", related_sequence: diagnosis.sequence })
+      await link(main.id, recheck, { relation: "assesses", related_sequence: corrected.sequence })
+      await link(main.id, laterInterpretation, { relation: "supersedes", related_sequence: diagnosis.sequence, confidence: "uncertain", note: "Later working interpretation; historical order remains unknown." })
+      for (const record of originals) await link(main.id, record)
+      for (let i = 0; i < 24; i++) {
+        const requestID = `overlap-review-${String(i).padStart(2, "0")}`
+        const request: Omit<ReviewRequest, "requester" | "work_revision_policy"> = { format: "loom-review-request/v1", request_id: requestID,
+          mandate: { question: `Assess independent correction branch ${i} against its exact requested artifact.`, dimensions: ["scope"],
+            criteria: [{ text: "Shared evidence does not establish common causation or whole-release success.", source_ref: null }], mode: "independent",
+            inclusions: [`correction branch ${i}`], exclusions: ["complete issue 182 release acceptance", "native review execution"] },
+          intended_recipient: { agent: "investigator", session_id: null },
+          members: [{ member_id: "subject", work_ref: null, producing_attempt_refs: [], artifact_refs: [{ locator: `https://example.test/controlled/branch/${i}`,
+            version: { kind: "sha256", value: digest({ branch: i }) }, content_ref: null }], prior_review_request_id: i % 3 === 2 ? reviewIDs[i - 1]! : null,
+            membership_source_refs: [initialInterpretation.id], gaps: [{ reason: "source-missing", source_ref: null }] }], rechecks: [] }
+        await invoke("review", { operation: "freeze", request }); reviewIDs.push(requestID)
+        const findingRelation = await invoke("review", { operation: "relate", request_id: requestID, relationship: "finding", source_record_id: initialInterpretation.id, member_ids: ["subject"] })
+        relationshipIDs.push(findingRelation.id)
+        const correctionRelation = await invoke("review", { operation: "relate", request_id: requestID, relationship: "correction", source_record_id: correctionReport.id, member_ids: ["subject"], supersedes: findingRelation.id })
+        relationshipIDs.push(correctionRelation.id)
+        if (i === 0) for (const source of chains.slice(0, 6).flat().filter(record => record.session_id === sessions.reader && record.kind !== "observation"))
+          for (const relationship of ["cited", "claimed-inspected"]) {
+            const relation = await invoke("review", { operation: "relate", request_id: requestID, relationship, source_record_id: source.id, member_ids: ["subject"] })
+            relationshipIDs.push(relation.id)
+          }
+      }
+    }
+    const originalSnapshot = Object.fromEntries((db.query("SELECT id,data FROM ledger ORDER BY seq").all() as Array<{ id: string; data: string }>).map(row => [row.id, row.data]))
+    const connectedRecords = options.mode === "connected" ? [...originals, ...chains.slice(0, 6).flat()] : originals
+    return { f: host, directory, db, store, action, sessions, records, observations: { original, rerun: retry, edit, beforeIndex, afterIndex },
+      unrelated, objectives, reviewIDs, relationshipIDs, objectiveSources, originals, connectedRecords, chains,
+      originalSnapshot, totalRecords, mode: options.mode, question: TRAJECTORY_QUESTION, search: TRAJECTORY_SEARCH,
+      setupQualification: options.mode === "sparse"
+        ? "Synthetic unplanned originals with zero objective/review associations. Original observer references and citations are retained. Discovery, attributed retrospective authoring and subsequent navigation must be measured separately. No private operator reproduction or native review execution."
+        : "Synthetic large unplanned citation population with explicitly overlapping objectives and review branches. Its connected component includes known shared-evidence spillover. Registered source owners are real; native host and sources are controlled fixtures.", close }
   } catch (error) { await close(); throw error }
 }

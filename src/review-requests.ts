@@ -41,13 +41,14 @@ export type ReviewHistorySources = {
 export type ReviewHistorySnapshot = ReviewHistorySources & {
   requests: Array<{ request: ReviewRequest; frozen_work_membership: FrozenWorkMembership[];
     relationships: Array<Relationship & { id: string; sequence: number; source_availability: "record-available" }>;
+    content_digest: string;
     qualification: { request: "frozen-authored-mandate"; native_review_binding: { status: "unknown"; reason: "unsupported-host-boundary" };
       rechecks: "requested-only; actual inspection and verification require their own evidence";
       source_content: "references-only; original source permission required" } }>;
   gaps: Array<{ code: string; detail: string }>; content_digest: string;
 }
 const HISTORY_LIMITS = { requests: 1000, relationships: 10000, ledger: 100000, bytes: 8 * 1024 * 1024 } as const
-type ReviewHistoryRequestRow = { rowid: number; request_id: string; data_bytes: number; membership_bytes: number }
+type ReviewHistoryRequestRow = { rowid: number; request_id: string; data_bytes: number; membership_bytes: number; directly_applicable: number }
 type ReviewHistoryRelationshipRow = { id: string; sequence: number; request_id: string; source_record_id: string;
   author_session: string; source_session: string; supersedes: string | null; data_bytes: number }
 type ReviewHistoryLedgerRow = { id: string; seq: number; session_id: string; action_id: string | null; work_ref: string | null; data_bytes: number }
@@ -395,10 +396,13 @@ export class ReviewRequests {
           if (!actual || actual.session_id !== actor.session_id) throw new ReviewRequestError("not-authorized", "Review history source unavailable")
           return { ...relation, id: meta.id, sequence: meta.sequence, source_availability: "record-available" as const }
         })
-        return { request, frozen_work_membership: this.frozenWork(request), relationships,
+        const item = { request, frozen_work_membership: this.frozenWork(request), relationships,
           qualification: { request: "frozen-authored-mandate" as const, native_review_binding: qualifier,
             rechecks: "requested-only; actual inspection and verification require their own evidence" as const,
             source_content: "references-only; original source permission required" as const } }
+        // A valid owner snapshot can exceed the generic digest budget while its
+        // pages remain small. Hash it once under this owner's existing bounds.
+        return { ...item, content_digest: historyHash(item) }
       })
       const gaps = [
         { code: "requester-owned-review-scope", detail: "Only the actual caller's applicable frozen review requests are projected. Inaccessible, reserved preparation or outside-scope manifests are not expanded. Their identifiers and counts are not disclosed." },
@@ -478,18 +482,45 @@ export class ReviewRequests {
           AND json_extract(CASE WHEN json_valid(r.data) AND octet_length(r.data)<=393216 THEN r.data ELSE '{}' END,'$.source_record_id') IN (SELECT value FROM json_each(?))))`
     const applicabilityArgs = [workMatchValue, selectedRecordIDs, selection.relationship_through ?? null, selection.relationship_through ?? null, selectedRecordIDs,
       selection.request_through ?? null, selection.request_through ?? null, selection.relationship_through ?? null, selection.relationship_through ?? null, selectedRecordIDs]
-    const requestMax = this.db.prepare(`SELECT COALESCE(MAX(rowid),0) AS n FROM review_requests WHERE requester_session=? AND ${classification} AND ${applicability}`)
-      .get(actor.session_id, ...applicabilityArgs) as { n: number }
-    const requestThrough = selection.request_through ?? requestMax.n
-    if (requestThrough > requestMax.n) {
-      // A valid owner fence can be reused by a narrower selection with fewer
-      // members. Validate it against the same caller-owned nonprepared domain.
+    if (selection.request_through !== undefined) {
+      // A valid owner fence can be reused by a narrower selection. Its domain
+      // remains the actual caller's nonprepared requests, not a global registry.
       const ownerMax = this.db.prepare(`SELECT COALESCE(MAX(rowid),0) AS n FROM review_requests WHERE requester_session=? AND ${classification}`).get(actor.session_id) as { n: number }
-      if (requestThrough > ownerMax.n) throw new ReviewRequestError("history-unavailable", "Review history request boundary unavailable")
+      if (selection.request_through > ownerMax.n) throw new ReviewRequestError("history-unavailable", "Review history request boundary unavailable")
     }
-    const registry = this.db.prepare(`SELECT rowid,request_id,octet_length(data) AS data_bytes,octet_length(membership_data) AS membership_bytes
-      FROM review_requests WHERE requester_session=? AND rowid<=? AND ${classification} AND ${applicability} ORDER BY rowid LIMIT ?`)
-      .all(actor.session_id, requestThrough, ...applicabilityArgs, HISTORY_LIMITS.requests + 1) as ReviewHistoryRequestRow[]
+    // Explicit frozen review dependencies are an applicability basis even before
+    // a later review produces evidence. Resolve them within this owner, before
+    // hydration; concrete source scope and complete-manifest pruning still apply
+    // below. Neither artifact equality nor Session parentage creates an edge.
+    const registry = this.db.prepare(`WITH RECURSIVE
+      scoped_requests AS (
+        SELECT rowid,request_id,CASE WHEN json_valid(data) AND octet_length(data)<=393216 THEN data ELSE '{}' END AS data FROM review_requests
+        WHERE requester_session=? AND (? IS NULL OR rowid<=?) AND ${classification}
+      ), dependencies AS (
+        SELECT r.request_id AS source,json_extract(m.value,'$.prior_review_request_id') AS target
+          FROM scoped_requests r,json_each(r.data,'$.members') m
+          WHERE json_type(m.value,'$.prior_review_request_id')='text'
+        UNION
+        SELECT r.request_id,json_extract(c.value,'$.request_id')
+          FROM scoped_requests r,json_each(r.data,'$.rechecks') c
+          WHERE json_type(c.value,'$.request_id')='text'
+      ), edges AS (
+        SELECT d.source,d.target FROM dependencies d JOIN scoped_requests r ON r.request_id=d.target
+        UNION
+        SELECT d.target,d.source FROM dependencies d JOIN scoped_requests r ON r.request_id=d.target
+      ), direct_requests AS (
+        SELECT review_requests.request_id FROM review_requests
+          JOIN scoped_requests s ON s.request_id=review_requests.request_id WHERE ${applicability}
+      ), relevant(request_id) AS (
+        SELECT request_id FROM direct_requests
+        UNION
+        SELECT edges.target FROM edges JOIN relevant ON edges.source=relevant.request_id LIMIT ?
+      )
+      SELECT r.rowid,r.request_id,octet_length(r.data) AS data_bytes,octet_length(r.membership_data) AS membership_bytes,
+        EXISTS (SELECT 1 FROM direct_requests d WHERE d.request_id=r.request_id) AS directly_applicable
+        FROM review_requests r JOIN relevant ON relevant.request_id=r.request_id ORDER BY r.rowid`)
+      .all(actor.session_id, selection.request_through ?? null, selection.request_through ?? null,
+        ...applicabilityArgs, HISTORY_LIMITS.requests + 1) as ReviewHistoryRequestRow[]
     if (registry.length > HISTORY_LIMITS.requests) throw new ProcessingLimitError("review history requester registry exceeds its bounded read")
     let bytes = 0
     for (const row of registry) {
@@ -534,7 +565,7 @@ export class ReviewRequests {
         FROM review_requests r,json_each(r.data,'$.members') m WHERE r.request_id=? AND r.requester_session=? LIMIT 101`)
         .all(row.request_id, actor.session_id) as { member_id: string; work_ref: string | null; attempts: string; prior: string | null }[]
       if (!members.length || members.length > 100) throw new ReviewRequestError("history-unavailable", "Review history membership is unavailable")
-      let inScope = false, outside = false
+      let outside = false
       const dependencies: string[] = [], attempts: string[] = []
       for (const member of members) {
         uid(member.member_id)
@@ -542,10 +573,9 @@ export class ReviewRequests {
           const ref = work(JSON.parse(member.work_ref))
           const permitted = selection.action_id !== undefined ? ref.action_id === selection.action_id : workRefs.has(canonical(ref))
           if (!permitted) outside = true
-          else inScope = true
         }
         const producing = list(JSON.parse(member.attempts), "historical producing attempts", value => uid(value))
-        for (const id of producing) { if (ledger.get(id)?.session_id !== actor.session_id) outside = true; else { attempts.push(id); inScope = true } }
+        for (const id of producing) { if (ledger.get(id)?.session_id !== actor.session_id) outside = true; else attempts.push(id) }
         if (member.prior !== null) dependencies.push(uid(member.prior))
       }
       const rechecks = this.db.prepare("SELECT json_extract(data,'$.rechecks') AS rechecks FROM review_requests WHERE request_id=? AND requester_session=?")
@@ -554,11 +584,10 @@ export class ReviewRequests {
         const r = object(value, "historical recheck"); fields(r, ["request_id", "finding_ids"])
         const requestID = uid(r.request_id), findings = list(r.finding_ids, "historical recheck findings", value => uid(value))
         if (findings.some(id => !candidateRelations.some(relation => relation.id === id && relation.request_id === requestID))) outside = true
-        else if (findings.length) inScope = true
         return { request_id: requestID, finding_ids: findings }
       })
       dependencies.push(...parsedRechecks.map(recheck => recheck.request_id))
-      if (!outside && (inScope || candidateRelations.some(relation => relation.request_id === row.request_id)))
+      if (!outside)
         candidates.set(row.request_id, { row, dependencies, attempts, member_metadata: members, rechecks: parsedRechecks })
     }
     // A raw immutable manifest is returned whole or omitted whole. Never turn
@@ -575,7 +604,22 @@ export class ReviewRequests {
         candidates.delete(id); changed = true
       }
     }
-    const relationships = [...retainedRelations.values()]
+    // Pruning a mixed-scope manifest must not leave its otherwise unrelated
+    // predecessors visible merely because the initial SQL closure reached them.
+    const neighbors = new Map<string, Set<string>>()
+    for (const [id, candidate] of candidates) for (const dependency of candidate.dependencies) {
+      for (const [from, to] of [[id, dependency], [dependency, id]]) {
+        const targets = neighbors.get(from) ?? new Set<string>()
+        targets.add(to); neighbors.set(from, targets)
+      }
+    }
+    const reachable = new Set([...candidates].filter(([, value]) => value.row.directly_applicable === 1).map(([id]) => id))
+    const queue = [...reachable]
+    for (let index = 0; index < queue.length; index++) for (const target of neighbors.get(queue[index]) ?? []) if (!reachable.has(target)) {
+      reachable.add(target); queue.push(target)
+    }
+    for (const id of candidates.keys()) if (!reachable.has(id)) candidates.delete(id)
+    const relationships = [...retainedRelations.values()].filter(row => candidates.has(row.request_id))
     const used = new Set(relationships.map(row => row.source_record_id))
     for (const value of candidates.values()) for (const id of value.attempts) used.add(id)
     const contributors = new Set<string>()
