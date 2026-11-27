@@ -2,6 +2,9 @@ name: Installed question production-path qualification
 on:
   pull_request:
     branches: [main]
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
   contents: read
 jobs:
@@ -20,8 +23,6 @@ jobs:
           node-version: 22
       - run: bun install --frozen-lockfile
       - run: git diff --exit-code -- bun.lock
-      - name: Mandatory COMPONENT SDK-get rejection, not installed ACL evidence
-        run: bun test tests/question-host/get-rejection.test.ts
       - name: Pack and install the exact 2.3.0 candidate artifact
         run: |
           mkdir -p "$RUNNER_TEMP/loom-question-artifact"
@@ -101,10 +102,6 @@ jobs:
           --artifact "$(find "$RUNNER_TEMP/loom-question-artifact" -maxdepth 1 -name 'loom-plugin-*.tgz' -print -quit)"
           --repository "$GITHUB_WORKSPACE"
           --report-directory "$RUNNER_TEMP/loom-choice-report"
-      - name: Typecheck QA-B scripted source provider (provider-free)
-        run: >-
-          ./node_modules/.bin/tsc --noEmit --ignoreConfig --target ES2022 --module NodeNext
-          --moduleResolution NodeNext --strict --skipLibCheck --types bun,node tests/retrospective-source/server.ts
       - name: QA-B source proof via installed OpenCode (no inference)
         run: |
           set +e

@@ -37,7 +37,7 @@ from installed_original_sources import (
     exercise_original_negatives, inspect_original_fragments, inspect_original_population,
     inspect_original_restart, install_source_owner, prepare_original_population,
 )
-from installed_questions import audit_session, events, idle, request, result_value
+from installed_questions import audit_session, event_count, events, idle, request, result_value
 from native_review_oracle import call_key
 
 
@@ -721,12 +721,12 @@ class HistoricalScenario(ReviewScenario):
         if self.invocation_plan is not None:
             self.invocation_plan.append({"session_id": session, "job": job,
                                          "code_sha256": hashlib.sha256(code.encode()).hexdigest()})
-        start = len(events(self.root))
+        start = event_count(self.root)
         self.submit(session, job)
         return job, start
 
     def read(self, actor, tool, query, label):
-        start = len(events(self.root))
+        start = event_count(self.root)
         began = time.monotonic()
         rendered = tool == "history" and query.get("response_format") in ("markdown", "html")
         if rendered:
@@ -737,7 +737,7 @@ class HistoricalScenario(ReviewScenario):
         else:
             value = self.invoke(actor, tool, query)
         elapsed = time.monotonic() - began
-        observed = events(self.root)[start:]
+        observed = events(self.root, after=start)
         before = [event for event in observed if event["type"] == "tool-before"
                   and event["data"].get("tool") in ("loom_" + tool, "loom." + tool)]
         after = [event for event in observed if event["type"] == "tool-after"
@@ -876,12 +876,12 @@ def run(args) -> dict:
                             if verdict:
                                 query["verdict"] = verdict
                             script.append("await tools.loom.record(" + encoded(query) + ")")
-                        start = len(events(root))
+                        start = event_count(root)
                         receipt = scenario.dispatch(parent, scenario.add(code="return [" + ",".join(script) + "]"))
                         dispatches.append(receipt)
                         child = receipt["child_session_id"]
                         owned.add(child)
-                        created = [result_value(event) for event in events(root)[start:] if event["type"] == "tool-after"
+                        created = [result_value(event) for event in events(root, after=start) if event["type"] == "tool-after"
                                    and event["data"].get("sessionID") == child
                                    and event["data"].get("tool") in ("loom_record", "loom.record")
                                    and event["data"].get("status") == "completed"]
@@ -926,10 +926,10 @@ def run(args) -> dict:
                     connected_fixture = prepare_connected_history(scenario, reader)
                     # Keep this separate from the connected navigation fixture:
                     # its later associations must not alter the earlier oracles.
-                    population_start = len(events(root))
+                    population_start = event_count(root)
                     scenario.invocation_plan = []
                     population = prepare_population(scenario, reader, prepare_connected_history(scenario, reader))
-                    setup_effects = assert_population_setup_effects(events(root)[population_start:], reader, scenario.invocation_plan)
+                    setup_effects = assert_population_setup_effects(events(root, after=population_start), reader, scenario.invocation_plan)
                     report["population_setup_driver_invocations"] = scenario.invocation_plan
                     scenario.invocation_plan = None
                     check("frozen-population-preview-freeze-and-preparation",
@@ -937,12 +937,12 @@ def run(args) -> dict:
                           preview_pages=population["expected"]["pages"], member_count=population["expected"]["member_count"],
                           preparation_request_id=population["prepared"]["request_id"], freeze_replay_identity_preserved=True,
                           source_policy="declared-not-authority", **setup_effects)
-                    original_start = len(events(root))
+                    original_start = event_count(root)
                     scenario.invocation_plan = []
                     original_population = prepare_original_population(scenario, second_reader,
                         lambda: native_export(host, owned, second_reader), original_owner)
                     report["original_source_setup_effects"] = assert_population_setup_effects(
-                        events(root)[original_start:], second_reader, scenario.invocation_plan)
+                        events(root, after=original_start), second_reader, scenario.invocation_plan)
                     report["original_source_setup_driver_invocations"] = scenario.invocation_plan
                     scenario.invocation_plan = None
                     idle(host, [parent, reader, *children])
@@ -966,7 +966,7 @@ def run(args) -> dict:
                         "connected_original_record_ids": [item["id"] for item in connected_fixture["records"].values()],
                         "authored_support": "original five-record Action: empty evidence_ids; no objective registration or Loom assignment/delivery",
                         "connected_support": "separate no-Plan Action; attributed objective links and requester-owned artifact review scopes; no native review execution"}
-                    read_start = len(events(root))
+                    read_start = event_count(root)
                     scenario.invocation_plan = []
 
                     sessions, pages, cursor = [], [], None
@@ -1346,7 +1346,7 @@ def run(args) -> dict:
 
                     for session, before in originals.items():
                         require(native_export(host, owned, session) == before, "Historical native Session changed during evidence retrieval")
-                    read_receipts = events(root)[read_start:]
+                    read_receipts = events(root, after=read_start)
                     effects = assert_read_only_effects(read_receipts, {reader, second_reader}, scenario.invocation_plan)
                     require(not any(event["type"] == "model-request" and event["data"].get("agent") == "evaluator"
                                     for event in events(root)), "Fixture unexpectedly invoked an Evaluator")

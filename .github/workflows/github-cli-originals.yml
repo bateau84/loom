@@ -5,6 +5,9 @@ on:
       - 'src/external-originals.ts'
       - 'tests/external-originals-native.test.ts'
       - '.github/workflows/github-cli-originals.yml'
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
   contents: read
 jobs:
