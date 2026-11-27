@@ -291,7 +291,7 @@ test("flagless CLI must prove exact bytes before owner reads, independent of its
       const observed = await readCalls()
       const probes = observed.filter(call => call.local)
       expect(probes.length).toBeGreaterThanOrEqual(2)
-      expect(probes.every(call => call.isolated)).toBe(true)
+      expect(probes.every(call => call.isolated && call.config === "isolated")).toBe(true)
       expect(observed.at(-1)?.args).toEqual(["api", "--hostname", "github.com", "--method", "GET",
         "--header", "X-GitHub-Api-Version: 2022-11-28", prefix])
       expect(observed.at(-1)?.isolated).toBe(false)
@@ -350,7 +350,7 @@ test.skipIf(!qualifiedInstalledGH && process.env.LOOM_REQUIRE_REAL_GH !== "1")("
     const address = server.address() as { port: number }, bin = join(directory, "bin")
     await mkdir(bin)
     const controlledEnv = { PATH: "/usr/bin:/bin", GH_CONFIG_DIR: join(directory, "config"), GH_TOKEN: "controlled-not-a-real-token", GH_PROMPT_DISABLED: "1", NO_COLOR: "1" }
-    await writeFile(join(bin, "gh"), `#!${process.execPath}\nconst{execFileSync}=require('node:child_process');const args=process.argv.slice(2);if(args[0]==='api'&&args[1]!=='--help'){const last=args.length-1;if(args[last].startsWith('/repos/bateau84/loom'))args[last]='http://127.0.0.1:${address.port}'+args[last];else if(!args[last].startsWith('http://127.0.0.1:'))process.exit(90)}try{process.stdout.write(execFileSync(${JSON.stringify(installedGH)},args,{env:${JSON.stringify(controlledEnv)},maxBuffer:1048576,timeout:5000}))}catch(error){process.stderr.write(error.stderr??'controlled CLI failed');process.exit(1)}\n`, { mode: 0o700 })
+    await writeFile(join(bin, "gh"), `#!${process.execPath}\nconst{execFileSync}=require('node:child_process');const args=process.argv.slice(2);if(args[0]==='api'&&args[1]!=='--help'){const last=args.length-1;if(args[last].startsWith('/repos/bateau84/loom'))args[last]='http://127.0.0.1:${address.port}'+args[last];else if(!args[last].startsWith('http://127.0.0.1:'))process.exit(90)}try{process.stdout.write(execFileSync(${JSON.stringify(installedGH)},args,{env:args.at(-1)?.includes('/repos/bateau84/loom')||args.at(-1)==='--help'||args.at(-1)==='--version'?${JSON.stringify(controlledEnv)}:process.env,maxBuffer:1048576,timeout:5000}))}catch(error){process.stderr.write(error.stderr??'controlled CLI failed');process.exit(1)}\n`, { mode: 0o700 })
     process.env.PATH = bin + ":" + savedPath
     const options = { directory, signal: new AbortController().signal, authorize: async () => {} }
     const file = await resolveExternalOriginal(request(`blob/${commit}/restore_test.go`), options)

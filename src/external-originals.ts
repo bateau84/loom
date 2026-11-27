@@ -1,5 +1,8 @@
 import { execFile } from "node:child_process"
 import { createHash } from "node:crypto"
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { canonical, digest, ProcessingBudget, ProcessingLimitError } from "./model.js"
 import type { EvaluationSourceRef } from "./evaluation-store.js"
 import type { RetrospectiveSourceRequest, RetrospectiveSourceResolution } from "./retrospective-populations.js"
@@ -88,18 +91,19 @@ export type ExternalOriginalOptions = { signal: AbortSignal; directory: string;
   /** Controlled owner/transport qualification seam; production uses existing gh. */
   transport?: ExternalOriginalTransport }
 
-type CLIOptions = { directory: string; signal: AbortSignal; maxBytes: number; timeoutMs?: number }
+type CLIOptions = { directory: string; signal: AbortSignal; maxBytes: number; timeoutMs?: number;
+  executable: string; environment?: NodeJS.ProcessEnv }
 const runGH = (args: string[], options: CLIOptions): Promise<{ status: number; body: Uint8Array }> => new Promise((resolve, reject) => {
   options.signal.throwIfAborted()
   // Credentials remain with gh. Prevent diagnostics, paging, prompts and TTY
   // formatting from becoming another output/secret channel. All stdout is piped;
   // raw terminal escapes never reach an actual terminal through this transport.
-  const env: NodeJS.ProcessEnv = { ...process.env, GH_PROMPT_DISABLED: "1", GH_PAGER: "", PAGER: "", NO_COLOR: "1" }
+  const env: NodeJS.ProcessEnv = { ...(options.environment ?? process.env), GH_PROMPT_DISABLED: "1", GH_PAGER: "", PAGER: "", NO_COLOR: "1" }
   delete env.GH_DEBUG
   delete env.DEBUG
   delete env.GH_FORCE_TTY
   delete env.CLICOLOR_FORCE
-  execFile("gh", args, { cwd: options.directory, encoding: "buffer", maxBuffer: options.maxBytes,
+  execFile(options.executable, args, { cwd: options.directory, encoding: "buffer", maxBuffer: options.maxBytes,
     timeout: options.timeoutMs ?? EXTERNAL_ORIGINAL_LIMITS.timeoutMs, signal: options.signal, env }, (error, stdout, stderr) => {
     if (options.signal.aborted) { reject(options.signal.reason); return }
     if (error) {
@@ -116,26 +120,76 @@ const runGH = (args: string[], options: CLIOptions): Promise<{ status: number; b
   })
 })
 
-/** Qualify byte-output behavior once per source read, before any remote read.
- * Modern gh needs an explicit opt-in. The inspected 2.46.0 implementation copies
- * non-TTY response bytes directly (pkg/cmd/api/api.go at tag v2.46.0). Unknown
- * flagless implementations are not presumed equivalent and get no API retry.
- * This is a local CLI capability observation, never an authorization grant. */
+const apiArguments = (endpoint: string, explicitRaw: boolean) => ["api", "--hostname", "github.com", "--method", "GET",
+  ...(explicitRaw ? ["--allow-escape-sequences"] : []), "--header", "X-GitHub-Api-Version: 2022-11-28", endpoint]
+
+/** Flagless CLIs must demonstrate byte-preserving nonterminal output. The
+ * only URLs admitted here are generated loopback probe URLs, with synthetic
+ * bodies and a disposable credential-free configuration. No owner endpoint or
+ * operator credentials enter this test. It is a capability test for a trusted
+ * installed executable, not a sandbox for an adversarial executable. */
+async function qualifyFlaglessCLI(options: CLIOptions): Promise<void> {
+  let directory: string | undefined, stop: (() => void | Promise<void>) | undefined
+  try {
+    options.signal.throwIfAborted()
+    directory = await mkdtemp(join(tmpdir(), "loom-gh-byte-probe-"))
+    const textBytes = Buffer.from("\ufeffloom byte probe\r\n\x1b[31mred\x1b[0m\x1b]0;probe\x07\t\n")
+    const binaryBytes = Uint8Array.from({ length: 256 }, (_, i) => i)
+    const server = Bun.serve({
+      hostname: "127.0.0.1", port: 0,
+      fetch(request) {
+        // A capability probe has no authorization to receive real credentials.
+        if (request.method !== "GET" || request.headers.has("authorization")) return new Response(null, { status: 400 })
+        const path = new URL(request.url).pathname
+        if (path === "/text") return new Response(textBytes, { headers: { "content-type": "text/plain" } })
+        if (path === "/redirect") return new Response(null, { status: 302, headers: { location: "/binary" } })
+        if (path === "/binary") return new Response(binaryBytes, { headers: { "content-type": "application/octet-stream" } })
+        return new Response(null, { status: 404 })
+      }
+    })
+    stop = () => server.stop(true)
+    // Construct a minimal environment, never copy the operator's token, proxy,
+    // config, keyring or other credential-bearing environment into the probe.
+    const environment: NodeJS.ProcessEnv = { PATH: process.env.PATH, HOME: directory, USERPROFILE: directory,
+      XDG_CONFIG_HOME: directory, XDG_CACHE_HOME: directory, XDG_DATA_HOME: directory, XDG_STATE_HOME: directory,
+      GH_CONFIG_DIR: directory, GH_TOKEN: "loom-local-probe-not-a-credential",
+      GH_NO_UPDATE_NOTIFIER: "1", GH_NO_EXTENSION_UPDATE_NOTIFIER: "1" }
+    for (const [path, expected] of [["text", textBytes], ["redirect", binaryBytes]] as const) {
+      const response = await runGH(apiArguments(new URL(path, server.url).href, false), {
+        ...options, directory, environment, maxBytes: 4096, timeoutMs: 5000
+      })
+      if (response.status !== 200 || !Buffer.from(response.body).equals(Buffer.from(expected)))
+        throw new Error("byte mismatch")
+    }
+  } catch {
+    options.signal.throwIfAborted()
+    return gap("unsupported", "github-cli-byte-output-unqualified",
+      "The flagless GitHub CLI could not prove exact nonterminal text and redirected binary output using the isolated local probe. No GitHub owner read was attempted. Make loopback available or put a GitHub CLI with --allow-escape-sequences on PATH; check gh --version.")
+  } finally {
+    try { await stop?.() }
+    finally { if (directory !== undefined) await rm(directory, { recursive: true, force: true }) }
+  }
+}
+
+/** Qualify byte output once per source read, before any remote owner read.
+ * Prefer the CLI's explicit raw-output capability; otherwise require a
+ * successful local nonterminal byte probe, not a version claim. Use the same
+ * resolved executable for help, qualification and owner reads. */
 function githubCLITransport(): ExternalOriginalTransport {
-  let rawFlag: Promise<boolean> | undefined
+  let qualified: Promise<{ executable: string; explicitRaw: boolean }> | undefined
   return async (endpoint, options) => {
-    rawFlag ??= (async () => {
-      const help = await runGH(["api", "--help"], { ...options, maxBytes: 32768, timeoutMs: 5000 })
-      if (help.status !== 200) return gap("unsupported", "github-cli-byte-output-unqualified", "GitHub CLI byte-output support could not be established.")
-      if (/^\s+--allow-escape-sequences(?:\s|=)/m.test(decode(help.body))) return true
-      const version = await runGH(["--version"], { ...options, maxBytes: 4096, timeoutMs: 5000 })
-      if (version.status === 200 && /^gh version 2\.46\.0(?:\s|$)/.test(decode(version.body))) return false
-      return gap("unsupported", "github-cli-byte-output-unqualified",
-        "This GitHub CLI has neither the supported raw-output option nor the qualified legacy 2.46.0 byte-output behavior.")
+    qualified ??= (async () => {
+      const executable = Bun.which("gh", { PATH: process.env.PATH, cwd: options.directory })
+      if (!executable) return gap("unsupported", "github-cli-unavailable",
+        "The existing authenticated GitHub CLI could not be found on PATH. No account or credentials were created.")
+      const help = await runGH(["api", "--help"], { ...options, executable, maxBytes: 32768, timeoutMs: 5000 })
+      if (help.status !== 200) return gap("unsupported", "github-cli-byte-output-unqualified", "GitHub CLI byte-output support could not be established. Check gh api --help.")
+      const explicitRaw = /^\s+--allow-escape-sequences(?:\s|=)/m.test(decode(help.body))
+      if (!explicitRaw) await qualifyFlaglessCLI({ ...options, executable })
+      return { executable, explicitRaw }
     })()
-    const explicitRaw = await rawFlag
-    return runGH(["api", "--hostname", "github.com", "--method", "GET", ...(explicitRaw ? ["--allow-escape-sequences"] : []),
-      "--header", "X-GitHub-Api-Version: 2022-11-28", endpoint], options)
+    const { executable, explicitRaw } = await qualified
+    return runGH(apiArguments(endpoint, explicitRaw), { ...options, executable })
   }
 }
 

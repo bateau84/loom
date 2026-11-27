@@ -127,15 +127,28 @@ endpoint or turns an unknown URL into a general network read. The source
 namespace identifies the GitHub repository owner separately from the local
 Loom reference store.
 
-The adapter performs a bounded `gh api --help` capability check before its
-first API request. A CLI advertising `--allow-escape-sequences` uses that explicit
-raw-output option. The separately qualified legacy **2.46.0** path uses its
-nonterminal byte-copy behavior. Unknown flagless implementations remain
-unsupported; a failed read never retries by silently dropping a required flag.
-The loopback qualification exercises actual 2.46.0 log bytes and redirected
-archive bytes, without establishing real GitHub-account authorization. CLI
-diagnostics and credentials are never returned to the reader. Source reference:
-[2.46.0 API output](https://github.com/cli/cli/blob/v2.46.0/pkg/cmd/api/api.go).
+The adapter resolves the existing `gh` executable and performs a bounded
+`gh api --help` capability check before its first owner API request. A CLI
+advertising `--allow-escape-sequences` uses that explicit raw-output option.
+Otherwise a flagless CLI must reproduce exact synthetic nonterminal text
+(including a BOM, CRLF and terminal escape sequences) and all 256 byte values
+after a loopback HTTP redirect. A version string alone does not qualify a CLI.
+The fixed synthetic probe uses a private temporary configuration, a dummy token,
+no inherited credential or proxy environment, a loopback-only listener, a 4 KiB
+output bound and a five-second timeout per probe request. It releases the
+listener and temporary configuration before owner reads. The same resolved
+executable performs the authorized owner GETs. Failed or unavailable probes
+produce `github-cli-byte-output-unqualified`; no GitHub owner request or
+flag-dropping retry occurs. This is capability qualification for the trusted
+installed CLI, not sandboxing arbitrary executables or account qualification.
+
+The actual-binary CI matrix exercises official releases 2.46.0, 2.87.3 and
+2.106.0 with exact file, redirected CI job log and redirected digest-verified
+archive checks; it does not establish live GitHub-account authorization.
+CLI diagnostics and credentials are never returned to the reader. Source
+references: [2.46.0 API output](https://github.com/cli/cli/blob/v2.46.0/pkg/cmd/api/api.go),
+[2.87.3 API output](https://github.com/cli/cli/blob/v2.87.3/pkg/cmd/api/api.go),
+[2.106.0 guarded output](https://github.com/cli/cli/blob/v2.106.0/pkg/cmd/api/api.go).
 
 Each external original is limited to eight generated GET requests, 1 MiB per API
 response, 512 KiB of original bytes and a 1 MiB complete permitted representation.
