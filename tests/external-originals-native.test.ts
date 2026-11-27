@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
 import { createServer } from "node:http"
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { EXTERNAL_ORIGINAL_LIMITS, externalOriginalDescriptor, resolveExternalOriginal,
@@ -238,7 +238,7 @@ test("default CLI transport uses fixed GET argv and bounded cancellation without
   try {
     const bin = join(directory, "bin"), argsFile = join(directory, "arguments.json")
     await mkdir(bin)
-    await writeFile(join(bin, "gh"), `#!${process.execPath}\nimport {writeFileSync} from 'node:fs';const args=process.argv.slice(2);if(args.join(' ')==='api --help'){process.stdout.write('  --allow-escape-sequences  Raw byte output\\n');process.exit(0)}writeFileSync(${JSON.stringify(argsFile)},JSON.stringify(args));process.stderr.write('SECRET-OWNER-DIAGNOSTIC');process.exit(1);\n`, { mode: 0o700 })
+    await writeFile(join(bin, "gh"), `#!${process.execPath}\nimport {writeFileSync} from 'node:fs';const args=process.argv.slice(2);if(args.join(' ')==='api --help'){process.stdout.write('  --allow-escape-sequences[=true|false]  Raw byte output\\n');process.exit(0)}writeFileSync(${JSON.stringify(argsFile)},JSON.stringify(args));process.stderr.write('SECRET-OWNER-DIAGNOSTIC');process.exit(1);\n`, { mode: 0o700 })
     process.env.PATH = bin + ":" + savedPath
     const result = await resolveExternalOriginal(request(`commit/${commit}`), { directory, signal: new AbortController().signal, authorize: async () => {} })
     expect(result).toMatchObject({ status: "unresolved", gap: { code: "github-cli-unavailable" } })
@@ -256,30 +256,92 @@ test("default CLI transport uses fixed GET argv and bounded cancellation without
   }
 })
 
-test("CLI byte-output qualification accepts known legacy bytes and never retries an unknown sanitizer without its flag", async () => {
+test("flagless CLI must prove exact bytes before owner reads, independent of its version", async () => {
   const directory = await mkdtemp(join(tmpdir(), "loom-external-cli-modes-")), savedPath = process.env.PATH
+  const sentinel = { GH_TOKEN: "operator-sentinel", GH_ENTERPRISE_TOKEN: "enterprise-sentinel",
+    GH_CONFIG_DIR: "operator-config-sentinel", XDG_CONFIG_HOME: "operator-xdg-sentinel", HTTPS_PROXY: "operator-proxy-sentinel" }
+  const savedEnv = Object.fromEntries(Object.keys(sentinel).map(key => [key, process.env[key]]))
   try {
     const bin = join(directory, "bin"), calls = join(directory, "calls.jsonl")
     await mkdir(bin)
-    const writeCLI = async (version: string) => writeFile(join(bin, "gh"), `#!${process.execPath}\nconst fs=require('node:fs');const args=process.argv.slice(2);fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify(args)+'\\n');if(args.join(' ')==='api --help'){process.stdout.write('Legacy API help without a raw flag\\n');process.exit(0)}if(args.join(' ')==='--version'){process.stdout.write(${JSON.stringify(version)});process.exit(0)}process.stderr.write('gh: HTTP 404');process.exit(1);\n`, { mode: 0o700 })
+    // Exercise the actual subprocess and HTTP response path; this external
+    // fake is deliberately able to corrupt either of the qualification views.
+    const writeCLI = async (mode: string, version: string) => {
+      const script = [
+        "#!" + process.execPath,
+        "const fs=require('node:fs');const args=process.argv.slice(2);const mode=" + JSON.stringify(mode),
+        "const endpoint=args.at(-1);const local=endpoint.startsWith('http://127.0.0.1:');",
+        "fs.appendFileSync(" + JSON.stringify(calls) + ",JSON.stringify({args,local,isolated:process.env.GH_TOKEN!=='operator-sentinel'&&!process.env.GH_ENTERPRISE_TOKEN&&!process.env.HTTPS_PROXY&&process.env.GH_CONFIG_DIR===process.env.HOME&&process.env.XDG_CONFIG_HOME===process.env.HOME,config:process.env.GH_CONFIG_DIR})+'\\n');",
+        "if(args.join(' ')==='api --help'){console.log('Flagless API help');process.exit(0)}",
+        "if(args.join(' ')==='--version'){console.log(" + JSON.stringify(version) + ");process.exit(0)}",
+        "if(args.includes('--allow-escape-sequences'))process.exit(1);",
+        "if(!local){process.stderr.write('gh: HTTP 404');process.exit(1)}",
+        "if(mode==='stall'){setInterval(()=>{},1000)}else",
+        "(async()=>{const response=await fetch(endpoint);const body=Buffer.from(await response.arrayBuffer());if(!response.ok)process.exit(1);",
+        "const type=response.headers.get('content-type');if((mode==='text'&&type==='text/plain')||(mode==='binary'&&type==='application/octet-stream'))body[0]^=1;",
+        "if(mode==='error')process.exit(1);process.stdout.write(body)})().catch(()=>process.exit(1));"
+      ].join("\n")
+      await writeFile(join(bin, "gh"), script, { mode: 0o700 })
+    }
     process.env.PATH = bin + ":" + savedPath
-    await writeCLI("gh version 2.46.0 (controlled fixture)\n")
+    Object.assign(process.env, sentinel)
     const options = { directory, signal: new AbortController().signal, authorize: async () => {} }
-    expect(await resolveExternalOriginal(request(`commit/${commit}`), options)).toMatchObject({ status: "missing" })
-    let observed = (await readFile(calls, "utf8")).trim().split("\n").map(line => JSON.parse(line))
-    expect(observed).toEqual([["api", "--help"], ["--version"],
-      ["api", "--hostname", "github.com", "--method", "GET", "--header", "X-GitHub-Api-Version: 2022-11-28", prefix]])
+    const readCalls = async () => (await readFile(calls, "utf8")).trim().split("\n").map(line => JSON.parse(line)) as
+      { args: string[]; local: boolean; isolated: boolean; config: string }[]
+    for (const version of ["gh version 2.46.0", "gh version 2.87.3", "gh version 2.999.0"]) {
+      await writeFile(calls, "")
+      await writeCLI("exact", version)
+      expect(await resolveExternalOriginal(request(`commit/${commit}`), options)).toMatchObject({ status: "missing" })
+      const observed = await readCalls()
+      const probes = observed.filter(call => call.local)
+      expect(probes).toHaveLength(2)
+      expect(probes.every(call => call.isolated)).toBe(true)
+      expect(new Set(probes.map(call => call.config)).size).toBe(1)
+      await expect(stat(probes[0]!.config)).rejects.toThrow()
+      expect(observed.at(-1)?.args).toEqual(["api", "--hostname", "github.com", "--method", "GET",
+        "--header", "X-GitHub-Api-Version: 2022-11-28", prefix])
+      expect(observed.at(-1)?.isolated).toBe(false)
+    }
+    for (const mode of ["text", "binary", "error"]) {
+      await writeFile(calls, "")
+      await writeCLI(mode, "gh version 2.87.3")
+      const result = await resolveExternalOriginal(request(`commit/${commit}`), options)
+      expect(result).toMatchObject({ status: "unsupported", gap: { code: "github-cli-byte-output-unqualified" } })
+      expect(result.value).toBeUndefined()
+      expect(JSON.stringify(result)).not.toContain("operator-sentinel")
+      const observed = await readCalls()
+      expect(observed.some(call => call.args.at(-1) === prefix)).toBe(false)
+      const probes = observed.filter(call => call.local)
+      expect(probes.length).toBeGreaterThan(0)
+      expect(probes.every(call => call.isolated)).toBe(true)
+      await expect(stat(probes[0]!.config)).rejects.toThrow()
+    }
     await writeFile(calls, "")
-    await writeCLI("gh version 2.999.0 (unknown flagless fixture)\n")
-    const denied = await resolveExternalOriginal(request(`commit/${commit}`), options)
-    expect(denied).toMatchObject({ status: "unsupported", gap: { code: "github-cli-byte-output-unqualified" } })
-    observed = (await readFile(calls, "utf8")).trim().split("\n").map(line => JSON.parse(line))
-    expect(observed).toEqual([["api", "--help"], ["--version"]])
+    await writeCLI("stall", "gh version 2.87.3")
+    const abort = new AbortController()
+    const pending = resolveExternalOriginal(request(`commit/${commit}`), { ...options, signal: abort.signal })
+    // Observe a started local subprocess, not just cancellation during help.
+    let started: Awaited<ReturnType<typeof readCalls>>[number] | undefined
+    const deadline = Date.now() + 4000
+    try {
+      while (!started && Date.now() < deadline) {
+        const contents = await readFile(calls, "utf8")
+        if (contents.trim()) started = (await readCalls()).find(call => call.local)
+        if (!started) await Bun.sleep(20)
+      }
+    } finally { abort.abort(new Error("controlled probe cancellation")) }
+    await expect(pending).rejects.toThrow("controlled probe cancellation")
+    expect(started).toBeDefined()
+    await expect(stat(started!.config)).rejects.toThrow()
+    expect((await readCalls()).some(call => call.args.at(-1) === prefix)).toBe(false)
   } finally {
     if (savedPath === undefined) delete process.env.PATH; else process.env.PATH = savedPath
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value
+    }
     await rm(directory, { recursive: true, force: true })
   }
-})
+}, 30000)
 
 // This is a real CLI byte/redirect check when a qualified installed executable is
 // available, not a claim of live GitHub account authorization. Only the test
@@ -289,23 +351,29 @@ let qualifiedInstalledGH = false
 if (installedGH) {
   try {
     const help = execFileSync(installedGH, ["api", "--help"], { encoding: "utf8", maxBuffer: 32768, timeout: 5000 })
-    qualifiedInstalledGH = /^\s+--allow-escape-sequences(?:\s|=)/m.test(help)
-      || /^gh version 2\.46\.0(?:\s|$)/.test(execFileSync(installedGH, ["--version"], { encoding: "utf8", maxBuffer: 4096, timeout: 5000 }))
+    qualifiedInstalledGH = /^[ \t]*--allow-escape-sequences(?:[ \t=]|\[=|$)/m.test(help)
+      || /^gh version (?:2\.46\.0|2\.87\.3)(?:\s|$)/.test(execFileSync(installedGH, ["--version"], { encoding: "utf8", maxBuffer: 4096, timeout: 5000 }))
   } catch { /* Unavailable/unsupported installed CLI is an explicit skipped check. */ }
 }
-test.skipIf(!qualifiedInstalledGH)("installed GitHub CLI preserves original log and redirected artifact bytes through the production compatibility path", async () => {
+test.skipIf(!qualifiedInstalledGH && process.env.LOOM_REQUIRE_REAL_GH !== "1")("installed GitHub CLI preserves exact file, redirected log and artifact bytes through the production compatibility path", async () => {
+  expect(installedGH).toBeTruthy()
   const directory = await mkdtemp(join(tmpdir(), "loom-real-cli-originals-")), savedPath = process.env.PATH
   const f = fixture(), calls: string[] = [], authorizations: Array<string | undefined> = []
-  const log = Buffer.from("\ufeffactual CLI log bytes\r\n\x1b[31mfailed\x1b[0m\n")
-  f.routes.set(prefix + "/actions/jobs/11/logs", { status: 200, body: log })
+  const log = Buffer.from("\ufeffactual CLI log bytes\r\n\x1b[31mfailed\x1b[0m\x1b]0;controlled\x07\t\n")
+  let redirectLogs = false, logBytes = log
+  const archiveBytes = Buffer.concat([Buffer.from("504b0506000000000000000000000000000000000001", "hex"), Buffer.from(Array.from({ length: 256 }, (_, i) => i))])
+  f.set("/actions/artifacts/501", { id: 501, name: "binary-artifact", expired: false, digest: `sha256:${hash(archiveBytes)}`,
+    size_in_bytes: archiveBytes.length, workflow_run: { id: 100, repository_id: 42, head_sha: commit } })
   const server = createServer((incoming, response) => {
     const path = incoming.url!; calls.push(path); authorizations.push(incoming.headers.authorization)
-    if (path.endsWith("/zip")) {
-      response.writeHead(302, { location: "/controlled-original-archive" }); response.end(); return
+    if (incoming.method !== "GET") { response.writeHead(405); response.end(); return }
+    if (path.endsWith("/zip") || redirectLogs && path.endsWith("/logs")) {
+      response.writeHead(302, { location: path.endsWith("/zip") ? "/controlled-original-archive" : "/controlled-original-log" }); response.end(); return
     }
-    const source = path === "/controlled-original-archive" ? { status: 200, body: f.archive } : f.routes.get(path)
+    const source = path === "/controlled-original-archive" ? { status: 200, body: archiveBytes }
+      : path === "/controlled-original-log" || path.endsWith("/logs") ? { status: 200, body: logBytes } : f.routes.get(path)
     if (!source) { response.writeHead(404); response.end(); return }
-    response.writeHead(source.status, { "content-type": path.endsWith("/logs") ? "text/plain"
+    response.writeHead(source.status, { "content-type": path === "/controlled-original-log" || path.endsWith("/logs") ? "text/plain"
       : path === "/controlled-original-archive" ? "application/zip" : "application/json" })
     response.end(source.body)
   })
@@ -314,20 +382,35 @@ test.skipIf(!qualifiedInstalledGH)("installed GitHub CLI preserves original log 
     const address = server.address() as { port: number }, bin = join(directory, "bin")
     await mkdir(bin)
     const controlledEnv = { PATH: "/usr/bin:/bin", GH_CONFIG_DIR: join(directory, "config"), GH_TOKEN: "controlled-not-a-real-token", GH_PROMPT_DISABLED: "1", NO_COLOR: "1" }
-    await writeFile(join(bin, "gh"), `#!${process.execPath}\nconst{execFileSync}=require('node:child_process');const args=process.argv.slice(2);if(args[0]==='api'&&args[1]!=='--help'){const last=args.length-1;if(!args[last].startsWith('/repos/bateau84/loom'))process.exit(90);args[last]='http://127.0.0.1:${address.port}'+args[last]}try{process.stdout.write(execFileSync(${JSON.stringify(installedGH)},args,{env:${JSON.stringify(controlledEnv)},maxBuffer:1048576,timeout:5000}))}catch(error){process.stderr.write(error.stderr??'controlled CLI failed');process.exit(1)}\n`, { mode: 0o700 })
+    await writeFile(join(bin, "gh"), `#!${process.execPath}\nconst{execFileSync}=require('node:child_process');const args=process.argv.slice(2);if(args[0]==='api'&&args[1]!=='--help'){const last=args.length-1;if(args[last].startsWith('/repos/bateau84/loom'))args[last]='http://127.0.0.1:${address.port}'+args[last];else if(!args[last].startsWith('http://127.0.0.1:'))process.exit(90)}try{process.stdout.write(execFileSync(${JSON.stringify(installedGH)},args,{env:args.at(-1)?.includes('/repos/bateau84/loom')||args.at(-1)==='--help'||args.at(-1)==='--version'?${JSON.stringify(controlledEnv)}:process.env,maxBuffer:1048576,timeout:5000}))}catch(error){process.stderr.write(error.stderr??'controlled CLI failed');process.exit(1)}\n`, { mode: 0o700 })
     process.env.PATH = bin + ":" + savedPath
     const options = { directory, signal: new AbortController().signal, authorize: async () => {} }
-    const result = await resolveExternalOriginal(request("actions/runs/100/attempts/1/jobs/11"), options)
+    const file = await resolveExternalOriginal(request(`blob/${commit}/restore_test.go`), options)
+    expect(file).toMatchObject({ status: "available", value: { original: { content: f.source.toString("utf8"),
+      blob_sha: f.blob, content_sha256: hash(f.source), byte_length: f.source.length } } })
+    const selectedLog = request("actions/runs/100/attempts/1/jobs/11")
+    const result = await resolveExternalOriginal(selectedLog, options)
     expect(result.status).toBe("available")
     expect(result.value?.original).toMatchObject({ log: { content: log.toString("utf8"), content_sha256: hash(log), byte_length: log.length } })
+    redirectLogs = true
+    const redirected = await resolveExternalOriginal({ ...selectedLog, source: result.source }, options)
+    expect(redirected).toEqual(result)
     const archive = await resolveExternalOriginal(request("actions/runs/100/artifacts/501"), options)
     expect(archive.status).toBe("available")
-    expect(archive.value?.original).toMatchObject({ archive_sha256: hash(f.archive), content: f.archive.toString("base64") })
+    expect(archive.value?.original).toMatchObject({ archive_sha256: hash(archiveBytes), content: archiveBytes.toString("base64"), byte_length: archiveBytes.length })
     expect(calls).toContain("/controlled-original-archive")
+    expect(calls).toContain("/controlled-original-log")
+    logBytes = Buffer.alloc(EXTERNAL_ORIGINAL_LIMITS.originalBytes + 1, 65)
+    const oversized = await resolveExternalOriginal(selectedLog, options)
+    expect(oversized).toMatchObject({ status: "unresolved", gap: { code: "processing-limit" } })
+    expect(oversized.value).toBeUndefined()
+    const count = calls.length
+    await expect(resolveExternalOriginal(selectedLog, { ...options, authorize: async () => { throw new Error("denied") } })).rejects.toThrow("denied")
+    expect(calls.length).toBe(count)
     expect(authorizations.every(value => value === undefined)).toBe(true)
   } finally {
     if (savedPath === undefined) delete process.env.PATH; else process.env.PATH = savedPath
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()))
     await rm(directory, { recursive: true, force: true })
   }
-})
+}, 30000)

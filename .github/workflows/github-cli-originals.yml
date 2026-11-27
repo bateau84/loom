@@ -1,0 +1,60 @@
+name: GitHub CLI original-byte compatibility
+on:
+  pull_request:
+    paths:
+      - 'src/external-originals.ts'
+      - 'tests/external-originals-native.test.ts'
+      - '.github/workflows/github-cli-originals.yml'
+permissions:
+  contents: read
+jobs:
+  actual-cli:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: '2.46.0'
+            sha256: ''
+          - version: '2.87.3'
+            sha256: c6e5537631fca45f277ef405ce8751d139b491e9402cc20891a003525a8773b2
+          - version: '2.106.0'
+            sha256: a476449fa9625413c54a3734eded62e9e480e49f421ff08e7f3b3879c059a033
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - run: bun install --frozen-lockfile
+      - name: Install isolated official GitHub CLI release
+        env:
+          VERSION: ${{ matrix.version }}
+          EXPECTED_SHA: ${{ matrix.sha256 }}
+        run: |
+          set -euo pipefail
+          directory="$RUNNER_TEMP/loom-gh-$VERSION"
+          mkdir -p "$directory"
+          cd "$directory"
+          archive="gh_${VERSION}_linux_amd64.tar.gz"
+          base="https://github.com/cli/cli/releases/download/v$VERSION"
+          curl --fail --silent --show-error --location --max-time 90 --output "$archive" "$base/$archive"
+          if [[ -n "$EXPECTED_SHA" ]]; then
+            printf '%s  %s\n' "$EXPECTED_SHA" "$archive" | sha256sum --check --strict
+          else
+            curl --fail --silent --show-error --location --max-time 30 --output checksums.txt "$base/gh_${VERSION}_checksums.txt"
+            awk -v archive="$archive" '$2 == archive {print}' checksums.txt | sha256sum --check --strict
+          fi
+          tar -xzf "$archive" -- "gh_${VERSION}_linux_amd64/bin/gh"
+          bin="$directory/gh_${VERSION}_linux_amd64/bin"
+          "$bin/gh" --version
+          "$bin/gh" --version | grep -E "^gh version $VERSION( |$)"
+          help="$(env -i PATH=/usr/bin:/bin HOME="$directory" GH_CONFIG_DIR="$directory/config" GH_TOKEN=controlled-not-a-real-token GH_PROMPT_DISABLED=1 GH_PAGER= PAGER= NO_COLOR=1 "$bin/gh" api --help)"
+          printf '%s\n' "$help" | grep -F -- '--allow-escape-sequences' || echo "Raw-output flag not advertised in nonterminal help"
+          printf '%s\n' "$bin" >> "$GITHUB_PATH"
+      - name: Exercise real non-TTY CLI through the resolver
+        env:
+          LOOM_REQUIRE_REAL_GH: '1'
+        run: bun test tests/external-originals-native.test.ts -t 'installed GitHub CLI'
