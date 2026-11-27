@@ -45,7 +45,11 @@ jobs:
       - name: Verify real Code Mode search returns registered Loom help; no model requests
         run: LOOM_CODEMODE_ROOT="$RUNNER_TEMP/loom-tool-search" bun test tests/tool-search-codemode.test.ts
       - run: git diff --exit-code -- package.json bun.lock
+      - name: Install pinned JSON Schema test validator outside plugin dependencies
+        run: python3 -m pip install --disable-pip-version-check --no-input --no-compile --target "$RUNNER_TEMP/loom-jsonschema" jsonschema==4.26.0
       - run: bun run test:python
+        env:
+          PYTHONPATH: ${{ runner.temp }}/loom-jsonschema
       - name: Build real production module graph (fixtures excluded)
         run: bun build server.ts --target=bun --external @opencode/plugin --outfile "$RUNNER_TEMP/loom-server.js"
       - name: Generate portable populated old prerequisite without Git objects

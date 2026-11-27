@@ -1,0 +1,3174 @@
+{
+  "format": "loom-tool-usability-evidence/v1",
+  "date": "2026-11-27",
+  "related_issue": "https://github.com/bateau84/loom/issues/227",
+  "pull_request": "https://github.com/bateau84/loom/pull/257",
+  "method": {
+    "agent_isolation": "Fresh agents without implementation context, restricted by instruction to public skill, catalog, schemas and returned guidance; not a filesystem security sandbox.",
+    "execution_boundary": "Real registered callbacks and stores, simulated native registration/permission host; synthetic sources, no native dispatch or Evaluator execution.",
+    "baseline": "Same task and equivalent established fixture; selective discovery and direct reads. Competent but not optimized or error-free.",
+    "measurement": "Actual UTF-8 returned content bytes before local display filtering. Failures are callback exceptions. No token counts or token-saving claims.",
+    "excluded_volume": [
+      "/start orientation",
+      "file-transport envelopes",
+      "chat messages",
+      "local display/processing output"
+    ],
+    "comparison_limits": [
+      "One agent per version",
+      "Different generated IDs and question wording",
+      "Different preview page limits",
+      "13 versus 16 frozen source samples",
+      "Baseline has two historical-work reads",
+      "Candidate has larger unique help and tool output",
+      "Missing-objective run is separate, not an A/B comparison"
+    ]
+  },
+  "publication_identity": {
+    "local_candidate": "2eebab2535da3b5a2c4be015ec7d983cf362708d",
+    "published_candidate": "918652b517983c8daaf5f249a5283a21c1545f78",
+    "identical_tree": "376d11d0318ef21aa4f50e062f60cf2af1f4889e",
+    "final_delta": "History after prerequisite schema and two regression cases, missing bridge minimum record count, evidence documentation. Fresh-agent runs were not repeated against this delta.",
+    "reviewed_delta_sha256": {
+      "src/tool-input-contracts.ts": "577769f08226c67dbaadcb2add107c577bfea51f2bf012c55c7993302cb1f8fd",
+      "tests/helpers/tool-schema-cases.ts": "74d5b1a4a0701921a0d2f2527da891d58081912b11b8685ac837415ae3091917",
+      "tests/tool-usability-reader.ts": "1aceea1aaf2c89d2b869148a2b0489b3541a1630805546c4798094dd0da0d263"
+    }
+  },
+  "authorizations": {
+    "authority": "Integration owner, disposable synthetic fixture only; not a production-user or native execution approval.",
+    "established": "Each investigator stopped with complete selected membership and exact preview digest. Root approved that exact freeze only, then readback.",
+    "missing": "Read-only discovery first. Root then approved one objective anchored at the actual original request and associations for 14 specified originals; preview only. Root separately approved returned freeze digest 097e10d95dedcdcd20e063503de3ec207d057995be0b81cdd88848a9fd7b4496 and representative readback.",
+    "enforcement": "Approval stages were conversational; the harness operation allowlist alone did not enforce them."
+  },
+  "raw_responses": {
+    "path": "tool-usability-responses.json.gz",
+    "sha256": "7e970d188d42cbcca2d11dae1ef1563f4675a1823f53e492c0b212011230c064",
+    "compressed_bytes": 255670,
+    "entries": 156,
+    "content_bytes": 1950026,
+    "format": "gzip of UTF-8 JSON array of {run,index,content}; content preserves the measured response exactly"
+  },
+  "runs": {
+    "baseline": {
+      "format": "loom-tool-usability/v1",
+      "source_head": "0c618ad417519fbc68bfe642662b23682eb6a63c",
+      "source_sha256": {
+        "src/agents.ts": "d5ec87885badb17e9b558de0051f6ad5889f31d53bd7aefe558c43e79c9d71a6",
+        "src/answer-resume.ts": "a353fcc77a5e10e83af099986528565b3eafd9bf8ba45164beaa6996a21dcdc8",
+        "src/automatic-learning.ts": "cb46ada9bf57f9537773d6094c710caa207e3872a21f0008fe5f4051c291d9c5",
+        "src/collaboration.ts": "4db9c3eb40c3f026bc65cbab2eac77dff3b464c4f9319686ac26bc6c4455606f",
+        "src/config-admission.ts": "7d3754b3dcae9bc08d90d22acf71cdd2bbded564b889c8e80976358fb314b9f1",
+        "src/config-parser.ts": "9b1502e18720eded50244470304022b1a986edf08bcc0ed4a8cc9f04ef5f1d7f",
+        "src/config.ts": "0c1b750162d731915380df10d976eca4dc3f13b128cbeac90c53e16adc9c53b3",
+        "src/context.ts": "55e0f5c84a025d4ada4ff28bbf560f86b32f30cd1d79f27b15720c67c13cad8a",
+        "src/engineering-history-dashboard.ts": "2ce08ddabaf4d478ecbb5dd05d57a01c26c84036904633ea48f43179a85c22c1",
+        "src/engineering-history.ts": "434ee7e88884b090f36f5c4ad08f72078d5513b3730d593c5d323c30091c995c",
+        "src/engineering-trajectories.ts": "20f9fdb94ee9cb6bacb7fa4e98ba6c29107adabe6f8b2bd82f19bcb26fb471b1",
+        "src/evaluation-store.ts": "dd9baef80190446935ef6f487199d7e1d60d4627497dd52847cbdf3c2a709df8",
+        "src/evaluator-execution-contract.ts": "82c9ffb821b610546e5c718752dfa3cd5f36416c31f60855638a40052a8a09ca",
+        "src/evaluator-execution.ts": "4fd58d1cc88f03b510647e345607c699954a0ad7d2d329c4190e96bc9468ee7d",
+        "src/evaluator-method.ts": "d2dd841f1794e643594d4033dd58e0f3ea079c81711d77a423e2c3da92ed6647",
+        "src/evaluator-preparation.ts": "3b976d8ec3df6514f8908276a159fe48255a2d317d4e6a568e79010044cf5808",
+        "src/history-renderer.ts": "f32bb730ad37b64a7d4763380196a01222779a6f9407d0ffb943ed1b54e333d9",
+        "src/history.ts": "0b99b3a28df06d5ec215a2392428c569827c04488f62290cefa7dedd505e1404",
+        "src/learning-findings.ts": "6f19cfb6244e9272f320e9c6fce093b403a1f8670b6c1a386cc295524571fee7",
+        "src/learning-runtime.ts": "c13431fab1e6203ca688972fa1b96a0b2bc4a14d6b89f497397f703c419fab6c",
+        "src/learning-sources.ts": "16fe5a115091eafd792cdc29916c35f886acef465cde38f577a024ac6a4a7cbf",
+        "src/learning.ts": "28f4270e8404b088cf93ddc1cbbdeff801d9f698985d487fa192858eeb367d92",
+        "src/model-routing-adapter.ts": "293381d5ac14aca4e6ec922185e0c7b89e85ba4eccf58edaf5866c9a8636a37e",
+        "src/model-routing-runtime.ts": "56b119d6383d2dc9cbecc02bc624ecf9dbb5cbc32eaa2e4bcd163ca07572a417",
+        "src/model-routing-shared-quota.ts": "4afe41f705d8c3b776ebe9af3607f98e283044efd1b10abaa0376c347cb822b3",
+        "src/model-routing.ts": "380f5ac08f697a752103ea5fa605dceef494061229e9607bfe40e705405ba4a1",
+        "src/model.ts": "73da3eafb970fd8588ed1ce6a5c6b1a0147834250b2db72105b22eb5908edc9f",
+        "src/native-evidence.ts": "d7e224b4cd0d8524a7b2b67a06631bcadfcba210e04dcc46fa59d4431ea7f090",
+        "src/objective-trends.ts": "9eeb7a88c163f532e35e8efbc3ddb9db0210531cd35c966e19ce729993e0c7d4",
+        "src/objectives.ts": "d0fb93c587d4775df505859240100df1a5faf0b36a0eb7a6de96cd904d9940a7",
+        "src/plugin.ts": "22f62ebea7190b7c682eaef9e48d2a9bbb07a776615250a58d7f3c6d8cfff4cc",
+        "src/question-routing.ts": "f3dec232b2f4ce89c67e26c48c686a4c82fcd4b6e610110f7342f0516479d0fa",
+        "src/quota-state.ts": "c5fc68d871d66ce46750262ddf1e383f770d49cc73fc8cf22aedde2d45bf3782",
+        "src/request-local-model-routing.ts": "6cfbf5134137986caeed2bed81306bafb187b6f6e96285cebfb6637e34b3e05e",
+        "src/response-format.ts": "6d9c4ec6cc00e58890f4d141692d9be856c677c266e320ba5058d3f2ada72815",
+        "src/retrospective-contract.ts": "2f92c3e8969b2d096bbf467b1558ee325c52b6df8b994ebfc3e4ec55bd128d0d",
+        "src/retrospective-populations.ts": "fad85f100cb9fcf39cc1b14b88790f3e6a6124100aeb4420afb07992c9d784c8",
+        "src/review-companions.ts": "e6862935a9b7004c67390343c7bc44f7669c33bd8f525f2ac490669477384ccf",
+        "src/review-issues.ts": "f4cb99197d45cad0db7c2b018c4db60df2aad481a3ee77caf235d96fe8ba3043",
+        "src/review-requests.ts": "9520b579959c4639ff18d3453efd8750173ce6619244bd7660399a5a6e655ba1",
+        "src/session-trace.ts": "d34fd2ea377f0464ca57344c05364a62aeafb533c9b85a31499b0dbf5386db5a",
+        "src/skill.ts": "bf035d7b4b69b2d6cb4e754c2ac5564fd7b8bbcf1cca4ae87d12b9bbcfdc2336",
+        "src/skills/loom/SKILL.md": "a68ecd38b137c058ad588c30cb7a5b0e0eaf63e661d3dc973423a20e3a5f0794",
+        "src/sqlite-connection.ts": "1ba373fd7a434a989d87f4238bb114aec0baea923e2ce560ed176fc83c07096c",
+        "src/store.ts": "784b7a00de38f670024d9904ca51b77f00ac50b6a94694814c1ab46d73986345",
+        "src/tool-help.ts": "13b13128a72b36a4804933ca8ba44d77a84c420652ba5bd0ab47936659bb4306",
+        "src/work-context.ts": "3cb3d6435f36e9e955ee91135033ac4b910172ac7ebd902c50562500eb075ce4",
+        "src/workload-admission.ts": "35cd1f954cce73c0ede62a8b21b052b825ada78b443b024654f9d7ed49dafa37",
+        "src/workload-routing.ts": "8247bc066040e89b8de7c40c03370056d981365efe736e75f783af23786e26b7"
+      },
+      "mode": "established",
+      "fixture_records": 240,
+      "qualification": "Synthetic equivalent; actual registered owners, simulated native host. Review access uses its existing requester Session. No private operator originals or native review-execution attestation.",
+      "bridge_sha256": "ffa820facf899080edc5b96ad42710e96578e492981d77e76cd588a71a1109a4",
+      "steps": [
+        {
+          "index": 1,
+          "kind": "help",
+          "name": "history",
+          "bytes": 6349,
+          "elapsed_ms": 0,
+          "failed": false,
+          "response_sha256": "7a9eeaaa51d14d8cad0ac50cd2868abdadfb409e8f6dd7dc2e237ffa01ac0fe2"
+        },
+        {
+          "index": 2,
+          "kind": "skill",
+          "name": "loom",
+          "bytes": 11831,
+          "elapsed_ms": 0,
+          "failed": false,
+          "response_sha256": "a68ecd38b137c058ad588c30cb7a5b0e0eaf63e661d3dc973423a20e3a5f0794"
+        },
+        {
+          "index": 3,
+          "kind": "help",
+          "name": "objective",
+          "bytes": 5207,
+          "elapsed_ms": 0,
+          "failed": false,
+          "response_sha256": "6a2c47319d4d311e2459d31ff6631e5e837159a376b2293f36a65317af5eb0c2"
+        },
+        {
+          "index": 4,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "read",
+            "action_id": "f3469089-badb-4cf1-ad7f-33ce27b52ca0",
+            "match": "freshness",
+            "limit": 20
+          },
+          "bytes": 20931,
+          "elapsed_ms": 84,
+          "failed": false,
+          "response_sha256": "deeaa8f81b3b4f6a9a414dde9caf7975f014e8ab64f857b9cb2d5cf2d2f5209c"
+        },
+        {
+          "index": 5,
+          "kind": "help",
+          "name": "record",
+          "bytes": 25047,
+          "elapsed_ms": 0,
+          "failed": false,
+          "response_sha256": "7e48a846690f4a09b0a740f3ba4f88650acd2fbf626271f109e51df97fdc6701"
+        },
+        {
+          "index": 6,
+          "kind": "help",
+          "name": "review",
+          "bytes": 24205,
+          "elapsed_ms": 0,
+          "failed": false,
+          "response_sha256": "1e3c2a91f5fd6c78f6af486839391ccc37619eebba2b566f8b650aa8b7231ae7"
+        },
+        {
+          "index": 7,
+          "kind": "tool",
+          "name": "objective",
+          "input": {
+            "operation": "read",
+            "objective_id": "16f08d02-b8ef-47db-a614-ef82c310343f",
+            "limit": 50
+          },
+          "bytes": 11338,
+          "elapsed_ms": 3,
+          "failed": false,
+          "response_sha256": "57be0813c8b012c2983b4b260f6dda4e3279861054c536ec296f036e65eda365"
+        },
+        {
+          "index": 8,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "read",
+            "action_id": "f3469089-badb-4cf1-ad7f-33ce27b52ca0",
+            "record_id": "10159e38-ebb7-458f-af85-ea0a32a1ea9c",
+            "related": true,
+            "through": 240,
+            "limit": 20,
+            "owner_boundary": {
+              "objective_links": 14,
+              "review_requests": 2,
+              "review_relationships": 5
+            },
+            "owner_version": "8b0833ba54caabf1fb7dbc4ba07808bfa0f089c6ef928e6062c85eb1089d7481"
+          },
+          "bytes": 120804,
+          "elapsed_ms": 55,
+          "failed": false,
+          "response_sha256": "80b9428ac5cf3d9a1c1fb4f0346f9f4b92ce9828082dcc1e59445077d5eaf2e5"
+        },
+        {
+          "index": 9,
+          "kind": "help",
+          "name": "record",
+          "bytes": 25047,
+          "elapsed_ms": 0,
+          "failed": false,
+          "response_sha256": "7e48a846690f4a09b0a740f3ba4f88650acd2fbf626271f109e51df97fdc6701"
+        },
+        {
+          "index": 10,
+          "kind": "help",
+          "name": "review",
+          "bytes": 24205,
+          "elapsed_ms": 0,
+          "failed": false,
+          "response_sha256": "1e3c2a91f5fd6c78f6af486839391ccc37619eebba2b566f8b650aa8b7231ae7"
+        },
+        {
+          "index": 11,
+          "kind": "tool",
+          "name": "review",
+          "input": {
+            "operation": "read",
+            "request_id": "ordered-test-recheck",
+            "limit": 50
+          },
+          "bytes": 7985,
+          "elapsed_ms": 5,
+          "failed": false,
+          "response_sha256": "db4670e2208cdb179972444e3a9cbe7f334424db9a6614ee64ca00fb038eb8d4"
+        },
+        {
+          "index": 12,
+          "kind": "tool",
+          "name": "review",
+          "input": {
+            "operation": "read",
+            "request_id": "original-probe-review",
+            "limit": 50
+          },
+          "bytes": 5441,
+          "elapsed_ms": 2,
+          "failed": false,
+          "response_sha256": "f886a7b6cedadf4fd6c317088bb00ebb0dcae5c64859ebe52e8de22077918c66"
+        },
+        {
+          "index": 13,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "f3469089-badb-4cf1-ad7f-33ce27b52ca0",
+            "source_session_id": "build-worker",
+            "record_id": "d425ffa1-9728-469d-b8b1-840d8f71489f",
+            "response_format": "json"
+          },
+          "bytes": 1152,
+          "elapsed_ms": 2,
+          "failed": false,
+          "response_sha256": "35442174e1c1393fadab98da66d1982636ad48be13c8f442729b727605db729c"
+        },
+        {
+          "index": 14,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "f3469089-badb-4cf1-ad7f-33ce27b52ca0",
+            "source_session_id": "build-worker",
+            "record_id": "10159e38-ebb7-458f-af85-ea0a32a1ea9c",
+            "response_format": "json"
+          },
+          "bytes": 752,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "0148d08026c820c01952b9932bb4b4788b9492cd98b7dd51c85c631d64bc66de"
+        },
+        {
+          "index": 15,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "f3469089-badb-4cf1-ad7f-33ce27b52ca0",
+            "source_session_id": "build-worker",
+            "record_id": "d5a24c53-83ab-4cc6-9bdf-baedd2133202",
+            "response_format": "json"
+          },
+          "bytes": 997,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "0db2b1407d91f7267078feb21da1e2b3338c56804b23a441bc2fbe5fa52960c8"
+        },
+        {
+          "index": 16,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "f3469089-badb-4cf1-ad7f-33ce27b52ca0",
+            "source_session_id": "build-worker",
+            "record_id": "1aaafa99-70e3-4833-95f1-a48c03a46919",
+            "response_format": "json"
+          },
+          "bytes": 987,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "04a3c8cdf55cad971ae750f4a24dc6f8bb27c1e69030f2770ca9fa865db29b5f"
+        },
+        {
+          "index": 17,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "f3469089-badb-4cf1-ad7f-33ce27b52ca0",
+            "source_session_id": "build-worker",
+            "record_id": "e30eab76-8724-4750-8aa4-7e042bbcd3fe",
+            "response_format": "json"
+          },
+          "bytes": 1166,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "9a43d73ef74bbcd0d26edfbad182a5bf39f8d12ae01369561cbb50e0856b093e"
+        },
+        {
+          "index": 18,
+          "kind": "tool",
+          "name": "review",
+          "input": {
+            "operation": "work",
+            "request_id": "original-probe-review",
+            "member_id": "initial-probe"
+          },
+          "bytes": 1152,
+          "elapsed_ms": 2,
+          "failed": false,
+          "response_sha256": "db06cb5929a686c43b9b26cecdcb6b95eb3956dc1bc27af31a75618a08d10cfd"
+        },
+        {
+          "index": 19,
+          "kind": "tool",
+          "name": "review",
+          "input": {
+            "operation": "work",
+            "request_id": "ordered-test-recheck",
+            "member_id": "b2-test"
+          },
+          "bytes": 1243,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "c1adbaefb28442190a4af00f4ae7e9525a9de102d72484ccde5fa802c4837962"
+        },
+        {
+          "index": 20,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "f3469089-badb-4cf1-ad7f-33ce27b52ca0",
+            "source_session_id": "review-owner",
+            "record_id": "ae5061fd-bc6b-42d9-957c-2dda358fa7c0",
+            "response_format": "json"
+          },
+          "bytes": 666,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "e8bea4af4a2503da902f6f8baa425badd3c5296e512b5aeb89ceed068d08fdcb"
+        },
+        {
+          "index": 21,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "f3469089-badb-4cf1-ad7f-33ce27b52ca0",
+            "source_session_id": "test-author",
+            "record_id": "5ef53182-a074-4649-b547-9a5ccc21799e",
+            "response_format": "json"
+          },
+          "bytes": 1008,
+          "elapsed_ms": 2,
+          "failed": false,
+          "response_sha256": "cabe6d9c5c058dce2e05c530e47a28febca099e5bb981ddecedf6697777223e1"
+        },
+        {
+          "index": 22,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "f3469089-badb-4cf1-ad7f-33ce27b52ca0",
+            "source_session_id": "test-author",
+            "record_id": "8bec2967-23ec-4f80-b94f-8d6c8226724c",
+            "response_format": "json"
+          },
+          "bytes": 1177,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "e049a0bf76d53422bc65300311fec0b618bfa409dd6316a837d1f7a937ef342b"
+        },
+        {
+          "index": 23,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "f3469089-badb-4cf1-ad7f-33ce27b52ca0",
+            "source_session_id": "test-author",
+            "record_id": "4125e4d6-2afb-4264-8531-0684a066c453",
+            "response_format": "json"
+          },
+          "bytes": 753,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "fa39871947f1501ee891991addf6362972fc694fe42ab233a2b188ae45fa5a14"
+        },
+        {
+          "index": 24,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "f3469089-badb-4cf1-ad7f-33ce27b52ca0",
+            "source_session_id": "build-worker",
+            "record_id": "139bec28-aaa1-4ba0-a17d-e8afc05e8e9e",
+            "response_format": "json"
+          },
+          "bytes": 712,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "3f3b81bb5227626a541f38d3c2661d79b929df42b562079d9ccb615e3b0d40c7"
+        },
+        {
+          "index": 25,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "f3469089-badb-4cf1-ad7f-33ce27b52ca0",
+            "source_session_id": "review-owner",
+            "record_id": "71b8d685-93e9-440c-abf8-c7de344afc48",
+            "response_format": "json"
+          },
+          "bytes": 1011,
+          "elapsed_ms": 2,
+          "failed": false,
+          "response_sha256": "a37b4a2bd7efee7fddeb2eab35b622feb1fc39331501131263b642f3dc6ea64d"
+        },
+        {
+          "index": 26,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "f3469089-badb-4cf1-ad7f-33ce27b52ca0",
+            "source_session_id": "review-owner",
+            "record_id": "654540a0-eada-4236-94c6-82694187798a",
+            "response_format": "json"
+          },
+          "bytes": 825,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "44a2d817d0b4a273db7d2f2d7c4ce05d6b641b4405a01f157dc6958d6599cbad"
+        },
+        {
+          "index": 27,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "f3469089-badb-4cf1-ad7f-33ce27b52ca0",
+            "source_session_id": "review-owner",
+            "record_id": "d1d44618-a9d9-4a3b-9b30-ae8e345520fc",
+            "response_format": "json"
+          },
+          "bytes": 1011,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "50a3e324a670256de0ab096162f06690d8e99da74d9adec67d4dd07a6437a904"
+        },
+        {
+          "index": 28,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "f3469089-badb-4cf1-ad7f-33ce27b52ca0",
+            "source_session_id": "release-owner",
+            "record_id": "bf421725-b13a-46a2-be16-8e04db364b4d",
+            "response_format": "json"
+          },
+          "bytes": 747,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "26a2f2fac2c97298a97d4db0ee0de97b392ca719e3bbc2c4112a7c93305e13ea"
+        },
+        {
+          "index": 29,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "f3469089-badb-4cf1-ad7f-33ce27b52ca0",
+            "source_session_id": "release-owner",
+            "record_id": "6f24d896-fbd6-4914-8b1a-4c69c59e39f9",
+            "response_format": "json"
+          },
+          "bytes": 723,
+          "elapsed_ms": 2,
+          "failed": false,
+          "response_sha256": "4060612771a39f98d0855999f63c045483d3deebbe994de88def853fa50bafc3"
+        },
+        {
+          "index": 30,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "preview-population",
+            "selection": {
+              "objective_id": "16f08d02-b8ef-47db-a614-ef82c310343f",
+              "question": "What do the original ledger evidence and attributed objective and review relationships establish about the first a1 CI failure, unchanged-code a1 rerun, possible historical cause, b2 test-only correction, scoped verification, c3 merge, and outstanding issue 182 release acceptance; which relationships and conclusions remain authored or unknown?",
+              "through": 240,
+              "owner_boundary": {
+                "objective_links": 14,
+                "review_requests": 2,
+                "review_relationships": 5
+              },
+              "owner_version": "8b0833ba54caabf1fb7dbc4ba07808bfa0f089c6ef928e6062c85eb1089d7481"
+            },
+            "limit": 50
+          },
+          "bytes": 66,
+          "elapsed_ms": 30,
+          "failed": true,
+          "response_sha256": "b59fa23444066239e30957a8b7d808424e8acc41f4ced0d59324f825e4ae4255"
+        },
+        {
+          "index": 31,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "preview-population",
+            "selection": {
+              "objective_id": "16f08d02-b8ef-47db-a614-ef82c310343f",
+              "question": "What do the original ledger evidence and attributed objective and review relationships establish about the first a1 CI failure, unchanged-code a1 rerun, possible historical cause, b2 test-only correction, scoped verification, c3 merge, and outstanding issue 182 release acceptance; which relationships and conclusions remain authored or unknown?",
+              "through": 240,
+              "owner_boundary": {
+                "objective_links": 14,
+                "review_requests": 2,
+                "review_relationships": 5
+              },
+              "owner_version": "8b0833ba54caabf1fb7dbc4ba07808bfa0f089c6ef928e6062c85eb1089d7481"
+            },
+            "limit": 50
+          },
+          "bytes": 66,
+          "elapsed_ms": 68,
+          "failed": true,
+          "response_sha256": "b59fa23444066239e30957a8b7d808424e8acc41f4ced0d59324f825e4ae4255"
+        },
+        {
+          "index": 32,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "read",
+            "objective_id": "16f08d02-b8ef-47db-a614-ef82c310343f",
+            "limit": 50
+          },
+          "bytes": 119777,
+          "elapsed_ms": 45,
+          "failed": false,
+          "response_sha256": "857cfc24c87fcb05cbeab5ba59097a49eeca0148fdc9d6087a89ca4d0a5ec318"
+        },
+        {
+          "index": 33,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "preview-population",
+            "selection": {
+              "objective_id": "16f08d02-b8ef-47db-a614-ef82c310343f",
+              "question": "What do the original ledger evidence and attributed objective and review relationships establish about the first a1 CI failure, unchanged-code a1 rerun, possible historical cause, b2 test-only correction, scoped verification, c3 merge, and outstanding issue 182 release acceptance; which relationships and conclusions remain authored or unknown?",
+              "through": 100,
+              "owner_boundary": {
+                "objective_links": 14,
+                "review_requests": 2,
+                "review_relationships": 5
+              },
+              "owner_version": "4209333ec9d345119208fab9a2fd04abc898e651ec934c70ab65fed3e415230a"
+            },
+            "limit": 50
+          },
+          "bytes": 66,
+          "elapsed_ms": 25,
+          "failed": true,
+          "response_sha256": "b59fa23444066239e30957a8b7d808424e8acc41f4ced0d59324f825e4ae4255"
+        },
+        {
+          "index": 34,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "preview-population",
+            "selection": {
+              "objective_id": "16f08d02-b8ef-47db-a614-ef82c310343f",
+              "question": "What do the original ledger evidence and attributed objective and review relationships establish about the first a1 CI failure, unchanged-code a1 rerun, possible historical cause, b2 test-only correction, scoped verification, c3 merge, and outstanding issue 182 release acceptance; which relationships and conclusions remain authored or unknown?"
+            },
+            "limit": 50
+          },
+          "bytes": 122146,
+          "elapsed_ms": 138,
+          "failed": false,
+          "response_sha256": "8c749e4c0928a8505000c1e9b6422e708692b984601152b8f60adad39aa69b74"
+        },
+        {
+          "index": 35,
+          "kind": "tool",
+          "name": "review",
+          "input": {
+            "operation": "freeze-population",
+            "selection": {
+              "mode": "explicit-objective",
+              "objective_id": "16f08d02-b8ef-47db-a614-ef82c310343f",
+              "question": "What do the original ledger evidence and attributed objective and review relationships establish about the first a1 CI failure, unchanged-code a1 rerun, possible historical cause, b2 test-only correction, scoped verification, c3 merge, and outstanding issue 182 release acceptance; which relationships and conclusions remain authored or unknown?",
+              "through": 100,
+              "owner_boundary": {
+                "objective_links": 14,
+                "review_requests": 2,
+                "review_relationships": 5
+              },
+              "owner_version": "13e5cae7be4d39e3ddd673825d3671e6d75496613b859607547e3a69f30969bd",
+              "exclusions": []
+            },
+            "preview_sha256": "fde5dc65368899b62190cc88e6cd300342ff8bce31fdda205f29b5ac88fcee43"
+          },
+          "bytes": 61638,
+          "elapsed_ms": 177,
+          "failed": false,
+          "response_sha256": "e9ec3fa7e7f971958bf69a5224a8bdcdc3021893d488c384c7be8014f306d6a7"
+        },
+        {
+          "index": 36,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population",
+            "population_id": "retrospective-0de0e9cf1f85ae13a25ec4aca7e66a43a813e5f2c3446f6e93aa5ea6b0fbd508",
+            "manifest_sha256": "fde5dc65368899b62190cc88e6cd300342ff8bce31fdda205f29b5ac88fcee43",
+            "after": 20,
+            "limit": 20
+          },
+          "bytes": 67772,
+          "elapsed_ms": 44,
+          "failed": false,
+          "response_sha256": "6bf72c88becbd2aa09c6a2b81860db3985f59260582895fcb8a0a41ca4f609e8"
+        },
+        {
+          "index": 37,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population",
+            "population_id": "retrospective-0de0e9cf1f85ae13a25ec4aca7e66a43a813e5f2c3446f6e93aa5ea6b0fbd508",
+            "manifest_sha256": "fde5dc65368899b62190cc88e6cd300342ff8bce31fdda205f29b5ac88fcee43",
+            "after": 40,
+            "limit": 20
+          },
+          "bytes": 15620,
+          "elapsed_ms": 17,
+          "failed": false,
+          "response_sha256": "d8c7cd7e25845620ac0e264b53b9aa4c491af0be6002d3afa0c5c43f0b4f199b"
+        },
+        {
+          "index": 38,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-0de0e9cf1f85ae13a25ec4aca7e66a43a813e5f2c3446f6e93aa5ea6b0fbd508",
+            "manifest_sha256": "fde5dc65368899b62190cc88e6cd300342ff8bce31fdda205f29b5ac88fcee43",
+            "member_key": "source-60af5a3e1bea576b1fec43b0d16b51fa6f66ff3a4b35431fc162e804e33a2419"
+          },
+          "bytes": 1759,
+          "elapsed_ms": 17,
+          "failed": false,
+          "response_sha256": "3b544c01ffcc7519537f85c68d9e10904ed8de79148e2350aa1ca6cc78771af5"
+        },
+        {
+          "index": 39,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-0de0e9cf1f85ae13a25ec4aca7e66a43a813e5f2c3446f6e93aa5ea6b0fbd508",
+            "manifest_sha256": "fde5dc65368899b62190cc88e6cd300342ff8bce31fdda205f29b5ac88fcee43",
+            "member_key": "source-2666c5684037864ad3916ca3ea77b9af0b4b8db5366d216f99af57fefa0dddb7"
+          },
+          "bytes": 1355,
+          "elapsed_ms": 16,
+          "failed": false,
+          "response_sha256": "545af3b63eec62be13fb2361f6363cce912d9781d00898824aca0b502f2f0ea0"
+        },
+        {
+          "index": 40,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-0de0e9cf1f85ae13a25ec4aca7e66a43a813e5f2c3446f6e93aa5ea6b0fbd508",
+            "manifest_sha256": "fde5dc65368899b62190cc88e6cd300342ff8bce31fdda205f29b5ac88fcee43",
+            "member_key": "source-59fff85c69af6a7577f41fcbc987e4dd07e21cebd29331f41084862887d619fe"
+          },
+          "bytes": 1540,
+          "elapsed_ms": 16,
+          "failed": false,
+          "response_sha256": "571b729aaa946f61fb20dc0bec422d62817aa782a7c34e8da8bbf8ac0bb1a421"
+        },
+        {
+          "index": 41,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-0de0e9cf1f85ae13a25ec4aca7e66a43a813e5f2c3446f6e93aa5ea6b0fbd508",
+            "manifest_sha256": "fde5dc65368899b62190cc88e6cd300342ff8bce31fdda205f29b5ac88fcee43",
+            "member_key": "source-34502df665863f3b0647c58590936abb6aae89522ee10d74a8d2d258db12a2c1"
+          },
+          "bytes": 1331,
+          "elapsed_ms": 13,
+          "failed": false,
+          "response_sha256": "f0a7e75bc27248341302a37d4921d26f88d73af2ca045999477b40319e3053a5"
+        },
+        {
+          "index": 42,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-0de0e9cf1f85ae13a25ec4aca7e66a43a813e5f2c3446f6e93aa5ea6b0fbd508",
+            "manifest_sha256": "fde5dc65368899b62190cc88e6cd300342ff8bce31fdda205f29b5ac88fcee43",
+            "member_key": "source-31af10f6fc47749fdc56674b42716c6001e6fb7776e6b823d5f94857ad1b61b0"
+          },
+          "bytes": 1359,
+          "elapsed_ms": 12,
+          "failed": false,
+          "response_sha256": "89091dde3ed5578853e17472a6c8db2925bb4d22dfbe4f9dd522450468d01bd7"
+        },
+        {
+          "index": 43,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-0de0e9cf1f85ae13a25ec4aca7e66a43a813e5f2c3446f6e93aa5ea6b0fbd508",
+            "manifest_sha256": "fde5dc65368899b62190cc88e6cd300342ff8bce31fdda205f29b5ac88fcee43",
+            "member_key": "source-6b294acdb954e19bdbd5bcafb79a187eefb68fea991be9cae6e03bf5eeff62e2"
+          },
+          "bytes": 1432,
+          "elapsed_ms": 18,
+          "failed": false,
+          "response_sha256": "953021e29ee5544cd1bcea96f8e142df4446b0ee6934e71471de31ebdcf4502a"
+        },
+        {
+          "index": 44,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-0de0e9cf1f85ae13a25ec4aca7e66a43a813e5f2c3446f6e93aa5ea6b0fbd508",
+            "manifest_sha256": "fde5dc65368899b62190cc88e6cd300342ff8bce31fdda205f29b5ac88fcee43",
+            "member_key": "source-ae567fbbf2e9f77857b9ab9852c95937547eb5aed4f2cf67109f2acd71741a1e"
+          },
+          "bytes": 1319,
+          "elapsed_ms": 11,
+          "failed": false,
+          "response_sha256": "a78bd5976fbc6f9df1bf6cecca1ee6b48026054eff48f4d1c857590d63f2ac05"
+        },
+        {
+          "index": 45,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-0de0e9cf1f85ae13a25ec4aca7e66a43a813e5f2c3446f6e93aa5ea6b0fbd508",
+            "manifest_sha256": "fde5dc65368899b62190cc88e6cd300342ff8bce31fdda205f29b5ac88fcee43",
+            "member_key": "source-6b9a8ae3a49e71cf813ff8a09412de44dcf917467baa95c88a2b65ce55c368f2"
+          },
+          "bytes": 1359,
+          "elapsed_ms": 15,
+          "failed": false,
+          "response_sha256": "bced92cc41931d21cc493d9a90f0f1f528a7e893e152cf3ae0aafd30fef05085"
+        },
+        {
+          "index": 46,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-0de0e9cf1f85ae13a25ec4aca7e66a43a813e5f2c3446f6e93aa5ea6b0fbd508",
+            "manifest_sha256": "fde5dc65368899b62190cc88e6cd300342ff8bce31fdda205f29b5ac88fcee43",
+            "member_key": "source-95bf4215d731c204a094567df2f11759bd76ea4cc34d02e116e25d5cfa39d3a6"
+          },
+          "bytes": 1787,
+          "elapsed_ms": 13,
+          "failed": false,
+          "response_sha256": "a206aa6c7c9cd336d938d9a738d53abf1b24f9f9930bda22cdda516cf4e5ad41"
+        },
+        {
+          "index": 47,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-0de0e9cf1f85ae13a25ec4aca7e66a43a813e5f2c3446f6e93aa5ea6b0fbd508",
+            "manifest_sha256": "fde5dc65368899b62190cc88e6cd300342ff8bce31fdda205f29b5ac88fcee43",
+            "member_key": "source-badf93a11038dced16650d0d7efeffcb27a5cce41c65465f38124f98fd694e8b"
+          },
+          "bytes": 1580,
+          "elapsed_ms": 13,
+          "failed": false,
+          "response_sha256": "26aa6748400ad433c40c03dab4798c3b90c1db5f4ffa5fdb6ae26df0ef475bef"
+        },
+        {
+          "index": 48,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-0de0e9cf1f85ae13a25ec4aca7e66a43a813e5f2c3446f6e93aa5ea6b0fbd508",
+            "manifest_sha256": "fde5dc65368899b62190cc88e6cd300342ff8bce31fdda205f29b5ac88fcee43",
+            "member_key": "source-e3cfa0c8f384307100700b85345493663a45303dc90bf7e18e998591c985515f"
+          },
+          "bytes": 3868,
+          "elapsed_ms": 12,
+          "failed": false,
+          "response_sha256": "408ae84f821e1733f7d40824c935d7b91c5908b5caa8684b2e03ed8b70e353df"
+        },
+        {
+          "index": 49,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-0de0e9cf1f85ae13a25ec4aca7e66a43a813e5f2c3446f6e93aa5ea6b0fbd508",
+            "manifest_sha256": "fde5dc65368899b62190cc88e6cd300342ff8bce31fdda205f29b5ac88fcee43",
+            "member_key": "source-f98335c3ae733c07f417ccd197a81b71d30865c7c84307a7a1a0934f7313563a"
+          },
+          "bytes": 1773,
+          "elapsed_ms": 14,
+          "failed": false,
+          "response_sha256": "aa59a57ab5a3589b1bbeb7c9fbf0b60717c944d19cf5f67516a854aff3327663"
+        },
+        {
+          "index": 50,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-0de0e9cf1f85ae13a25ec4aca7e66a43a813e5f2c3446f6e93aa5ea6b0fbd508",
+            "manifest_sha256": "fde5dc65368899b62190cc88e6cd300342ff8bce31fdda205f29b5ac88fcee43",
+            "member_key": "source-f60004576d358a9300186d70d04c184c8c3077fbd2e49b4e52881fa6aaf37554"
+          },
+          "bytes": 1787,
+          "elapsed_ms": 10,
+          "failed": false,
+          "response_sha256": "b72c8d5ba87285706b577aaaf2352504fae7954f30dd66d882f0e4965bed0e07"
+        }
+      ],
+      "source_originals_unchanged": true,
+      "cleanup": true,
+      "measurements": {
+        "by_kind": {
+          "tool": {
+            "calls": 43,
+            "bytes": 591981
+          },
+          "help": {
+            "calls": 6,
+            "bytes": 110060
+          },
+          "skill": {
+            "calls": 1,
+            "bytes": 11831
+          }
+        },
+        "total_measured_bytes": 713872,
+        "failed_tool_calls": 3,
+        "deliberately_seeded_failures": 0,
+        "distinct_help_tools": 4,
+        "exact_repeated_tool_inputs": 1,
+        "additional_semantic_page_rereads": 0
+      },
+      "outcome": {
+        "completed": true,
+        "implementation_inspection": "forbidden by fresh-agent task; participants reported none",
+        "population_id": "retrospective-0de0e9cf1f85ae13a25ec4aca7e66a43a813e5f2c3446f6e93aa5ea6b0fbd508",
+        "manifest_sha256": "fde5dc65368899b62190cc88e6cd300342ff8bce31fdda205f29b5ac88fcee43",
+        "member_count": 42,
+        "freeze_step": 35,
+        "freeze_request_copied_unchanged": true,
+        "preview_membership_exhausted": true,
+        "frozen_membership_exhausted": true,
+        "representative_frozen_source_reads": 13,
+        "all_sampled_source_statuses_available": true,
+        "execution_permit": null,
+        "evaluation_prepared_or_executed": false,
+        "action_or_plan_created": false
+      }
+    },
+    "candidate": {
+      "format": "loom-tool-usability/v1",
+      "source_head": "2eebab2535da3b5a2c4be015ec7d983cf362708d",
+      "source_sha256": {
+        "src/agents.ts": "d5ec87885badb17e9b558de0051f6ad5889f31d53bd7aefe558c43e79c9d71a6",
+        "src/answer-resume.ts": "a353fcc77a5e10e83af099986528565b3eafd9bf8ba45164beaa6996a21dcdc8",
+        "src/automatic-learning.ts": "cb46ada9bf57f9537773d6094c710caa207e3872a21f0008fe5f4051c291d9c5",
+        "src/collaboration.ts": "4db9c3eb40c3f026bc65cbab2eac77dff3b464c4f9319686ac26bc6c4455606f",
+        "src/config-admission.ts": "7d3754b3dcae9bc08d90d22acf71cdd2bbded564b889c8e80976358fb314b9f1",
+        "src/config-parser.ts": "9b1502e18720eded50244470304022b1a986edf08bcc0ed4a8cc9f04ef5f1d7f",
+        "src/config.ts": "0c1b750162d731915380df10d976eca4dc3f13b128cbeac90c53e16adc9c53b3",
+        "src/context.ts": "55e0f5c84a025d4ada4ff28bbf560f86b32f30cd1d79f27b15720c67c13cad8a",
+        "src/engineering-history-dashboard.ts": "2ce08ddabaf4d478ecbb5dd05d57a01c26c84036904633ea48f43179a85c22c1",
+        "src/engineering-history.ts": "434ee7e88884b090f36f5c4ad08f72078d5513b3730d593c5d323c30091c995c",
+        "src/engineering-trajectories.ts": "20f9fdb94ee9cb6bacb7fa4e98ba6c29107adabe6f8b2bd82f19bcb26fb471b1",
+        "src/evaluation-store.ts": "dd9baef80190446935ef6f487199d7e1d60d4627497dd52847cbdf3c2a709df8",
+        "src/evaluator-execution-contract.ts": "82c9ffb821b610546e5c718752dfa3cd5f36416c31f60855638a40052a8a09ca",
+        "src/evaluator-execution.ts": "4fd58d1cc88f03b510647e345607c699954a0ad7d2d329c4190e96bc9468ee7d",
+        "src/evaluator-method.ts": "d2dd841f1794e643594d4033dd58e0f3ea079c81711d77a423e2c3da92ed6647",
+        "src/evaluator-preparation.ts": "3b976d8ec3df6514f8908276a159fe48255a2d317d4e6a568e79010044cf5808",
+        "src/history-renderer.ts": "f32bb730ad37b64a7d4763380196a01222779a6f9407d0ffb943ed1b54e333d9",
+        "src/history.ts": "0b99b3a28df06d5ec215a2392428c569827c04488f62290cefa7dedd505e1404",
+        "src/learning-findings.ts": "6f19cfb6244e9272f320e9c6fce093b403a1f8670b6c1a386cc295524571fee7",
+        "src/learning-runtime.ts": "c13431fab1e6203ca688972fa1b96a0b2bc4a14d6b89f497397f703c419fab6c",
+        "src/learning-sources.ts": "16fe5a115091eafd792cdc29916c35f886acef465cde38f577a024ac6a4a7cbf",
+        "src/learning.ts": "28f4270e8404b088cf93ddc1cbbdeff801d9f698985d487fa192858eeb367d92",
+        "src/model-routing-adapter.ts": "293381d5ac14aca4e6ec922185e0c7b89e85ba4eccf58edaf5866c9a8636a37e",
+        "src/model-routing-runtime.ts": "56b119d6383d2dc9cbecc02bc624ecf9dbb5cbc32eaa2e4bcd163ca07572a417",
+        "src/model-routing-shared-quota.ts": "4afe41f705d8c3b776ebe9af3607f98e283044efd1b10abaa0376c347cb822b3",
+        "src/model-routing.ts": "380f5ac08f697a752103ea5fa605dceef494061229e9607bfe40e705405ba4a1",
+        "src/model.ts": "73da3eafb970fd8588ed1ce6a5c6b1a0147834250b2db72105b22eb5908edc9f",
+        "src/native-evidence.ts": "d7e224b4cd0d8524a7b2b67a06631bcadfcba210e04dcc46fa59d4431ea7f090",
+        "src/objective-trends.ts": "9eeb7a88c163f532e35e8efbc3ddb9db0210531cd35c966e19ce729993e0c7d4",
+        "src/objectives.ts": "d0fb93c587d4775df505859240100df1a5faf0b36a0eb7a6de96cd904d9940a7",
+        "src/plugin.ts": "df12194e06ba006f617a79b74748e099e3c669f41628d21f9d69c9e7310e0274",
+        "src/question-routing.ts": "f3dec232b2f4ce89c67e26c48c686a4c82fcd4b6e610110f7342f0516479d0fa",
+        "src/quota-state.ts": "c5fc68d871d66ce46750262ddf1e383f770d49cc73fc8cf22aedde2d45bf3782",
+        "src/request-local-model-routing.ts": "6cfbf5134137986caeed2bed81306bafb187b6f6e96285cebfb6637e34b3e05e",
+        "src/response-format.ts": "6d9c4ec6cc00e58890f4d141692d9be856c677c266e320ba5058d3f2ada72815",
+        "src/retrospective-contract.ts": "2f92c3e8969b2d096bbf467b1558ee325c52b6df8b994ebfc3e4ec55bd128d0d",
+        "src/retrospective-populations.ts": "fad85f100cb9fcf39cc1b14b88790f3e6a6124100aeb4420afb07992c9d784c8",
+        "src/review-companions.ts": "e6862935a9b7004c67390343c7bc44f7669c33bd8f525f2ac490669477384ccf",
+        "src/review-issues.ts": "f4cb99197d45cad0db7c2b018c4db60df2aad481a3ee77caf235d96fe8ba3043",
+        "src/review-requests.ts": "9520b579959c4639ff18d3453efd8750173ce6619244bd7660399a5a6e655ba1",
+        "src/session-trace.ts": "d34fd2ea377f0464ca57344c05364a62aeafb533c9b85a31499b0dbf5386db5a",
+        "src/skill.ts": "34d95e5d2659e7563ef65394c1f037cd15d064c881e38ef07278becf72383781",
+        "src/skills/loom/SKILL.md": "a320f6c1bff5bdf2ad6fbcbbd7a2e2f6e7906849274b1ee8e1f1ed540f01eb33",
+        "src/sqlite-connection.ts": "1ba373fd7a434a989d87f4238bb114aec0baea923e2ce560ed176fc83c07096c",
+        "src/store.ts": "784b7a00de38f670024d9904ca51b77f00ac50b6a94694814c1ab46d73986345",
+        "src/tool-help.ts": "318d483a2ab6be358a4bd7d33a8f230a9433b1e7c1ca7503441fdd4112132d42",
+        "src/tool-input-contracts.ts": "25e69f2edaf4888aef4502fa519f66de08a902cebadc48237cd92735b5cebed3",
+        "src/tool-navigation.ts": "1278885d6e59e051ed528978703c03dbb367ef1eef3650ac73e172c2d75cc00d",
+        "src/work-context.ts": "3cb3d6435f36e9e955ee91135033ac4b910172ac7ebd902c50562500eb075ce4",
+        "src/workload-admission.ts": "35cd1f954cce73c0ede62a8b21b052b825ada78b443b024654f9d7ed49dafa37",
+        "src/workload-routing.ts": "8247bc066040e89b8de7c40c03370056d981365efe736e75f783af23786e26b7"
+      },
+      "mode": "established",
+      "fixture_records": 240,
+      "qualification": "Synthetic equivalent; actual registered owners, simulated native host. Review access uses its existing requester Session. No private operator originals or native review-execution attestation.",
+      "bridge_sha256": "ffa820facf899080edc5b96ad42710e96578e492981d77e76cd588a71a1109a4",
+      "steps": [
+        {
+          "index": 1,
+          "kind": "skill",
+          "name": "loom",
+          "bytes": 11964,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "a320f6c1bff5bdf2ad6fbcbbd7a2e2f6e7906849274b1ee8e1f1ed540f01eb33"
+        },
+        {
+          "index": 2,
+          "kind": "help",
+          "name": "record",
+          "bytes": 26229,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "913a10efb951da4e45569370c8ce5c8fd39dc547bea6703bfd42beb79c6232ef"
+        },
+        {
+          "index": 3,
+          "kind": "help",
+          "name": "history",
+          "bytes": 10195,
+          "elapsed_ms": 0,
+          "failed": false,
+          "response_sha256": "fb8e5ec32117fdd0de8e7ab2ea6a6d2f87affa0a2e529385a9d7a8ca7d087a47"
+        },
+        {
+          "index": 4,
+          "kind": "help",
+          "name": "objective",
+          "bytes": 11886,
+          "elapsed_ms": 0,
+          "failed": false,
+          "response_sha256": "fc035e8cd5c37b39841244bd6e46cbe03833143d1878730ed355c56f60af43e1"
+        },
+        {
+          "index": 5,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "read",
+            "action_id": "10c69972-b20a-477c-a79d-7919e135f3d4",
+            "match": "freshness",
+            "limit": 20
+          },
+          "bytes": 21083,
+          "elapsed_ms": 57,
+          "failed": false,
+          "response_sha256": "033cc724509620e0ebbf7ae5d2bf07e495a948c56c30a262d7ff10ac3c552e97"
+        },
+        {
+          "index": 6,
+          "kind": "tool",
+          "name": "objective",
+          "input": {
+            "operation": "read",
+            "objective_id": "3a487426-b779-49e6-9881-1fec35b30902"
+          },
+          "bytes": 11365,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "56e737cd771f1e2314eb181dcc03410b5f1bb1bea696ddd5c2c920913520fa55"
+        },
+        {
+          "index": 7,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "read",
+            "action_id": "10c69972-b20a-477c-a79d-7919e135f3d4",
+            "record_id": "a8087e88-1b4d-484c-bd13-f24191224e95",
+            "related": true,
+            "through": 240,
+            "limit": 20,
+            "owner_boundary": {
+              "objective_links": 14,
+              "review_requests": 2,
+              "review_relationships": 5
+            },
+            "owner_version": "81919cc79aa978ab87dbd50014f3d60acec0778a27e9c29291df439ae0ebd413"
+          },
+          "bytes": 121659,
+          "elapsed_ms": 45,
+          "failed": false,
+          "response_sha256": "4a370c5ee606664b2ac01a46afc9440761a888b9f99a12272dd66446e540778a"
+        },
+        {
+          "index": 8,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "10c69972-b20a-477c-a79d-7919e135f3d4",
+            "source_session_id": "build-worker",
+            "record_id": "a8087e88-1b4d-484c-bd13-f24191224e95"
+          },
+          "bytes": 752,
+          "elapsed_ms": 2,
+          "failed": false,
+          "response_sha256": "938656c7059fd7a48c35b958a690170448eec5bf742a162c3c30d51d39773ecf"
+        },
+        {
+          "index": 9,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "read",
+            "action_id": "10c69972-b20a-477c-a79d-7919e135f3d4",
+            "record_id": "a8087e88-1b4d-484c-bd13-f24191224e95",
+            "related": true,
+            "through": 240,
+            "limit": 20,
+            "owner_boundary": {
+              "objective_links": 14,
+              "review_requests": 2,
+              "review_relationships": 5
+            },
+            "owner_version": "81919cc79aa978ab87dbd50014f3d60acec0778a27e9c29291df439ae0ebd413"
+          },
+          "bytes": 121659,
+          "elapsed_ms": 81,
+          "failed": false,
+          "response_sha256": "4a370c5ee606664b2ac01a46afc9440761a888b9f99a12272dd66446e540778a"
+        },
+        {
+          "index": 10,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "10c69972-b20a-477c-a79d-7919e135f3d4",
+            "source_session_id": "build-worker",
+            "record_id": "67d4e5fd-e798-4cbd-94ba-b88634cf1899"
+          },
+          "bytes": 712,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "177e371f9bbe51c55593e01ea4ea19b33388647803c671597195cb127ab4424b"
+        },
+        {
+          "index": 11,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "10c69972-b20a-477c-a79d-7919e135f3d4",
+            "source_session_id": "review-owner",
+            "record_id": "b0d2e871-f5a3-417e-bd75-a3e5734cb795"
+          },
+          "bytes": 1180,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "eee82e2d1a4ef3f02e46867c64ef31edc530f2739f16edda9a6d6a6490a4dbb9"
+        },
+        {
+          "index": 12,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "10c69972-b20a-477c-a79d-7919e135f3d4",
+            "source_session_id": "review-owner",
+            "record_id": "1641a034-f798-4700-8fe7-66cae77de0e5"
+          },
+          "bytes": 814,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "a185af1d0c2f3162bd7a118b1710ce0852f8fa71b17ae782d2e98248baf149ac"
+        },
+        {
+          "index": 13,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "10c69972-b20a-477c-a79d-7919e135f3d4",
+            "source_session_id": "review-owner",
+            "record_id": "a1e8bbf8-8099-4808-921c-5f1f4cd5a896"
+          },
+          "bytes": 666,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "a6079c4a6f78b09c3d897ca3abfdbfead10c9caee317a0068f98394a354a5edf"
+        },
+        {
+          "index": 14,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "10c69972-b20a-477c-a79d-7919e135f3d4",
+            "source_session_id": "build-worker",
+            "record_id": "0bcf813d-1006-4e32-91c1-9b5c4655e8fe"
+          },
+          "bytes": 1152,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "991492025882a4ef22c254ba8534abacd1887b6c0039983e21550cf3a1d775bd"
+        },
+        {
+          "index": 15,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "10c69972-b20a-477c-a79d-7919e135f3d4",
+            "source_session_id": "review-owner",
+            "record_id": "04c511a0-cb2a-4677-b8b4-91b45e7e9ed9"
+          },
+          "bytes": 825,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "b194a5f903e345a6e7af9378e11bed6a5c87912d843067ab981f72cb2a66a6ec"
+        },
+        {
+          "index": 16,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "10c69972-b20a-477c-a79d-7919e135f3d4",
+            "source_session_id": "review-owner",
+            "record_id": "0ef06bef-a745-4027-a4de-fa338d0c1207"
+          },
+          "bytes": 973,
+          "elapsed_ms": 0,
+          "failed": false,
+          "response_sha256": "196d7619530c06b46df66416a132850dd43d9cbff6b95a79c49dada56a1cc47e"
+        },
+        {
+          "index": 17,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "10c69972-b20a-477c-a79d-7919e135f3d4",
+            "source_session_id": "test-author",
+            "record_id": "cb0c74ba-67cc-4fff-a14a-46c2dc0f626a"
+          },
+          "bytes": 1177,
+          "elapsed_ms": 0,
+          "failed": false,
+          "response_sha256": "d7294aa7d6eaa44cf0bb6a71a0570cff3f1b71f53ed521b84e91836d7fbd5a3c"
+        },
+        {
+          "index": 18,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "preview-population",
+            "selection": {
+              "objective_id": "3a487426-b779-49e6-9881-1fec35b30902",
+              "question": "What do the recorded a1 failure and unchanged-code rerun establish, how do the b2 test-only correction and its scoped recheck bear on the competing historical explanations, what was merged as c3, and what remains unverified for full issue 182 release acceptance? Preserve authorship, rejected associations, requested review scope, and source gaps."
+            },
+            "limit": 20
+          },
+          "bytes": 63307,
+          "elapsed_ms": 132,
+          "failed": false,
+          "response_sha256": "e632d139732f85aa3cf6ed54d1b495865b22fd50a00852ac98857a78075e6a6e"
+        },
+        {
+          "index": 19,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "10c69972-b20a-477c-a79d-7919e135f3d4",
+            "source_session_id": "release-owner",
+            "record_id": "d8566757-aedf-4ac0-8ee8-a9d0cb869d4a"
+          },
+          "bytes": 723,
+          "elapsed_ms": 2,
+          "failed": false,
+          "response_sha256": "f60371eea692a14c556d4b274b6f47c9159f519fdc78026fd716607eaaf7cf06"
+        },
+        {
+          "index": 20,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "10c69972-b20a-477c-a79d-7919e135f3d4",
+            "source_session_id": "release-owner",
+            "record_id": "38fd73f8-a4c3-44a8-870f-0bea2d4449b6"
+          },
+          "bytes": 747,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "4c1233f85cfa81109cdfb0536a5f055817e13b9b1644801a783b87c6efee3e15"
+        },
+        {
+          "index": 21,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "10c69972-b20a-477c-a79d-7919e135f3d4",
+            "source_session_id": "review-owner",
+            "record_id": "b0584598-b99c-489d-9ba6-8fd5737487c7"
+          },
+          "bytes": 1180,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "a029deae2054b350a51b589b5bcfd1c6d6d515f7ec30c08f962dcc810dc12d2b"
+        },
+        {
+          "index": 22,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "10c69972-b20a-477c-a79d-7919e135f3d4",
+            "source_session_id": "test-author",
+            "record_id": "ecd834b3-619d-48b8-8e30-b25d091ceff7"
+          },
+          "bytes": 753,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "24297a82d416747f0214c0d173ca168536797cc9e03f1973780f69ca4878681a"
+        },
+        {
+          "index": 23,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "10c69972-b20a-477c-a79d-7919e135f3d4",
+            "source_session_id": "build-worker",
+            "record_id": "d01b804a-735e-4f5c-a5cd-de67e0480f19"
+          },
+          "bytes": 1166,
+          "elapsed_ms": 8,
+          "failed": false,
+          "response_sha256": "6411e65a19aeec7ab7909a1ef086c649c860262d975814d0ef465cae74832d71"
+        },
+        {
+          "index": 24,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "10c69972-b20a-477c-a79d-7919e135f3d4",
+            "source_session_id": "review-owner",
+            "record_id": "0239ed49-9b7b-49b8-a81a-f0cbb3c90c90"
+          },
+          "bytes": 750,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "c9f80be227615bf9ee77d460788fbfa86481a2b19a028ff8d5b40e3c2dd86d5a"
+        },
+        {
+          "index": 25,
+          "kind": "help",
+          "name": "review",
+          "bytes": 24482,
+          "elapsed_ms": 0,
+          "failed": false,
+          "response_sha256": "a14a78e55ca4fd4a62b24e0fc889a79aa0f37e882a41479613d11fb28525a790"
+        },
+        {
+          "index": 26,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "preview-population",
+            "selection": {
+              "mode": "explicit-objective",
+              "objective_id": "3a487426-b779-49e6-9881-1fec35b30902",
+              "question": "What do the recorded a1 failure and unchanged-code rerun establish, how do the b2 test-only correction and its scoped recheck bear on the competing historical explanations, what was merged as c3, and what remains unverified for full issue 182 release acceptance? Preserve authorship, rejected associations, requested review scope, and source gaps.",
+              "through": 100,
+              "owner_boundary": {
+                "objective_links": 14,
+                "review_requests": 2,
+                "review_relationships": 5
+              },
+              "owner_version": "84111d0f8baeb6609578de8cca4f783d5a790f5fbaaa2e3dc3c9b8cf798cf9a9",
+              "exclusions": []
+            },
+            "after": 20,
+            "limit": 20
+          },
+          "bytes": 64034,
+          "elapsed_ms": 105,
+          "failed": false,
+          "response_sha256": "a8ec305c21fa5287316d93b932871bb7af728277dbc3e23d390ce441835805f5"
+        },
+        {
+          "index": 27,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "preview-population",
+            "selection": {
+              "mode": "explicit-objective",
+              "objective_id": "3a487426-b779-49e6-9881-1fec35b30902",
+              "question": "What do the recorded a1 failure and unchanged-code rerun establish, how do the b2 test-only correction and its scoped recheck bear on the competing historical explanations, what was merged as c3, and what remains unverified for full issue 182 release acceptance? Preserve authorship, rejected associations, requested review scope, and source gaps.",
+              "through": 100,
+              "owner_boundary": {
+                "objective_links": 14,
+                "review_requests": 2,
+                "review_relationships": 5
+              },
+              "owner_version": "84111d0f8baeb6609578de8cca4f783d5a790f5fbaaa2e3dc3c9b8cf798cf9a9",
+              "exclusions": []
+            },
+            "after": 40,
+            "limit": 20
+          },
+          "bytes": 9473,
+          "elapsed_ms": 102,
+          "failed": false,
+          "response_sha256": "b7d913640b42fc1eb7c62cd47be94d376db69dfdda2caa97df726c86f526e7a1"
+        },
+        {
+          "index": 28,
+          "kind": "tool",
+          "name": "review",
+          "input": {
+            "operation": "read",
+            "request_id": "ordered-test-recheck"
+          },
+          "bytes": 7985,
+          "elapsed_ms": 3,
+          "failed": false,
+          "response_sha256": "dcf9a0b2368b4df2b560734b31e4d5f5a1a47f9cf02cb98c7c2ce5e173dce5f6"
+        },
+        {
+          "index": 29,
+          "kind": "tool",
+          "name": "review",
+          "input": {
+            "operation": "read",
+            "request_id": "original-probe-review"
+          },
+          "bytes": 5441,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "4ddeee2287fdbcc0999aea1dbfdf565e8bc9fcd7c0b801c620ec75a6f968c427"
+        },
+        {
+          "index": 30,
+          "kind": "tool",
+          "name": "review",
+          "input": {
+            "operation": "freeze-population",
+            "selection": {
+              "mode": "explicit-objective",
+              "objective_id": "3a487426-b779-49e6-9881-1fec35b30902",
+              "question": "What do the recorded a1 failure and unchanged-code rerun establish, how do the b2 test-only correction and its scoped recheck bear on the competing historical explanations, what was merged as c3, and what remains unverified for full issue 182 release acceptance? Preserve authorship, rejected associations, requested review scope, and source gaps.",
+              "through": 100,
+              "owner_boundary": {
+                "objective_links": 14,
+                "review_requests": 2,
+                "review_relationships": 5
+              },
+              "owner_version": "84111d0f8baeb6609578de8cca4f783d5a790f5fbaaa2e3dc3c9b8cf798cf9a9",
+              "exclusions": []
+            },
+            "preview_sha256": "8a36887587df3634ee77f1370fa04f5a5b899b5ec13d6bf48bd155cd46a07cd8"
+          },
+          "bytes": 67676,
+          "elapsed_ms": 168,
+          "failed": false,
+          "response_sha256": "f7a70efddd92d4519023f85787e9bdbd14de88dfa2d371f40ebdf650af1fdaf0"
+        },
+        {
+          "index": 31,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-cd732bd4be5b65d1bed495d340756953a9f9b4cef9e9ce1e96ba080c2a38c26c",
+            "manifest_sha256": "8a36887587df3634ee77f1370fa04f5a5b899b5ec13d6bf48bd155cd46a07cd8",
+            "member_key": "source-25ea6437ac15e966d37cfe2f352f603c21bdb01c08b9a603e83e8ec7bf79c27a"
+          },
+          "bytes": 1359,
+          "elapsed_ms": 16,
+          "failed": false,
+          "response_sha256": "a7e456918953bf34131d3ffd6974e1d2614b8635c8415899508790cf035c1681"
+        },
+        {
+          "index": 32,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population",
+            "population_id": "retrospective-cd732bd4be5b65d1bed495d340756953a9f9b4cef9e9ce1e96ba080c2a38c26c",
+            "manifest_sha256": "8a36887587df3634ee77f1370fa04f5a5b899b5ec13d6bf48bd155cd46a07cd8",
+            "after": 20,
+            "limit": 20
+          },
+          "bytes": 68403,
+          "elapsed_ms": 31,
+          "failed": false,
+          "response_sha256": "980d47b454c68ef68f695a708d5aebfb16a2345fd6fbec20e31ea106090aa0ba"
+        },
+        {
+          "index": 33,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-cd732bd4be5b65d1bed495d340756953a9f9b4cef9e9ce1e96ba080c2a38c26c",
+            "manifest_sha256": "8a36887587df3634ee77f1370fa04f5a5b899b5ec13d6bf48bd155cd46a07cd8",
+            "member_key": "source-07e1efec7a6a7ebe14d346daf56e21e83effd9c913b95a361058f83a96087ad9"
+          },
+          "bytes": 1058,
+          "elapsed_ms": 17,
+          "failed": false,
+          "response_sha256": "3938ce3df47e7f04bbf366b3cfed62fb6e11465e9f5bebc6e6c0d3bfa9107573"
+        },
+        {
+          "index": 34,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-cd732bd4be5b65d1bed495d340756953a9f9b4cef9e9ce1e96ba080c2a38c26c",
+            "manifest_sha256": "8a36887587df3634ee77f1370fa04f5a5b899b5ec13d6bf48bd155cd46a07cd8",
+            "member_key": "source-6163f8c7511f39f8474e64868f160d89d181a60be4398ba1cc759021370d75fc"
+          },
+          "bytes": 3868,
+          "elapsed_ms": 16,
+          "failed": false,
+          "response_sha256": "1bf00b4d6873f88e819b76f429f435ad3b2fa9ce0e64be6580c99e5f36be7bcf"
+        },
+        {
+          "index": 35,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-cd732bd4be5b65d1bed495d340756953a9f9b4cef9e9ce1e96ba080c2a38c26c",
+            "manifest_sha256": "8a36887587df3634ee77f1370fa04f5a5b899b5ec13d6bf48bd155cd46a07cd8",
+            "member_key": "source-3e86eb6fa9a8c45740711e7a078dc9ff0bfba17d4e0041525b01af703988dfae"
+          },
+          "bytes": 1359,
+          "elapsed_ms": 40,
+          "failed": false,
+          "response_sha256": "059c8e18e0865e659d12baf33d045f037e5cc171edd5c1d06dc8c38f6a1e8e6c"
+        },
+        {
+          "index": 36,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-cd732bd4be5b65d1bed495d340756953a9f9b4cef9e9ce1e96ba080c2a38c26c",
+            "manifest_sha256": "8a36887587df3634ee77f1370fa04f5a5b899b5ec13d6bf48bd155cd46a07cd8",
+            "member_key": "source-a2a2897898822ee71bc5e43ce7409f0b342a6d3f6f1bb58aa6c2580db6eae5ef"
+          },
+          "bytes": 1432,
+          "elapsed_ms": 33,
+          "failed": false,
+          "response_sha256": "ea4deb0d3bd10cb145c3bc7ee10771fe7cbd447907ad3ca13dc0e8055b61facf"
+        },
+        {
+          "index": 37,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-cd732bd4be5b65d1bed495d340756953a9f9b4cef9e9ce1e96ba080c2a38c26c",
+            "manifest_sha256": "8a36887587df3634ee77f1370fa04f5a5b899b5ec13d6bf48bd155cd46a07cd8",
+            "member_key": "source-4fec70626bd6e0315769a1e7174f5ea32f51b28e65f68e0c0783cbde72fe05fd"
+          },
+          "bytes": 1540,
+          "elapsed_ms": 18,
+          "failed": false,
+          "response_sha256": "6ba3d23d25e98331bc40c6e2950f547a57b823199d31937b561ce0baf213ef31"
+        },
+        {
+          "index": 38,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-cd732bd4be5b65d1bed495d340756953a9f9b4cef9e9ce1e96ba080c2a38c26c",
+            "manifest_sha256": "8a36887587df3634ee77f1370fa04f5a5b899b5ec13d6bf48bd155cd46a07cd8",
+            "member_key": "source-69866a1b443611f4b67a2bf5ee5221a4714d63d731a51c1769ad7a5288946737"
+          },
+          "bytes": 1355,
+          "elapsed_ms": 15,
+          "failed": false,
+          "response_sha256": "b784d84dfd638379fb7fbb8e4e5895dff9a8b99f4a016aca0fbe76b16dfbe110"
+        },
+        {
+          "index": 39,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-cd732bd4be5b65d1bed495d340756953a9f9b4cef9e9ce1e96ba080c2a38c26c",
+            "manifest_sha256": "8a36887587df3634ee77f1370fa04f5a5b899b5ec13d6bf48bd155cd46a07cd8",
+            "member_key": "source-30a051c498d24cad7fbecd41ea011a1c4b976ea2f3b4f59a94646ba97ead82d8"
+          },
+          "bytes": 1331,
+          "elapsed_ms": 13,
+          "failed": false,
+          "response_sha256": "000cf466b782b756a2eab2c93a5640faf6871c5afb472685239d1e50e441f383"
+        },
+        {
+          "index": 40,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-cd732bd4be5b65d1bed495d340756953a9f9b4cef9e9ce1e96ba080c2a38c26c",
+            "manifest_sha256": "8a36887587df3634ee77f1370fa04f5a5b899b5ec13d6bf48bd155cd46a07cd8",
+            "member_key": "source-ccc234be75563068aec2acc15d4250e00117454636b4edee31eab8316939b8e6"
+          },
+          "bytes": 1759,
+          "elapsed_ms": 15,
+          "failed": false,
+          "response_sha256": "3300a7fa1078c93c07c62429e7ef9c93c536eb6ac22de9220fbb8cdc73561a59"
+        },
+        {
+          "index": 41,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-cd732bd4be5b65d1bed495d340756953a9f9b4cef9e9ce1e96ba080c2a38c26c",
+            "manifest_sha256": "8a36887587df3634ee77f1370fa04f5a5b899b5ec13d6bf48bd155cd46a07cd8",
+            "member_key": "source-04af58afc589b67fc013a8a3b37c73181a93d24a407389c7e163d7f123b67b14"
+          },
+          "bytes": 1357,
+          "elapsed_ms": 12,
+          "failed": false,
+          "response_sha256": "a973afd9d4b4adba1118566168aaff9602a7cb3b32d135d726aa24faa02ad361"
+        },
+        {
+          "index": 42,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-cd732bd4be5b65d1bed495d340756953a9f9b4cef9e9ce1e96ba080c2a38c26c",
+            "manifest_sha256": "8a36887587df3634ee77f1370fa04f5a5b899b5ec13d6bf48bd155cd46a07cd8",
+            "member_key": "source-cde1086333b215f1018f5a4decf8d6ba6ab1c142272f7cd6821a33e0ba535d90"
+          },
+          "bytes": 1787,
+          "elapsed_ms": 13,
+          "failed": false,
+          "response_sha256": "084a66d6b69a5a350f20bfa262b0ed1975d71f53f2e2a2c3e70bb7cb6bfa72fd"
+        },
+        {
+          "index": 43,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-cd732bd4be5b65d1bed495d340756953a9f9b4cef9e9ce1e96ba080c2a38c26c",
+            "manifest_sha256": "8a36887587df3634ee77f1370fa04f5a5b899b5ec13d6bf48bd155cd46a07cd8",
+            "member_key": "source-2e8927032b3933ab96793c6323adad384696916804a05452e379d1bc8841b4d3"
+          },
+          "bytes": 1787,
+          "elapsed_ms": 11,
+          "failed": false,
+          "response_sha256": "8322edb97af6c44214a065d66721126ee416a04d6ff46f0ce27010dfa813d754"
+        },
+        {
+          "index": 44,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-cd732bd4be5b65d1bed495d340756953a9f9b4cef9e9ce1e96ba080c2a38c26c",
+            "manifest_sha256": "8a36887587df3634ee77f1370fa04f5a5b899b5ec13d6bf48bd155cd46a07cd8",
+            "member_key": "source-9c274b55b45f3709f4883d7982a161e2c63429329c5b45b776058434e0d915f5"
+          },
+          "bytes": 1580,
+          "elapsed_ms": 13,
+          "failed": false,
+          "response_sha256": "cb5adb769ea080d68ec24a02e5e47848b6093234fa4c939e6440bff85f451209"
+        },
+        {
+          "index": 45,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-cd732bd4be5b65d1bed495d340756953a9f9b4cef9e9ce1e96ba080c2a38c26c",
+            "manifest_sha256": "8a36887587df3634ee77f1370fa04f5a5b899b5ec13d6bf48bd155cd46a07cd8",
+            "member_key": "source-0ce6d037da45929f22f430c300d63e11b745aece3294a5ff7ce2a1c13725f5b9"
+          },
+          "bytes": 1406,
+          "elapsed_ms": 12,
+          "failed": false,
+          "response_sha256": "263c91584a0ba7c4e8faa8db937e23fa268a274dfdc6bb5e2218d27e0161287d"
+        },
+        {
+          "index": 46,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population",
+            "population_id": "retrospective-cd732bd4be5b65d1bed495d340756953a9f9b4cef9e9ce1e96ba080c2a38c26c",
+            "manifest_sha256": "8a36887587df3634ee77f1370fa04f5a5b899b5ec13d6bf48bd155cd46a07cd8",
+            "after": 40,
+            "limit": 20
+          },
+          "bytes": 8959,
+          "elapsed_ms": 12,
+          "failed": false,
+          "response_sha256": "759e576f8ab66ddefabbe245afaedae0bc2a7c223b9385b319f90daceb125294"
+        },
+        {
+          "index": 47,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-cd732bd4be5b65d1bed495d340756953a9f9b4cef9e9ce1e96ba080c2a38c26c",
+            "manifest_sha256": "8a36887587df3634ee77f1370fa04f5a5b899b5ec13d6bf48bd155cd46a07cd8",
+            "member_key": "source-8cdd801a93251f3e5636d9411260551e9e2a941d6107e3ba2f14a364a6f1fb70"
+          },
+          "bytes": 1773,
+          "elapsed_ms": 12,
+          "failed": false,
+          "response_sha256": "92bf85a752c6740db8dd267f8c72e209ff70507574855ffb07bc4985874a5b57"
+        },
+        {
+          "index": 48,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-cd732bd4be5b65d1bed495d340756953a9f9b4cef9e9ce1e96ba080c2a38c26c",
+            "manifest_sha256": "8a36887587df3634ee77f1370fa04f5a5b899b5ec13d6bf48bd155cd46a07cd8",
+            "member_key": "source-171fe4bd98b2367a98ed6663e165f13dcac6507c643702c23f69e7576d054edc"
+          },
+          "bytes": 1319,
+          "elapsed_ms": 10,
+          "failed": false,
+          "response_sha256": "4bbf336ffb52bdb4081e725a15be0f4207e2d65a912b588f4f3eb5554d2ce300"
+        }
+      ],
+      "source_originals_unchanged": true,
+      "cleanup": true,
+      "measurements": {
+        "by_kind": {
+          "tool": {
+            "calls": 43,
+            "bytes": 610684
+          },
+          "help": {
+            "calls": 4,
+            "bytes": 72792
+          },
+          "skill": {
+            "calls": 1,
+            "bytes": 11964
+          }
+        },
+        "total_measured_bytes": 695440,
+        "failed_tool_calls": 0,
+        "deliberately_seeded_failures": 0,
+        "distinct_help_tools": 4,
+        "exact_repeated_tool_inputs": 1,
+        "additional_semantic_page_rereads": 0
+      },
+      "outcome": {
+        "completed": true,
+        "implementation_inspection": "forbidden by fresh-agent task; participants reported none",
+        "population_id": "retrospective-cd732bd4be5b65d1bed495d340756953a9f9b4cef9e9ce1e96ba080c2a38c26c",
+        "manifest_sha256": "8a36887587df3634ee77f1370fa04f5a5b899b5ec13d6bf48bd155cd46a07cd8",
+        "member_count": 42,
+        "freeze_step": 30,
+        "freeze_request_copied_unchanged": true,
+        "preview_membership_exhausted": true,
+        "frozen_membership_exhausted": true,
+        "representative_frozen_source_reads": 16,
+        "all_sampled_source_statuses_available": true,
+        "execution_permit": null,
+        "evaluation_prepared_or_executed": false,
+        "action_or_plan_created": false
+      }
+    },
+    "missing": {
+      "format": "loom-tool-usability/v1",
+      "source_head": "2eebab2535da3b5a2c4be015ec7d983cf362708d",
+      "source_sha256": {
+        "src/agents.ts": "d5ec87885badb17e9b558de0051f6ad5889f31d53bd7aefe558c43e79c9d71a6",
+        "src/answer-resume.ts": "a353fcc77a5e10e83af099986528565b3eafd9bf8ba45164beaa6996a21dcdc8",
+        "src/automatic-learning.ts": "cb46ada9bf57f9537773d6094c710caa207e3872a21f0008fe5f4051c291d9c5",
+        "src/collaboration.ts": "4db9c3eb40c3f026bc65cbab2eac77dff3b464c4f9319686ac26bc6c4455606f",
+        "src/config-admission.ts": "7d3754b3dcae9bc08d90d22acf71cdd2bbded564b889c8e80976358fb314b9f1",
+        "src/config-parser.ts": "9b1502e18720eded50244470304022b1a986edf08bcc0ed4a8cc9f04ef5f1d7f",
+        "src/config.ts": "0c1b750162d731915380df10d976eca4dc3f13b128cbeac90c53e16adc9c53b3",
+        "src/context.ts": "55e0f5c84a025d4ada4ff28bbf560f86b32f30cd1d79f27b15720c67c13cad8a",
+        "src/engineering-history-dashboard.ts": "2ce08ddabaf4d478ecbb5dd05d57a01c26c84036904633ea48f43179a85c22c1",
+        "src/engineering-history.ts": "434ee7e88884b090f36f5c4ad08f72078d5513b3730d593c5d323c30091c995c",
+        "src/engineering-trajectories.ts": "20f9fdb94ee9cb6bacb7fa4e98ba6c29107adabe6f8b2bd82f19bcb26fb471b1",
+        "src/evaluation-store.ts": "dd9baef80190446935ef6f487199d7e1d60d4627497dd52847cbdf3c2a709df8",
+        "src/evaluator-execution-contract.ts": "82c9ffb821b610546e5c718752dfa3cd5f36416c31f60855638a40052a8a09ca",
+        "src/evaluator-execution.ts": "4fd58d1cc88f03b510647e345607c699954a0ad7d2d329c4190e96bc9468ee7d",
+        "src/evaluator-method.ts": "d2dd841f1794e643594d4033dd58e0f3ea079c81711d77a423e2c3da92ed6647",
+        "src/evaluator-preparation.ts": "3b976d8ec3df6514f8908276a159fe48255a2d317d4e6a568e79010044cf5808",
+        "src/history-renderer.ts": "f32bb730ad37b64a7d4763380196a01222779a6f9407d0ffb943ed1b54e333d9",
+        "src/history.ts": "0b99b3a28df06d5ec215a2392428c569827c04488f62290cefa7dedd505e1404",
+        "src/learning-findings.ts": "6f19cfb6244e9272f320e9c6fce093b403a1f8670b6c1a386cc295524571fee7",
+        "src/learning-runtime.ts": "c13431fab1e6203ca688972fa1b96a0b2bc4a14d6b89f497397f703c419fab6c",
+        "src/learning-sources.ts": "16fe5a115091eafd792cdc29916c35f886acef465cde38f577a024ac6a4a7cbf",
+        "src/learning.ts": "28f4270e8404b088cf93ddc1cbbdeff801d9f698985d487fa192858eeb367d92",
+        "src/model-routing-adapter.ts": "293381d5ac14aca4e6ec922185e0c7b89e85ba4eccf58edaf5866c9a8636a37e",
+        "src/model-routing-runtime.ts": "56b119d6383d2dc9cbecc02bc624ecf9dbb5cbc32eaa2e4bcd163ca07572a417",
+        "src/model-routing-shared-quota.ts": "4afe41f705d8c3b776ebe9af3607f98e283044efd1b10abaa0376c347cb822b3",
+        "src/model-routing.ts": "380f5ac08f697a752103ea5fa605dceef494061229e9607bfe40e705405ba4a1",
+        "src/model.ts": "73da3eafb970fd8588ed1ce6a5c6b1a0147834250b2db72105b22eb5908edc9f",
+        "src/native-evidence.ts": "d7e224b4cd0d8524a7b2b67a06631bcadfcba210e04dcc46fa59d4431ea7f090",
+        "src/objective-trends.ts": "9eeb7a88c163f532e35e8efbc3ddb9db0210531cd35c966e19ce729993e0c7d4",
+        "src/objectives.ts": "d0fb93c587d4775df505859240100df1a5faf0b36a0eb7a6de96cd904d9940a7",
+        "src/plugin.ts": "df12194e06ba006f617a79b74748e099e3c669f41628d21f9d69c9e7310e0274",
+        "src/question-routing.ts": "f3dec232b2f4ce89c67e26c48c686a4c82fcd4b6e610110f7342f0516479d0fa",
+        "src/quota-state.ts": "c5fc68d871d66ce46750262ddf1e383f770d49cc73fc8cf22aedde2d45bf3782",
+        "src/request-local-model-routing.ts": "6cfbf5134137986caeed2bed81306bafb187b6f6e96285cebfb6637e34b3e05e",
+        "src/response-format.ts": "6d9c4ec6cc00e58890f4d141692d9be856c677c266e320ba5058d3f2ada72815",
+        "src/retrospective-contract.ts": "2f92c3e8969b2d096bbf467b1558ee325c52b6df8b994ebfc3e4ec55bd128d0d",
+        "src/retrospective-populations.ts": "fad85f100cb9fcf39cc1b14b88790f3e6a6124100aeb4420afb07992c9d784c8",
+        "src/review-companions.ts": "e6862935a9b7004c67390343c7bc44f7669c33bd8f525f2ac490669477384ccf",
+        "src/review-issues.ts": "f4cb99197d45cad0db7c2b018c4db60df2aad481a3ee77caf235d96fe8ba3043",
+        "src/review-requests.ts": "9520b579959c4639ff18d3453efd8750173ce6619244bd7660399a5a6e655ba1",
+        "src/session-trace.ts": "d34fd2ea377f0464ca57344c05364a62aeafb533c9b85a31499b0dbf5386db5a",
+        "src/skill.ts": "34d95e5d2659e7563ef65394c1f037cd15d064c881e38ef07278becf72383781",
+        "src/skills/loom/SKILL.md": "a320f6c1bff5bdf2ad6fbcbbd7a2e2f6e7906849274b1ee8e1f1ed540f01eb33",
+        "src/sqlite-connection.ts": "1ba373fd7a434a989d87f4238bb114aec0baea923e2ce560ed176fc83c07096c",
+        "src/store.ts": "784b7a00de38f670024d9904ca51b77f00ac50b6a94694814c1ab46d73986345",
+        "src/tool-help.ts": "318d483a2ab6be358a4bd7d33a8f230a9433b1e7c1ca7503441fdd4112132d42",
+        "src/tool-input-contracts.ts": "25e69f2edaf4888aef4502fa519f66de08a902cebadc48237cd92735b5cebed3",
+        "src/tool-navigation.ts": "1278885d6e59e051ed528978703c03dbb367ef1eef3650ac73e172c2d75cc00d",
+        "src/work-context.ts": "3cb3d6435f36e9e955ee91135033ac4b910172ac7ebd902c50562500eb075ce4",
+        "src/workload-admission.ts": "35cd1f954cce73c0ede62a8b21b052b825ada78b443b024654f9d7ed49dafa37",
+        "src/workload-routing.ts": "8247bc066040e89b8de7c40c03370056d981365efe736e75f783af23786e26b7"
+      },
+      "mode": "missing",
+      "fixture_records": 500,
+      "qualification": "Synthetic unplanned originals with zero objective/review associations. Original observer references and citations are retained. Discovery, attributed retrospective authoring and subsequent navigation must be measured separately. No private operator reproduction or native review execution.",
+      "bridge_sha256": "1aceea1aaf2c89d2b869148a2b0489b3541a1630805546c4798094dd0da0d263",
+      "steps": [
+        {
+          "index": 1,
+          "kind": "skill",
+          "name": "loom",
+          "bytes": 11964,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "a320f6c1bff5bdf2ad6fbcbbd7a2e2f6e7906849274b1ee8e1f1ed540f01eb33"
+        },
+        {
+          "index": 2,
+          "kind": "help",
+          "name": "record",
+          "bytes": 26229,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "913a10efb951da4e45569370c8ce5c8fd39dc547bea6703bfd42beb79c6232ef"
+        },
+        {
+          "index": 3,
+          "kind": "help",
+          "name": "objective",
+          "bytes": 11886,
+          "elapsed_ms": 0,
+          "failed": false,
+          "response_sha256": "fc035e8cd5c37b39841244bd6e46cbe03833143d1878730ed355c56f60af43e1"
+        },
+        {
+          "index": 4,
+          "kind": "help",
+          "name": "history",
+          "bytes": 10195,
+          "elapsed_ms": 0,
+          "failed": false,
+          "response_sha256": "fb8e5ec32117fdd0de8e7ab2ea6a6d2f87affa0a2e529385a9d7a8ca7d087a47"
+        },
+        {
+          "index": 5,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "action_id": "19ce3025-6e66-451c-870e-4e20ea538190",
+            "match": "freshness"
+          },
+          "bytes": 109,
+          "elapsed_ms": 0,
+          "failed": true,
+          "response_sha256": "542ee967fafeb76d740c2b32dc451f64873a024ea3f23889e8b517ed7f4799ea"
+        },
+        {
+          "index": 6,
+          "kind": "tool",
+          "name": "objective",
+          "input": {
+            "operation": "find",
+            "label": "restore freshness"
+          },
+          "bytes": 210,
+          "elapsed_ms": 0,
+          "failed": true,
+          "response_sha256": "b1a1bb684b469db4d06278eabd2b440874b61834d85587d0f6b542ba33d2d7c8"
+        },
+        {
+          "index": 7,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "read",
+            "action_id": "19ce3025-6e66-451c-870e-4e20ea538190",
+            "match": "freshness"
+          },
+          "bytes": 15270,
+          "elapsed_ms": 63,
+          "failed": false,
+          "response_sha256": "92c14968c46d48acf69f1f1b297287eec02e2c615a1f1416e830106d6eff7fb4"
+        },
+        {
+          "index": 8,
+          "kind": "tool",
+          "name": "objective",
+          "input": {
+            "operation": "list"
+          },
+          "bytes": 159,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "2267e8288fb4e0d73d120259964be771fb360702fb23a01fc4a1f3d9c5392b05"
+        },
+        {
+          "index": 9,
+          "kind": "tool",
+          "name": "objective",
+          "input": {
+            "operation": "find",
+            "source_type": "ledger-record",
+            "source_id": "828a3842-3eaa-49e7-9b13-641c18989801"
+          },
+          "bytes": 590,
+          "elapsed_ms": 2,
+          "failed": false,
+          "response_sha256": "4fb2510370d8463517e2ea9198f1b72b0e577a11fc0b9afbfaac6f64126e0908"
+        },
+        {
+          "index": 10,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "read",
+            "action_id": "19ce3025-6e66-451c-870e-4e20ea538190",
+            "record_id": "828a3842-3eaa-49e7-9b13-641c18989801",
+            "related": true,
+            "through": 500,
+            "limit": 20,
+            "owner_boundary": {
+              "objective_links": 0,
+              "review_requests": 0,
+              "review_relationships": 0
+            },
+            "owner_version": "7b6455a094dc23ca9ced418a488d0006ddf0069136db7d9b8cde28601e0344fa"
+          },
+          "bytes": 9468,
+          "elapsed_ms": 32,
+          "failed": false,
+          "response_sha256": "dff03372d075525dc9d06c2d41d7e2397481f8f7406bb130e98f354ba0385a19"
+        },
+        {
+          "index": 11,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "19ce3025-6e66-451c-870e-4e20ea538190",
+            "source_session_id": "build-worker",
+            "record_id": "828a3842-3eaa-49e7-9b13-641c18989801"
+          },
+          "bytes": 716,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "466673318055cfe7816070b2e4c2082913e04c61691dc7d4330ef85e9fa1a118"
+        },
+        {
+          "index": 12,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "read",
+            "action_id": "19ce3025-6e66-451c-870e-4e20ea538190",
+            "match": "correction"
+          },
+          "bytes": 29532,
+          "elapsed_ms": 38,
+          "failed": false,
+          "response_sha256": "8d42585c61c9e0b2497b9aa4f3321f07eed09d3c07663f23d27c8fa3bb60d8ea"
+        },
+        {
+          "index": 13,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "read",
+            "action_id": "19ce3025-6e66-451c-870e-4e20ea538190",
+            "match": "restore"
+          },
+          "bytes": 15266,
+          "elapsed_ms": 33,
+          "failed": false,
+          "response_sha256": "eca95abeec6374f1c53fe2d8b3adafa085eb63dd22f0065041f09fa18896764b"
+        },
+        {
+          "index": 14,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "read",
+            "action_id": "19ce3025-6e66-451c-870e-4e20ea538190",
+            "match": "rerun"
+          },
+          "bytes": 8104,
+          "elapsed_ms": 35,
+          "failed": false,
+          "response_sha256": "7bb9392d4393ac9ee9252f767e74db695a7057bc69bf6e11e7c0152dd53013ab"
+        },
+        {
+          "index": 15,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "read",
+            "action_id": "19ce3025-6e66-451c-870e-4e20ea538190",
+            "match": "187"
+          },
+          "bytes": 38876,
+          "elapsed_ms": 37,
+          "failed": false,
+          "response_sha256": "22bd6a6f59c5ad4111aa0adacaba73e6f4e65dc5c4fd1b4a420b1903670df46c"
+        },
+        {
+          "index": 16,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "read",
+            "action_id": "19ce3025-6e66-451c-870e-4e20ea538190",
+            "match": "182"
+          },
+          "bytes": 61362,
+          "elapsed_ms": 58,
+          "failed": false,
+          "response_sha256": "c5405404ae7237c562fe7af47fbfaa673e65a68831ca5e52855aa63ccae85693"
+        },
+        {
+          "index": 17,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "19ce3025-6e66-451c-870e-4e20ea538190",
+            "source_session_id": "release-owner",
+            "record_id": "ca0fd310-77c5-4045-bc04-d15a34ffc528"
+          },
+          "bytes": 693,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "3d998d31c016500551e1a4ff98655c6c11904bffa53c8419d8574bc8b0d349ee"
+        },
+        {
+          "index": 18,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "19ce3025-6e66-451c-870e-4e20ea538190",
+            "source_session_id": "build-worker",
+            "record_id": "ea5ecd49-8f52-47e0-ab63-882dee0cfde2"
+          },
+          "bytes": 678,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "38835d72042ecc8ace88009a3c0c222eb2b80ccdcafe5cc70806d6023d7dc4bc"
+        },
+        {
+          "index": 19,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "read",
+            "action_id": "19ce3025-6e66-451c-870e-4e20ea538190",
+            "match": "scheduling"
+          },
+          "bytes": 15272,
+          "elapsed_ms": 37,
+          "failed": false,
+          "response_sha256": "69930347a8290e6f2ff6b8efc55a22b17a1d92bf2789e0ce70899bb58fe34a42"
+        },
+        {
+          "index": 20,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "19ce3025-6e66-451c-870e-4e20ea538190",
+            "source_session_id": "release-owner",
+            "record_id": "f8710406-859c-4562-b273-020fce5e9989"
+          },
+          "bytes": 689,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "6402ffa944da2232d680be4bd0257ef927e84d032bbad8312d003f343ed3d517"
+        },
+        {
+          "index": 21,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "19ce3025-6e66-451c-870e-4e20ea538190",
+            "source_session_id": "review-owner",
+            "record_id": "ac669757-d7b0-4b79-b7a4-53a59479f21f"
+          },
+          "bytes": 618,
+          "elapsed_ms": 3,
+          "failed": false,
+          "response_sha256": "2184766ca2e1206eeeb2123d6aca9cd1e01139a693ce2407a5581582a9ea1e36"
+        },
+        {
+          "index": 22,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "19ce3025-6e66-451c-870e-4e20ea538190",
+            "source_session_id": "test-author",
+            "record_id": "d91013f0-a7be-40c6-9a7c-1ed25b97cb39"
+          },
+          "bytes": 699,
+          "elapsed_ms": 2,
+          "failed": false,
+          "response_sha256": "bbe9f93ef5d04c7580b3f1fef29f7767033c46173a6e82fe9648c5509c355b11"
+        },
+        {
+          "index": 23,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "19ce3025-6e66-451c-870e-4e20ea538190",
+            "source_session_id": "review-owner",
+            "record_id": "a10234e3-698c-4d7f-89bf-4ac43545c08e"
+          },
+          "bytes": 895,
+          "elapsed_ms": 5,
+          "failed": false,
+          "response_sha256": "ab9ee91a629b2976662a87dcc3c08da6726bd88919a49dd772f109ac3f7493fc"
+        },
+        {
+          "index": 24,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "19ce3025-6e66-451c-870e-4e20ea538190",
+            "source_session_id": "review-owner",
+            "record_id": "1cbe273d-d6ca-400e-888e-146f3c8182c7"
+          },
+          "bytes": 676,
+          "elapsed_ms": 2,
+          "failed": false,
+          "response_sha256": "002201835a61f846296bd772187cc482683bb2553ff5ac411a57cb72b5aa6caa"
+        },
+        {
+          "index": 25,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "read",
+            "action_id": "19ce3025-6e66-451c-870e-4e20ea538190",
+            "record_id": "a10234e3-698c-4d7f-89bf-4ac43545c08e",
+            "related": true,
+            "through": 500,
+            "limit": 20,
+            "owner_boundary": {
+              "objective_links": 0,
+              "review_requests": 0,
+              "review_relationships": 0
+            },
+            "owner_version": "7b6455a094dc23ca9ced418a488d0006ddf0069136db7d9b8cde28601e0344fa"
+          },
+          "bytes": 23976,
+          "elapsed_ms": 46,
+          "failed": false,
+          "response_sha256": "32b6c3bf60362c0c200bb1b8b387273f9bd7cc702453e37f6da277b56a79ac9e"
+        },
+        {
+          "index": 26,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "19ce3025-6e66-451c-870e-4e20ea538190",
+            "source_session_id": "review-owner",
+            "record_id": "c61a9c94-510f-43af-848d-c282b76420c4"
+          },
+          "bytes": 639,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "728685f35feff68742695104e9f84ba970abf1f21d040cf75d295f6f2b04f674"
+        },
+        {
+          "index": 27,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "19ce3025-6e66-451c-870e-4e20ea538190",
+            "source_session_id": "review-owner",
+            "record_id": "fa91df44-7095-47de-a7a0-5bb1e99e6342"
+          },
+          "bytes": 755,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "dcff449f8ae95b5649aa37e35bba4b4439795a085f2fcea7a73a272cda058a44"
+        },
+        {
+          "index": 28,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "19ce3025-6e66-451c-870e-4e20ea538190",
+            "source_session_id": "review-owner",
+            "record_id": "d557aa0a-a113-4d73-ac15-c1ffac341d63"
+          },
+          "bytes": 677,
+          "elapsed_ms": 0,
+          "failed": false,
+          "response_sha256": "f98457b01ae3c835c265afc01ac33c1a52d95d51a83191f730f27bf9523213c5"
+        },
+        {
+          "index": 29,
+          "kind": "tool",
+          "name": "objective",
+          "input": {
+            "operation": "find",
+            "source_type": "ledger-record",
+            "source_id": "ac669757-d7b0-4b79-b7a4-53a59479f21f"
+          },
+          "bytes": 590,
+          "elapsed_ms": 2,
+          "failed": false,
+          "response_sha256": "4fb2510370d8463517e2ea9198f1b72b0e577a11fc0b9afbfaac6f64126e0908"
+        },
+        {
+          "index": 30,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "19ce3025-6e66-451c-870e-4e20ea538190",
+            "source_session_id": "review-owner",
+            "record_id": "52fe29d9-9743-4a0c-b83a-e16100e15856"
+          },
+          "bytes": 873,
+          "elapsed_ms": 2,
+          "failed": false,
+          "response_sha256": "1ee6f62668c5aa9c842e05aa8eef75ccc9fccf98bdd5c0392c54958d29bc384e"
+        },
+        {
+          "index": 31,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "19ce3025-6e66-451c-870e-4e20ea538190",
+            "source_session_id": "review-owner",
+            "record_id": "26612723-96fb-4b3d-a119-0d3397687d0b"
+          },
+          "bytes": 1042,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "e798adda90f132b63ef91a4ae7412dd653d2739fad22cb8fb4ce6bd30e2bead4"
+        },
+        {
+          "index": 32,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "19ce3025-6e66-451c-870e-4e20ea538190",
+            "source_session_id": "review-owner",
+            "record_id": "5f24b116-fd6d-4319-ab13-30676f8376d1"
+          },
+          "bytes": 1042,
+          "elapsed_ms": 2,
+          "failed": false,
+          "response_sha256": "6fa1067afe0595f7ba32fa8e5d2b0c16dcdeaf0ec0f30a51ceccb340f2dd9c99"
+        },
+        {
+          "index": 33,
+          "kind": "tool",
+          "name": "record",
+          "input": {
+            "operation": "query",
+            "action_id": "19ce3025-6e66-451c-870e-4e20ea538190",
+            "source_session_id": "review-owner",
+            "record_id": "d978c4a5-1f57-454d-abda-3a4ef39f41c1"
+          },
+          "bytes": 873,
+          "elapsed_ms": 4,
+          "failed": false,
+          "response_sha256": "ce4778f22bac03fe419bb8be87a83539556ee2966a590540f058b0593a961006"
+        },
+        {
+          "index": 34,
+          "kind": "help",
+          "name": "objective",
+          "bytes": 11886,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "fc035e8cd5c37b39841244bd6e46cbe03833143d1878730ed355c56f60af43e1"
+        },
+        {
+          "index": 35,
+          "kind": "tool",
+          "name": "objective",
+          "input": {
+            "operation": "create",
+            "source_type": "ledger-record",
+            "source_id": "ac669757-d7b0-4b79-b7a4-53a59479f21f",
+            "label": "Issue 182 CI anomaly and issue 187 test correction: scoped retrospective",
+            "unit_key": "issue-182-ci-anomaly-test-correction-retrospective"
+          },
+          "bytes": 469,
+          "elapsed_ms": 14,
+          "failed": false,
+          "response_sha256": "48069dc9e1259ab06c2190076686b196b285f1cb0eaee014d21e2b948206e997"
+        },
+        {
+          "index": 36,
+          "kind": "tool",
+          "name": "objective",
+          "input": {
+            "operation": "read",
+            "objective_id": "0519ebaf-b92d-46a6-a9f1-dce7f3f3367c",
+            "limit": 20
+          },
+          "bytes": 1540,
+          "elapsed_ms": 2,
+          "failed": false,
+          "response_sha256": "88a857aea4e86ada0f4426f933b892e96eecef36fca2ac65ae6e4388ca037b42"
+        },
+        {
+          "index": 37,
+          "kind": "tool",
+          "name": "objective",
+          "input": {
+            "source_id": "828a3842-3eaa-49e7-9b13-641c18989801",
+            "phase": "coordination",
+            "confidence": "supported",
+            "note": "Retrospective association of the authored initial CI failure report at a1: expected refresh=true, observed false. The original scheduling order was not recorded. This preserves the report without independently validating it or establishing native dispatch.",
+            "operation": "link",
+            "objective_id": "0519ebaf-b92d-46a6-a9f1-dce7f3f3367c",
+            "source_type": "ledger-record"
+          },
+          "bytes": 1006,
+          "elapsed_ms": 3,
+          "failed": false,
+          "response_sha256": "4b67396544aef459fd387591057248c3a90985379ca7da7c330208aa5d2abda0"
+        },
+        {
+          "index": 38,
+          "kind": "tool",
+          "name": "objective",
+          "input": {
+            "source_id": "d557aa0a-a113-4d73-ac15-c1ffac341d63",
+            "phase": "verification",
+            "assessment": "inconclusive",
+            "confidence": "uncertain",
+            "note": "Retrospective association of the initial inconclusive stale-index interpretation. Whether the watcher had already indexed the row remained unknown; this is a possible explanation, not an established historical cause.",
+            "operation": "link",
+            "objective_id": "0519ebaf-b92d-46a6-a9f1-dce7f3f3367c",
+            "source_type": "ledger-record"
+          },
+          "bytes": 979,
+          "elapsed_ms": 1,
+          "failed": false,
+          "response_sha256": "74813cbebeb540ad2cc939073c22682317e913df3a46a3a6f1ee8eac36ed1561"
+        },
+        {
+          "index": 39,
+          "kind": "tool",
+          "name": "objective",
+          "input": {
+            "source_id": "ea5ecd49-8f52-47e0-ab63-882dee0cfde2",
+            "phase": "coordination",
+            "confidence": "supported",
+            "note": "Retrospective association of the authored attempt-2 pass report on unchanged a1 before the patch. This report cannot verify the later b2 test correction or establish the first attempt's cause.",
+            "operation": "link",
+            "objective_id": "0519ebaf-b92d-46a6-a9f1-dce7f3f3367c",
+            "source_type": "ledger-record"
+          },
+          "bytes": 941,
+          "elapsed_ms": 5,
+          "failed": false,
+          "response_sha256": "91a179a42410c33fc77b2fd8ff4234faec750cd92f2a1e116af5c5b7501a619a"
+        },
+        {
+          "index": 40,
+          "kind": "tool",
+          "name": "objective",
+          "input": {
+            "source_id": "d91013f0-a7be-40c6-9a7c-1ed25b97cb39",
+            "phase": "coordination",
+            "confidence": "supported",
+            "note": "Retrospective association of the authored issue-187 test-only b2 correction report: coordinate watcher and probe for both valid orderings; production index behavior is reported unchanged. No native dispatch or independently inspected patch body is claimed.",
+            "operation": "link",
+            "objective_id": "0519ebaf-b92d-46a6-a9f1-dce7f3f3367c",
+            "source_type": "ledger-record"
+          },
+          "bytes": 1004,
+          "elapsed_ms": 2,
+          "failed": false,
+          "response_sha256": "e8c6903303f56f068b1b4080d019df926a0e817a93bd515d76d7494521fc7db8"
+        },
+        {
+          "index": 41,
+          "kind": "tool",
+          "name": "objective",
+          "input": {
+            "source_id": "1cbe273d-d6ca-400e-888e-146f3c8182c7",
+            "phase": "coordination",
+            "confidence": "supported",
+            "relation": "addresses",
+            "note": "Attributed retrospective connection from this source's explanation of the b2 test patch to the earlier reported a1 assertion. Controlling ordering addresses the assertion, while the historical failing interleaving remains unknown; no causal proof is asserted.",
+            "operation": "link",
+            "objective_id": "0519ebaf-b92d-46a6-a9f1-dce7f3f3367c",
+            "source_type": "ledger-record",
+            "related_sequence": 2
+          },
+          "bytes": 1012,
+          "elapsed_ms": 6,
+          "failed": false,
+          "response_sha256": "7084b8a125aec41af8d575ff8723ae1e5467942a55b1b46ce8315893d6f7ae8e"
+        },
+        {
+          "index": 42,
+          "kind": "tool",
+          "name": "objective",
+          "input": {
+            "source_id": "52fe29d9-9743-4a0c-b83a-e16100e15856",
+            "phase": "coordination",
+            "confidence": "supported",
+            "note": "Included as the recorded start for old-index-order, paired with the finish cited by the scoped assessment. This is shell-call metadata with an input digest, not a tool body or pass verdict. Task/group WorkRef was not observed.",
+            "operation": "link",
+            "objective_id": "0519ebaf-b92d-46a6-a9f1-dce7f3f3367c",
+            "source_type": "ledger-record"
+          },
+          "bytes": 980,
+          "elapsed_ms": 11,
+          "failed": false,
+          "response_sha256": "afa5ff1ed52c6d03e1d10db7f1caeefac9f51210c52a8ad48a47aaa6a990664e"
+        },
+        {
+          "index": 43,
+          "kind": "tool",
+          "name": "objective",
+          "input": {
+            "source_id": "5f24b116-fd6d-4319-ab13-30676f8376d1",
+            "phase": "coordination",
+            "confidence": "supported",
+            "note": "Included as the old-index-order finish explicitly cited by the scoped assessment. The observer recorded completion and its start pairing; a result digest is not test output or independently verified correctness. Task/group WorkRef was not observed.",
+            "operation": "link",
+            "objective_id": "0519ebaf-b92d-46a6-a9f1-dce7f3f3367c",
+            "source_type": "ledger-record"
+          },
+          "bytes": 1002,
+          "elapsed_ms": 2,
+          "failed": false,
+          "response_sha256": "54b8be9a1eba4b0d0eb671c55727f5206b8206325e44e2ee039e0f038ae2e68f"
+        },
+        {
+          "index": 44,
+          "kind": "tool",
+          "name": "objective",
+          "input": {
+            "source_id": "d978c4a5-1f57-454d-abda-3a4ef39f41c1",
+            "phase": "coordination",
+            "confidence": "supported",
+            "note": "Included as the recorded start for new-index-order, paired with the finish cited by the scoped assessment. This is shell-call metadata with an input digest, not a tool body or pass verdict. Task/group WorkRef was not observed.",
+            "operation": "link",
+            "objective_id": "0519ebaf-b92d-46a6-a9f1-dce7f3f3367c",
+            "source_type": "ledger-record"
+          },
+          "bytes": 980,
+          "elapsed_ms": 2,
+          "failed": false,
+          "response_sha256": "87623c7dc5f91f349444a15ad110f897219b0f55ad465cbbe847a2753b4bafd5"
+        },
+        {
+          "index": 45,
+          "kind": "tool",
+          "name": "objective",
+          "input": {
+            "source_id": "26612723-96fb-4b3d-a119-0d3397687d0b",
+            "phase": "coordination",
+            "confidence": "supported",
+            "note": "Included as the new-index-order finish explicitly cited by the scoped assessment. The observer recorded completion and its start pairing; a result digest is not test output or independently verified correctness. Task/group WorkRef was not observed.",
+            "operation": "link",
+            "objective_id": "0519ebaf-b92d-46a6-a9f1-dce7f3f3367c",
+            "source_type": "ledger-record"
+          },
+          "bytes": 1003,
+          "elapsed_ms": 2,
+          "failed": false,
+          "response_sha256": "534f089d7360e248067010e585e6e20ecf1e7ba84fab5d0ff7dccdce08e68cc4"
+        },
+        {
+          "index": 46,
+          "kind": "tool",
+          "name": "objective",
+          "input": {
+            "source_id": "a10234e3-698c-4d7f-89bf-4ac43545c08e",
+            "phase": "verification",
+            "assessment": "pass",
+            "confidence": "supported",
+            "relation": "assesses",
+            "note": "Preserves the authored pass only for the corrected b2 tree: old indexed row requires refresh, updated row returns false, and scoped race check reportedly passed. Its two observation citations are retained. This does not prove a1 ordering, native review membership, or full issue-182 release acceptance.",
+            "operation": "link",
+            "objective_id": "0519ebaf-b92d-46a6-a9f1-dce7f3f3367c",
+            "source_type": "ledger-record",
+            "related_sequence": 5
+          },
+          "bytes": 1061,
+          "elapsed_ms": 2,
+          "failed": false,
+          "response_sha256": "0f61285198d9c373e23b705336e46f262dad62c8b76ad00d5aee16ab3965e773"
+        },
+        {
+          "index": 47,
+          "kind": "tool",
+          "name": "objective",
+          "input": {
+            "source_id": "fa91df44-7095-47de-a7a0-5bb1e99e6342",
+            "phase": "verification",
+            "assessment": "inconclusive",
+            "confidence": "uncertain",
+            "relation": "supersedes",
+            "note": "Preserves the later authored working explanation: controlled b2 cases make a test-ordering race plausible, replacing the earlier stale-index reading only as an interpretation. The original historical cause remains unproven; the earlier source remains part of the record.",
+            "operation": "link",
+            "objective_id": "0519ebaf-b92d-46a6-a9f1-dce7f3f3367c",
+            "source_type": "ledger-record",
+            "related_sequence": 3
+          },
+          "bytes": 1039,
+          "elapsed_ms": 3,
+          "failed": false,
+          "response_sha256": "1ac3132707a5095d28e14df17266de6f1ffa95b126609ff7a5cdf4c7b18286db"
+        },
+        {
+          "index": 48,
+          "kind": "tool",
+          "name": "objective",
+          "input": {
+            "source_id": "ca0fd310-77c5-4045-bc04-d15a34ffc528",
+            "phase": "coordination",
+            "confidence": "supported",
+            "note": "Retrospective association of the authored report that corrected b2 was merged as c3. This is a delivery report, not independent merge verification or complete release acceptance.",
+            "operation": "link",
+            "objective_id": "0519ebaf-b92d-46a6-a9f1-dce7f3f3367c",
+            "source_type": "ledger-record"
+          },
+          "bytes": 929,
+          "elapsed_ms": 2,
+          "failed": false,
+          "response_sha256": "853278b053f4942eaba13681d578698947440365672bd9f7c075ab0416b17520"
+        },
+        {
+          "index": 49,
+          "kind": "tool",
+          "name": "objective",
+          "input": {
+            "source_id": "f8710406-859c-4562-b273-020fce5e9989",
+            "phase": "outcome",
+            "assessment": "inconclusive",
+            "confidence": "supported",
+            "note": "Overall acceptance remains unestablished in the selected evidence: the source says issue 182 still needs the installed release matrix, migration, cancellation and repair checks, while issue 187 assessed only the specified b2 correction. No whole-release acceptance is inferred.",
+            "operation": "link",
+            "objective_id": "0519ebaf-b92d-46a6-a9f1-dce7f3f3367c",
+            "source_type": "ledger-record"
+          },
+          "bytes": 1034,
+          "elapsed_ms": 2,
+          "failed": false,
+          "response_sha256": "b99c304d8b8a8f8756f637bb5e51a2d48453ff6c292271b13490568968e5627b"
+        },
+        {
+          "index": 50,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "preview-population",
+            "selection": {
+              "objective_id": "0519ebaf-b92d-46a6-a9f1-dce7f3f3367c",
+              "question": "What does the recorded evidence establish about the initial a1 freshness failure, the unchanged-code pass, the b2 test correction and scoped verification, and what remains unproven about historical cause and overall release acceptance?"
+            },
+            "limit": 20
+          },
+          "bytes": 44939,
+          "elapsed_ms": 147,
+          "failed": false,
+          "response_sha256": "b6ab701150d0f93dc6f92c9841c6f9c523736b3134ffbeac36c10c82d0251deb"
+        },
+        {
+          "index": 51,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "preview-population",
+            "selection": {
+              "mode": "explicit-objective",
+              "objective_id": "0519ebaf-b92d-46a6-a9f1-dce7f3f3367c",
+              "question": "What does the recorded evidence establish about the initial a1 freshness failure, the unchanged-code pass, the b2 test correction and scoped verification, and what remains unproven about historical cause and overall release acceptance?",
+              "through": 444,
+              "owner_boundary": {
+                "objective_links": 14,
+                "review_requests": 0,
+                "review_relationships": 0
+              },
+              "owner_version": "b0dd6283edd9b2b7d93f33c00c26d6b0b4b5f031f4f864a7428187243dd85aec",
+              "exclusions": []
+            },
+            "after": 20,
+            "limit": 20
+          },
+          "bytes": 26648,
+          "elapsed_ms": 82,
+          "failed": false,
+          "response_sha256": "caa0e0fad4295056c84c8ef4a115f7a8bc5764d553f5852dfba5bfae804bf142"
+        },
+        {
+          "index": 52,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "preview-population",
+            "selection": {
+              "mode": "explicit-objective",
+              "objective_id": "0519ebaf-b92d-46a6-a9f1-dce7f3f3367c",
+              "question": "What does the recorded evidence establish about the initial a1 freshness failure, the unchanged-code pass, the b2 test correction and scoped verification, and what remains unproven about historical cause and overall release acceptance?",
+              "through": 444,
+              "owner_boundary": {
+                "objective_links": 14,
+                "review_requests": 0,
+                "review_relationships": 0
+              },
+              "owner_version": "b0dd6283edd9b2b7d93f33c00c26d6b0b4b5f031f4f864a7428187243dd85aec",
+              "exclusions": []
+            },
+            "after": 0,
+            "limit": 20
+          },
+          "bytes": 44939,
+          "elapsed_ms": 102,
+          "failed": false,
+          "response_sha256": "b6ab701150d0f93dc6f92c9841c6f9c523736b3134ffbeac36c10c82d0251deb"
+        },
+        {
+          "index": 53,
+          "kind": "help",
+          "name": "review",
+          "bytes": 24482,
+          "elapsed_ms": 0,
+          "failed": false,
+          "response_sha256": "a14a78e55ca4fd4a62b24e0fc889a79aa0f37e882a41479613d11fb28525a790"
+        },
+        {
+          "index": 54,
+          "kind": "tool",
+          "name": "review",
+          "input": {
+            "operation": "freeze-population",
+            "selection": {
+              "mode": "explicit-objective",
+              "objective_id": "0519ebaf-b92d-46a6-a9f1-dce7f3f3367c",
+              "question": "What does the recorded evidence establish about the initial a1 freshness failure, the unchanged-code pass, the b2 test correction and scoped verification, and what remains unproven about historical cause and overall release acceptance?",
+              "through": 444,
+              "owner_boundary": {
+                "objective_links": 14,
+                "review_requests": 0,
+                "review_relationships": 0
+              },
+              "owner_version": "b0dd6283edd9b2b7d93f33c00c26d6b0b4b5f031f4f864a7428187243dd85aec",
+              "exclusions": []
+            },
+            "preview_sha256": "097e10d95dedcdcd20e063503de3ec207d057995be0b81cdd88848a9fd7b4496"
+          },
+          "bytes": 49644,
+          "elapsed_ms": 190,
+          "failed": false,
+          "response_sha256": "671f85796e44807b12e1f1f58e5f3cd662ecd0914d495fc72663d1ad1ca4aba4"
+        },
+        {
+          "index": 55,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-465be1f5620e1e72ec9058f8210ab830768bdaaf980246e60150fe4ccedb674a",
+            "manifest_sha256": "097e10d95dedcdcd20e063503de3ec207d057995be0b81cdd88848a9fd7b4496",
+            "member_key": "source-b96a5b3afc30b7c65a38d3c4b1b0c1fbd2740bdf2ad19c9db81730a5d19fa364"
+          },
+          "bytes": 1502,
+          "elapsed_ms": 11,
+          "failed": false,
+          "response_sha256": "ffff4efd302e9abf368d4460f129a670d51a09e4bca33d7d1769f34a021646e3"
+        },
+        {
+          "index": 56,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-465be1f5620e1e72ec9058f8210ab830768bdaaf980246e60150fe4ccedb674a",
+            "manifest_sha256": "097e10d95dedcdcd20e063503de3ec207d057995be0b81cdd88848a9fd7b4496",
+            "member_key": "source-2b0b670fb8c03fc999c85415dd7761fd4e49bfaeb4594d328a6280650a216847"
+          },
+          "bytes": 1323,
+          "elapsed_ms": 14,
+          "failed": false,
+          "response_sha256": "12d703bfa08a4ad05f60e4607a1d60cba8faec9d8d40575b81f51246959695c0"
+        },
+        {
+          "index": 57,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population",
+            "population_id": "retrospective-465be1f5620e1e72ec9058f8210ab830768bdaaf980246e60150fe4ccedb674a",
+            "manifest_sha256": "097e10d95dedcdcd20e063503de3ec207d057995be0b81cdd88848a9fd7b4496",
+            "after": 20,
+            "limit": 20
+          },
+          "bytes": 28444,
+          "elapsed_ms": 20,
+          "failed": false,
+          "response_sha256": "cad7d30fd2883b24ccc56d10be018ba1d08b624c6e2359f649d3b9f645558f85"
+        },
+        {
+          "index": 58,
+          "kind": "tool",
+          "name": "history",
+          "input": {
+            "operation": "population-source",
+            "population_id": "retrospective-465be1f5620e1e72ec9058f8210ab830768bdaaf980246e60150fe4ccedb674a",
+            "manifest_sha256": "097e10d95dedcdcd20e063503de3ec207d057995be0b81cdd88848a9fd7b4496",
+            "member_key": "source-bd568ba1333ab5c47e267eab5c8eec6bc335eb563f9f9826800a629a12746ee6"
+          },
+          "bytes": 1305,
+          "elapsed_ms": 34,
+          "failed": false,
+          "response_sha256": "fdba28fc5f0c1a44c357b0c61ae3ba93d72b3cbad873421ab2eec36c8ea90497"
+        }
+      ],
+      "source_originals_unchanged": true,
+      "cleanup": true,
+      "measurements": {
+        "by_kind": {
+          "tool": {
+            "calls": 52,
+            "bytes": 444072
+          },
+          "help": {
+            "calls": 5,
+            "bytes": 84678
+          },
+          "skill": {
+            "calls": 1,
+            "bytes": 11964
+          }
+        },
+        "total_measured_bytes": 540714,
+        "failed_tool_calls": 2,
+        "deliberately_seeded_failures": 2,
+        "distinct_help_tools": 4,
+        "exact_repeated_tool_inputs": 0,
+        "additional_semantic_page_rereads": 1
+      },
+      "outcome": {
+        "completed": true,
+        "implementation_inspection": "forbidden by fresh-agent task; participants reported none",
+        "population_id": "retrospective-465be1f5620e1e72ec9058f8210ab830768bdaaf980246e60150fe4ccedb674a",
+        "manifest_sha256": "097e10d95dedcdcd20e063503de3ec207d057995be0b81cdd88848a9fd7b4496",
+        "member_count": 29,
+        "freeze_step": 54,
+        "freeze_request_copied_unchanged": true,
+        "preview_membership_exhausted": true,
+        "frozen_membership_exhausted": true,
+        "representative_frozen_source_reads": 3,
+        "all_sampled_source_statuses_available": true,
+        "execution_permit": null,
+        "evaluation_prepared_or_executed": false,
+        "action_or_plan_created": false
+      }
+    }
+  },
+  "attribution": {
+    "baseline": {
+      "failed_preview_steps": [
+        30,
+        31,
+        33
+      ],
+      "exact_retry": [
+        30,
+        31
+      ],
+      "agent_errors": [
+        "Copied Action-history pins into objective preview despite minimal public example",
+        "Repeated failed request after wrapper lost its error output",
+        "Copied objective-history pins into preview",
+        "Two help rereads after uncached truncated local display"
+      ],
+      "interface_deficiency": "Different history/preview version domains not clear; generic restart-the-read diagnostic did not explain recovery."
+    },
+    "candidate": {
+      "exact_retry": [
+        7,
+        9
+      ],
+      "agent_errors": [
+        "One repeated trajectory after local processing failure; actual exception not retained",
+        "Two acknowledged avoidable preemptive help reads",
+        "Overlapping direct record and review reads",
+        "Conservative preview paging"
+      ],
+      "interface_limit": "Large repeated projections and full multi-operation help increase response handling burden."
+    },
+    "missing": {
+      "seeded_error_steps": [
+        5,
+        6
+      ],
+      "semantic_reread": [
+        50,
+        52
+      ],
+      "agent_errors": [
+        "Required-operation and exact-source contract deliberately violated for recovery probes",
+        "One uncached objective-help reread",
+        "One unnecessary pinned preview-page repeat"
+      ],
+      "interface_observation": "Useful diagnostics recovered without further failures; absence of objective did not block source reads."
+    }
+  },
+  "discovery": {
+    "runtime": "@opencode/codemode@2.0.29",
+    "measurement": "UTF-8 bytes of JSON.stringify(actual search result); signature/description lengths are JavaScript code units.",
+    "input_sha256": {
+      "src/plugin.ts": "df12194e06ba006f617a79b74748e099e3c669f41628d21f9d69c9e7310e0274",
+      "src/tool-help.ts": "318d483a2ab6be358a4bd7d33a8f230a9433b1e7c1ca7503441fdd4112132d42",
+      "src/tool-input-contracts.ts": "577769f08226c67dbaadcb2add107c577bfea51f2bf012c55c7993302cb1f8fd"
+    },
+    "exact_tool_results": {
+      "baseline": [
+        {
+          "tool": "agents",
+          "response_bytes": 1869,
+          "signature_chars": 36,
+          "description_chars": 1728,
+          "schema_bytes": 76
+        },
+        {
+          "tool": "history",
+          "response_bytes": 5886,
+          "signature_chars": 2035,
+          "description_chars": 3517,
+          "schema_bytes": 2663
+        },
+        {
+          "tool": "review",
+          "response_bytes": 17521,
+          "signature_chars": 13091,
+          "description_chars": 3553,
+          "schema_bytes": 20451
+        },
+        {
+          "tool": "trace",
+          "response_bytes": 4700,
+          "signature_chars": 868,
+          "description_chars": 3584,
+          "schema_bytes": 1048
+        },
+        {
+          "tool": "insights",
+          "response_bytes": 4699,
+          "signature_chars": 800,
+          "description_chars": 3579,
+          "schema_bytes": 886
+        },
+        {
+          "tool": "objective",
+          "response_bytes": 5214,
+          "signature_chars": 1295,
+          "description_chars": 3581,
+          "schema_bytes": 1453
+        },
+        {
+          "tool": "trends",
+          "response_bytes": 3279,
+          "signature_chars": 692,
+          "description_chars": 2401,
+          "schema_bytes": 898
+        },
+        {
+          "tool": "tweak",
+          "response_bytes": 3106,
+          "signature_chars": 596,
+          "description_chars": 2279,
+          "schema_bytes": 761
+        },
+        {
+          "tool": "action",
+          "response_bytes": 3090,
+          "signature_chars": 456,
+          "description_chars": 2453,
+          "schema_bytes": 550
+        },
+        {
+          "tool": "plan",
+          "response_bytes": 4480,
+          "signature_chars": 662,
+          "description_chars": 3551,
+          "schema_bytes": 914
+        },
+        {
+          "tool": "context",
+          "response_bytes": 3869,
+          "signature_chars": 172,
+          "description_chars": 3528,
+          "schema_bytes": 263
+        },
+        {
+          "tool": "record",
+          "response_bytes": 16038,
+          "signature_chars": 5184,
+          "description_chars": 9995,
+          "schema_bytes": 14549
+        },
+        {
+          "tool": "assessment",
+          "response_bytes": 2799,
+          "signature_chars": 138,
+          "description_chars": 2510,
+          "schema_bytes": 201
+        },
+        {
+          "tool": "qa",
+          "response_bytes": 2757,
+          "signature_chars": 130,
+          "description_chars": 2484,
+          "schema_bytes": 201
+        }
+      ],
+      "candidate": [
+        {
+          "tool": "agents",
+          "response_bytes": 1858,
+          "signature_chars": 36,
+          "description_chars": 1717,
+          "schema_bytes": 76
+        },
+        {
+          "tool": "history",
+          "response_bytes": 7551,
+          "signature_chars": 3622,
+          "description_chars": 3541,
+          "schema_bytes": 6901
+        },
+        {
+          "tool": "review",
+          "response_bytes": 17779,
+          "signature_chars": 13311,
+          "description_chars": 3585,
+          "schema_bytes": 20694
+        },
+        {
+          "tool": "trace",
+          "response_bytes": 4739,
+          "signature_chars": 918,
+          "description_chars": 3573,
+          "schema_bytes": 1192
+        },
+        {
+          "tool": "insights",
+          "response_bytes": 4730,
+          "signature_chars": 842,
+          "description_chars": 3568,
+          "schema_bytes": 2081
+        },
+        {
+          "tool": "objective",
+          "response_bytes": 6838,
+          "signature_chars": 2860,
+          "description_chars": 3552,
+          "schema_bytes": 8169
+        },
+        {
+          "tool": "trends",
+          "response_bytes": 3298,
+          "signature_chars": 722,
+          "description_chars": 2390,
+          "schema_bytes": 1131
+        },
+        {
+          "tool": "tweak",
+          "response_bytes": 3131,
+          "signature_chars": 632,
+          "description_chars": 2268,
+          "schema_bytes": 1295
+        },
+        {
+          "tool": "action",
+          "response_bytes": 3109,
+          "signature_chars": 486,
+          "description_chars": 2442,
+          "schema_bytes": 811
+        },
+        {
+          "tool": "plan",
+          "response_bytes": 4519,
+          "signature_chars": 712,
+          "description_chars": 3540,
+          "schema_bytes": 1052
+        },
+        {
+          "tool": "context",
+          "response_bytes": 3870,
+          "signature_chars": 184,
+          "description_chars": 3517,
+          "schema_bytes": 664
+        },
+        {
+          "tool": "record",
+          "response_bytes": 16015,
+          "signature_chars": 5184,
+          "description_chars": 9971,
+          "schema_bytes": 15754
+        },
+        {
+          "tool": "assessment",
+          "response_bytes": 2799,
+          "signature_chars": 138,
+          "description_chars": 2510,
+          "schema_bytes": 201
+        },
+        {
+          "tool": "qa",
+          "response_bytes": 2757,
+          "signature_chars": 130,
+          "description_chars": 2484,
+          "schema_bytes": 201
+        }
+      ]
+    },
+    "ceilings": {
+      "history": 8000,
+      "objective": 7200,
+      "review": 18000,
+      "record": 16500,
+      "whole_namespace": 84000
+    },
+    "guide_characters": 11964,
+    "guide_ceiling": 12000,
+    "shared_help_characters": 43664,
+    "shared_help_ceiling": 44000,
+    "all_14_registered_description_characters": 48658
+  },
+  "schema_agreement": {
+    "validator": "jsonschema==4.26.0 Draft202012Validator",
+    "valid_registered_schemas": 14,
+    "final_explicit_cases": 94,
+    "tools_with_cases": 12,
+    "final_mismatches": [],
+    "native_effects": {
+      "creates": 0,
+      "prompts": 0,
+      "notices": 0
+    },
+    "common_baseline_comparison": {
+      "cases": 92,
+      "schema_mismatches": 61,
+      "runtime_mismatches": 2,
+      "candidate_mismatches": 0
+    },
+    "qualification": "Representative syntactic cases, not exhaustive stateful validation or live-host authorization."
+  },
+  "implementation_review": {
+    "kind": "Cold independent agent implementation review followed by informed delta review",
+    "reviewed_candidate": "2eebab2535da3b5a2c4be015ec7d983cf362708d",
+    "cold_verdict": "Ready with one harness fix; no material production defect",
+    "finding": {
+      "severity": "minor",
+      "summary": "Missing bridge used240 but fixture requires>=500",
+      "disposition": "Changed missing mode only to500; reviewer independently reproduced original failure and corrected startup/cleanup"
+    },
+    "cold_checks": {
+      "bun_tests": 119,
+      "python_tests": 3,
+      "typecheck": "pass"
+    },
+    "delta_verdict": "ready within reviewed scope; no new defect",
+    "delta_checks": {
+      "python_tests": 3,
+      "corrected_missing_bridge": "startup and shutdown pass; original ledger unchanged; cleanup true"
+    },
+    "limits": [
+      "No live model-driven OpenCode run",
+      "No producer/usability findings read before cold conclusion",
+      "Representative contracts, not all owner rules",
+      "Not GitHub human approval"
+    ]
+  },
+  "usability_evidence_review": {
+    "status": "ready within measured usability-evidence scope; no blocking finding",
+    "raw_audit_observed": "Independent reviewer verified all156 response hashes and byte counts, unchanged freeze requests, all42/42/29 member sets, all32 sampled source hashes, and23 overlapping exact original record matches.",
+    "limitations": [
+      "No causal effect-size claim",
+      "Agent errors distinguished from interface deficiencies",
+      "Synthetic host and one participant per version",
+      "Missing-objective scenario separate from A/B"
+    ],
+    "reviewed_markdown_sha256": "fb33e0f397e6300469395a6cfc913a2750ab27244e5ca6fdb829ac581e596ca5",
+    "reviewed_archive_sha256": "7e970d188d42cbcca2d11dae1ef1563f4675a1823f53e492c0b212011230c064",
+    "scope": "Independent read-only audit of public responses, archive, accounting and report claims; no implementation inspection. Later Markdown changes record this verdict, parallel-PR coordination and documentation CI corrections; raw run evidence is unchanged."
+  },
+  "ci": {
+    "tested_published_commit": "918652b517983c8daaf5f249a5283a21c1545f78",
+    "workflows_passed": 8,
+    "main_ci": "https://github.com/bateau84/loom/actions/runs/45969454918",
+    "main_ci_counts": {
+      "core": 438,
+      "native": 985,
+      "codemode": 11,
+      "python": 322
+    },
+    "typecheck": "pass",
+    "production_bundle": "pass",
+    "current_head_checks": "https://github.com/bateau84/loom/pull/257/checks",
+    "qualification": "Initial published snapshot passed. Current-head results remain the PR checks; later source edits are not credited with earlier CI.",
+    "intermediate_failure": {
+      "published_commit": "68089c269aa1327c88fe91ee6574599c4c69b2db",
+      "test_merge_commit": "eee5f79db25548c98acd1dbbe171594ac24bfa05",
+      "test_merge_tree": "c9a0958b2e4c833a1cc30d38931779de9d831d7a",
+      "failed_runs": [
+        "https://github.com/bateau84/loom/actions/runs/45973427002",
+        "https://github.com/bateau84/loom/actions/runs/45973427113"
+      ],
+      "native_result": {
+        "passed": 983,
+        "failed": 2
+      },
+      "cause": "New report omitted from docs/index.md and used a local section-fragment link prohibited by the repository documentation contract.",
+      "correction": "Add documentation index/log entries and link to the whole discovery document. No production code changed.",
+      "focused_verification": {
+        "command": "bun test tests/okf-native.test.ts",
+        "passed": 5,
+        "failed": 0,
+        "assertions": 1497
+      },
+      "qualification": "These failures occurred before the routing installed-host phase. Final-head CI must run after the documentation correction."
+    }
+  },
+  "parallel_integration": {
+    "pull_request": "https://github.com/bateau84/loom/pull/256",
+    "head": "164f6749e3ddc1b0897da1b5913028d0c33c1493",
+    "base": "0c618ad417519fbc68bfe642662b23682eb6a63c",
+    "overlapping_conflicting_files": [
+      "src/plugin.ts",
+      "src/tool-help.ts"
+    ],
+    "inspection": "Read-only git merge-tree; no branch or working-tree merge",
+    "followup": "At eventual integration add supported source_offset, source_limit and response_format to the central history.population-source envelope. Preserve source continuations, formats, fragment assembly/digest checks and unresolved/reference-only guidance. Rerun schema/runtime, source and preparation continuation, example and discovery-budget checks. These capabilities belong to PR256 and are not added here.",
+    "independent_review": "Confirmed only two textual conflicts plus the central-envelope semantic clash. Current validator independently rejects all three new fields. Current PR remains ready against its existing base. No branches combined and no integration-suite result claimed.",
+    "continuation_caveats": [
+      "Large originals of every owner, including ledger, can be fragmented instead of returning value.",
+      "Preparation-source continuation targets history.population-source and uses the population manifest hash, distinct from preparation hash.",
+      "Current history navigation adapter leaves population-source continuation untouched.",
+      "Previously reference-only frozen identity remains unchanged; new original availability requires fresh preview/freeze."
+    ],
+    "documentation": "Later documentation index/log additions must retain both initiatives at eventual integration. Source-owner boundaries remain unchanged."
+  }
+}

@@ -21,7 +21,7 @@ useful, not simply because work takes multiple steps.
 | `loom_agents` | Existing native roster, roles, configuration/capture diagnostics |
 | `loom_action` | Create/list/update a goal, or read native Session inventory and archive status |
 | `loom_trace` | Inspect permitted Session structure, child identities, tool-part metadata and exact fields; state coverage gaps |
-| `loom_history` | Start with a compact recorded-work overview; expand historical branches and render the same authorized view as JSON, Markdown or HTML |
+| `loom_history` | Discover connected history, preview selected populations, inspect frozen originals; JSON, Markdown or HTML |
 | `loom_insights` | Read bounded observational Action/project ledger metadata; no success-rate claims |
 | `loom_objective` | Recover one source-linked objective, child-agent handbacks, runtime checks and corrective attempts |
 | `loom_trends` | Compare a bounded, explicitly selected objective population over source-start and reporting windows; no causal verdict |
@@ -32,6 +32,8 @@ useful, not simply because work takes multiple steps.
 | `loom_review` | Privately freeze, read and relate protected review mandates; unqualified recipient-specific delivery stays withheld |
 | `loom_assessment` | Load an installed skill’s ASSESSMENT.md; requires the enabled caller’s assessment role |
 | `loom_qa` | Load an installed skill’s QA.md; requires the enabled caller’s qa role |
+
+Except agents, context and lenses, requests require an explicit `operation`. UPPERCASE example IDs and zero hashes are placeholders, not stored objects; replace them with returned IDs or verified references. Search the needed tool once for its callable path and contract.
 
 Structured responses remain JSON text with `result` and optional `config_errors`.
 All `loom_record` query views accept explicit `response_format:"json"`; it is
@@ -78,8 +80,7 @@ wildcard or semantic search. Optional `verdict`, `source_session_id`, `node_id`,
 established WorkRefs only; fingerprints cannot establish a report's exact Plan
 revision. `has_gaps:true` discovers recorded attribution or work-scope gaps.
 
-After finding a relevant record, call `loom_history` with `operation:"read"`
-plus its `trajectory` query. It follows explicit objective, review and original
+After finding a relevant record, submit its complete `trajectory` request unchanged to `loom_history`. It follows explicit objective, review and original
 evidence relationships even when related records use different words. The query
 replaces the discovery text with the exact seed while retaining scope, page size
 and source boundaries. The equivalent new request is:
@@ -88,14 +89,13 @@ and source boundaries. The equivalent new request is:
 {"operation":"read","action_id":"ACTION_ID","record_id":"RECORD_ID","related":true}
 ```
 
-Call `loom_history` with `operation:"read"` plus a returned branch or record's
-`expand` query to inspect that group. Historical Plan revisions have actionable
+Submit a returned branch/record `expand` or connection group `details` request unchanged to `loom_history` to inspect that group. Historical Plan revisions have actionable
 ancestor containers; Sessions contain observed message groups or explicitly
 analytical chronology. Related branches can share a captured subject fingerprint
 without asserting the same revision or invocation.
 
-Use `navigation.next_records` or `navigation.next_branches` with
-`operation:"read"` for continuation. These ready queries retain scope, selectors,
+Use `navigation.next_records`, `next_branches`, `next_connections` or
+`next_relationships` unchanged for continuation. These complete requests include operation, scope, selectors,
 seed, `through`, `owner_boundary`, `owner_version` and limit. The separate owner
 bounds exclude later objective/review appends; a changed relationship view fails
 instead of silently restarting. New work appears on a fresh read;
@@ -143,7 +143,19 @@ boundaries](learning-engineering-history.md).
 
 ## Source-linked whole-objective history
 
-`loom_objective` is an optional, authored reconstruction index in separate `learning.sqlite`. A `create` request anchors one goal to an original source message/ledger record/declared URL; different goals in the same request use different `unit_key` values. Use `link` with exact native message/call IDs or a validated ledger record for request, coordination, dispatch, handback, verification, corrective dispatch, continuation, changed requirements, planned increments, environmental failure, outcome and explicit coverage gaps. Later verdict or relationship corrections append records, never erase previous claims. `read` pages chronologically; `find` may return several objectives for a shared source. Foreign native Session evidence requires its own authorized export; no private transcript bodies are copied into the index. Original source, link authorship, confidence, status (reported versus verified) and missing coverage remain separate. See [the full evidence contract](learning-experiments.md).
+`loom_objective` is an optional, authored reconstruction index in separate `learning.sqlite`. An Action is not an objective and may contain several goals or no authored goal. `find` requires exact `source_type` and `source_id`; it is not a label or text search. For an original discovered through history, use `source_type:"ledger-record"` and its `source.record_id`. Native identities also need the original Session and, for calls, message ID. `list` browses labels when no source is known. Empty results mean no indexed association, not missing engineering history. Several objectives may share a source; inspect candidate `read` results before choosing. Returned `navigation.next` requests retain the exact selectors/cursors.
+
+`create` is a write: source_type/source_id plus label, with distinct unit_key values for distinct goals sharing an anchor. Use it only within authorization to author that reconstruction. It returns **result.id**, not result.objective_id. Link related originals only with supported phases, assessments and qualifications. Later relationship corrections append history, never erase prior claims. Foreign native Session evidence requires an authorized export. Original source, link author, confidence, authored verdict and missing coverage stay separate. See [the evidence contract](learning-experiments.md).
+
+### From discovery to a frozen population
+
+Start with `history read+match`, then inspect selected `source.query` originals. Resolve their objective via exact-source `find`, or author one only when authorized. Follow `trajectory` for connected work. A missing objective does not block historical investigation; it does block objective population preparation.
+
+Preview with history input `{"operation":"preview-population","selection":{"objective_id":"OBJECTIVE_ID","question":"What corrected this failure and what remains unverified?"},"limit":20}`. Put objective/question inside selection. Omit boundaries initially: live history and retrospective preview have different owner versions. Do not transplant history pins into preview. Follow only preview-returned navigation/selection for subsequent pages.
+
+Review the complete selected membership, exclusions, qualifications and gaps through `navigation.next`; ordinary discovery need not exhaust every branch. Preview remains read-only with population_id:null. Obtain approval for that exact selection, or apply existing authorization, then pass **the returned preview.freeze request unchanged** to `loom_review`. Changed scope needs a new preview. Approval is not an extra field or new operation.
+
+Freeze returns population_id and manifest_sha256. Follow frozen navigation and pass a member's `inspect` request unchanged to history. That read resolves the exact version through its owner or reports missing/changed/unsupported. Use `source_offset`/`source_limit` or follow `navigation.next` unchanged for fragmented originals, concatenate `content_json` in order and verify the frozen SHA-256 before parsing. JSON, Markdown and HTML share coverage and identity. Preparation-source continuation uses the population manifest hash, not the preparation hash. Missing or reference-only sources require a fresh preview/freeze when available; do not retrofit a frozen population. A pointer or hash does not establish inspected content. Ledger-only populations can be investigated across authorized Sessions; those containing private reviews remain requester-only. Neither freeze nor inspection grants source release, Evaluator execution or proof of genuine reasoning. See [frozen population contracts](learning-retrospective-populations.md).
 
 ## Read-only longitudinal comparisons
 

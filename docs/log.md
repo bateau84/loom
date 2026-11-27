@@ -4,6 +4,17 @@ type: Log
 
 # Update Log
 
+## 2026-11-27
+
+**Public tool usability (#227):** Refined optional skill guidance, operation
+descriptions and schemas, safe diagnostics and complete continuation requests.
+Recorded fresh-agent baseline/candidate and missing-objective workflows with
+actual failures, response bytes, authorization stages and independently checked
+raw evidence. Retained guidance budgets and the distinct historical investigation,
+evidence preparation and execution boundaries. Integrated exact-original paging
+from #256, pinned selection dependencies and published-example schema checks. See
+[the usability qualification](tool-usability.md).
+
 ## 2026-11-26
 
 **Frozen retrospective evidence populations (#227):** Added explicit objective

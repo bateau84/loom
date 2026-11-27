@@ -61,6 +61,37 @@ returned status and report any failure. It is not an atomic multi-write transact
 Dependent calls remain sequential: a question must be saved before using its ID
 in an answer, and a Plan must be saved before selecting one of its nodes.
 
+## Supported Code Mode retrieval and measurement
+
+Use `Date.now()` for coarse elapsed milliseconds. The pinned Code Mode runtime
+has no `performance.now()`, Node `process` or `Buffer`; do not assume arbitrary
+browser/Node APIs. JSON Schema informs discovery signatures in this qualified
+host version; Loom's runtime validation still enforces the request contract.
+
+For a known record, retrieve only the fields needed. This example assumes search
+returned `tools.loom.record`; replace both placeholders with actual returned or
+verified IDs. The real Code Mode regression executes this exact snippet:
+
+```js
+// example: measured-record
+const started = Date.now();
+const response = JSON.parse(await tools.loom.record({
+  operation: "query", action_id: "ACTION_ID", record_id: "RECORD_ID",
+  projection: "fields", fields: ["statement"], response_format: "json"
+}));
+return { elapsed_ms: Date.now() - started, records: response.result.items };
+```
+
+`text.length` counts UTF-16 code units, not UTF-8 bytes or model tokens. Measure
+UTF-8 response volume in the host harness. Response-byte reductions cannot
+establish token savings. Keep measurement outside the normal task unless it is
+needed; do not retrieve JSON/Markdown/HTML copies simply to compare formats.
+For unknown work, use history selectors and returned navigation. All history
+expand/trajectory/navigation requests include operation and required boundaries;
+copy them unchanged. Exact-source objective find is not text search, and initial
+population preview needs only nested selection{objective_id,question}. Preview
+boundaries come from preview itself, not a live-history response.
+
 ## Tests and reproduction
 
 `bun run test:native` checks the actual registered descriptions with role
@@ -98,6 +129,10 @@ No new runtime dependency is added.
 The installed-host boot test and independent two-agent acceptance retain their
 existing, separate meanings. Tests of search behavior are not evidence of model
 quality or successful end-to-end delegation.
+
+The separate [public-tool usability qualification](tool-usability.md) records
+fresh investigators, actual failed calls and returned bytes, schema/runtime
+agreement, independent review and the limits of the baseline comparison.
 
 Pinned sources:
 - [Tool-to-Code-Mode registration](https://github.com/anomalyco/opencode/blob/v2.0.29/packages/core/src/codemode/tool.ts)
