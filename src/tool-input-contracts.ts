@@ -61,6 +61,11 @@ function combinations(name: string, operation: string): Record<string, unknown>[
     { oneOf: ["action_id", "session_id", "objective_id"].map(field => ({ required: [field] })) },
     { not: { required: ["record_id", "branch_ref"] } },
     depends("after", "through"), depends("owner_boundary", "through"), depends("owner_version", "owner_boundary"),
+    { if: { required: ["after"], not: selected("related", true) }, then: {
+      ...absent("record_id"),
+      anyOf: ["branch_ref", "objective_id", "match", "record_kinds", "verdict", "source_session_id", "node_id", "plan_revision", "has_gaps"]
+        .map(field => ({ required: [field] })),
+    } },
     depends("connection_cursor", "through"),
     { if: { properties: { branch_offset: { minimum: 1 } }, required: ["branch_offset"] }, then: { required: ["through"] } },
     { if: { required: ["branch_offset"] }, then: absent("record_id") },

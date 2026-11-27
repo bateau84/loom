@@ -26,7 +26,7 @@ await mkdir(join(transport, "outbox"))
 const fixtures = await import(pathToFileURL(join(root, "tests/helpers/engineering-trajectory-fixture.ts")).href)
 const fixture = mode === "established"
   ? await fixtures.engineeringTrajectoryFixture({ directory: join(output, "state"), records: 240 })
-  : await fixtures.unplannedEngineeringTrajectoryFixture({ directory: join(output, "state"), records: 240, mode: "sparse" })
+  : await fixtures.unplannedEngineeringTrajectoryFixture({ directory: join(output, "state"), records: 500, mode: "sparse" })
 const host = fixture.f
 const originalRows = new Map((fixture.db.query("SELECT id,data FROM ledger ORDER BY seq").all() as Array<{id: string; data: string}>)
   .map(row => [row.id, row.data]))

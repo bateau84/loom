@@ -130,6 +130,10 @@ The installed-host boot test and independent two-agent acceptance retain their
 existing, separate meanings. Tests of search behavior are not evidence of model
 quality or successful end-to-end delegation.
 
+The separate [public-tool usability qualification](tool-usability.md) records
+fresh investigators, actual failed calls and returned bytes, schema/runtime
+agreement, independent review and the limits of the baseline comparison.
+
 Pinned sources:
 - [Tool-to-Code-Mode registration](https://github.com/anomalyco/opencode/blob/v2.0.29/packages/core/src/codemode/tool.ts)
 - [Search results and ranking](https://github.com/anomalyco/opencode/blob/v2.0.29/packages/codemode/src/tool-runtime.ts)

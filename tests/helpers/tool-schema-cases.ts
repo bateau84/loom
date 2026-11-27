@@ -26,6 +26,8 @@ try {
     {}, { operation: "bad" }, { ...read, session_id: "s" }, { ...read, related: true },
     { ...read, related: true, record_id: record.id, match: "result" },
     { ...read, record_id: record.id, branch_ref: "branch" }, { ...read, match: "result", after: 0 },
+    { ...read, after: 0, through: 0 },
+    { ...read, record_id: record.id, after: 0, through: 0 },
     { ...read, owner_version: "a".repeat(64) },
     { ...read, owner_boundary: { objective_links: 0, review_requests: 0, review_relationships: 0 } },
     { ...read, branch_offset: 1 }, { ...read, record_id: record.id, branch_offset: 0 },
