@@ -11,6 +11,7 @@ import type { EvaluationMember } from "../src/evaluation-store.js"
 import { retrospectiveMemberKey, type RetrospectiveManifest } from "../src/retrospective-contract.js"
 import { retrospectiveActor as actor, retrospectiveFixture } from "./helpers/retrospective-store-fixture.js"
 import { method, openState, POLICY, type FixtureState } from "./helpers/evaluator-execution-fixture.js"
+import { externalOriginalDescriptor, resolveExternalOriginal } from "../src/external-originals.js"
 
 const command = new URL("../tools/learning-state-backup.py", import.meta.url).pathname
 const sha = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex")
@@ -77,6 +78,45 @@ function rehashBackup(directory: string) {
   manifest.files = files(directory)
   writeFileSync(path, JSON.stringify(manifest))
 }
+
+test("backup preserves a source-owner-resolved external member and preparation without retaining original bytes or fetching during recovery", async () => {
+  const source = { kind: "external-ref", id: "https://github.com/fixture/originals/commit/" + "a".repeat(40), required: true }
+  const descriptor = externalOriginalDescriptor(source)!
+  const resolved = await resolveExternalOriginal({ ...descriptor, source, recipient_session_id: actor.session_id, purpose: "preview" }, {
+    directory: tmpdir(), signal: new AbortController().signal, authorize: async () => {},
+    transport: async endpoint => ({ status: 200, body: Buffer.from(JSON.stringify(endpoint.endsWith("/originals")
+      ? { id: 227, full_name: "fixture/originals" }
+      : { sha: "a".repeat(40), tree: { sha: "b".repeat(40) }, parents: [], author: { name: "Controlled" },
+        committer: { name: "Controlled" }, message: "ORIGINAL_CONTENT_NOT_RETAINED_IN_POPULATION" })) }),
+  })
+  expect(resolved.status).toBe("available")
+  const f = fixture((_manifest, learning, store) => {
+    const manifest = originalManifest(learning, store, "external-original-recovery", 3)
+    manifest.members.push({ key: retrospectiveMemberKey(descriptor.source_store_id, resolved.source, descriptor.permitted_view),
+      ...descriptor, source: resolved.source, availability: "available", basis: [{ kind: "controlled-source-association" }],
+      historical_scope: null, qualifications: ["Controlled owner original; no live GitHub account qualification"] })
+    return manifest
+  })
+  try {
+    const state = openState(f.source)
+    let prepared
+    try { prepared = state.learning.evaluator.prepareRetrospective(actor, f.frozen, method(), POLICY) } finally { state.close() }
+    ok(f.run("backup")); ok(f.run("restore"))
+    const restored = openState(f.destination)
+    try {
+      const population = restored.learning.automatic.history.retrospectivePopulation(f.frozen.population_id, actor.session_id)
+      expect(population).toEqual(f.frozen)
+      expect(JSON.stringify(population)).not.toContain("ORIGINAL_CONTENT_NOT_RETAINED")
+      expect(restored.learning.evaluator.read(actor.session_id, prepared.batch_id)).toEqual(prepared)
+      const member = population.manifest.members.find(item => item.source.kind === "external-ref")!
+      expect(member.source_store_id).toBe(descriptor.source_store_id)
+      expect(member.source).toEqual(resolved.source)
+      const current = await restored.learning.populations.resolve(actor, member, async request => ({ ...request, status: "missing" }))
+      expect(current.status).toBe("missing")
+      expect(restored.learning.automatic.history.retrospectivePopulation(population.population_id)).toEqual(f.frozen)
+    } finally { restored.close() }
+  } finally { f.close() }
+})
 
 test("paired backup and restore preserve two actual retrospective preparations and reconstruct their complete populations across pages", () => {
   const f = preparedFixture(107)

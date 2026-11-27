@@ -65,8 +65,9 @@ additional maintained tests. Do not publish private host reports without inspect
 
 The current historical-evidence profile targets exact SDK/CLI **2.3.0/2.3.0**.
 Its [delivery boundary](learning-historical-evidence.md) distinguishes supported
-metadata and current-context reads from blocked cross-Session raw release,
-external-original resolution and selected-population preparation.
+metadata and current-context reads from blocked cross-Session raw release.
+The [original-source increment](learning-original-source-resolution.md) adds
+bounded native/GitHub resolution to selected-population preparation and readers.
 
 | Entry | Invocation, behavior and proof limit |
 | --- | --- |
@@ -77,7 +78,39 @@ external-original resolution and selected-population preparation.
 | `tests/test_installed_historical_evidence.py` | Profile P; counterexamples for the installed complete-field-envelope, audit and storage-generation oracles, not a replacement for the installed run. |
 | `.github/workflows/installed-historical-evidence.yml` | Exact pull-request head, separately packed/installed candidate and pinned CLI; runs the installed profile and retains its report for seven days. No external provider or operator data. |
 
-### Frozen retrospective populations
+### Original-source resolution
+
+```sh
+bun test tests/native-originals-native.test.ts tests/external-originals-native.test.ts tests/original-source-populations-native.test.ts tests/retrospective-source-view-native.test.ts
+python3 -m unittest discover -s tests -p 'test_installed_original_sources.py'
+```
+
+The pure owner suites test exact namespace/Session/message/part and Git/CI
+identity, missing/changed originals, bounded processing, UTF-8 fidelity, artifact
+digests, fixed CLI arguments and authorization failures. The external transport
+also qualifies the installed `gh` 2.46.0 against a loopback source fixture,
+including byte-exact logs and redirected archive bytes. This is CLI behavior
+qualification with controlled originals, not authenticated GitHub-account proof.
+
+`original-source-populations-native.test.ts` exercises the actual registered
+preview/freeze/source tools through the production subprocess boundary. Its
+controlled #182/#187 equivalent keeps original failed attempt, unchanged rerun,
+correction file, both named subtests and suite-level race output separate. It
+also tests source substitution, current denial, later availability requiring a
+new population, and no raw original persistence. Source-view tests reconstruct
+Unicode content from every fragment and check inert shared document rendering.
+
+The installed historical-evidence harness retains its existing 19 checks and
+adds four original-source checks, for 23 total. These use actual native user/tool
+activity plus a controlled GitHub owner behind the real resolver, complete
+fragment readback, actual native permission denial, wrong-member and later-attempt
+substitution, changed/missing content and host restart. The fixture does not
+reproduce private operator originals, prove atomic revocation, or dispatch an
+Evaluator. `test_installed_original_sources.py` tests the qualification oracles;
+it does not replace that installed run. Existing retrospective backup/recovery,
+preparation, Stage 3 and restricted-execution regressions remain required.
+
+### Population persistence and preparation
 
 The new population suites use the existing registered tools and SQLite owners:
 

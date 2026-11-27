@@ -133,7 +133,7 @@ test("native calls sharing a call ID retain distinct message identities through 
     for (const source_message_id of ["message-a", "message-b"]) await invoke(f, "objective", { operation: "link", objective_id: objective.id,
       phase: "dispatch", source_type: "native-call", source_id: "reused-call", source_message_id })
     const preview = await invoke(f, "history", { operation: "preview-population", selection: { objective_id: objective.id,
-      question: "Inspect the distinct calls without claiming native originals are resolved." }, limit: 50 }) as Page
+      question: "Inspect the distinct current-context call projections without inferring native admission." }, limit: 50 }) as Page
     const frozen = await invoke(f, "review", preview.freeze) as Page
     const native = (await exhaust(f, frozen)).items.filter(member => member.source.kind === "native-call")
     expect(native).toHaveLength(2)
@@ -141,8 +141,14 @@ test("native calls sharing a call ID retain distinct message identities through 
     expect(native.map(member => member.source.message_id).sort()).toEqual(["message-a", "message-b"])
     for (const member of native) {
       expect(member.source).toMatchObject({ kind: "native-call", session_id: "owner", id: "reused-call" })
-      expect(member.availability).toBe("unsupported")
-      expect(member.current.status).toBe("unsupported")
+      expect(member.availability).toBe("available")
+      expect(member.current.status).toBe("available")
+      expect(member.permitted_view).toBe("native-call-fields-v1")
+      const original = await invoke(f, "history", { operation: "population-source", population_id: frozen.population_id,
+        manifest_sha256: frozen.manifest_sha256, member_key: member.key })
+      expect(original.value.identity.message_id).toBe(member.source.message_id)
+      expect(original.value.fields.input).toEqual({ subagent_type: "coder", prompt: "Controlled" })
+      expect(original.value.coverage.invocation_provenance).toBe("not-established")
     }
     const prepared = await invoke(f, "review", { operation: "prepare-evaluation", population_id: frozen.population_id,
       manifest_sha256: frozen.manifest_sha256, method: method(), budget_policy: null })

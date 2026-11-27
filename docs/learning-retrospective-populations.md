@@ -133,6 +133,13 @@ not viable alternatives: each directly violates accepted membership semantics.
 
 ## Asynchronous source boundary and authorization
 
+The subsequent [original-source increment](learning-original-source-resolution.md)
+connects selected current-caller native views and exact GitHub originals to this
+boundary. New previews can pin those owner versions. Existing unresolved or
+reference-only members retain their frozen identity and gaps; a newly available
+original requires a fresh preview and explicit freeze. The native historical
+release dependency and the execution fence below remain unchanged.
+
 The preparation/population service uses an asynchronous source-resolution
 boundary. A resolution request names the actual caller/recipient context,
 source namespace and exact identity/version, and the permitted view. Its result

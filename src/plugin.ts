@@ -32,6 +32,9 @@ import { findTraceSource, readSessionExport, traceTimeline } from "./session-tra
 import { nativeEvidenceDigest, nativeEvidenceParts, nativeEvidenceSource, type NativeEvidenceField, type NativeEvidenceMatchField } from "./native-evidence.js"
 import { retrospectiveProposal, type RetrospectiveSourceResolver, type RetrospectivePopulationView } from "./retrospective-populations.js"
 import { retrospectiveDigest, type RetrospectiveManifest, type RetrospectivePopulation } from "./retrospective-contract.js"
+import { externalOriginalDescriptor, resolveExternalOriginal } from "./external-originals.js"
+import { nativeOriginalDescriptor, resolveNativeOriginal } from "./native-originals.js"
+import { retrospectiveSourceView, renderRetrospectiveSourceHTML, renderRetrospectiveSourceMarkdown } from "./retrospective-source-view.js"
 
 function payload(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected an object")
@@ -144,6 +147,7 @@ const specs = [
   { name: "history", description: TOOL_HELP.history, input: preserveInput({
     operation: choice("read", "preview-population", "population", "population-source"), action_id: str, session_id: str, objective_id: str, related: { type: "boolean" },
     selection: populationSelectionInput, population_id: str, manifest_sha256: str, member_key: str,
+    source_offset: num, source_limit: { type: "integer", minimum: 2, maximum: 32768 },
     branch_ref: { type: "string", minLength: 1, maxLength: 4096 }, record_id: str,
     match: { type: "string", minLength: 1, maxLength: 200 },
     record_kinds: { type: "array", minItems: 1, maxItems: RECORD_KINDS.length, uniqueItems: true, items: choice(...RECORD_KINDS) },
@@ -597,10 +601,49 @@ export default Plugin.define({
               }
               await assertEvidence([...evidenceResources])
             }
+            let originalReads = 0, originalSignal: AbortSignal | undefined
+            const originalReadSignal = () => {
+              if (++originalReads > 128) throw new Error("Original-source resolution exceeds the complete bounded read; narrow the selected population")
+              return originalSignal ??= AbortSignal.any([lifetime.signal, toolContext.signal, AbortSignal.timeout(60000)])
+            }
             const populationResolver: RetrospectiveSourceResolver = async request => {
-              if (request.recipient_session_id !== actor.session_id || request.source_store_id !== requiredLearning().automatic.sources.namespace)
+              if (request.recipient_session_id !== actor.session_id)
                 throw new Error("Retrospective source unavailable")
               const ref = request.source
+              if (ref.kind === "external-ref") {
+                const descriptor = externalOriginalDescriptor(ref)
+                if (!descriptor || request.permitted_view !== descriptor.permitted_view || request.source_store_id !== descriptor.source_store_id)
+                  return { ...request, status: "unsupported" }
+                await beginEvidence("external:" + encodeURIComponent(ref.id), [request.permitted_view], [request.permitted_view])
+                return resolveExternalOriginal(request, { directory,
+                  signal: originalReadSignal(),
+                  authorize: async resources => {
+                    for (const resource of resources) evidenceResources.add(resource)
+                    await assertEvidence([...evidenceResources])
+                  } })
+              }
+              if (request.source_store_id !== requiredLearning().automatic.sources.namespace)
+                throw new Error("Retrospective source unavailable")
+              if (ref.kind === "native-message" || ref.kind === "native-call") {
+                const descriptor = nativeOriginalDescriptor(ref, request.source_store_id)
+                if (!descriptor || descriptor.permitted_view !== request.permitted_view) return { ...request, status: "unsupported" }
+                if (ref.session_id !== actor.session_id) return { ...request, status: "unsupported",
+                  gap: { code: "unsupported-source-release", detail: "Historical or cross-Session native originals require the source owner's supported recipient-bound history release interface." } }
+                const scope = "session:" + evidenceID(ref.session_id, "source Session") + ":message:"
+                  + evidenceID(ref.kind === "native-call" ? ref.message_id : ref.id, "source message")
+                  + (ref.kind === "native-call" ? ":part:" + evidenceID(ref.id, "source part") : "")
+                const views = ref.kind === "native-call" ? ["input", "output", "error", "status", "dispatch"].map(field => "native-" + field)
+                  : ["native-user-text"]
+                await beginEvidence(scope, views, views)
+                const sourceSignal = originalReadSignal()
+                sourceSignal.throwIfAborted()
+                await evidenceSession(ref.session_id); evidenceSessions.add(ref.session_id)
+                const response = unwrapped(await ctx.session.context({ sessionID: toolContext.sessionID }))
+                sourceSignal.throwIfAborted()
+                const messages = Array.isArray(response) ? response : payload(response).messages
+                return resolveNativeOriginal(request, messages, { source_store_id: request.source_store_id,
+                  project_id: ctx.location.project.id, workspace_id: ctx.location.workspaceID ?? null })
+              }
               const views: Record<string, string> = { "ledger-record": "record-full", objective: "objective", "objective-link": "objective-link",
                 "review-request": "review-request", "review-relationship": "review-relationship" }
               if (!Object.hasOwn(views, ref.kind)) return { ...request, status: "unsupported" }
@@ -649,7 +692,8 @@ export default Plugin.define({
               const { mode: _mode, question: _question, exclusions: _exclusions, ...query } = selection
               const history = await authorizedHistory({ ...query, limit: 20 }, true)
               await populationContributors(history.contributors)
-              const manifest = await requiredLearning().populations.preview(actor, selection, history, populationResolver)
+              const manifest = await requiredLearning().populations.preview(actor, selection, history, populationResolver,
+                source => externalOriginalDescriptor(source) ?? nativeOriginalDescriptor(source, requiredLearning().automatic.sources.namespace) ?? undefined)
               await evidenceSourceCheck?.()
               return manifest
             }
@@ -659,7 +703,7 @@ export default Plugin.define({
                 if (["preview-population", "population", "population-source"].includes(String(input.operation))) {
                   const allowed = input.operation === "preview-population" ? ["operation", "selection", "after", "limit", "response_format"]
                     : input.operation === "population" ? ["operation", "population_id", "manifest_sha256", "after", "limit", "response_format"]
-                    : ["operation", "population_id", "manifest_sha256", "member_key"]
+                    : ["operation", "population_id", "manifest_sha256", "member_key", "source_offset", "source_limit", "response_format"]
                   if (Object.keys(input).some(key => !allowed.includes(key))) throw new Error("Unsupported retrospective population field")
                   if (input.response_format !== undefined && !["json", "markdown", "html"].includes(String(input.response_format)))
                     throw new Error("History response_format must be json, markdown or html")
@@ -673,9 +717,9 @@ export default Plugin.define({
                       const member = population.manifest.members.find(member => member.key === input.member_key)
                       if (!member) throw new Error("Retrospective source unavailable")
                       const resolved = await requiredLearning().populations.resolve(actor, member, populationResolver)
-                      result = { population_id: population.population_id, manifest_sha256: population.manifest_sha256, member_key: member.key,
+                      result = retrospectiveSourceView({ population_id: population.population_id, manifest_sha256: population.manifest_sha256, member_key: member.key,
                         source: member.source, source_store_id: member.source_store_id, permitted_view: member.permitted_view, ...resolved,
-                        receiving_session: actor.session_id, native_evaluator_retrieval: "not-established", execution_permit: null }
+                        receiving_session: actor.session_id, native_evaluator_retrieval: "not-established", execution_permit: null }, input)
                     }
                   }
                   break
@@ -992,7 +1036,13 @@ export default Plugin.define({
                     const population = await populationRead(request.population_id, request.manifest_sha256, true)
                     const member = population.manifest.members.find(member => member.key === request.member_key)
                     if (!member) throw new Error("Retrospective preparation source unavailable")
-                    result = { ...result, ...await requiredLearning().populations.resolve(actor, member, populationResolver) }
+                    const resolved = await requiredLearning().populations.resolve(actor, member, populationResolver)
+                    const sourcePage = retrospectiveSourceView({
+                      population_id: population.population_id, manifest_sha256: population.manifest_sha256, member_key: member.key,
+                      source: member.source, source_store_id: member.source_store_id, permitted_view: member.permitted_view, ...resolved,
+                      receiving_session: actor.session_id, native_evaluator_retrieval: "not-established", execution_permit: null }, {})
+                    result = { ...result, ...sourcePage, manifest_sha256: payload(result).manifest_sha256,
+                      population_manifest_sha256: population.manifest_sha256 }
                   }
                 } else if (input.batch_id !== undefined || input.member_key !== undefined || input.report_id !== undefined || input.after !== undefined
                   || input.request_id !== undefined || input.manifest_sha256 !== undefined || input.attempt_id !== undefined || input.source_index !== undefined) {
@@ -1464,7 +1514,10 @@ export default Plugin.define({
             // All presentations are derived from one view and enter the same final
             // authorization path. Hash the actual returned bytes, including HTML.
             const populationView = spec.name === "history" && ["preview-population", "population"].includes(String(input.operation))
-            const content = populationView && input.response_format === "html" ? renderRetrospectivePopulationHTML(result as RetrospectivePopulationView)
+            const sourceView = spec.name === "history" && input.operation === "population-source"
+            const content = sourceView && input.response_format === "html" ? renderRetrospectiveSourceHTML(result)
+              : sourceView && input.response_format === "markdown" ? renderRetrospectiveSourceMarkdown(result)
+              : populationView && input.response_format === "html" ? renderRetrospectivePopulationHTML(result as RetrospectivePopulationView)
               : populationView && input.response_format === "markdown" ? renderRetrospectivePopulationMarkdown(result as RetrospectivePopulationView)
               : spec.name === "history" && input.response_format === "html"
               ? renderEngineeringHistoryHTML(result as EngineeringHistoryView)

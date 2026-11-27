@@ -73,6 +73,16 @@ Human and agent views read that same durable manifest through `loom_history`.
 Later records, relationships and Plan changes do not enter it. Preparation can
 consume this distinct population; Evaluator execution remains disconnected.
 
+[Original-source resolution](docs/learning-original-source-resolution.md) now
+pins supported originals during a new preview and retrieves them through
+`loom_history population-source`. The bounded views include the caller's native
+user text and tool fields, exact GitHub commit/file objects, explicit CI
+attempt/job logs and digest-verified artifact archives. External reads reuse an
+already authenticated `gh`; no account setup is performed. Each continuation
+checks the frozen version and current access. Old reference-only populations
+remain unchanged. Native full history and cross-Session raw release require the
+[source-owner interface described in the upstream handoff](docs/learning-native-source-handoff.md).
+
 No history-size or whole-process resource guarantee is advertised. The Action
 `paused`, `cancelled` and `completed` labels record intent/progress; they do not
 interrupt an OpenCode session or certify successful delivery.
