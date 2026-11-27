@@ -39,7 +39,10 @@ async function withSearch(run: (search: (input: unknown) => Promise<any>, f: Awa
   } finally { await f.close() }
 }
 
-test("actual Code Mode search returns each full registered description and callable signature", async () => {
+test("actual Code Mode search returns each full registered description and callable signature within response budgets", async () => {
+  // UTF-8 bytes of the complete serialized search reply, including generated
+  // signatures. Description-only ceilings cannot catch schema expansion.
+  const maximumBytes: Record<string, number> = { history: 8000, objective: 7200, review: 18000, record: 16500 }
   await withSearch(async (search, f) => {
     for (const [name, registration] of f.tools) {
       const result = await search({ query: `tools.loom.${name}` })
@@ -47,6 +50,8 @@ test("actual Code Mode search returns each full registered description and calla
       expect(result.items[0].path).toBe(`tools.loom.${name}`)
       expect(result.items[0].description).toBe(registration.description)
       expect(result.items[0].signature).toContain(`tools.loom.${name}(`)
+      if (Object.hasOwn(maximumBytes, name))
+        expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(maximumBytes[name]!)
       for (const key of Object.keys(registration.input.properties)) expect(result.items[0].signature).toContain(key)
     }
   })
@@ -57,6 +62,9 @@ test("namespace search carries the complete current tool inventory without file 
     const result = await search({ namespace: "loom", limit: f.tools.size })
     expect(result.items).toHaveLength(f.tools.size)
     expect(result.remaining).toBe(0)
+    // The measured fourteen-tool candidate reply is 82,262 UTF-8 bytes.
+    // Keep bounded room for wording; this is not a model-token budget.
+    expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(84000)
     for (const item of result.items) {
       const name = item.path.split(".").at(-1)
       expect(item.description).toBe(f.tools.get(name).description)
@@ -311,5 +319,50 @@ test("real Code Mode carries Unicode boundaries and runtime rejects invalid choi
     expect(thread.answers).toHaveLength(2)
     expect(f.nativeInputs).toHaveLength(0)
     expect(f.sessionCreates).toHaveLength(0)
+  } finally { await f.close() }
+})
+
+test("documented Code Mode measurement uses Date.now and does not assume performance or Node globals", async () => {
+  const runtime = CodeMode.make({ tools: {} })
+  const result = await Effect.runPromise(runtime.execute(`
+    const started = Date.now();
+    const sample = "é😀";
+    return { elapsed_ms: Date.now() - started, code_units: sample.length,
+      performance: typeof performance, process: typeof process, Buffer: typeof Buffer };
+  `))
+  expect(result.ok).toBe(true)
+  expect(result.value.elapsed_ms).toBeGreaterThanOrEqual(0)
+  expect(result.value.code_units).toBe(3)
+  expect(result.value.performance).toBe("undefined")
+  expect(result.value.process).toBe("undefined")
+  expect(result.value.Buffer).toBe("undefined")
+  expect(result.toolCalls).toEqual([])
+})
+
+test("documented measured-record snippet executes exact field retrieval with returned identities", async () => {
+  const f = await registeredLoom()
+  try {
+    const action = (await f.invoke("action", { operation: "create", title: "Measured example", goal: "Controlled retrieval" })).result
+    const record = (await f.invoke("record", { operation: "add", action_id: action.id, kind: "result",
+      statement: "Exact selected statement é😀", artifact_refs: ["OMITTED_ARTIFACT_REFERENCE"] })).result
+    const registration = f.tools.get("record")
+    const runtime = CodeMode.make({ tools: { loom: Namespace.make({ tools: { record: Tool.make({
+      description: registration.description, input: registration.input, output: { type: "string" },
+      execute: (input: unknown) => Effect.tryPromise({
+        try: async () => JSON.stringify(await f.invoke("record", input)),
+        catch: (error: unknown) => toolError(error instanceof Error ? error.message : String(error)),
+      }),
+    }) } }) } })
+    const doc = await readFile(new URL("../docs/tool-discovery.md", import.meta.url), "utf8")
+    const snippet = doc.match(/```js\n(\/\/ example: measured-record[\s\S]*?)\n```/)![1]!
+    const result = await Effect.runPromise(runtime.execute(snippet.replaceAll('"ACTION_ID"', JSON.stringify(action.id))
+      .replaceAll('"RECORD_ID"', JSON.stringify(record.id))))
+    expect(result.ok).toBe(true)
+    expect(result.value.elapsed_ms).toBeGreaterThanOrEqual(0)
+    expect(result.value.records).toHaveLength(1)
+    expect(result.value.records[0].id).toBe(record.id)
+    expect(result.value.records[0].data).toEqual({ statement: record.data.statement })
+    expect(JSON.stringify(result.value)).not.toContain("OMITTED_ARTIFACT_REFERENCE")
+    expect(result.toolCalls).toEqual([{ name: "loom.record" }])
   } finally { await f.close() }
 })

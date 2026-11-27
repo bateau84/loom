@@ -28,6 +28,8 @@ import { QUESTION_CHOICE_LIMITS, QUESTION_DISPATCH, questionRecipient } from "./
 import { questionRoute, sendQuestion, type NativeModel, type QuestionRoute } from "./question-routing.js"
 import { resumeAnswer } from "./answer-resume.js"
 import { TOOL_HELP, LOOM_NAMESPACE_HELP } from "./tool-help.js"
+import { operationInputSchema, validateOperationInput } from "./tool-input-contracts.js"
+import { withToolNavigation } from "./tool-navigation.js"
 import { findTraceSource, readSessionExport, traceTimeline } from "./session-trace.js"
 import { nativeEvidenceDigest, nativeEvidenceParts, nativeEvidenceSource, type NativeEvidenceField, type NativeEvidenceMatchField } from "./native-evidence.js"
 import { retrospectiveProposal, type RetrospectiveSourceResolver, type RetrospectivePopulationView } from "./retrospective-populations.js"
@@ -136,9 +138,13 @@ const evaluatorPrepareInput = { operation: { const: "prepare-evaluation" }, batc
 const populationSelectionInput = preserveInput({ mode: { const: "explicit-objective" }, objective_id: str,
   question: { type: "string", minLength: 1, maxLength: 8000 }, through: num,
   owner_boundary: preserveInput({ objective_links: { anyOf: [num, { type: "null" }] }, review_requests: num, review_relationships: num },
-    ["objective_links", "review_requests", "review_relationships"]), owner_version: str,
+    ["objective_links", "review_requests", "review_relationships"]), owner_version: { type: "string", pattern: "^[a-f0-9]{64}$" },
   exclusions: { type: "array", maxItems: 2000, items: preserveInput({ record_id: str, reason: str }, ["record_id", "reason"]) },
 }, ["objective_id", "question"])
+const frozenPopulationSelectionInput = { ...populationSelectionInput,
+  required: ["objective_id", "question", "through", "owner_boundary", "owner_version"],
+  description: "Copy the complete selection returned by preview-population; do not reconstruct boundaries or versions.",
+}
 const specs = [
   { name: "agents", description: TOOL_HELP.agents, input: obj({}) },
   { name: "history", description: TOOL_HELP.history, input: preserveInput({
@@ -166,7 +172,8 @@ const specs = [
       preserveInput(evaluatorPrepareInput, ["operation", "batch_id", "method", "budget_policy"]),
       preserveInput({ operation: { const: "prepare-evaluation" }, population_id: str, manifest_sha256: str, method: evaluatorMethodInput,
         budget_policy: evaluatorPrepareInput.budget_policy }, ["operation", "population_id", "manifest_sha256", "method", "budget_policy"]),
-      preserveInput({ operation: { const: "freeze-population" }, selection: populationSelectionInput, preview_sha256: str }, ["operation", "selection", "preview_sha256"]),
+      preserveInput({ operation: { const: "freeze-population" }, selection: frozenPopulationSelectionInput,
+        preview_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" } }, ["operation", "selection", "preview_sha256"]),
       obj({ operation: { const: "freeze" }, request: reviewRequestInput }, ["operation", "request"]),
       obj({ operation: { const: "read" }, request_id: str, after: num, relationship_after: num, issue_after: num, limit: { type: "integer", minimum: 1, maximum: 50 } }, ["operation", "request_id"]),
       obj({ operation: { const: "prepare" }, request_id: str }, ["operation", "request_id"]),
@@ -262,6 +269,18 @@ const specs = [
         then: { properties: { operation: { const: "query" } } } },
       { if: { properties: { response_format: { const: "markdown" } }, required: ["response_format"] },
         then: { properties: { view: { const: "full_thread" } }, required: ["view"] } },
+      { if: { properties: { operation: { const: "add" } }, required: ["operation"] },
+        then: { required: ["kind", "statement"], allOf: [
+          { if: { properties: { kind: choice("assessment", "qa") }, required: ["kind"] }, then: { required: ["verdict"] } },
+        ] } },
+      { if: { properties: { operation: { const: "complete" } }, required: ["operation"] }, then: { required: ["work_ref", "statement"] } },
+      { if: { properties: { operation: { const: "reopen" } }, required: ["operation"] }, then: { required: ["statement"] } },
+      { if: { anyOf: ["projection", "fields", "source_session_id", "record_kinds", "through"].map(field => ({ required: [field] })) },
+        then: { properties: { operation: { const: "query" }, view: { const: "ledger" } } } },
+      { if: { properties: { projection: { const: "fields" } }, required: ["projection"] }, then: { required: ["record_id", "fields"] } },
+      { if: { required: ["fields"] }, then: { properties: { projection: { const: "fields" } }, required: ["projection"] } },
+      { if: { properties: { session_only: { const: true } }, required: ["session_only"] },
+        then: { properties: { operation: choice("query", "add") }, not: { anyOf: [{ required: ["action_id"] }, { required: ["node_id"] }] } } },
     ] } },
 ] as const
 
@@ -415,11 +434,13 @@ export default Plugin.define({
       disposers.push(await ctx.tool.transform(editor => {
         editor.namespace({ name: "loom", description: LOOM_NAMESPACE_HELP })
         for (const spec of specs) editor.add({
-          name: spec.name, description: spec.description, input: spec.input as Parameters<typeof editor.add>[0]["input"],
+          name: spec.name, description: spec.description,
+          input: operationInputSchema(spec.name, spec.input) as Parameters<typeof editor.add>[0]["input"],
           options: { namespace: "loom", codemode: true },
           execute: async (raw, toolContext) => {
             if (!await owns(toolContext.sessionID)) throw new Error("This Loom instance does not own the Session location")
             const input = payload(raw), actor: Actor = { session_id: toolContext.sessionID, agent: toolContext.agent }
+            validateOperationInput(spec.name, input, spec.input)
             const snapshot = await getConfig(toolContext.signal)
             lifetime.signal.throwIfAborted()
             toolContext.signal.throwIfAborted()
@@ -540,7 +561,8 @@ export default Plugin.define({
                   // Contributor discovery is an internal permission preflight. Its
                   // failures must not expose a protected cardinality threshold,
                   // Plan author or source-store detail before source grants exist.
-                  catch { throw new Error("Engineering history scope unavailable") }
+                  catch { throw new Error("Engineering history scope unavailable"
+                    + (requested.objective_id === undefined ? "" : ". Use an objective ID from successful authorized find/list/create and check current source permissions. Investigate by Action/Session without an objective; author one only when authorized.")) }
                 }
                 const sources = historyContributors(query)
                 if (query.owner_boundary && (query.owner_boundary.objective_links === null) !== (sources.objectives === undefined))
@@ -644,10 +666,38 @@ export default Plugin.define({
               }
               return population
             }
+            const populationSelection = (raw: unknown) => {
+              try { return retrospectiveProposal(raw) }
+              catch (error) {
+                // This allowlist preserves actionable parser reasons without
+                // forwarding unexpected exception details or caller values.
+                const hints: Record<string, string> = {
+                  "Invalid retrospective selection": "Use selection:{objective_id,question}; omit boundaries on the first preview.",
+                  "Unsupported retrospective selection policy": "Only mode:explicit-objective is supported; mode may be omitted.",
+                  "Retrospective selection requires a bounded evaluation question": "selection.question must contain 1-8000 characters without control characters.",
+                  "Invalid retrospective exclusions": "Use at most 2000 {record_id,reason} exclusions, or omit exclusions.",
+                  "Invalid retrospective exclusion": "Each exclusion needs only record_id and a nonblank reason of at most 8000 characters without control characters.",
+                  "Duplicate retrospective exclusion": "Include each excluded record_id once.",
+                  "excluded record must be a simple identifier of 1-120 characters": "Use the exact record_id obtained from an authorized read.",
+                  "objective_id must be a simple identifier of 1-120 characters": "Use an objective ID returned by find/list or an authorized create.",
+                  "Invalid retrospective page": "through and owner boundary counters must be nonnegative integers; copy returned selection instead of guessing.",
+                  "Invalid retrospective owner boundary": "owner_boundary needs objective_links, review_requests and review_relationships; copy returned selection instead of reconstructing it.",
+                  "Invalid retrospective owner version": "owner_version must be a returned SHA-256 with its owner_boundary; copy returned selection.",
+                }
+                const reason = error instanceof Error && Object.hasOwn(hints, error.message) ? error.message : "Invalid retrospective selection"
+                throw new Error(`${reason}. ${hints[reason]}`)
+              }
+            }
             const populationPreview = async (raw: unknown): Promise<RetrospectiveManifest> => {
-              const selection = retrospectiveProposal(raw)
+              const selection = populationSelection(raw)
               const { mode: _mode, question: _question, exclusions: _exclusions, ...query } = selection
-              const history = await authorizedHistory({ ...query, limit: 20 }, true)
+              let history: Awaited<ReturnType<typeof authorizedHistory>>
+              try { history = await authorizedHistory({ ...query, limit: 20 }, true) }
+              catch (error) {
+                if (error instanceof Error && error.message === "History relationship sources changed; restart the read")
+                  throw new Error("Retrospective preview sources changed or boundaries came from a different view. Start preview with objective_id, question and the same deliberate exclusions, omitting navigation boundaries; then use its returned selection/next/freeze unchanged and approve before freezing.")
+                throw error
+              }
               await populationContributors(history.contributors)
               const manifest = await requiredLearning().populations.preview(actor, selection, history, populationResolver)
               await evidenceSourceCheck?.()
@@ -657,10 +707,6 @@ export default Plugin.define({
             switch (spec.name) {
               case "history": {
                 if (["preview-population", "population", "population-source"].includes(String(input.operation))) {
-                  const allowed = input.operation === "preview-population" ? ["operation", "selection", "after", "limit", "response_format"]
-                    : input.operation === "population" ? ["operation", "population_id", "manifest_sha256", "after", "limit", "response_format"]
-                    : ["operation", "population_id", "manifest_sha256", "member_key"]
-                  if (Object.keys(input).some(key => !allowed.includes(key))) throw new Error("Unsupported retrospective population field")
                   if (input.response_format !== undefined && !["json", "markdown", "html"].includes(String(input.response_format)))
                     throw new Error("History response_format must be json, markdown or html")
                   if (input.operation === "preview-population") {
@@ -680,10 +726,6 @@ export default Plugin.define({
                   }
                   break
                 }
-                const allowed = ["operation", "action_id", "session_id", "objective_id", "branch_ref", "record_id", "related", "match", "record_kinds", "verdict",
-                  "source_session_id", "node_id", "plan_revision", "has_gaps", "after", "through", "branch_offset", "limit", "owner_boundary", "owner_version", "connection_cursor", "response_format"]
-                if (input.operation !== "read" || Object.keys(input).some(key => !allowed.includes(key)))
-                  throw new Error("Unsupported engineering history operation or field")
                 if (input.response_format !== undefined && !["json", "markdown", "html"].includes(String(input.response_format)))
                   throw new Error("History response_format must be json, markdown or html")
                 if ([input.action_id, input.session_id, input.objective_id].filter(value => value !== undefined).length !== 1)
@@ -704,14 +746,14 @@ export default Plugin.define({
                     : input.operation === "prepare" ? ["operation", "request_id"]
                       : input.operation === "work" ? ["operation", "request_id", "member_id"]
                         : input.operation === "relate" ? ["operation", "request_id", "relationship", "source_record_id", "member_ids", "supersedes"] : undefined
-                if (!allowed) throw new Error("Unknown review operation")
-                if (Object.keys(input).some(key => !allowed.includes(key))) throw new Error("Unsupported review operation field")
+                if (!allowed) throw new Error("Unknown review operation. Choose freeze, read, issue, prepare, prepare-evaluation, freeze-population, relate or work; these do not dispatch execution.")
+                if (Object.keys(input).some(key => !allowed.includes(key))) throw new Error("Unsupported review operation field; use only the selected operation's documented arguments. For freeze-population, copy the approved preview's freeze request unchanged.")
                 await authorizeReview()
                 if (input.operation === "freeze-population") {
                   if (typeof input.preview_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(input.preview_sha256)) throw new Error("Invalid retrospective preview fingerprint")
-                  const selection = retrospectiveProposal(input.selection)
+                  const selection = populationSelection(input.selection)
                   if (selection.through === undefined || selection.owner_boundary === undefined || selection.owner_version === undefined)
-                    throw new Error("Freeze requires the complete pinned preview selection")
+                    throw new Error("Freeze requires the complete pinned preview selection: through, owner_boundary and owner_version. Copy preview.freeze unchanged after approval; do not invent boundary values.")
                   await beginEvidence("objective:" + evidenceID(selection.objective_id, "objective_id"), ["retrospective-population"], ["retrospective-population"])
                   evidenceResources.add(learningFilename); await assertEvidence([...evidenceResources])
                   const prior = requiredLearning().automatic.history.findRetrospective(input.preview_sha256, actor.session_id)
@@ -1020,16 +1062,12 @@ export default Plugin.define({
                 else if (input.operation === "read") result = index.read(input.objective_id as string,
                   input.cursor as string | undefined, input.limit as number | undefined)
                 else if (input.operation === "find") {
-                  if (input.source_type === undefined || input.source_id === undefined)
-                    throw new Error("Objective find requires an exact source type and source ID")
                   result = index.find({
                     type: input.source_type as ObjectiveSource["type"], id: input.source_id as string,
                     session_id: input.source_session_id as string | undefined,
                     message_id: input.source_message_id as string | undefined,
                   }, input.offset as number | undefined)
                 } else if (input.operation === "create" || input.operation === "link") {
-                  if (input.source_type === undefined || input.source_id === undefined)
-                    throw new Error("Objective links require an original source type and ID")
                   const sourceType = input.source_type as ObjectiveSource["type"]
                   let source: ObjectiveSource
                   if (sourceType === "ledger-record") {
@@ -1461,6 +1499,7 @@ export default Plugin.define({
               result = { ...page, items: page.items.map(r => "data" in r ? ({ ...r, data: typeof r.data.statement === "string" && r.data.statement.length > 600
                 ? { ...r.data, statement: r.data.statement.slice(0,600), truncated: true, read_full: "Pass this record_id to loom_record query" } : r.data }) : r) }
             }
+            result = withToolNavigation(spec.name, input, result)
             // All presentations are derived from one view and enter the same final
             // authorization path. Hash the actual returned bytes, including HTML.
             const populationView = spec.name === "history" && ["preview-population", "population"].includes(String(input.operation))
