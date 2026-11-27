@@ -15,7 +15,7 @@ for (const name of Object.keys(TOOL_HELP) as LoomToolName[]) test(`registered ${
     expect(tool.description.split("\n")[0].length).toBeLessThanOrEqual(120)
     expect(tool.description.length).toBeLessThanOrEqual(name === "record" ? 10000 : 3600)
     for (const section of ["Usage:", "Returns:", "Caution:", "Examples (JSON inputs"]) expect(tool.description).toContain(section)
-    expect(tool.description).not.toContain("docs/tools.md")
+    expect(tool.description).not.toContain("docs/user-docs/tools.md")
     const inputs = tool.description.split("\n").filter((s: string) => s.startsWith("{")).map((s: string) => JSON.parse(s))
     expect(inputs).toEqual(TOOL_EXAMPLES[name])
     for (const input of inputs) {

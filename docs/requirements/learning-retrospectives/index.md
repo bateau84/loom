@@ -2,7 +2,7 @@
 
 **Status:** Draft requirements authored against the user-accepted architecture in [PR #233](https://github.com/bateau84/loom/pull/233), for independent requirements assessment. No requirements are claimed implemented. The concept's independent architecture GO does not constitute implementation or requirements acceptance.
 
-**Later authority:** The accepted [native evidence specification](../../learning-native-evidence-spec.md) records acceptance of the original BR/QS/OC baseline; earlier proposed labels remain historical. The operator's 2026-11-26 #227 assignment adds BR-010 and QS-006 for shared layered engineering history. These are accepted product targets, not a claim that every layer or original-source boundary is implemented. See the [bounded architecture and delivery mapping](../../learning-engineering-history.md).
+**Later authority:** The accepted [native evidence specification](../../architecture/spec/ars-001-learning-native-evidence-spec.md) records acceptance of the original BR/QS/OC baseline; earlier proposed labels remain historical. The operator's 2026-11-26 #227 assignment adds BR-010 and QS-006 for shared layered engineering history. These are accepted product targets, not a claim that every layer or original-source boundary is implemented. See the [bounded architecture and delivery mapping](../../architecture/design/ard-008-learning-engineering-history.md).
 
 ## Intended behavior
 
@@ -14,38 +14,38 @@ There is **no automatic skill/agent/directive mutation**, no built-in directive 
 
 ## Behavioral Requirements
 
-- [BR-001 — Preserve execution attribution](br-001-preserve-execution-attribution.md)
-- [BR-002 — Preserve historical work scopes](br-002-preserve-historical-work-scopes.md)
-- [BR-003 — Preserve requested review subjects](br-003-preserve-review-requested-subjects.md)
-- [BR-004 — Preserve actual review basis and qualified findings](br-004-preserve-review-basis-and-verdict.md)
-- [BR-005 — Expose source evidence and coverage gaps](br-005-expose-source-evidence-and-gaps.md)
-- [BR-006 — Evaluate accumulated work automatically](br-006-run-evaluation-automatically.md)
-- [BR-007 — Prioritize whole-work and longitudinal learning](br-007-prioritize-whole-work-learning.md)
-- [BR-008 — Persist revisable evaluation history](br-008-persist-revisable-evaluation-history.md)
-- [BR-009 — Present controlled system-improvement recommendations](br-009-present-controlled-system-improvements.md)
-- [BR-010 — Navigate layered engineering history](br-010-layered-engineering-history.md)
+- [BR-001 — Preserve execution attribution](../requirements/learning-retrospectives/br-001-preserve-execution-attribution.md)
+- [BR-002 — Preserve historical work scopes](../requirements/learning-retrospectives/br-002-preserve-historical-work-scopes.md)
+- [BR-003 — Preserve requested review subjects](../requirements/learning-retrospectives/br-003-preserve-review-requested-subjects.md)
+- [BR-004 — Preserve actual review basis and qualified findings](../requirements/learning-retrospectives/br-004-preserve-review-basis-and-verdict.md)
+- [BR-005 — Expose source evidence and coverage gaps](../requirements/learning-retrospectives/br-005-expose-source-evidence-and-gaps.md)
+- [BR-006 — Evaluate accumulated work automatically](../requirements/learning-retrospectives/br-006-run-evaluation-automatically.md)
+- [BR-007 — Prioritize whole-work and longitudinal learning](../requirements/learning-retrospectives/br-007-prioritize-whole-work-learning.md)
+- [BR-008 — Persist revisable evaluation history](../requirements/learning-retrospectives/br-008-persist-revisable-evaluation-history.md)
+- [BR-009 — Present controlled system-improvement recommendations](../requirements/learning-retrospectives/br-009-present-controlled-system-improvements.md)
+- [BR-010 — Navigate layered engineering history](../requirements/learning-retrospectives/br-010-layered-engineering-history.md)
 
 ## Quality Scenarios
 
-- [QS-001 — Concurrent execution attribution](qs-001-concurrent-execution-attribution.md)
-- [QS-002 — Recover interrupted evaluation batches](qs-002-recover-interrupted-batches.md)
-- [QS-003 — Synthesize large frozen populations without omission](qs-003-synthesize-large-frozen-populations.md)
-- [QS-004 — Protect derived reports under restricted source access](qs-004-protect-derived-reports.md)
-- [QS-005 — Bound optional automatic analysis](qs-005-bound-background-analysis.md)
-- [QS-006 — Progressive history navigation](qs-006-progressive-history-navigation.md)
+- [QS-001 — Concurrent execution attribution](../quality-scenarios/learning-retrospectives/qs-001-concurrent-execution-attribution.md)
+- [QS-002 — Recover interrupted evaluation batches](../quality-scenarios/learning-retrospectives/qs-002-recover-interrupted-batches.md)
+- [QS-003 — Synthesize large frozen populations without omission](../quality-scenarios/learning-retrospectives/qs-003-synthesize-large-frozen-populations.md)
+- [QS-004 — Protect derived reports under restricted source access](../quality-scenarios/learning-retrospectives/qs-004-protect-derived-reports.md)
+- [QS-005 — Bound optional automatic analysis](../quality-scenarios/learning-retrospectives/qs-005-bound-background-analysis.md)
+- [QS-006 — Progressive history navigation](../quality-scenarios/learning-retrospectives/qs-006-progressive-history-navigation.md)
 
 ## Obligation Contracts
 
-- [OC-001 — Host observation and dispatch provenance](oc-001-host-observation-and-dispatch-provenance.md)
-- [OC-002 — Review admission and effective evidence basis](oc-002-review-admission-and-evidence-basis.md)
-- [OC-003 — Protected source and derived-report access](oc-003-protected-source-and-derived-report-access.md)
-- [OC-004 — Evaluation processing and publication meaning](oc-004-evaluation-processing-and-publication.md)
+- [OC-001 — Host observation and dispatch provenance](../obligation-contracts/learning-retrospectives/oc-001-host-observation-and-dispatch-provenance.md)
+- [OC-002 — Review admission and effective evidence basis](../obligation-contracts/learning-retrospectives/oc-002-review-admission-and-evidence-basis.md)
+- [OC-003 — Protected source and derived-report access](../obligation-contracts/learning-retrospectives/oc-003-protected-source-and-derived-report-access.md)
+- [OC-004 — Evaluation processing and publication meaning](../obligation-contracts/learning-retrospectives/oc-004-evaluation-processing-and-publication.md)
 
 - [Change log](log.md)
 
 ## E1–E14 architecture acceptance coverage
 
-These map to the [approved concept's E1–E14 proposals](../../learning-evidence-and-review-scope.md). They are **future assembled-product verification duties**, not tests executed by this requirements commit.
+These map to the [approved concept's E1–E14 proposals](../../architecture/design/ard-006-learning-evidence-and-review-scope.md). They are **future assembled-product verification duties**, not tests executed by this requirements commit.
 
 | Scenario | Governing requirements | Key observation |
 | --- | --- | --- |
@@ -69,7 +69,7 @@ These map to the [approved concept's E1–E14 proposals](../../learning-evidence
 ## Product authority, compatibility and unresolved decisions
 
 - **Accepted user intent:** accurate evidence and review-scope attribution; automatic processing; broad whole-work evaluation; durable checkpointed history; evidence-backed, user-gated improvements.
-- **Approved architecture reference:** [Review-scoped evidence and whole-work retrospectives](../../learning-evidence-and-review-scope.md) and [issue #227](https://github.com/bateau84/loom/issues/227). Implementation details in that document constrain downstream realization but do not invent extra product obligations.
+- **Approved architecture reference:** [Review-scoped evidence and whole-work retrospectives](../../architecture/design/ard-006-learning-evidence-and-review-scope.md) and [issue #227](https://github.com/bateau84/loom/issues/227). Implementation details in that document constrain downstream realization but do not invent extra product obligations.
 - **Existing system boundaries:** Current Loom has partial bounded capture, exact historical `WorkRef` support, objective readers and independently scoped reviews, but no automatic retrospective engine or general full-content retention.
 - **Operator decisions still open:** eligible protected-payload collection classes, retention/deletion defaults, derived-report disclosure/declassification authority, qualified model-route authorization and spending/resource limits. These are NOT assigned defaults here. Capture and authorized descriptive reporting may be delivered at their existing bounded level without misrepresenting missing content.
 - **Native host qualification still open:** exact normal-subagent invocation binding, opaque nested operations, reliable automatic access to original histories across compaction, trusted originating-request independence and final-provider exposure; weak signals cannot be upgraded to proof.

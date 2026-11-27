@@ -115,9 +115,9 @@ test("skill guidance retains current evidence, coordination and recovery boundar
 
 test("published question-routing guidance distinguishes dispatcher, user and forwarded specialist paths", async () => {
   for (const [file, direct] of [
-    ["../docs/collaboration.md", "which answers directly when the recipient is the dispatcher"],
-    ["../docs/coordination.md", "dispatcher is answered directly by that dispatcher"],
-    ["../docs/tools.md", "addressed to the dispatcher, it must answer directly"],
+    ["../docs/architecture/design/ard-003-collaboration.md", "which answers directly when the recipient is the dispatcher"],
+    ["../docs/architecture/design/ard-002-coordination.md", "dispatcher is answered directly by that dispatcher"],
+    ["../docs/user-docs/tools.md", "addressed to the dispatcher, it must answer directly"],
   ]) {
     const text = (await readFile(new URL(file, import.meta.url), "utf8")).replace(/\s+/g, " ")
     expect(text).toContain("dispatcher")
@@ -126,7 +126,7 @@ test("published question-routing guidance distinguishes dispatcher, user and for
     expect(text).toContain("actual decision")
     expect(text).toContain(direct)
   }
-  const collaboration = await readFile(new URL("../docs/collaboration.md", import.meta.url), "utf8")
+  const collaboration = await readFile(new URL("../docs/architecture/design/ard-003-collaboration.md", import.meta.url), "utf8")
   expect(collaboration).not.toContain("the parent must delegate natively")
 })
 
@@ -168,7 +168,7 @@ test("bundled JSON examples execute with real returned identities against regist
 test("human core-tool walkthrough examples use canonical collaboration and real stored history", async () => {
   const f = await registeredLoom()
   try {
-    const doc = await readFile(new URL("../docs/tools.md", import.meta.url), "utf8")
+    const doc = await readFile(new URL("../docs/user-docs/tools.md", import.meta.url), "utf8")
     const examples = [...doc.matchAll(/```json\n([\s\S]*?)\n```/g)].map(match => JSON.parse(match[1]))
     expect(examples).toHaveLength(13)
     const [actionOverview, sessionOverview, objectiveOverview, historyDiscovery, connectedHistory, ...inputs] = examples

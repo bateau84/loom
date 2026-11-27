@@ -4,37 +4,66 @@
 name: loom
 version: "1.0"
 
-# Exact, case-sensitive frontmatter types in the current docs corpus.
-# index.md and log.md are reserved, unindexed OKF files; Log is included
-# in the local vocabulary for completeness.
+# Exact, case-sensitive frontmatter types for the five documentation areas.
+# Anchor and product-design types reserve vocabulary for future documents;
+# declaring a type does not assert that such a document already exists.
+# index.md and log.md are reserved, unindexed OKF files.
 concept_types:
+  - name: Anchor
+  - name: "Behavioral Requirement"
+  - name: "Obligation Contract"
+  - name: "Quality Scenario"
+  - name: "Design Specification"
+  - name: "User Story"
+  - name: Scenario
+  - name: "Architectural Design"
+  - name: "Architectural Decision"
+  - name: "Architectural Specification"
+  - name: "Qualification Report"
+  - name: "Historical Reference"
+  # Retain general architecture/configuration vocabulary for mixed references.
   - name: Architecture
   - name: Configuration
   - name: Playbook
   - name: "API Reference"
-  - name: "Behavioral Requirement"
-  - name: "Quality Scenario"
-  - name: "Obligation Contract"
   - name: Log
 
 # A link's nearest preceding heading determines its relationship.
 # Unmapped headings remain untyped; ordinary navigation is not a dependency.
 relationships:
   # Source cites a document as supporting or further technical background.
-  # Observed in docs/configuration-parser.md under "Audited primary sources".
+  # Observed in docs/architecture/spec/ars-007-configuration-parser.md and
+  # docs/architecture/design/ard-006-learning-evidence-and-review-scope.md.
   - name: references
-    heading_aliases: ["Audited primary sources", "Implementation references"]
+    heading_aliases: ["Audited primary sources", "Implementation references", "References"]
     inverse: referenced-by
     allowed_source_types: ["*"]
     allowed_target_types: ["*"]
 
   # Source requires the linked technical contract or interface as an input.
-  # Observed in docs/model-routing.md under "Depends on".
+  # Observed in docs/architecture/design/ard-013-model-routing.md under "Depends on".
   - name: depends-on
     heading_aliases: ["Depends on"]
     inverse: depended-on-by
     allowed_source_types: ["*"]
     allowed_target_types: ["*"]
+
+  # Existing "Derived from" sections identify source requirements, contracts,
+  # quality scenarios, designs, specifications and operational evidence.
+  # Derivation is broader than requirement-to-anchor in the accepted corpus.
+  - name: derived-from
+    heading_aliases: ["Derived from"]
+    inverse: derives
+    allowed_source_types: ["*"]
+    allowed_target_types: ["*"]
+
+  # The retrospective design explicitly aligns to named requirements.
+  # This records the stated alignment, not proof of implementation or acceptance.
+  - name: aligns-with
+    heading_aliases: ["Requirements alignment"]
+    inverse: aligned-by
+    allowed_source_types: ["Architectural Design"]
+    allowed_target_types: ["Behavioral Requirement", "Obligation Contract", "Quality Scenario"]
 
 # No corpus-wide minimum/maximum link count has been authorized.
 # Add constraints only after a concrete obligation is established.
