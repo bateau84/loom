@@ -20,7 +20,7 @@ export const PROCESSING_LIMITS = Object.freeze({
 })
 export class ProcessingLimitError extends Error {
   readonly code = "LOOM_PROCESSING_LIMIT"
-  constructor(message: string) { super(`Loom processing limit: ${message}`) }
+  constructor(message: string, readonly kind: "capacity" | "invalid-data" = "capacity") { super(`Loom processing limit: ${message}`) }
 }
 /** A monotonic operation budget. Exhaustion never restarts the allowance. */
 export class ProcessingBudget {
@@ -30,7 +30,7 @@ export class ProcessingBudget {
   constructor(readonly maxChars: number = PROCESSING_LIMITS.valueChars, readonly maxValues: number = PROCESSING_LIMITS.values) {
     if (!Number.isSafeInteger(maxChars) || maxChars < 1 || !Number.isSafeInteger(maxValues) || maxValues < 1) throw new Error("Invalid processing budget")
   }
-  fail(reason: string): never { this.exhausted = true; throw new ProcessingLimitError(reason) }
+  fail(reason: string, kind: "capacity" | "invalid-data" = "capacity"): never { this.exhausted = true; throw new ProcessingLimitError(reason, kind) }
   take(chars: number, values = 0) {
     if (this.exhausted || chars > this.maxChars - this.chars || values > this.maxValues - this.values) this.fail(`serialization exceeds ${this.maxChars} characters or ${this.maxValues} values; reduce the payload`)
     this.chars += chars; this.values += values
@@ -52,9 +52,9 @@ export function canonical(value: unknown, budget = new ProcessingBudget()): stri
     if (typeof v === "string") { quote(v); return }
     if (v === null || v === undefined) { emit("null"); return }
     if (typeof v === "number" || typeof v === "boolean") { emit(JSON.stringify(v)); return }
-    if (typeof v !== "object") budget.fail("only plain data can be serialized")
+    if (typeof v !== "object") budget.fail("only plain data can be serialized", "invalid-data")
     const object = v as object
-    if (active.has(object)) budget.fail("cyclic data cannot be serialized")
+    if (active.has(object)) budget.fail("cyclic data cannot be serialized", "invalid-data")
     active.add(object)
     try {
       if (Array.isArray(v)) {
@@ -63,13 +63,13 @@ export function canonical(value: unknown, budget = new ProcessingBudget()): stri
         for (let i = 0; i < v.length; i++) {
           if (i) emit(",")
           const item = Object.getOwnPropertyDescriptor(v, String(i))
-          if (item && !("value" in item)) budget.fail("accessors cannot be serialized")
+          if (item && !("value" in item)) budget.fail("accessors cannot be serialized", "invalid-data")
           walk(item?.value, depth + 1)
         }
         emit("]"); return
       }
       const prototype = Object.getPrototypeOf(v)
-      if (prototype !== Object.prototype && prototype !== null) budget.fail("only plain mappings can be serialized")
+      if (prototype !== Object.prototype && prototype !== null) budget.fail("only plain mappings can be serialized", "invalid-data")
       const keys = Object.keys(v)
       if (keys.length > budget.maxValues - budget.values) budget.fail("mapping exceeds remaining value allowance")
       // Bound key material before sorting. Engine-level key enumeration and proxies
@@ -83,7 +83,7 @@ export function canonical(value: unknown, budget = new ProcessingBudget()): stri
       let first = true
       for (const key of keys.sort((a, b) => a.localeCompare(b))) {
         const item = Object.getOwnPropertyDescriptor(v, key)!
-        if (!("value" in item)) budget.fail("accessors cannot be serialized")
+        if (!("value" in item)) budget.fail("accessors cannot be serialized", "invalid-data")
         if (item.value === undefined) continue
         if (!first) emit(",")
         first = false; quote(key); emit(":"); walk(item.value, depth + 1)

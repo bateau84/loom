@@ -138,10 +138,42 @@ test("tool errors and observed skill contents retain their exact original field 
   expect(result.value?.coverage).toMatchObject({ effective_instructions_and_configuration: "not-observed-by-this-view" })
 })
 
-test("oversized UTF-8 originals and oversized context fail rather than return an excerpt", () => {
-  expect(() => resolveNativeOriginal(request("native-message"), [{ id: "user", type: "user", text: "ø".repeat(140000) }], namespace)).toThrow("processing limit")
-  expect(() => resolveNativeOriginal(request(), [{ id: "assistant", type: "assistant", content: [call("call", "ø".repeat(140000))] }], namespace)).toThrow("processing limit")
-  expect(() => resolveNativeOriginal(request("native-message"), [{ id: "user", type: "user", text: "x".repeat(17 * 1024 * 1024) }], namespace)).toThrow()
+test("native capacity limits return unresolved source gaps without an original or excerpt", () => {
+  let nested: unknown = "original"
+  for (let depth = 0; depth < 50; depth++) nested = { nested }
+  const cases: Array<[RetrospectiveSourceRequest, unknown]> = [
+    [request("native-message"), [{ id: "user", type: "user", text: "ø".repeat(140000) }]],
+    [request(), [{ id: "assistant", type: "assistant", content: [call("call", "ø".repeat(140000))] }]],
+    [request("native-message"), [{ id: "user", type: "user", text: "x".repeat(17 * 1024 * 1024) }]],
+    [request("native-message"), [{ id: "user", type: "user", text: "ø".repeat(9 * 1024 * 1024) }]],
+    [request("native-message"), Array.from({ length: 20001 }, (_, index) => ({ id: "user-" + index, type: "user", text: "small" }))],
+    [request(), [{ id: "assistant", type: "assistant", content: [call("call"), ...Array.from({ length: 60000 }, () => ({ type: "text", text: "small" }))] }]],
+    [request("native-message"), [{ id: "user", type: "user", text: "small", metadata: Array(1000001).fill(0) }]],
+    [request("native-message"), [{ id: "user", type: "user", text: "small", metadata: nested }]],
+  ]
+  for (const [selected, source] of cases) {
+    const resolved = resolveNativeOriginal(selected, source, namespace)
+    expect(resolved).toMatchObject({ ...selected, status: "unresolved", gap: { code: "native-source-processing-limit" } })
+    expect(resolved).not.toHaveProperty("value")
+    expect(resolved.source).toEqual(selected.source)
+  }
+})
+
+test("malformed native data and identity remain errors rather than processing gaps", () => {
+  const cycle: Record<string, unknown> = {}; cycle.self = cycle
+  let accessed = 0
+  const accessor = Object.defineProperty({}, "hidden", { enumerable: true, get: () => { accessed++; return "no" } })
+  const arrayAccessor: unknown[] = [null]
+  Object.defineProperty(arrayAccessor, "0", { get: () => { accessed++; return "no" } })
+  for (const metadata of [cycle, accessor, arrayAccessor, new Date(), () => "invalid"]) {
+    expect(() => resolveNativeOriginal(request("native-message"), [{ id: "user", type: "user", text: "original", metadata }], namespace)).toThrow()
+  }
+  expect(accessed).toBe(0)
+  for (const source of [null, {}, [null], [{ id: "invalid message id", type: "user", text: "original" }]])
+    expect(() => resolveNativeOriginal(request("native-message"), source, namespace)).toThrow()
+  expect(() => resolveNativeOriginal(request(), [{ id: "assistant", type: "assistant", content: [
+    { ...call("call"), state: { status: "invented" } },
+  ] }], namespace)).toThrow("Invalid normalized native tool status")
 })
 
 test("source descriptor does not promote other references or create native message identity", () => {

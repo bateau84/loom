@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { canonical, ProcessingBudget, uid } from "./model.js"
+import { canonical, ProcessingBudget, ProcessingLimitError, uid } from "./model.js"
 
 const MAX_SOURCE_BYTES = 16 * 1024 * 1024
 const MAX_MESSAGES = 20000
@@ -46,12 +46,12 @@ const sha256 = (value: unknown, label: string): string => {
 }
 function serialized(value: unknown, maxBytes = MAX_SOURCE_BYTES): string {
   const result = canonical(value, new ProcessingBudget(maxBytes, MAX_VALUES))
-  if (Buffer.byteLength(result, "utf8") > maxBytes) throw new Error("Native evidence exceeds byte processing limit")
+  if (Buffer.byteLength(result, "utf8") > maxBytes) throw new ProcessingLimitError("Native evidence exceeds byte processing limit")
   return result
 }
 function encodedMessages(messages: unknown): string {
-  if (!Array.isArray(messages) || messages.length > MAX_MESSAGES)
-    throw new Error("Native evidence requires at most 20000 normalized messages")
+  if (!Array.isArray(messages)) throw new Error("Native evidence requires normalized messages")
+  if (messages.length > MAX_MESSAGES) throw new ProcessingLimitError("Native evidence requires at most 20000 normalized messages")
   return serialized(messages)
 }
 
@@ -73,7 +73,7 @@ function inspect(messages: unknown): Source {
     if (message.type !== "assistant") continue
     if (!Array.isArray(message.content)) throw new Error("Native assistant message has no normalized content")
     partCount += message.content.length
-    if (partCount > MAX_PARTS) throw new Error("Native evidence exceeds 60000 content parts")
+    if (partCount > MAX_PARTS) throw new ProcessingLimitError("Native evidence exceeds 60000 content parts")
     const identities = new Set<string>()
     const time = mapping(message.time)
     const messageCreatedAt = typeof time?.created === "number" && Number.isFinite(time.created) && time.created >= 0

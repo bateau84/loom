@@ -81,7 +81,7 @@ bounded native/GitHub resolution to selected-population preparation and readers.
 ### Original-source resolution
 
 ```sh
-bun test tests/native-originals-native.test.ts tests/external-originals-native.test.ts tests/original-source-populations-native.test.ts tests/retrospective-source-view-native.test.ts
+bun test tests/native-originals-native.test.ts tests/external-originals-native.test.ts tests/original-source-populations-native.test.ts tests/original-source-limits-native.test.ts tests/retrospective-source-view-native.test.ts
 python3 -m unittest discover -s tests -p 'test_installed_original_sources.py'
 ```
 
@@ -91,6 +91,8 @@ digests, fixed CLI arguments and authorization failures. The external transport
 also qualifies the installed `gh` 2.46.0 against a loopback source fixture,
 including byte-exact logs and redirected archive bytes. This is CLI behavior
 qualification with controlled originals, not authenticated GitHub-account proof.
+That real installed-CLI check explicitly skips when no qualified executable is
+available; the controlled transport checks still run.
 
 `original-source-populations-native.test.ts` exercises the actual registered
 preview/freeze/source tools through the production subprocess boundary. Its
@@ -99,6 +101,16 @@ correction file, both named subtests and suite-level race output separate. It
 also tests source substitution, current denial, later availability requiring a
 new population, and no raw original persistence. Source-view tests reconstruct
 Unicode content from every fragment and check inert shared document rendering.
+
+`original-source-limits-native.test.ts` freezes available native originals, then
+exceeds selected-output, context-size and message/part-count limits. Registered
+population readers must reconstruct the unchanged complete membership and pins
+through continuation while reporting explicit current-source gaps. Malformed
+identity, denial and in-flight cancellation remain errors. Registered admission
+checks exercise 53/54/55 native/external owner attempts, the original 65-source
+counterexample, repeated associations, source or authorization changes during revalidation and
+the reserved default freeze response. Mixed native/external alias coverage in
+the source-population suite verifies counting occurs before deduplication.
 
 The installed historical-evidence harness retains its existing 19 checks and
 adds four original-source checks, for 23 total. These use actual native user/tool

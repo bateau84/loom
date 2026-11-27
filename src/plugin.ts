@@ -36,6 +36,13 @@ import { externalOriginalDescriptor, resolveExternalOriginal } from "./external-
 import { nativeOriginalDescriptor, resolveNativeOriginal } from "./native-originals.js"
 import { retrospectiveSourceView, renderRetrospectiveSourceHTML, renderRetrospectiveSourceMarkdown } from "./retrospective-source-view.js"
 
+const ORIGINAL_READ_LIMIT = 128
+const FREEZE_POPULATION_PAGE_LIMIT = 20
+// Reserve a fresh owner validation for every selected original and every item
+// in the freeze response. Deduplication may reduce work; admission never relies
+// on it. Preview presentation (at most 50 items) also fits the same total cap.
+const ORIGINAL_SELECTION_LIMIT = Math.floor((ORIGINAL_READ_LIMIT - FREEZE_POPULATION_PAGE_LIMIT) / 2)
+
 function payload(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected an object")
   return value as Record<string, unknown>
@@ -601,9 +608,11 @@ export default Plugin.define({
               }
               await assertEvidence([...evidenceResources])
             }
-            let originalReads = 0, originalSignal: AbortSignal | undefined
+            let originalReads = 0, originalSelectionReads: number | undefined, originalSignal: AbortSignal | undefined
             const originalReadSignal = () => {
-              if (++originalReads > 128) throw new Error("Original-source resolution exceeds the complete bounded read; narrow the selected population")
+              if (originalSelectionReads !== undefined && ++originalSelectionReads > ORIGINAL_SELECTION_LIMIT)
+                throw new Error(`Retrospective selection exceeds ${ORIGINAL_SELECTION_LIMIT} native/external resolution attempts; narrow the selection to reserve freeze revalidation and readback within ${ORIGINAL_READ_LIMIT} reads`)
+              if (++originalReads > ORIGINAL_READ_LIMIT) throw new Error("Original-source resolution exceeds the complete bounded read; narrow the selected population")
               return originalSignal ??= AbortSignal.any([lifetime.signal, toolContext.signal, AbortSignal.timeout(60000)])
             }
             const populationResolver: RetrospectiveSourceResolver = async request => {
@@ -692,8 +701,12 @@ export default Plugin.define({
               const { mode: _mode, question: _question, exclusions: _exclusions, ...query } = selection
               const history = await authorizedHistory({ ...query, limit: 20 }, true)
               await populationContributors(history.contributors)
-              const manifest = await requiredLearning().populations.preview(actor, selection, history, populationResolver,
-                source => externalOriginalDescriptor(source) ?? nativeOriginalDescriptor(source, requiredLearning().automatic.sources.namespace) ?? undefined)
+              let manifest: RetrospectiveManifest
+              originalSelectionReads = 0
+              try {
+                manifest = await requiredLearning().populations.preview(actor, selection, history, populationResolver,
+                  source => externalOriginalDescriptor(source) ?? nativeOriginalDescriptor(source, requiredLearning().automatic.sources.namespace) ?? undefined)
+              } finally { originalSelectionReads = undefined }
               await evidenceSourceCheck?.()
               return manifest
             }
@@ -771,7 +784,7 @@ export default Plugin.define({
                     await evidenceSourceCheck?.()
                     population = requiredLearning().automatic.history.freezeRetrospective(actor, manifest)
                   }
-                  result = await requiredLearning().populations.page(actor, population.manifest, populationResolver, { population })
+                  result = await requiredLearning().populations.page(actor, population.manifest, populationResolver, { population, limit: FREEZE_POPULATION_PAGE_LIMIT })
                 }
                 else if (input.operation === "prepare-evaluation") {
                   await ctx.permission.assert({ action: "read", resources: [learningFilename], sessionID: toolContext.sessionID, agent: toolContext.agent,

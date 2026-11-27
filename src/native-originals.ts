@@ -1,4 +1,4 @@
-import { canonical, digest, ProcessingBudget, uid } from "./model.js"
+import { canonical, digest, ProcessingBudget, ProcessingLimitError, uid } from "./model.js"
 import type { EvaluationSourceRef } from "./evaluation-store.js"
 import { nativeEvidenceDigest, nativeEvidenceSource, type NativeEvidenceField } from "./native-evidence.js"
 import type { RetrospectiveSourceRequest, RetrospectiveSourceResolution } from "./retrospective-populations.js"
@@ -15,7 +15,7 @@ export type NativeOriginalDescriptor = {
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value)
 const bounded = (value: unknown, bytes: number) => {
   const encoded = canonical(value, new ProcessingBudget(bytes, MAX_VALUES))
-  if (Buffer.byteLength(encoded, "utf8") > bytes) throw new Error("Native original exceeds byte processing limit")
+  if (Buffer.byteLength(encoded, "utf8") > bytes) throw new ProcessingLimitError("Native original exceeds byte processing limit")
   return encoded
 }
 const fingerprint = (value: unknown) => digest(value, new ProcessingBudget(MAX_SOURCE_BYTES, MAX_VALUES))
@@ -45,6 +45,20 @@ export function resolveNativeOriginal(request: RetrospectiveSourceRequest, messa
     throw new Error("Native original unavailable in the authorized scope")
   uid(namespace.project_id, "native project")
   if (namespace.workspace_id !== null) uid(namespace.workspace_id, "native workspace")
+  try {
+    return projectNativeOriginal(request, messages, namespace, descriptor)
+  } catch (error) {
+    // Availability can change without invalidating the immutable membership.
+    // Only finite processing capacity becomes a source gap. Malformed source
+    // data, identity bindings and caller authorization must still fail closed.
+    if (!(error instanceof ProcessingLimitError) || error.kind !== "capacity") throw error
+    return { ...request, status: "unresolved", gap: { code: "native-source-processing-limit",
+      detail: "The current native context or selected original exceeds a processing limit. No original content was returned; frozen membership and source pins remain unchanged." } }
+  }
+}
+
+function projectNativeOriginal(request: RetrospectiveSourceRequest, messages: unknown,
+  namespace: NativeOriginalNamespace, descriptor: NativeOriginalDescriptor): RetrospectiveSourceResolution {
   // Reuse the existing finite normalized-context budget. Its digest is useful
   // only while reading; never put it in a member version or stable projection.
   const contextSha256 = nativeEvidenceDigest(messages)

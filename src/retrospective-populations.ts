@@ -264,7 +264,7 @@ export class RetrospectivePopulations {
     input: { after?: unknown; limit?: unknown; population?: RetrospectivePopulation } = {}) {
     const after = pageInteger(input.after, 0, 0, manifest.members.length), limit = pageInteger(input.limit, 20, 1, 50)
     const { members, ...header } = manifest, sha256 = retrospectiveDigest(manifest), frozen = input.population
-    const items: Array<RetrospectiveMember & { ordinal: number; current: { status: string }; inspect: Record<string, unknown> | null }> = []
+    const items: Array<RetrospectiveMember & { ordinal: number; current: { status: string; gap?: { code: string; detail: string } }; inspect: Record<string, unknown> | null }> = []
     const query = frozen ? { operation: "population", population_id: frozen.population_id, manifest_sha256: sha256 }
       : { operation: "preview-population", selection: manifest.selection }
     const result = { format: "loom-retrospective-population-view/v1", state: frozen ? "frozen" : "preview",
@@ -275,7 +275,7 @@ export class RetrospectivePopulations {
       availability_scope: "current page only; frozen membership and qualifications remain unchanged", execution_permit: null }
     for (let index = after; index < Math.min(members.length, after + limit); index++) {
       const member = members[index]!, resolved = await this.resolve(actor, member, resolver)
-      const item = { ...member, ordinal: index + 1, current: { status: resolved.status }, inspect: frozen ? { operation: "population-source",
+      const item = { ...member, ordinal: index + 1, current: { status: resolved.status, ...(resolved.gap ? { gap: resolved.gap } : {}) }, inspect: frozen ? { operation: "population-source",
         population_id: frozen.population_id, manifest_sha256: sha256, member_key: member.key } : null }
       const next = index + 1 < members.length ? { ...query, after: index + 1, limit } : null
       try {

@@ -286,3 +286,32 @@ test("new preview canonicalizes an explicit job alias while retaining exact-atte
     expect(data[`${prefix}/actions/runs/10`]).toBeUndefined()
   } finally { await fixture.close() }
 }, 30000)
+
+test("native and external aliases share selection admission before canonical membership deduplication", async () => {
+  const fixture = await externalFixture(), { f, url } = fixture
+  try {
+    const { selected, selection } = await objective(f)
+    const context = Array.from({ length: 53 }, (_, index) => ({ id: "budget-native-" + index, type: "user", text: "Controlled original " + index }))
+    f.nativeContexts.set("owner", { data: context })
+    for (const message of context) await invoke(f, "objective", { operation: "link", objective_id: selected.id,
+      phase: "request", source_type: "native-message", source_id: message.id })
+    await invoke(f, "objective", { operation: "link", objective_id: selected.id, phase: "coordination",
+      source_type: "external-ref", source_id: url("actions/runs/10/job/101") })
+    const preview = await invoke(f, "history", { operation: "preview-population", selection, limit: 1 })
+    const population = await invoke(f, "review", preview.freeze), originalMembers = await collect(f, population)
+    expect(originalMembers.filter(member => member.source.kind === "native-message")).toHaveLength(53)
+    expect(originalMembers.filter(member => member.source.kind === "external-ref")).toHaveLength(1)
+    const root = join(f.directory, "state", "loom", "actions-v1", digest({ project: "tool-help", canonical: f.directory }))
+    const db = new Database(join(root, "learning.sqlite"), { readonly: true })
+    try {
+      const before = db.query("SELECT * FROM learning_retrospective_populations").all()
+      await invoke(f, "objective", { operation: "link", objective_id: selected.id, phase: "coordination",
+        source_type: "external-ref", source_id: url("actions/runs/10/attempts/1/jobs/101") })
+      await expect(invoke(f, "history", { operation: "preview-population", selection, limit: 1 }))
+        .rejects.toThrow("selection exceeds 54 native/external resolution attempts")
+      expect(db.query("SELECT * FROM learning_retrospective_populations").all()).toEqual(before)
+    } finally { db.close() }
+    // The newly inadmissible selection cannot invalidate or block the earlier freeze replay.
+    expect((await invoke(f, "review", preview.freeze)).population_id).toBe(population.population_id)
+  } finally { await fixture.close() }
+}, 30000)

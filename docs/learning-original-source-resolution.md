@@ -141,6 +141,18 @@ Each external original is limited to eight generated GET requests, 1 MiB per API
 response, 512 KiB of original bytes and a 1 MiB complete permitted representation.
 Each subprocess has a 20-second timeout. One registered tool call permits at most
 128 native/external resolutions within a 60-second original-resolution deadline.
+New selection admission permits at most **54 native/external owner-resolution
+attempts**, including repeated associations and equivalent locator aliases.
+This reserves fresh validation for every selected original and the complete
+default 20-member freeze response within the existing limit:
+`54 + 54 + 20 = 128`. A preview page of up to 50 members also fits
+(`54 + 50 <= 128`). The limit counts actual owner attempts before member
+deduplication, not only unique originals. A larger selection is rejected before
+a freeze request is returned or a population is published. This is a structural
+read-count admission rule, not a latency guarantee: changed sources, current
+authorization, cancellation and the unchanged shared deadline can still reject
+a later freeze. Existing frozen populations and freeze replays are not subject
+to new-selection admission; their bounded readers retain the 128-read limit.
 These are complete-read ceilings, not truncation rules. Original representations
 are then returned in at most 32,768 UTF-16-unit fragments without splitting
 surrogate pairs; the complete structured response stays within the existing
@@ -263,6 +275,17 @@ unapproved response bodies or protected native material. No successful read
 creates a capture permission, retained transcript, execution permit or provider
 reservation.
 
+If native context or original content outgrows byte, message/part-count, value or
+depth capacity after freezing, the original resolves to the typed
+`unresolved` / `native-source-processing-limit` gap. Authorized population pages
+retain every frozen member, source pin, digest and continuation and expose the
+same bounded gap in the current-source status. They return no original or
+excerpt. Preparation still rejects a previously available original that is now
+unresolved. Invalid source data or identity, authorization failures and
+cancellation remain errors. The existing native trace interfaces continue to
+reject capacity failures; only the population original resolver converts them
+into availability gaps.
+
 ## Recovery and qualification obligations
 
 Only descriptors and membership remain durable. Existing paired backups verify
@@ -282,6 +305,8 @@ authorization; lost or changed originals remain explicit gaps.
 | Unauthorized contributor, original or recipient disclosure | Whole unauthorized view withheld, including metadata and derived counts. |
 | Revocation observed during a bounded read | Withhold response through the existing final check; separately qualify any claimed atomic owner release. |
 | Oversized, truncated or incomplete source | Explicit failure/coverage limitation, never a successful full-content prefix. |
+| Native source/context exceeds capacity after freeze | Typed source gap; complete authorized frozen membership and continuation remain readable. |
+| Selection at the owner-resolution admission boundary | 53/54 attempts can preview and freeze with unchanged fast sources; 55 attempts reject before publication. Revalidation and bounded readback remain reserved. |
 | Restart, restore and preparation readback | Exact descriptors and membership survive; current sources are rechecked; v2 execution remains rejected. |
 | Equivalent structured and human views | Same source identities, qualifications, coverage and exact inspection requests. |
 
