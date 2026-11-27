@@ -14,11 +14,14 @@ export type RetrospectiveSourceRequest = {
 }
 export type RetrospectiveSourceResolution = {
   source_store_id: string; source: EvaluationSourceRef; permitted_view: string; recipient_session_id: string;
-  status: "available" | "missing" | "changed" | "unsupported"; value?: Record<string, unknown>;
+  status: "available" | "missing" | "changed" | "unresolved" | "unsupported"; value?: Record<string, unknown>;
+  gap?: { code: string; detail: string };
 }
 /** The owner must await its actual inspection/recipient-policy checks. An exact
  * source return authorizes this reader only, never a future Evaluator recipient. */
 export type RetrospectiveSourceResolver = (request: RetrospectiveSourceRequest) => Promise<RetrospectiveSourceResolution>
+export type RetrospectiveOriginalDescriptor = { source_store_id: string; permitted_view: string; source?: EvaluationSourceRef }
+export type RetrospectiveOriginalSelector = (source: EvaluationSourceRef) => RetrospectiveOriginalDescriptor | undefined
 export type RetrospectiveHistory = {
   query: EngineeringHistoryQuery; view: EngineeringHistoryView; owners: EngineeringHistoryOwners;
   associations?: ReturnType<ObjectiveIndex["retrospectiveSources"]>; contributors: string[];
@@ -82,8 +85,12 @@ async function ownerRead(request: RetrospectiveSourceRequest, resolver: Retrospe
     if (request.source.revision !== undefined && request.source.revision !== result.source.revision
       || request.source.sha256 !== undefined && request.source.sha256 !== result.source.sha256)
       return { ...request, status: "changed" }
-  } else if (!["missing", "changed", "unsupported"].includes(result.status) || result.value !== undefined)
+  } else if (!["missing", "changed", "unresolved", "unsupported"].includes(result.status) || result.value !== undefined)
     throw new Error("Invalid retrospective source-owner result")
+  if (result.gap !== undefined && (result.status === "available" || !object(result.gap)
+    || typeof result.gap.code !== "string" || result.gap.code.length > 120
+    || typeof result.gap.detail !== "string" || result.gap.detail.length > 2000))
+    throw new Error("Invalid retrospective source-owner gap")
   return result
 }
 
@@ -92,7 +99,8 @@ async function ownerRead(request: RetrospectiveSourceRequest, resolver: Retrospe
 export class RetrospectivePopulations {
   constructor(private readonly automatic: AutomaticLearning, private readonly store: Store) {}
 
-  async preview(actor: Actor, proposal: RetrospectiveProposal, history: RetrospectiveHistory, resolver: RetrospectiveSourceResolver): Promise<RetrospectiveManifest> {
+  async preview(actor: Actor, proposal: RetrospectiveProposal, history: RetrospectiveHistory, resolver: RetrospectiveSourceResolver,
+    selectOriginal: RetrospectiveOriginalSelector = () => undefined): Promise<RetrospectiveManifest> {
     const { owners, associations } = history
     if (!associations || !owners.objectives || history.query.through === undefined) throw new Error("Retrospective objective owner unavailable")
     const objective = owners.objectives.objectives.find(item => item.id === proposal.objective_id)
@@ -134,12 +142,12 @@ export class RetrospectivePopulations {
       relationships.set(key, { ...relation, target: includedRefs.has(relation.to) ? "included" : "in-scope-not-included" })
     const members = new Map<string, RetrospectiveMember>(), contributors = new Set(history.contributors)
     const add = (source: EvaluationSourceRef, view: string, availability: RetrospectiveMember["availability"], basis: Record<string, unknown>[],
-      historical_scope: Record<string, unknown> | null, qualifications: string[]) => {
-      const key = retrospectiveMemberKey(this.automatic.sources.namespace, source, view), prior = members.get(key)
+      historical_scope: Record<string, unknown> | null, qualifications: string[], sourceStoreID = this.automatic.sources.namespace) => {
+      const key = retrospectiveMemberKey(sourceStoreID, source, view), prior = members.get(key)
       if (source.session_id) contributors.add(source.session_id)
       const uniqueBasis = [...new Map([...(prior?.basis ?? []), ...basis].map(item => [fingerprint(item), item])).entries()]
         .sort(([a], [b]) => a.localeCompare(b)).map(([, item]) => item)
-      members.set(key, { key, source_store_id: this.automatic.sources.namespace, source, permitted_view: view, availability,
+      members.set(key, { key, source_store_id: sourceStoreID, source, permitted_view: view, availability,
         basis: uniqueBasis, historical_scope, qualifications: [...new Set([...(prior?.qualifications ?? []), ...qualifications])].sort() })
     }
     const original = async (kind: string, id: string, session: string, expected?: EvaluationSourceRef) => ownerRead({
@@ -176,19 +184,34 @@ export class RetrospectivePopulations {
           ? "relationships-omitted in initial history page; returned continuations are exhausted; references beyond bounded owner resolution remain unqualified"
           : gap.code + ": " + gap.detail))
     }
-    // All original associations are retained, including explicit missing/native/
-    // external references. They remain authored identity claims, not fetched data.
+    // Keep the authored association separately from the selected original. Only
+    // a NEW preview can establish the original's identity/version/permitted view.
+    // Existing reference-only frozen members never acquire a new identity here.
     for (const [sequence, link] of links) {
       if (typeof link.source_type !== "string" || typeof link.source_id !== "string") throw new Error("Invalid retrospective association source")
       if (link.source_type === "ledger-record" && (records.has(link.source_id) || excluded.has(link.source_id))) continue
       const source: EvaluationSourceRef = { kind: link.source_type, id: link.source_id, required: true,
         ...(typeof link.source_session_id === "string" ? { session_id: link.source_session_id } : {}),
         ...(link.source_type === "native-call" && typeof link.source_message_id === "string" ? { message_id: link.source_message_id } : {}) }
+      const basis = [{ kind: "authored-source-reference", objective_id: objective.id, association_sequence: sequence,
+        declared_source: source,
+        source_message_id: link.source_message_id ?? null, verification: link.verification, phase: link.phase,
+        confidence: link.confidence, gap_reason: link.gap_reason ?? null }]
+      const descriptor = selectOriginal(source)
+      if (descriptor) {
+        const selectedSource = descriptor.source ?? source
+        const resolved = await ownerRead({ ...descriptor, source: selectedSource, recipient_session_id: actor.session_id, purpose: "preview" }, resolver)
+        add(resolved.status === "available" ? resolved.source : selectedSource, descriptor.permitted_view,
+          resolved.status === "changed" ? "unresolved" : resolved.status, basis, null,
+          ["authored relationship retained; source retrieval does not establish causation or objective independence",
+            "original is only the selected owner representation; inspect its coverage and provenance",
+            ...(resolved.status === "available" ? [] : [resolved.gap ? resolved.gap.code + ": " + resolved.gap.detail : "original unavailable during selection"]),
+            "no recipient execution or protected transfer authority established"], descriptor.source_store_id)
+        continue
+      }
       add(source, link.source_type === "ledger-record" ? "record-full" : "reference-only",
         link.source_type === "ledger-record" || link.source_type === "unavailable" ? "missing" : "unsupported",
-        [{ kind: "authored-source-reference", objective_id: objective.id, association_sequence: sequence,
-          source_message_id: link.source_message_id ?? null, verification: link.verification, phase: link.phase,
-          confidence: link.confidence, gap_reason: link.gap_reason ?? null }], null,
+        basis, null,
         ["original source/version not resolved; identity is an authored reference", "no source release or recipient authority established"])
     }
     for (const review of owners.reviews?.requests ?? []) {
@@ -215,16 +238,17 @@ export class RetrospectivePopulations {
         review_access: "requester-owned complete mandates only; other reviews remain unqualified",
         exclusions: selection.exclusions, exclusion_effect: excluded.size ? "explicit supporting-basis gaps; excluded originals are not population members" : "none" },
       qualifications: ["explicit investigator selection; relevance to question is authored, not automatically inferred",
-        "frozen membership is not retention or immutability of originals", "native/full-history and external originals remain separate owner dependencies",
+        "frozen membership is not retention or immutability of originals", "original coverage is limited to each selected source-owner view; native full history remains unavailable",
         "no inferred independent objective count", "preparation grants no recipient release or execution permit",
         "original-source modification/replacement semantics remain unresolved"] })
   }
 
   async resolve(actor: Actor, member: RetrospectiveMember, resolver: RetrospectiveSourceResolver, purpose: "inspect" | "prepare" = "inspect") {
-    if (member.availability !== "available") return { status: member.availability === "missing" ? "missing" as const : "unsupported" as const }
+    if (member.availability !== "available") return { status: member.availability,
+      gap: { code: "unresolved-at-freeze", detail: "No original version was selected. A fresh preview and explicit freeze are required to establish a new source identity." } }
     const result = await ownerRead({ source_store_id: member.source_store_id, source: member.source, permitted_view: member.permitted_view,
       recipient_session_id: actor.session_id, purpose }, resolver)
-    return { status: result.status, ...(result.status === "available" ? { value: result.value } : {}) }
+    return { status: result.status, ...(result.status === "available" ? { value: result.value } : {}), ...(result.gap ? { gap: result.gap } : {}) }
   }
 
   async validateForPreparation(actor: Actor, population: RetrospectivePopulation, resolver: RetrospectiveSourceResolver) {
@@ -240,7 +264,7 @@ export class RetrospectivePopulations {
     input: { after?: unknown; limit?: unknown; population?: RetrospectivePopulation } = {}) {
     const after = pageInteger(input.after, 0, 0, manifest.members.length), limit = pageInteger(input.limit, 20, 1, 50)
     const { members, ...header } = manifest, sha256 = retrospectiveDigest(manifest), frozen = input.population
-    const items: Array<RetrospectiveMember & { ordinal: number; current: { status: string }; inspect: Record<string, unknown> | null }> = []
+    const items: Array<RetrospectiveMember & { ordinal: number; current: { status: string; gap?: { code: string; detail: string } }; inspect: Record<string, unknown> | null }> = []
     const query = frozen ? { operation: "population", population_id: frozen.population_id, manifest_sha256: sha256 }
       : { operation: "preview-population", selection: manifest.selection }
     const result = { format: "loom-retrospective-population-view/v1", state: frozen ? "frozen" : "preview",
@@ -251,7 +275,7 @@ export class RetrospectivePopulations {
       availability_scope: "current page only; frozen membership and qualifications remain unchanged", execution_permit: null }
     for (let index = after; index < Math.min(members.length, after + limit); index++) {
       const member = members[index]!, resolved = await this.resolve(actor, member, resolver)
-      const item = { ...member, ordinal: index + 1, current: { status: resolved.status }, inspect: frozen ? { operation: "population-source",
+      const item = { ...member, ordinal: index + 1, current: { status: resolved.status, ...(resolved.gap ? { gap: resolved.gap } : {}) }, inspect: frozen ? { operation: "population-source",
         population_id: frozen.population_id, manifest_sha256: sha256, member_key: member.key } : null }
       const next = index + 1 < members.length ? { ...query, after: index + 1, limit } : null
       try {
