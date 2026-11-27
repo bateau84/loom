@@ -86,15 +86,15 @@ Historical WorkRefs differ from current Plan; unplanned history uses observed gr
 
 An Action can contain many objectives or none. `loom_objective find` is exact-source lookup, not label/text search. Use `{"operation":"find","source_type":"ledger-record","source_id":"RECORD_ID"}`. Choose the relevant `result.items[].id`; inspect `read` if ambiguous. Several goals may share a source. Native sources also need Session/message identity. `list` browses labels; follow `navigation.next` as needed.
 
-Empty `find` does not prevent source investigation. Preview does require an authored objective. If authorized, `create` with actual source_type/source_id, truthful label and distinct unit_key for separate goals sharing an anchor. Its `result.id` is the objective ID. Link relevant originals with `link`; preserve the meaning of phase/assessment, uncertainty and authorship. Relationships are attributed interpretation, not invented dispatch, causation or historical review membership. Do not create an objective merely to make a read succeed.
+Empty `find` does not block investigation; preview needs an authored objective. If authorized, `create` with actual source IDs, truthful label and distinct unit_key for goals sharing an anchor. Use `result.id`. Link originals with honest phase/assessment, uncertainty and authorship; not invented dispatch, causation or review membership. Never create merely to enable a read.
 
 ### Preview, approve, freeze, inspect
 
 1. Call history with `{"operation":"preview-population","selection":{"objective_id":"OBJECTIVE_ID","question":"What corrected this failure and what remains unverified?"},"limit":20}`. Omit boundary parameters initially. History and preview use different boundary versions. Do not copy history pins into selection or guess partial boundaries; reuse only the preview's returned requests. Objective/question belong inside selection.
-2. Review membership/exclusions/gaps; follow `navigation.next` unchanged to completion. Ordinary discovery need not exhaust every branch. Preview is read-only, with no population ID.
+2. Review all membership/exclusions/gaps via `navigation.next` unchanged. Ordinary discovery need not exhaust branches. Read-only preview has no population ID.
 3. Obtain approval for that exact selection, or apply existing authorization. Changed scope needs a new preview. Approval is not a Boolean/tool operation.
 4. Send the approved preview's `freeze` request unchanged to `loom_review`. Save returned `population_id` and `manifest_sha256`. Freeze persists membership/versions, not evidence bodies or an execution permit.
-5. Follow frozen navigation; send member `inspect` unchanged for exact source. Check available/missing/changed/unsupported and gaps. Source-owner limits still apply; hashes/pointers are not contents.
+5. Follow member `inspect`, then `navigation.next` for any `content_json` fragments (also preparation sources: population hash, not preparation hash). Verify SHA-256 before parsing. Check available/missing/changed/unsupported; unresolved originals need fresh preview/freeze. Pointers grant no access.
 
 Historical investigation, evidence preparation and authorized execution are distinct. These steps grant no execution/source access or genuine-reasoning proof.
 

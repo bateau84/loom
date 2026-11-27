@@ -33,6 +33,10 @@ from installed_retrospective_populations import (
     assert_population_setup_effects, assert_population_stable, prepare_population, read_population_pages,
 )
 from installed_native_review import ReviewScenario
+from installed_original_sources import (
+    exercise_original_negatives, inspect_original_fragments, inspect_original_population,
+    inspect_original_restart, install_source_owner, prepare_original_population,
+)
 from installed_questions import audit_session, events, idle, request, result_value
 from native_review_oracle import call_key
 
@@ -60,6 +64,10 @@ CHECKS = {
     "frozen-population-complete-membership-and-shared-inspection",
     "frozen-population-native-source-denials",
     "frozen-population-restart-and-late-associations",
+    "frozen-original-source-native-and-external-read",
+    "frozen-original-source-bounded-readback",
+    "frozen-original-source-identity-and-denial-controls",
+    "frozen-original-source-restart",
     "historical-sources-unchanged-and-no-evaluator-effects",
 }
 
@@ -784,6 +792,7 @@ def run(args) -> dict:
                   "Revocation is exercised between retrievals; stale pending approval and atomic policy/return fencing remain unqualified.",
                   "Only this route's calls, UTF-8 response bytes and latency are measured; no baseline or token-cost saving is claimed.",
                   "Current activity explicitly enables experimental.part_rows=true; default OpenCode 2.3.0 storage is not inferred.",
+                  "Original GitHub responses use a disposable gh fixture through the real installed resolver; no live account authorization or private investigation is claimed.",
               ]}
     host = None
     temporary_root = None
@@ -792,7 +801,7 @@ def run(args) -> dict:
         report.update(verify_candidate(args, repo))
         report["input_sha256"] = {name: sha(repo / name) for name in (
             "tests/installed_historical_evidence.py", "tests/installed_native_review.py", "tests/native_review_oracle.py",
-            "tests/installed_learning_stage4.py", "tests/installed_retrospective_populations.py", "tests/installed_questions.py", "tests/installed_host_smoke.py",
+            "tests/installed_learning_stage4.py", "tests/installed_retrospective_populations.py", "tests/installed_original_sources.py", "tests/installed_questions.py", "tests/installed_host_smoke.py",
             "tests/installed_instruction_variants.py", "tests/question-host/server.ts", "tests/question-host/provider.mjs",
             "tests/question-host/review-script.ts", "package.json", "bun.lock", ".bun-version")}
         report["cli_sha256"] = sha(args.opencode.resolve())
@@ -802,6 +811,7 @@ def run(args) -> dict:
             project = root / "project"
             project.mkdir()
             env = isolated_environment(root)
+            original_owner = install_source_owner(root, env)
             env["LOOM_QUESTION_FIXTURE"] = str(root)
             database = root / "data" / "fixture-native.db"
             env["OPENCODE_DB"] = str(database)
@@ -927,6 +937,14 @@ def run(args) -> dict:
                           preview_pages=population["expected"]["pages"], member_count=population["expected"]["member_count"],
                           preparation_request_id=population["prepared"]["request_id"], freeze_replay_identity_preserved=True,
                           source_policy="declared-not-authority", **setup_effects)
+                    original_start = len(events(root))
+                    scenario.invocation_plan = []
+                    original_population = prepare_original_population(scenario, second_reader,
+                        lambda: native_export(host, owned, second_reader), original_owner)
+                    report["original_source_setup_effects"] = assert_population_setup_effects(
+                        events(root)[original_start:], second_reader, scenario.invocation_plan)
+                    report["original_source_setup_driver_invocations"] = scenario.invocation_plan
+                    scenario.invocation_plan = None
                     idle(host, [parent, reader, *children])
                     originals = {session: native_export(host, owned, session) for session in (parent, *children)}
                     inline = import_inline_control(host, owned, project, originals[parent])
@@ -1096,6 +1114,10 @@ def run(args) -> dict:
                     check("frozen-population-complete-membership-and-shared-inspection", pages=population_read["pages"],
                           member_count=population_read["member_count"], exact_originals=population_read["original_count"],
                           rendering=assert_population_renderings(population_first, population_markdown, population_html))
+                    check("frozen-original-source-native-and-external-read",
+                          **inspect_original_population(scenario, original_population))
+                    check("frozen-original-source-bounded-readback",
+                          **inspect_original_fragments(scenario, original_population))
 
                     inventories = {}
                     for label, session in (("split", parent), ("inline", imported)):
@@ -1167,9 +1189,9 @@ def run(args) -> dict:
                         "match": "LOOM_HARNESS_JOB:", "match_fields": ["input"]}, "unsupported-source-release")
                     check("cross-session-and-export-raw-release-blocked", raw_reads=2, body_matching=1)
 
-                    def set_policy(rules):
-                        request(host, "PATCH", f"/api/session/{reader}", {"permissions": rules})
-                        require(request(host, "GET", f"/api/session/{reader}").get("permissions") == rules,
+                    def set_policy(rules, target=reader):
+                        request(host, "PATCH", f"/api/session/{target}", {"permissions": rules})
+                        require(request(host, "GET", f"/api/session/{target}").get("permissions") == rules,
                                 "Native reader policy did not retain the exact rules")
 
                     def selective_policy(query, selected_fields):
@@ -1231,6 +1253,9 @@ def run(args) -> dict:
                     scenario.denied(reader, "history", {**population["query"], "manifest_sha256": "f" * 64})
                     check("frozen-population-native-source-denials", derived_denials=population_denials,
                           wrong_manifest_identity_rejected=True, protected_originals_disclosed=False)
+                    check("frozen-original-source-identity-and-denial-controls",
+                          **exercise_original_negatives(scenario, original_population, reader,
+                              lambda rules: set_policy(rules, second_reader), allow))
 
                     children_query = {"operation": "children", "access": "historical", "session_id": parent, "limit": 50}
                     parts_query = {"operation": "parts", "session_id": parent, "export_path": export_files["split"].name, "tool": "subagent"}
@@ -1317,6 +1342,7 @@ def run(args) -> dict:
                           manifest_sha256=restarted["manifest_sha256"], late_record_excluded=population["late"]["id"],
                           late_existing_source_association_excluded=population["fixture"]["unrelated"]["id"],
                           same_membership_after_restart=True, member_count=restarted["member_count"])
+                    check("frozen-original-source-restart", **inspect_original_restart(scenario, original_population))
 
                     for session, before in originals.items():
                         require(native_export(host, owned, session) == before, "Historical native Session changed during evidence retrieval")

@@ -1,5 +1,6 @@
 import { writeFile } from "node:fs/promises"
 import { registeredLoom } from "./registered-loom.js"
+import { TOOL_EXAMPLES } from "../../src/tool-help.js"
 
 /** Export real registration schemas and observed callback outcomes to the external
  * Draft 2020-12 validator. Static expectations represent public syntax contracts;
@@ -21,7 +22,7 @@ try {
   const link = { operation: "link", objective_id: objective.id, source_type: "ledger-record", source_id: record.id }
   const cases: Array<{ tool: string; input: unknown; expected: boolean }> = []
   const add = (tool: string, expected: boolean, ...inputs: unknown[]) => inputs.forEach(input => cases.push({ tool, input, expected }))
-  add("history", true, read, preview, { ...read, related: true, record_id: record.id })
+  add("history", true, read, preview, { ...preview, selection: page.freeze.selection }, { ...read, related: true, record_id: record.id })
   add("history", false,
     {}, { operation: "bad" }, { ...read, session_id: "s" }, { ...read, related: true },
     { ...read, related: true, record_id: record.id, match: "result" },
@@ -34,6 +35,11 @@ try {
     { operation: "preview-population", objective_id: objective.id, question: "Question" },
     { operation: "preview-population", selection: { question: "Question" } },
     { ...preview, selection: { ...preview.selection, owner_boundary: { objective_links: 0 } } },
+    { ...preview, selection: { ...preview.selection, owner_version: "a".repeat(64) } },
+    { ...preview, selection: { ...preview.selection, owner_boundary: page.freeze.selection.owner_boundary } },
+    { ...preview, selection: { ...preview.selection, through: page.freeze.selection.through, owner_version: "a".repeat(64) } },
+    { ...preview, selection: { ...preview.selection, owner_boundary: page.freeze.selection.owner_boundary, owner_version: page.freeze.selection.owner_version } },
+    { ...read, source_limit: 20 }, { ...preview, source_offset: 0 },
     { operation: "population", population_id: "example" },
     { operation: "population-source", population_id: "example", manifest_sha256: "a".repeat(64) },
   )
@@ -41,6 +47,25 @@ try {
   // not an earlier missing-fingerprint failure. Freeze uses the returned request.
   add("review", false, { operation: "freeze-population", selection: preview.selection, preview_sha256: page.freeze.preview_sha256 })
   add("review", true, page.freeze)
+  // Use a real frozen original and the source owner's continuation, not guessed pins.
+  const frozen = (await f.invoke("review", page.freeze)).result
+  const member = frozen.items.find((item: any) => item.source.kind === "ledger-record" && item.source.id === record.id)
+  if (!member?.inspect) throw new Error("Missing frozen ledger original")
+  const fragmentRequest = { ...member.inspect, source_offset: 0, source_limit: 20, response_format: "json" }
+  const fragment = (await f.invoke("history", fragmentRequest)).result
+  if (!fragment.navigation.next || !fragment.content_json) throw new Error("Expected original fragment and continuation")
+  add("history", true, fragmentRequest, fragment.navigation.next)
+  add("history", false, { ...fragmentRequest, source_limit: 1 }, { ...fragmentRequest, source_offset: -1 },
+    { ...fragmentRequest, response_format: "xml" }, { ...fragmentRequest, limit: 1 })
+  // The published review example intentionally leaves currentness absent.
+  // Explicit policies must match that mandate; omitted policy retains its default.
+  const historical = JSON.parse(JSON.stringify(TOOL_EXAMPLES.review[0]))
+  const historicalDefault = { ...historical, request: { ...historical.request, request_id: "schema-historical-default", work_revision_policy: undefined } }
+  const current = { ...historical, request: { ...historical.request, request_id: "schema-current", mandate: {
+    ...historical.request.mandate, currentness: "current-at-issue-claim" }, work_revision_policy: "current-at-issue-claim" } }
+  add("review", true, historical, historicalDefault, current)
+  add("review", false, { ...historical, request: { ...historical.request, work_revision_policy: "current-at-issue-claim" } },
+    { ...current, request: { ...current.request, work_revision_policy: "frozen-historical" } })
   add("objective", true,
     { operation: "list" }, create, { operation: "read", objective_id: objective.id },
     { operation: "find", source_type: "ledger-record", source_id: record.id },
@@ -104,6 +129,9 @@ try {
   }
   await writeFile(output, JSON.stringify({ format: "loom-tool-schema-contracts/v1",
     schemas: Object.fromEntries([...f.tools].map(([name, tool]) => [name, tool.input])), cases: results,
+    // Validate the actual published JSON lines, independent of callback cases.
+    examples: Object.fromEntries([...f.tools].map(([name, tool]) => [name,
+      tool.description.split("\n").filter((line: string) => line.startsWith("{")).map((line: string) => JSON.parse(line))])),
     native_effects: { creates: f.sessionCreates.length, prompts: f.sessionPrompts.length, notices: f.nativeInputs.length },
   }))
 } finally { await f.close() }

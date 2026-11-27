@@ -50,6 +50,16 @@ class ToolSchemaContractTest(unittest.TestCase):
                                  "; ".join(error.message for error in errors))
                 self.assertEqual(case["runtime_ok"], case["expected"], case.get("error"))
 
+    def test_every_published_json_example_matches_its_registered_schema(self):
+        self.assertEqual(set(self.report["examples"]), set(self.report["schemas"]))
+        for name, examples in self.report["examples"].items():
+            self.assertTrue(examples, f"No published JSON examples for {name}")
+            validator = Draft202012Validator(self.report["schemas"][name])
+            for example in examples:
+                with self.subTest(tool=name, input=example):
+                    errors = list(validator.iter_errors(example))
+                    self.assertFalse(errors, "; ".join(error.message for error in errors))
+
     def test_schema_exercises_never_dispatch_native_work(self):
         self.assertEqual(self.report["native_effects"], {"creates": 0, "prompts": 0, "notices": 0})
 

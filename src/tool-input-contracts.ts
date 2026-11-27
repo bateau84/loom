@@ -14,8 +14,8 @@ const contracts: Readonly<Record<string, Readonly<Record<string, OperationContra
       "Put objective_id and question inside selection. Obtain the objective ID from loom_objective find/list or an authorized create; omit boundaries on the first preview."),
     population: contract(["population_id", "manifest_sha256"], ["population_id", "manifest_sha256", "after", "limit", "response_format"],
       "Use population_id and manifest_sha256 returned by freeze-population; copy the returned next request."),
-    "population-source": contract(["population_id", "manifest_sha256", "member_key"], ["population_id", "manifest_sha256", "member_key"],
-      "Copy a frozen member's source request. Source references do not grant access."),
+    "population-source": contract(["population_id", "manifest_sha256", "member_key"], ["population_id", "manifest_sha256", "member_key", "source_offset", "source_limit", "response_format"],
+      "Copy member.inspect or navigation.next; verify original fragments. Source references do not grant access."),
   },
   objective: {
     list: contract([], ["offset"], "List authored objective IDs; this is not text search. Follow next_offset if needed."),

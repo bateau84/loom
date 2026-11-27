@@ -30,6 +30,8 @@ scan root so the profile is discovered; it declares no mandatory link counts.
 - [Layered engineering history](learning-engineering-history.md) — Shared authorized overview, historical work branches, readable document and first HTML dashboard; live navigation and frozen-selection boundaries
 - [Connected engineering trajectories](learning-connected-trajectories.md) — Qualified objective, review and original-evidence relationships; retrospective associations, ready navigation and owner boundaries
 - [Frozen retrospective evidence populations](learning-retrospective-populations.md) — Objective-scoped selection, durable exact membership, source-owned inspection and Evaluator preparation
+- [Original-source resolution](learning-original-source-resolution.md) — Exact native current-context and GitHub originals through frozen readers, bounded content and unchanged execution fences
+- [Native original-source handoff](learning-native-source-handoff.md) — Required upstream history and recipient-bound release interfaces, responsible owners and falsifiable acceptance
 - [Learning evidence and provisional experiments](learning-experiments.md) — Bounded insight statistics, content fingerprints and manual tweak trials
 - [Review-scoped evidence and whole-work retrospectives (approved concept)](learning-evidence-and-review-scope.md) — Accepted architecture and requirements direction for attribution and automatic multi-Session evaluation; not current runtime behavior
 - [Native execution and review evidence specification](learning-native-evidence-spec.md) — Exact identity, original mandate, evidence-basis, failure and recipient-transfer contracts; bounded Stage 2 persistence is implemented
