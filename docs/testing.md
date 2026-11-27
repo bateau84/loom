@@ -149,7 +149,9 @@ before mapping, review, issue and final blocking must still restore and replay.
 | --- | --- |
 | `tests/retrospective-populations-native.test.ts` | Registered selection, freeze, complete pagination, same-call/different-message identity, dense later-page relationship continuations, original inspection and current authorization controls. |
 | `tests/retrospective-source-resolution-native.test.ts` | Awaited source-owner binding, denial, exact recipient/view/identity/version and returned-byte checks; controlled owners, no real external authority. |
-| `tests/retrospective-preparation-native.test.ts` | Interrupted preparation writes, restart, snapshot restore with a surviving consumed issue, missing mapping fence and explicit rejection before any supplied execution authority is called. |
+| `tests/retrospective-preparation-native.test.ts` | Interrupted preparation writes, restart, snapshot restore with a surviving consumed issue, missing mapping fence and rejection of a supplied legacy execution authority without retrospective source integration. |
+| `tests/retrospective-execution-native.test.ts` | Distinct v2 enrollment; actual-recipient source binding; source/recipient/expiry/abort negative controls; unchanged v1 enrollment bytes; concurrent claim and source-dependent result disclosure. |
+| `tests/retrospective-execution-backup-native.test.ts` | Consumer-created completed, uncertain and unclaimed v2 admission restore; exact population/request/admission/attempt binding; checksum-consistent substitution rejection; source-loss accounting without redispatch or result disclosure. |
 | `tests/retrospective-store-native.test.ts` | Atomic optional persistence, complete membership integrity, concurrent replay, lost acknowledgement and actual process termination. |
 | `tests/retrospective-backup-native.test.ts` | Stopped paired backup/restore, actual preparation-to-population reference closure, complete source projection, valid interrupted replay, mixed source-store rejection and malformed native source identities. |
 | `tests/helpers/retrospective-store-fixture.ts` | Controlled versioned metadata population for persistence and recovery; no real source authority. |
@@ -171,6 +173,31 @@ The operator-local reference remains separate: reconcile the earlier five-record
 selection with the later fix-chain selection, inspect permitted originals, preview
 the actual objective/question and approve its exact membership before freezing.
 Do not export private originals or present controlled fixtures as that rehearsal.
+
+The existing `tests/installed_evaluator_execution.py` additionally accepts
+`--preparation-source retrospective`. It uses the same restricted execution
+consumer and local authority, with a real native Evaluator evidence-tool round
+trip. The v2 fixture explicitly reserves two synthetic provider requests inside
+one canonical execution: one requests evidence, the second consumes the exact
+tool response. Retry, auxiliary and additional sends remain controlled by the
+fixture owner. Compare the full frozen member inventory and original hashes
+with the native tool result and provider input. The same suite exercises
+concurrency, cancellation, interrupted execution, lost acknowledgements, native
+restart and stopped-state restore. Default `stage3` mode retains the existing
+one-request qualification. Neither mode proves real provider billing authority,
+universal Q4/Q5 or genuine Evaluator reasoning. CI runs both modes on the packed
+candidate; delivery receipts record actual observed checks and source hashes.
+
+The controlled v2 profile explicitly sets OpenCode's supported
+`tool_output.max_bytes` to **180,000**, matching the fixture's bounded source response. The
+default Stage 3 profile is unchanged. The v2 scenario set contains **21 checks**,
+including a negative control retaining the default **51,200-byte** output limit:
+if native truncation changes the source-tool result, its exact digest no longer
+matches and the continuation send is denied. The earlier admitted request stays
+consumed/uncertain; truncation must not produce a completed result or a fresh
+execution permit. A configured positive bound qualifies only the tested
+complete evidence envelope, not arbitrary larger populations or production
+source-transfer authority.
 
 ### Engineering-history browser and comparative qualification
 

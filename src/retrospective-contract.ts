@@ -26,6 +26,10 @@ export type RetrospectivePopulation = {
   population_id: string; manifest_sha256: string; owner_session: string; frozen_by: Actor; created_at: string;
   manifest: RetrospectiveManifest;
 }
+export type RetrospectivePopulationRef = {
+  kind: "retrospective-population"; format: "loom-retrospective-population/v1";
+  population_id: string; manifest_sha256: string;
+}
 export type RetrospectiveSources = {
   population_id: string; manifest_sha256: string; source_store_id: string; owner_session: string;
   contributors: string[]; contains_private_reviews: boolean; member_count: number;

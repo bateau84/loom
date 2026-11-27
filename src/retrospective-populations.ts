@@ -10,7 +10,7 @@ import { parseRetrospectiveManifest, retrospectiveDigest, retrospectiveMemberKey
 
 export type RetrospectiveSourceRequest = {
   source_store_id: string; source: EvaluationSourceRef; permitted_view: string;
-  recipient_session_id: string; purpose: "preview" | "inspect" | "prepare";
+  recipient_session_id: string; purpose: "preview" | "inspect" | "prepare" | "execute";
 }
 export type RetrospectiveSourceResolution = {
   source_store_id: string; source: EvaluationSourceRef; permitted_view: string; recipient_session_id: string;
@@ -243,17 +243,26 @@ export class RetrospectivePopulations {
         "original-source modification/replacement semantics remain unresolved"] })
   }
 
-  async resolve(actor: Actor, member: RetrospectiveMember, resolver: RetrospectiveSourceResolver, purpose: "inspect" | "prepare" = "inspect") {
+  async resolve(actor: Actor, member: RetrospectiveMember, resolver: RetrospectiveSourceResolver, purpose: "inspect" | "prepare" | "execute" = "inspect") {
     if (member.availability !== "available") return { status: member.availability,
       gap: { code: "unresolved-at-freeze", detail: "No original version was selected. A fresh preview and explicit freeze are required to establish a new source identity." } }
+    if (purpose === "execute" && ["native-message", "native-call"].includes(member.source.kind)
+        && member.source.session_id !== actor.session_id) return { status: "unsupported" as const,
+      gap: { code: "unsupported-source-release", detail: "A fresh Evaluator cannot inherit another Session's native original access." } }
     const result = await ownerRead({ source_store_id: member.source_store_id, source: member.source, permitted_view: member.permitted_view,
       recipient_session_id: actor.session_id, purpose }, resolver)
     return { status: result.status, ...(result.status === "available" ? { value: result.value } : {}), ...(result.gap ? { gap: result.gap } : {}) }
   }
 
   async validateForPreparation(actor: Actor, population: RetrospectivePopulation, resolver: RetrospectiveSourceResolver) {
+    return this.validateSources(actor, population, resolver, "prepare")
+  }
+
+  /** The same frozen-availability rule applies to a qualified execution
+   * recipient. This checks originals, never grants population disclosure. */
+  async validateSources(actor: Actor, population: RetrospectivePopulation, resolver: RetrospectiveSourceResolver, purpose: "prepare" | "execute" | "inspect") {
     for (const member of population.manifest.members) {
-      const current = await this.resolve(actor, member, resolver, "prepare")
+      const current = await this.resolve(actor, member, resolver, purpose)
       // Unknown originals recorded at freeze remain declared gaps. A previously
       // available original cannot be silently replaced or waived by preparation.
       if (member.availability === "available" && current.status !== "available") throw new Error("Retrospective preparation source unavailable or changed")

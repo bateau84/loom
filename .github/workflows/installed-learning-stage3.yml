@@ -82,3 +82,21 @@ jobs:
           path: ${{ runner.temp }}/loom-execution-installed-report/
           if-no-files-found: warn
           retention-days: 7
+      - name: Verify retrospective execution and native recipient retrieval
+        run: >-
+          python3 tests/installed_evaluator_execution.py
+          --preparation-source retrospective
+          --opencode "$RUNNER_TEMP/loom-stage3-host/node_modules/.bin/opencode"
+          --plugin "$RUNNER_TEMP/loom-stage3-install/node_modules/loom-plugin"
+          --artifact "$(find "$RUNNER_TEMP/loom-stage3-package" -maxdepth 1 -name 'loom-plugin-*.tgz' -print -quit)"
+          --repository "$GITHUB_WORKSPACE"
+          --expect-head "${{ github.event.pull_request.head.sha }}"
+          --expect-plugin-version "$(node -p 'require("./package.json").version')"
+          --report-directory "$RUNNER_TEMP/loom-retrospective-execution-installed-report"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installed-retrospective-execution-${{ github.sha }}
+          path: ${{ runner.temp }}/loom-retrospective-execution-installed-report/
+          if-no-files-found: warn
+          retention-days: 7

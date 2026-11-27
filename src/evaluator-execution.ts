@@ -1,14 +1,27 @@
 import { randomUUID } from "node:crypto"
-import { canonical, digest, type Actor } from "./model.js"
+import { canonical, type Actor } from "./model.js"
 import type { EvaluatorPreparation } from "./evaluator-preparation.js"
 import type { EvaluationStore } from "./evaluation-store.js"
 import type { Store } from "./store.js"
-import { evaluatorReservationHeld, parseEvaluatorAdmission, parseEvaluatorGrant, parseEvaluatorReceipt,
+import { evaluatorEnrollmentKey, evaluatorReservationHeld, parseEvaluatorAdmission, parseEvaluatorGrant, parseEvaluatorReceipt,
   type EvaluatorExecutionAdmission, type EvaluatorExecutionAuthority, type EvaluatorExecutionReceipt,
-  type EvaluatorExecutionSnapshot, type EvaluatorExecutionSubject } from "./evaluator-execution-contract.js"
+  type EvaluatorExecutionGrant, type EvaluatorExecutionSnapshot, type EvaluatorExecutionSubject } from "./evaluator-execution-contract.js"
+import type { RetrospectivePopulations, RetrospectiveSourceResolver } from "./retrospective-populations.js"
+import { retrospectiveBudget, type RetrospectiveSources } from "./retrospective-contract.js"
 
 export type EvaluatorExecutionPins = { batch_id: string; request_id: string; manifest_sha256: string; attempt_id: string }
-type Integration = { authority: EvaluatorExecutionAuthority; authorize: (actor: Actor) => Promise<void> }
+type Integration = {
+  authority: EvaluatorExecutionAuthority; authorize: (actor: Actor) => Promise<void>;
+  /** Explicit trusted capability, absent from production. authorize covers the
+   * complete population AND selected source-view inspection/disclosure union
+   * for this actual reader, including frozen gaps and private scope. It derives
+   * that union from the exact population pins; metadata access alone is not
+   * sufficient. resolve separately validates each current exact original. */
+  retrospective?: {
+    populations: RetrospectivePopulations; resolve: RetrospectiveSourceResolver;
+    authorize: (recipient: Actor, population: RetrospectiveSources) => Promise<void>;
+  };
+}
 type Prepared = ReturnType<EvaluatorPreparation["read"]>
 const same = (a: unknown, b: unknown) => canonical(a) === canonical(b)
 
@@ -33,7 +46,8 @@ export class EvaluatorExecution {
   private prepared(actor: Actor, pins: EvaluatorExecutionPins): Prepared {
     this.pins(pins)
     const p = this.preparation.read(actor.session_id, pins.batch_id)
-    if (p.request.format !== "loom-evaluation-request/v1") throw new Error("retrospective-execution-disconnected")
+    if (p.request.format === "loom-evaluation-request/v2" && !this.connected().retrospective)
+      throw new Error("retrospective-execution-disconnected")
     if (p.state !== "prepared" || p.request_id !== pins.request_id || p.manifest_sha256 !== pins.manifest_sha256
         || p.issue?.attempt.attempt_id !== pins.attempt_id) throw new Error("Evaluator execution preparation mismatch")
     return p
@@ -43,12 +57,51 @@ export class EvaluatorExecution {
     // Stage 3 can allocate another local batch UUID after an older restore.
     // Exclude that allocation, but retain the exact original source vector,
     // membership, method and policies. This is an idempotency key, NOT a grant.
-    const { preparation_source_batch: _sourceBatch, preparation_budget_policy: _budget, ...boundary } = p.manifest.boundary
-    const semantic_key = digest({ format: "loom-evaluation-enrollment-key/v1", source_store_id: p.manifest.source_store_id,
-      owner_session: actor.session_id, slot: "overall", boundary, membership_sha256: p.manifest.membership_sha256,
-      method: p.request.method, source_policy: p.request.source_policy, route_policy: p.request.route_policy, budget_policy: p.request.budget_policy })
+    const source = p.request.format === "loom-evaluation-request/v2" ? p.request.source : undefined
+    const semantic_key = evaluatorEnrollmentKey({ source_store_id: p.manifest.source_store_id,
+      owner_session: actor.session_id, boundary: p.manifest.boundary, membership_sha256: p.manifest.membership_sha256,
+      method: p.request.method, source_policy: p.request.source_policy, route_policy: p.request.route_policy,
+      budget_policy: p.request.budget_policy, ...(source ? { source } : {}) })
     return { source_store_id: p.manifest.source_store_id, owner_session: actor.session_id, batch_id: p.batch_id,
-      request_id: p.request_id, attempt_id: p.issue.attempt.attempt_id, manifest_sha256: p.manifest_sha256, semantic_key }
+      request_id: p.request_id, attempt_id: p.issue.attempt.attempt_id, manifest_sha256: p.manifest_sha256, semantic_key,
+      ...(source ? { source } : {}) }
+  }
+  private async population(actor: Actor, pins: EvaluatorExecutionPins, recipient: Actor = actor) {
+    this.pins(pins)
+    const source = this.preparation.retrospectiveReference(actor.session_id, pins.batch_id)
+    if (!source) return null
+    const integration = this.connected().retrospective
+    if (!integration) throw new Error("retrospective-execution-disconnected")
+    const metadata = this.history.retrospectiveSources(source.population_id, actor.session_id)
+    if (metadata.manifest_sha256 !== source.manifest_sha256
+        || metadata.contains_private_reviews && recipient.session_id !== metadata.owner_session)
+      throw new Error("Retrospective execution population unavailable")
+    // Authorize metadata before hydrating the manifest, including when every
+    // member is a frozen gap and no original resolver will be called.
+    await integration.authorize(recipient, metadata)
+    if (!same(metadata, this.history.retrospectiveSources(source.population_id, actor.session_id)))
+      throw new Error("Retrospective execution population changed")
+    const population = this.history.retrospectivePopulation(source.population_id, actor.session_id)
+    if (population.manifest_sha256 !== source.manifest_sha256) throw new Error("Retrospective execution population changed")
+    return population
+  }
+  private async validatePopulation(actor: Actor, pins: EvaluatorExecutionPins, grant: EvaluatorExecutionGrant, signal: AbortSignal) {
+    const recipient: Actor = { session_id: grant.recipient.session_id, agent: grant.recipient.agent }
+    const population = await this.population(actor, pins, recipient)
+    if (!population) return
+    const integration = this.connected().retrospective!
+    await integration.populations.validateSources(recipient, population, async request => {
+      signal.throwIfAborted()
+      this.live(grant.expires_at)
+      const result = await integration.resolve(request)
+      signal.throwIfAborted()
+      this.live(grant.expires_at)
+      return result
+    }, "execute")
+    await this.connected().authorize(actor)
+    await this.population(actor, pins, recipient)
+    signal.throwIfAborted()
+    this.live(grant.expires_at)
   }
   private bound(subject: EvaluatorExecutionSubject, raw: unknown, prepared?: Prepared): EvaluatorExecutionAdmission {
     const admission = parseEvaluatorAdmission(raw)
@@ -81,12 +134,25 @@ export class EvaluatorExecution {
   }
   private async disclose(actor: Actor, pins: EvaluatorExecutionPins, snapshot: EvaluatorExecutionSnapshot) {
     await this.connected().authorize(actor)
+    if (snapshot.admission.grant.subject.source) {
+      const population = await this.population(actor, pins)
+      if (!population) throw new Error("Retrospective execution population unavailable")
+      const integration = this.connected().retrospective!
+      // Accounting has already been retained. Like v1, result disclosure still
+      // requires the actual reader's current originals and source permissions;
+      // it does not require a live inference grant or execution-recipient rights.
+      await integration.populations.validateSources(actor, population, integration.resolve, "inspect")
+      await this.connected().authorize(actor)
+      await this.population(actor, pins)
+    }
     this.prepared(actor, pins)
     return { ...snapshot, interpretation: null, qualification: "execution-consumer-only" as const }
   }
   private async existing(actor: Actor, pins: EvaluatorExecutionPins) {
     this.pins(pins)
     const saved = this.history.readExecution(pins.batch_id, actor.session_id)
+    if (saved?.admission.grant.subject.source && !this.connected().retrospective)
+      throw new Error("retrospective-execution-disconnected")
     const subject = saved?.admission.grant.subject ?? this.subject(actor, this.prepared(actor, pins))
     if (subject.batch_id !== pins.batch_id || subject.request_id !== pins.request_id
         || subject.attempt_id !== pins.attempt_id || subject.manifest_sha256 !== pins.manifest_sha256)
@@ -117,6 +183,11 @@ export class EvaluatorExecution {
     const { authority, authorize } = this.connected()
     await authorize(actor)
     signal.throwIfAborted()
+    this.pins(pins)
+    if (this.preparation.retrospectiveReference(actor.session_id, pins.batch_id)) {
+      await this.population(actor, pins)
+      signal.throwIfAborted()
+    }
     let prepared = this.prepared(actor, pins)
     const subject = this.subject(actor, prepared), saved = this.history.readExecution(pins.batch_id, actor.session_id)
     // Always consult the owner's inventory, including on a pristine local store.
@@ -135,7 +206,8 @@ export class EvaluatorExecution {
       const grant = parseEvaluatorGrant(await authority.prepare(subject, prepared.method_manifest, prepared.request.budget_policy))
       if (!same(grant.subject, subject) || !same(grant.method, prepared.method_manifest)) throw new Error("Evaluator prepared authority changed")
       this.live(grant.expires_at)
-      await authorize(actor)
+      if (subject.source) await this.validatePopulation(actor, pins, grant, signal)
+      else await authorize(actor)
       signal.throwIfAborted()
       prepared = this.prepared(actor, pins)
       if (!same(this.subject(actor, prepared), subject)) throw new Error("Evaluator execution source changed")
@@ -160,7 +232,8 @@ export class EvaluatorExecution {
         // awaited caller check. Neither an old inventory read nor reserve's
         // immutable envelope proves that capacity is still held now.
         signal.throwIfAborted()
-        await authorize(actor)
+        if (subject.source) await this.validatePopulation(actor, pins, admission.grant, signal)
+        else await authorize(actor)
         signal.throwIfAborted()
         this.live(admission.grant.expires_at)
         const current = this.prepared(actor, pins)
@@ -181,6 +254,10 @@ export class EvaluatorExecution {
       claimAcknowledged = true
       await authorize(actor)
       signal.throwIfAborted()
+      if (subject.source) {
+        await this.validatePopulation(actor, pins, admission.grant, signal)
+        signal.throwIfAborted()
+      }
       prepared = this.prepared(actor, pins)
       this.bound(this.subject(actor, prepared), admission, prepared)
       this.live(admission.grant.expires_at)
@@ -198,7 +275,35 @@ export class EvaluatorExecution {
         // Original owner reads are preserved; the trusted adapter independently
         // authorizes this exact recipient/transfer before receiving these bytes.
         this.bound(this.subject(actor, this.prepared(actor, pins)), admission)
-        return this.preparation.source(actor.session_id, pins.batch_id, pins.request_id, pins.manifest_sha256, memberKey, sourceIndex)
+        if (!admission.grant.subject.source)
+          return this.preparation.source(actor.session_id, pins.batch_id, pins.request_id, pins.manifest_sha256, memberKey, sourceIndex)
+        const recipient: Actor = { session_id: admission.grant.recipient.session_id, agent: admission.grant.recipient.agent }
+        const population = await this.population(actor, pins, recipient)
+        if (!population) throw new Error("Retrospective execution population unavailable")
+        signal.throwIfAborted()
+        this.live(admission.grant.expires_at)
+        const member = population.manifest.members.find(item => item.key === memberKey)
+        if (!member || sourceIndex !== 0) throw new Error("Invalid evaluator preparation source selection")
+        const integration = this.connected().retrospective!
+        const resolved = await integration.populations.resolve(recipient, member, integration.resolve, "execute")
+        if (member.availability === "available" && resolved.status !== "available")
+          throw new Error("Retrospective execution source unavailable or changed")
+        // These are current permission observations, not a native atomic Q5
+        // release fence. The qualified source owner still owns actual release.
+        await authority.validate(admission, "source")
+        await authorize(actor)
+        await this.population(actor, pins, recipient)
+        signal.throwIfAborted()
+        this.live(admission.grant.expires_at)
+        this.bound(this.subject(actor, this.prepared(actor, pins)), admission)
+        const { members: _members, ...header } = population.manifest
+        const result = { batch_id: pins.batch_id, request_id: pins.request_id, manifest_sha256: pins.manifest_sha256,
+          population_id: population.population_id, population_manifest_sha256: population.manifest_sha256,
+          population_manifest: header, member_key: member.key, source_index: sourceIndex,
+          member, source: member.source, source_store_id: member.source_store_id, permitted_view: member.permitted_view,
+          ...resolved, receiving_session: recipient.session_id, native_evaluator_retrieval: "authority-must-observe" }
+        canonical(result, retrospectiveBudget())
+        return result
       }, signal)
       const remembered = this.remember(actor, subject, { admission, receipt })
       // A result can arrive after an abort that the native owner did not yet

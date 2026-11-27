@@ -285,7 +285,7 @@ def retrospective_preparation_integrity(db, populations, has_evaluator):
     scope = "evaluator-preparation/retrospective"
     fields = ("id", "identity", "owner_session", "scope_key", "source_store_id",
               "boundary_json", "method_json", "membership_sha256", "blocked_reason")
-    batches = {}
+    batches, prepared = {}, {}
     for row in db.execute("SELECT " + ",".join(fields) + " FROM learning_evaluation_batches"):
         batch = dict(zip(fields, row))
         boundary = json.loads(batch["boundary_json"])
@@ -402,6 +402,96 @@ def retrospective_preparation_integrity(db, populations, has_evaluator):
                     "version": {"kind": "sha256", "value": data["manifest_sha256"]},
                     "content_ref": "loom_insights:evaluation-preparation-members:" + batch_id}],
                 "Retrospective preparation review manifest mismatch")
+        prepared[batch_id] = {"batch": batch, "request": data, "values": data_values,
+                              "boundary": boundary_values, "membership_sha256": membership_sha}
+    return prepared
+
+
+def retrospective_execution_integrity(db, prepared, issues):
+    """Bind v2 execution mirrors to the already-validated frozen preparation.
+
+    Admission before the claim, or before its first receipt, is a valid crash
+    point. Neither this descriptor check nor paired backup grants current source
+    access or replaces the authority's restore-independent effect inventory.
+    Existing v1 mirror validation remains unchanged.
+    """
+    fields = ("batch_id", "request_id", "attempt_id", "authority_id", "reservation_id",
+              "semantic_key", "data_json", "sha256")
+    for row in db.execute("SELECT " + ",".join(fields) + " FROM learning_execution_admissions"):
+        record = dict(zip(fields, row))
+        admission = json.loads(record["data_json"])
+        grant = admission.get("grant") if isinstance(admission, dict) else None
+        subject = grant.get("subject") if isinstance(grant, dict) else None
+        if record["batch_id"] not in prepared and not (isinstance(subject, dict) and "source" in subject):
+            continue
+        require(record["batch_id"] in prepared, "Retrospective execution has no matching preparation")
+        retained = prepared[record["batch_id"]]
+        batch, request, values = retained["batch"], retained["request"], retained["values"]
+        shape(admission, ("format", "grant", "reservation_id", "pool_id", "authority_epoch"))
+        shape(grant, ("authority_id", "grant_id", "expires_at", "subject", "method", "recipient", "account",
+                      "source_authority_ref", "account_authority_ref", "budget_authority_ref", "limits"))
+        shape(subject, ("source_store_id", "owner_session", "batch_id", "request_id", "attempt_id",
+                        "manifest_sha256", "semantic_key", "source"))
+        admission_values = raw_object(record["data_json"])
+        grant_values = raw_object(admission_values["grant"])
+        subject_values = raw_object(grant_values["subject"])
+        require(admission["format"] == "loom-evaluation-admission/v1"
+                and sha_text(record["data_json"]) == record["sha256"], "Retrospective execution admission digest mismatch")
+        require(subject_values["source"] == values["source"]
+                and subject["source_store_id"] == request["source_store_id"]
+                and subject["owner_session"] == batch["owner_session"]
+                and subject["batch_id"] == batch["id"]
+                and subject["request_id"] == request["request_id"]
+                and subject["manifest_sha256"] == request["manifest_sha256"],
+                "Retrospective execution population/request binding mismatch")
+        require(record["request_id"] == subject["request_id"] and record["attempt_id"] == subject["attempt_id"]
+                and record["authority_id"] == grant["authority_id"]
+                and record["reservation_id"] == admission["reservation_id"]
+                and record["semantic_key"] == subject["semantic_key"],
+                "Retrospective execution row binding mismatch")
+        key = object_text({"kind": encoded("initial"), "request_id": values["request_id"]})
+        initial = [item for item in issues.get(request["request_id"], []) if item["intent_key"] == key]
+        require(len(initial) == 1 and initial[0]["attempt_id"] == subject["attempt_id"]
+                and initial[0]["intent_data"] == object_text({"intent": key})
+                and initial[0]["requester_session"] == batch["owner_session"]
+                and initial[0]["request_json"] == values["review_request"],
+                "Retrospective execution canonical initial issue mismatch")
+        boundary = {key: value for key, value in retained["boundary"].items()
+                    if key not in ("preparation_source_batch", "preparation_budget_policy")}
+        enrollment = object_text({"format": encoded("loom-evaluation-enrollment-key/v2"),
+            "request_format": encoded("loom-evaluation-request/v2"), "source": values["source"],
+            "source_store_id": values["source_store_id"], "owner_session": encoded(batch["owner_session"]),
+            "slot": encoded("overall"), "boundary": object_text(boundary),
+            "membership_sha256": encoded(retained["membership_sha256"]), "method": values["method"],
+            "source_policy": values["source_policy"], "route_policy": values["route_policy"],
+            "budget_policy": values["budget_policy"]})
+        require(subject["semantic_key"] == sha_text(enrollment), "Retrospective execution semantic enrollment mismatch")
+        method = db.execute("SELECT manifest_json,manifest_sha256,instruction_sha256 FROM learning_evaluator_methods WHERE id=?",
+                            (request["method"]["id"],)).fetchone()
+        require(method is not None and grant_values["method"] == method[0]
+                and sha_text(method[0]) == method[1] and request["method"]["id"] == "evaluator/v1/" + method[1]
+                and request["method"]["instruction_sha256"] == method[2],
+                "Retrospective execution effective method mismatch")
+        # Bind every retained outcome to this exact admission and recipient.
+        # Missing receipts alone remain valid: admission commits before claim.
+        for sequence, authority, receipt_id, text, fingerprint in db.execute(
+                "SELECT sequence,authority_id,receipt_id,data_json,sha256 FROM learning_execution_receipts "
+                "WHERE batch_id=? ORDER BY sequence", (batch["id"],)):
+            receipt = json.loads(text)
+            shape(receipt, ("format", "authority_id", "receipt_id", "sequence", "admission_sha256",
+                            "reservation_id", "execution", "budget", "fenced", "usage", "result"))
+            raw_object(text)
+            require(sha_text(text) == fingerprint and receipt["format"] == "loom-evaluation-execution-receipt/v1"
+                    and receipt["admission_sha256"] == record["sha256"]
+                    and receipt["reservation_id"] == admission["reservation_id"]
+                    and receipt["authority_id"] == authority == grant["authority_id"]
+                    and receipt["receipt_id"] == receipt_id and receipt["sequence"] == sequence,
+                    "Retrospective execution receipt binding mismatch")
+            if receipt["result"] is not None:
+                shape(receipt["result"], ("host_id", "session_id", "input_id", "result_id", "sha256"))
+                require(receipt["result"]["host_id"] == grant["recipient"]["host_id"]
+                        and receipt["result"]["session_id"] == grant["recipient"]["session_id"],
+                        "Retrospective execution result recipient mismatch")
 
 
 def sha256(path):
@@ -461,6 +551,7 @@ def inspect_sql(directory, file_names):
     # run it on source, backup, or restored state; only on private scratch.
     results = {}
     ledger_store_id = None
+    issues = {}
     with tempfile.TemporaryDirectory(prefix="loom-state-inspect-") as scratch:
         inspected = Path(scratch)
         copy_files(directory, inspected, file_names)
@@ -567,8 +658,9 @@ def inspect_sql(directory, file_names):
                         ).fetchone()
                         require(has_execution or not enrolled,
                                 "Missing required learning_execution_ tables for enrolled evaluator execution")
+                preparations = {}
                 if has_evaluation or has_evaluator:
-                    retrospective_preparation_integrity(db, populations, has_evaluator)
+                    preparations = retrospective_preparation_integrity(db, populations, has_evaluator)
                 if has_execution:
                     markers = db.execute(
                         "SELECT singleton,version FROM learning_execution_schema"
@@ -594,6 +686,7 @@ def inspect_sql(directory, file_names):
                     ).fetchone()
                     require(not missing and not unmarked,
                             "Evaluator execution enrollment/mirror mismatch")
+                    retrospective_execution_integrity(db, preparations, issues)
                 if name == "ledger.sqlite" and version == 2:
                     identity = db.execute(
                         "SELECT singleton,store_id FROM review_store_identity"
@@ -603,6 +696,12 @@ def inspect_sql(directory, file_names):
                             and re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}", identity[0][1]),
                             "Missing or invalid review source-store identity; no replacement identity is authorized")
                     ledger_store_id = identity[0][1]
+                    fields = ("request_id", "attempt_id", "intent_key", "intent_data", "requester_session", "request_json")
+                    for row in db.execute("SELECT issue.request_id,issue.attempt_id,issue.intent_key,issue.intent_data,"
+                                          "request.requester_session,request.data FROM review_issue_intents AS issue "
+                                          "JOIN review_requests AS request ON request.request_id=issue.request_id"):
+                        item = dict(zip(fields, row))
+                        issues.setdefault(item["request_id"], []).append(item)
                 schema_hash = hashlib.sha256(json.dumps(
                     schema, ensure_ascii=False, separators=(",", ":"),
                 ).encode("utf-8")).hexdigest()
