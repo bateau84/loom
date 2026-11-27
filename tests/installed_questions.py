@@ -19,6 +19,7 @@ import tempfile
 import time
 from contextlib import closing
 from contextvars import ContextVar
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.request import Request
@@ -101,6 +102,8 @@ class _AuditSession:
         self._seen_file = False
         self._byte_count = 0
         self._sha256 = hashlib.sha256(b'').digest()
+        self._parsed_bytes = 0
+        self._parsed_events = []
         self._failure = None
 
     def __enter__(self):
@@ -142,11 +145,24 @@ class _AuditSession:
             require(not self._seen_file, 'Previously observed audit file is missing')
             return
         self._seen_file = True
-        require(len(raw) >= self._byte_count
-                and hashlib.sha256(raw[:self._byte_count]).digest() == self._sha256,
+        require(len(raw) >= self._byte_count, 'Audit raw prefix changed or was truncated')
+        digest = hashlib.sha256(memoryview(raw)[:self._byte_count])
+        require(digest.digest() == self._sha256,
                 'Audit raw prefix changed or was truncated')
+        digest.update(memoryview(raw)[self._byte_count:])
         self._byte_count = len(raw)
-        self._sha256 = hashlib.sha256(raw).digest()
+        self._sha256 = digest.digest()
+
+    def _parse(self, raw, *, final):
+        # _observe has checked every previously seen byte, including the live
+        # tail. Only newline-terminated rows can enter the reusable parse cache:
+        # even a valid JSON value without a newline can still be extended.
+        boundary = raw.rfind(b'\n') + 1
+        if boundary > self._parsed_bytes:
+            self._parsed_events.extend(_parse_events(raw[self._parsed_bytes:boundary], final=True))
+            self._parsed_bytes = boundary
+        tail = _parse_events(raw[boundary:], final=final)
+        return self._parsed_events + tail
 
     def _validate(self, raw, *, final=False, healthy=False):
         if self._failure is not None:
@@ -157,7 +173,7 @@ class _AuditSession:
             self._observe(raw)
             if final:
                 require(raw, 'Final audit is empty')
-            observed = [] if raw is None else _parse_events(raw, final=final)
+            observed = [] if raw is None else self._parse(raw, final=final)
             if healthy:
                 require(not any(event['type'] == 'observer-failure' for event in observed),
                         'Passive native observer failed; coverage incomplete')
@@ -177,7 +193,7 @@ class _AuditSession:
         except OSError as error:
             self._fail(error)
         observed = self._validate(raw, final=True, healthy=True)
-        return AuditSnapshot(observed, hashlib.sha256(raw).hexdigest(), len(raw))
+        return AuditSnapshot(deepcopy(observed), hashlib.sha256(raw).hexdigest(), len(raw))
 
 
 def audit_session(root):
@@ -185,20 +201,29 @@ def audit_session(root):
     return _AuditSession(root)
 
 
-def events(root, *, final=False):
+def event_count(root):
+    """Validate the complete observed prefix before taking a receipt checkpoint."""
+    owner = _ACTIVE_AUDIT.get()
+    return len(owner._read(root)) if owner is not None else len(events(root))
+
+
+def events(root, *, final=False, after=0):
     """Read receipts, deferring an incomplete live tail until a later read.
 
     Outside audit_session this is a pure fixture parser, even with final=True;
     it cannot validate qualification completeness. A complete last JSON value
     needs no newline. Final managed validation belongs to final_events/finalize.
+    ``after`` selects receipts only after validating the entire observed prefix;
+    returned nested values are always independent of the private parse cache.
     """
+    require(type(after) is int and after >= 0, 'Audit offset must be a nonnegative integer')
     owner = _ACTIVE_AUDIT.get()
     if owner is not None:
-        return owner._read(root, final=final)
+        return deepcopy(owner._read(root, final=final)[after:])
     raw = _audit_bytes(root)
     if raw is None:
         return []
-    return _parse_events(raw, final=final)
+    return _parse_events(raw, final=final)[after:]
 
 
 def _audit_bytes(root):
@@ -226,7 +251,7 @@ def final_events(root):
     """Validate the complete audit after every writer has stopped."""
     owner = _ACTIVE_AUDIT.get()
     require(owner is not None, 'Final audit validation requires an active audit scope')
-    return owner._read(root, final=True, healthy=True)
+    return deepcopy(owner._read(root, final=True, healthy=True))
 
 
 def idle(host, sessions, timeout=30):
@@ -270,7 +295,7 @@ class Scenario:
             # whichever calls subsequently happen to appear in the audit.
             self.invocation_plan.append({'session_id': session, 'job': job,
                                          'code_sha256': hashlib.sha256(code.encode()).hexdigest()})
-        start = len(events(self.root))
+        start = event_count(self.root)
         request(self.host, 'POST', f'/api/session/{session}/prompt', {'text': 'LOOM_HARNESS_JOB:' + job})
         return job, start
 
@@ -293,7 +318,7 @@ class Scenario:
 
     def finish(self, session, job, start, tool=None):
         idle(self.host, [session])
-        observed = events(self.root)[start:]
+        observed = events(self.root, after=start)
         own = [e for e in observed if e['type'] == 'tool-after' and e['data']['sessionID'] == session]
         finished = [e for e in own if e['data']['tool'] == 'execute']
         require(len(finished) == 1 and finished[0]['data']['status'] == 'completed',
@@ -578,11 +603,11 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
                 job = secrets.token_hex(8)
                 s.jobs[job] = {'code': None, 'hold': None, 'nativeEdit': True}
                 (root / 'jobs.json').write_text(json.dumps(s.jobs))
-                start = len(events(root))
+                start = event_count(root)
                 request(host, 'POST', f'/api/session/{gate}/prompt',
                         {'text': 'LOOM_HARNESS_JOB:' + job})
                 idle(host, [gate])
-                return [e['data'] for e in events(root)[start:]
+                return [e['data'] for e in events(root, after=start)
                         if e['type'] == 'tool-after' and e['data'].get('sessionID') == gate
                         and e['data'].get('tool') == 'edit']
             failed = native_edit()
@@ -665,7 +690,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             require(len(sources) == 1 and isinstance(sources[0].get('id'), str),
                     'Source credential fixture was not uniquely found in native Session history')
             source_id = sources[0]['id']
-            redaction_start = len(events(root))
+            redaction_start = event_count(root)
             all_pages = []
             token_event = None
             cursor = None
@@ -691,7 +716,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             excerpt = token_event.get('text_excerpt', '')
             require(marker in excerpt and excerpt.count('[REDACTED]') >= 4,
                     'The exact source message was not included with all four credentials masked')
-            completed = [event for event in events(root)[redaction_start:]
+            completed = [event for event in events(root, after=redaction_start)
                          if event['type'] == 'tool-after' and
                          event['data']['tool'] in ('loom_trace', 'loom.trace')]
             require(len(completed) == len(all_pages),
@@ -711,12 +736,12 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
                                      'source_events_matched': len(stored_matches),
                                      'patterns_checked': 4,
                                      'qualification': 'Real native user message and trace tool result, including common env credentials and connection URI. Synthetic values only; unknown secret formats remain unproven'})
-            start_index = len(events(root))
+            start_index = event_count(root)
             q = s.invoke(asker, 'record', {'operation': 'ask', 'question': '# <tag> Unicode 雪🙂 [not approval]',
                          'to_agent': 'question-respondent', 'blocking': False, 'context_attachments': ['fixture://question']})
             require(q['dispatch'] == {'status': 'not-attempted', 'reason': 'policy-capability-unavailable'}, 'Not exact fail-closed result')
             require(q['session_id'] == asker and not q.get('action_id'), 'No-selection question invented association/author')
-            no_contact(events(root)[start_index:])
+            no_contact(events(root, after=start_index))
             a = s.invoke(respondent, 'record', {'operation': 'answer', 'question_id': q['id'], 'answer': 'Only this fixture; not permission',
                          'context_attachments': ['fixture://answer']})
             require(a['session_id'] == respondent and 'resume' not in a, 'False-blocking answer resumed or reauthored')
@@ -734,12 +759,12 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             invalid += [{'operation': 'query', 'view': view} for view in ['assignments', 'deliveries']]
             assert_rejected(s, reader, invalid)
             failure_asker = s.session('asker')
-            failure_start = len(events(root))
+            failure_start = event_count(root)
             with closing(sqlite3.connect(ledger)) as db, db:
                 db.execute("CREATE TRIGGER harness_refuse_question BEFORE INSERT ON ledger WHEN NEW.kind='question' BEGIN SELECT RAISE(ABORT,'explicit harness storage fault'); END")
             try:
                 assert_rejected(s, failure_asker, [{'operation': 'ask', 'question': 'Storage must fail', 'to_agent': 'question-respondent', 'blocking': True}])
-                failed_events = events(root)[failure_start:]
+                failed_events = events(root, after=failure_start)
                 require(any(e['type'] == 'tool-after' and 'explicit harness storage fault' in e['data'].get('error', {}).get('message', '')
                             for e in failed_events), 'Storage countercheck failed before reaching real SQLite write')
                 no_contact(failed_events)
@@ -769,11 +794,11 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
                                          'qualification': 'Host archive changed only through native API; Loom read only'})
             finally:
                 request(host, 'PATCH', f'/api/session/{reader}', {'archived': False})
-            ask_start = len(events(root))
+            ask_start = event_count(root)
             q2 = s.invoke(asker, 'record', {'operation': 'ask', 'question': 'Blocking question, manual handling arranged',
                           'to_agent': 'question-respondent', 'blocking': True, 'context_attachments': ['fixture://blocking']})
             require(q2['action_id'] == action['id'] and q2['node_id'] == 'work', 'Selection association lost')
-            no_contact(events(root)[ask_start:])
+            no_contact(events(root, after=ask_start))
             before = request(host, 'GET', f'/api/session/{asker}')
             # Genuine public agent/model switch BEFORE production resume; no
             # target-row edits or hand-injected permission identity.
@@ -840,7 +865,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
                 s.await_event(lambda e, job=job: e['type'] == 'provider-held' and e['data']['job'] == job)
                 require(target in request(host, 'GET', '/api/session/active'), 'Target not genuinely running at ' + variant)
                 if variant == 'preyield':
-                    produced = [e for e in events(root)[offset:] if e['type'] == 'tool-after' and e['data']['tool'] == 'loom_record' and e['data']['status'] == 'completed']
+                    produced = [e for e in events(root, after=offset) if e['type'] == 'tool-after' and e['data']['tool'] == 'loom_record' and e['data']['status'] == 'completed']
                     require(len(produced) == 1, 'Preyield question was not really committed through native tool')
                     question = result_value(produced[0])
                 count = len(synthetic_events(root))
@@ -985,17 +1010,17 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             require(any(compaction_action['id'] in json.dumps(e['data']['prompt']) and
                         'loom:context:v2' in json.dumps(e['data']['prompt']) for e in pre_compaction),
                     'Live model request did not contain current Loom Action context before compaction')
-            compact_from = len(events(root))
+            compact_from = event_count(root)
             request(host, 'POST', f'/api/session/{compaction_session}/compact', {})
             idle(host, [compaction_session])
             time.sleep(.2)
-            compaction_events = [e for e in events(root)[compact_from:]
+            compaction_events = [e for e in events(root, after=compact_from)
                                  if e['type'] == 'native-event' and e['data']['type'] == 'session.compaction.ended'
                                  and e['data']['data']['sessionID'] == compaction_session]
             require(compaction_events, 'Native compaction did not complete on the installed 2.3.0 host')
             s.invoke(compaction_session, 'record', {'operation': 'add', 'kind': 'result',
                                                     'statement': 'Postcompaction native tool completed'})
-            after_compaction = [e for e in events(root)[compact_from:]
+            after_compaction = [e for e in events(root, after=compact_from)
                                 if e['type'] == 'provider-request' and e['data']['role'] == 'reader'
                                 and compaction_action['id'] in json.dumps(e['data']['prompt'])
                                 and 'loom:context:v2' in json.dumps(e['data']['prompt'])]
@@ -1082,7 +1107,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             typed_asker, typed_reader = s.session('asker'), s.session('reader')
             # Fully installed typed-OQ path: real native child, model request,
             # Loom callback, durable answer and exact-typed_asker synthetic admission.
-            typed_start = len(events(root))
+            typed_start = event_count(root)
             asker_requests_before = len(target_requests(root, typed_asker))
             typed_q = s.invoke(typed_asker, 'record', {'operation': 'ask',
                            'question': 'Which boundary needs research?',
@@ -1113,7 +1138,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             # insufficient by itself: a wake can be queued but not yet active.
             # Observe its actual native terminal after the notice first.
             def parent_completed_after_native_notice():
-                observed = events(root)[typed_start:]
+                observed = events(root, after=typed_start)
                 notices = [(i, e) for i, e in enumerate(observed)
                     if e['type'] == 'native-event'
                     and e['data'].get('type') == 'session.inbox.enqueued'
@@ -1139,7 +1164,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
                     'Native delegation ignored specialist model precedence: ' + json.dumps(selected_model))
             require(any(e['data']['agent'] == 'question-specialist' for e in target_requests(root, child_id)),
                     'No installed native specialist model request observed')
-            retrieved = [e for e in events(root)[typed_start:] if e['type'] == 'tool-before'
+            retrieved = [e for e in events(root, after=typed_start) if e['type'] == 'tool-before'
                          and e['data']['sessionID'] == child_id
                          and e['data']['tool'] in ('loom_record', 'loom.record')
                          and e['data'].get('input', {}).get('operation') == 'query'
@@ -1152,7 +1177,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
                     typed_answers[0]['session_id'] == child_id and
                     typed_answers[0]['data']['format'] == 'loom-answer/v2',
                     'Native specialist did not persist one attributed typed answer')
-            typed_notices = [e['data'] for e in events(root)[typed_start:] if e['type'] == 'native-event'
+            typed_notices = [e['data'] for e in events(root, after=typed_start) if e['type'] == 'native-event'
                              and e['data']['type'] == 'session.inbox.enqueued'
                              and e['data']['data']['item']['type'] == 'synthetic'
                              and e['data']['data']['sessionID'] == typed_asker]
@@ -1174,7 +1199,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             # requests: the initial ask, the native tool-handle continuation,
             # then a new turn after the one subagent-completion synthetic
             # admission. None of these is a second Loom answer notification.
-            typed_observed = events(root)[typed_start:]
+            typed_observed = events(root, after=typed_start)
             parent_requests = [i for i, e in enumerate(typed_observed)
                 if e['type'] == 'model-request' and e['data'].get('sessionID') == typed_asker]
             completion_receipts = [i for i, e in enumerate(typed_observed)
@@ -1216,12 +1241,12 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             # Delegated work can ask its actual dispatcher or request a user
             # decision. Verify durable native parent notices, not invented approval.
             def parent_notice(question_id, after):
-                return [e['data'] for e in events(root)[after:]
+                return [e['data'] for e in events(root, after=after)
                         if e['type'] == 'native-event'
                         and e['data']['type'] == 'session.inbox.enqueued'
                         and e['data']['data']['item']['type'] == 'synthetic'
                         and e['data']['data']['item']['payload'].get('metadata', {}).get('question_id') == question_id]
-            dispatcher_from = len(events(root))
+            dispatcher_from = event_count(root)
             forwarded = s.invoke(child_id, 'record', {'operation': 'ask', 'question': 'Clarify my task scope',
                            'recipient': {'kind': 'dispatcher'}, 'blocking': False})
             require(forwarded['dispatch']['status'] == 'admission-observed'
@@ -1235,7 +1260,7 @@ def run(executable, repo, output, artifact, plugin, expected_plugin, expected_sd
             require(dispatcher_answer['session_id'] == typed_asker and 'resume' not in dispatcher_answer,
                     'Nonblocking dispatcher answer did not preserve expected authorship')
 
-            user_from = len(events(root))
+            user_from = event_count(root)
             user_question = s.invoke(child_id, 'record', {'operation': 'ask',
                             'question': 'What does the user prefer?', 'recipient': {'kind': 'user'},
                             'blocking': False})

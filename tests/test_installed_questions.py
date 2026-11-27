@@ -15,6 +15,7 @@ from installed_questions import (
     REQUIRED_INSTALLED_CHECKS,
     Scenario,
     audit_session,
+    event_count,
     events,
     final_events,
     fixture_snapshot,
@@ -31,6 +32,68 @@ from installed_questions import (
 
 
 class AuditSessionTest(unittest.TestCase):
+    def test_offset_reads_are_independent_snapshots_of_nested_receipts(self):
+        expected = [
+            {'type': 'ready', 'data': {'items': [{'value': 'original'}]}},
+            {'type': 'tool-after', 'data': {'items': [{'value': 'terminal'}]}},
+        ]
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'audit.ndjson').write_text(''.join(json.dumps(row) + '\n' for row in expected))
+            with audit_session(root) as owner:
+                observed = events(root, after=1)
+                self.assertEqual(observed, expected[1:])
+                observed[0]['data']['items'][0]['value'] = 'caller mutation'
+                observed.append({'type': 'invented'})
+                self.assertEqual(events(root), expected)
+                self.assertEqual(event_count(root), 2)
+                self.assertEqual(events(root, after=2), [])
+                self.assertEqual(events(root, after=20), [])
+                captured = owner.finalize(root / 'retained.ndjson')
+                captured.events[0]['data']['items'].clear()
+                self.assertEqual(final_events(root), expected)
+
+    def test_offset_reads_and_checkpoints_validate_the_unselected_prefix(self):
+        for reader in (event_count, lambda root: events(root, after=2)):
+            with self.subTest(reader=reader), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                path = root / 'audit.ndjson'
+                path.write_bytes(b'{"type":"ready"}\n{"type":"tool-after"}\n')
+                with audit_session(root):
+                    self.assertEqual(event_count(root), 2)
+                    path.write_bytes(b'{"type":"other"}\n{"type":"tool-after"}\n')
+                    with self.assertRaisesRegex(RuntimeError, 'prefix'):
+                        reader(root)
+
+    def test_offsets_reject_negative_noninteger_and_boolean_values(self):
+        with tempfile.TemporaryDirectory() as temp:
+            for after in (-1, 0.5, True, None):
+                with self.subTest(after=after), self.assertRaisesRegex(RuntimeError, 'nonnegative integer'):
+                    events(Path(temp), after=after)
+
+    def test_managed_reads_extend_complete_and_partial_tails_without_duplicate_receipts(self):
+        first = {'type': 'ready'}
+        second = {'type': 'tool-after'}
+        third = {'type': 'context', 'data': 'évidence'}
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = root / 'audit.ndjson'
+            path.write_bytes(b'{"type":"ready"}\n{"type":"tool-after"}')
+            with audit_session(root):
+                self.assertEqual(events(root), [first, second])
+                self.assertEqual(event_count(root), 2)
+                with path.open('ab') as stream:
+                    stream.write(b'\n{"type":"context","data":"\xc3')
+                self.assertEqual(event_count(root), 2)
+                self.assertEqual(events(root, after=1), [second])
+                with path.open('ab') as stream:
+                    stream.write(b'\xa9vidence"}')
+                self.assertEqual(events(root, after=1), [second, third])
+                with path.open('ab') as stream:
+                    stream.write(b'\n')
+                self.assertEqual(event_count(root), 3)
+                self.assertEqual(final_events(root), [first, second, third])
+
     def test_finalize_retains_parses_and_hashes_one_captured_snapshot(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

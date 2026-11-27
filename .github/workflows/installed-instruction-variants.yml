@@ -8,6 +8,9 @@ on:
       - tests/test_installed_instruction_variants.py
       - tests/variant-host/**
       - docs/architecture/qualification/session-instruction-qualification.md
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
   contents: read
 jobs:
@@ -25,14 +28,7 @@ jobs:
         with:
           node-version: 22
       - run: bun install --frozen-lockfile
-      - run: bun run typecheck
-      - name: Typecheck the test-only native provider observer
-        run: >-
-          ./node_modules/.bin/tsc --noEmit --ignoreConfig --target ES2022 --module NodeNext
-          --moduleResolution NodeNext --strict --skipLibCheck --types bun,node
-          tests/variant-host/server.ts
-      - name: Negative receipt, drift and version oracles
-        run: python3 -m unittest discover -s tests -p test_installed_instruction_variants.py -v
+      - run: git diff --exit-code -- bun.lock
       - name: Pack and install the Loom candidate without modifying an active installation
         run: |
           mkdir -p "$RUNNER_TEMP/loom-variant-artifacts"

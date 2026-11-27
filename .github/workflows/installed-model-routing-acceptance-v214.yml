@@ -1,6 +1,9 @@
 name: Installed V2 routing acceptance (local providers)
 on:
   pull_request:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
   contents: read
 jobs:
@@ -17,15 +20,10 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-      - name: Install pinned Loom dependencies and run unit protection controls
-        run: |
-          bun install --frozen-lockfile
-          bun run typecheck
-          ./node_modules/.bin/tsc --noEmit --ignoreConfig --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck --types bun,node tests/request-local-host/server.ts
-          bun run test:core
-          bun run test:native
-          bun run test:python
-          python3 tests/routing_acceptance_oracle.py
+      # Main CI owns typechecking and core/native/Python protection, including
+      # the routing oracle counterexamples. This job owns the installed boundary.
+      - run: bun install --frozen-lockfile
+      - run: git diff --exit-code -- bun.lock
       - name: Pack and install the exact candidate, never modify the runner user config
         run: |
           mkdir -p "$RUNNER_TEMP/loom-acceptance-artifact"

@@ -31,7 +31,7 @@ import time
 from installed_host_smoke import (PrivateHost, installed_plugin_inventory, isolated_environment,
     require, ready_url, endpoint_path, roster_response, NoRedirect)
 from installed_instruction_variants import verify_host_version
-from installed_questions import Scenario, audit_session, events, final_events, idle, request
+from installed_questions import Scenario, audit_session, event_count, events, final_events, idle, request
 
 HOST = "2.3.0"
 CHECKS = {
@@ -618,7 +618,7 @@ def run(args):
                         json.dumps({"operation": "evaluation", "batch_id": batch_a}) + ");")
                     idle(host, [owner])
                     failures = [
-                        e for e in events(root)[offset:]
+                        e for e in events(root, after=offset)
                         if e["type"] == "tool-after"
                         and e["data"].get("tool") in ("loom_insights", "loom.insights")
                         and e["data"].get("status") == "error"
@@ -627,7 +627,7 @@ def run(args):
                     require(not any(e["type"] == "tool-after"
                                     and e["data"].get("tool") in ("loom_insights", "loom.insights")
                                     and e["data"].get("status") == "completed"
-                                    for e in events(root)[offset:]),
+                                    for e in events(root, after=offset)),
                             "Revocation returned protected derived content")
                     check("S3-foreign-and-revoked-readers-denied",
                           foreign_denied=True, same_session_revoked=True)
@@ -740,11 +740,11 @@ def run(args):
                     scenario = Scenario(host, root)
                     require(request(host, "GET", f"/api/session/{owner}")["agent"] == "restricted",
                             "Native read-revocation state was not retained")
-                    denied_offset = len(events(root))
+                    denied_offset = event_count(root)
                     _, _ = scenario.begin(owner, "return await tools.loom.insights(" +
                         json.dumps({"operation": "evaluation", "batch_id": combined_id}) + ");")
                     idle(host, [owner])
-                    denied_events = events(root)[denied_offset:]
+                    denied_events = events(root, after=denied_offset)
                     require(any(e["type"] == "tool-after"
                                 and e["data"].get("tool") in ("loom_insights", "loom.insights")
                                 and e["data"].get("status") == "error"
@@ -767,7 +767,7 @@ def run(args):
                     require(frozen_read["request"]["rechecks"] == [
                         {"request_id": r1, "finding_ids": [finding_ref]}],
                         "Fresh restored host lost the R2 historical review recheck")
-                    foreign_offset = len(events(root))
+                    foreign_offset = event_count(root)
                     scenario.command(unrelated, "let denied=false;try{await tools.loom.insights(" +
                         json.dumps({"operation": "evaluation", "batch_id": combined_id}) +
                         ");}catch(error){denied=true;}if(!denied)throw new Error("
@@ -775,7 +775,7 @@ def run(args):
                     require(any(e["type"] == "tool-after"
                                 and e["data"].get("tool") in ("loom_insights", "loom.insights")
                                 and e["data"].get("status") == "error"
-                                for e in events(root)[foreign_offset:]),
+                                for e in events(root, after=foreign_offset)),
                             "Foreign restored-host source read did not fail")
                     check("S3-stopped-backup-restore-fresh-host-readback",
                           old_session=owner, restored_batch=combined_id,

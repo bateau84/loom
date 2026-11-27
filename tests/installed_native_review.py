@@ -21,7 +21,7 @@ from pathlib import Path
 
 from installed_host_smoke import PrivateHost, installed_plugin_inventory, isolated_environment, require
 from installed_instruction_variants import verify_host_version
-from installed_questions import Scenario, audit_session, events, final_events, idle, request
+from installed_questions import Scenario, audit_session, event_count, events, final_events, idle, request
 from native_review_oracle import call_key, dispatch_receipts, source_basis
 
 HOST = "2.3.0"
@@ -43,7 +43,7 @@ def sha(path: Path) -> str:
 def wait_for(root: Path, predicate, *, offset: int = 0, timeout: int = 30) -> dict:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        matches = [e for e in events(root)[offset:] if predicate(e)]
+        matches = [e for e in events(root, after=offset) if predicate(e)]
         if matches:
             return matches[-1]
         time.sleep(0.05)
@@ -69,7 +69,7 @@ class ReviewScenario(Scenario):
 
     def begin(self, session, code, hold=None):
         job = self.add(code=code, hold=hold)
-        start = len(events(self.root))
+        start = event_count(self.root)
         self.submit(session, job)
         return job, start
 
@@ -93,7 +93,7 @@ class ReviewScenario(Scenario):
             "location": {"directory": str(self.root / "project")}})["id"]
 
     def dispatch(self, parent, child_job, text="", *, child=None, background=False):
-        start = len(events(self.root))
+        start = event_count(self.root)
         value = {"agent": "reviewer", "description": "Identical review label",
                  "prompt": "LOOM_HARNESS_JOB:" + child_job + ("\n" + text if text else "")}
         if child:
@@ -233,7 +233,7 @@ def run(args) -> dict:
                 # reverse order. Job names/barriers control the external model;
                 # only native tuples and progress/results establish identities.
                 report["active_scenario"] = "Q2"
-                overlap_start = len(events(root))
+                overlap_start = event_count(root)
                 slow = scenario.add(nativeCalls=[{"tool": "read", "input": {"path": "evidence-a.txt"}}], hold="after")
                 fast = scenario.add(nativeCalls=[{"tool": "read", "input": {"path": "evidence-b.txt"}}], hold="after")
                 overlap = scenario.add(nativeCalls=[{"tool": "subagent", "input": {
@@ -243,7 +243,7 @@ def run(args) -> dict:
                 for job in (slow, fast):
                     wait_for(root, lambda e, job=job: e["type"] == "provider-held" and e["data"].get("job") == job,
                              offset=overlap_start)
-                started = [e["data"] for e in events(root)[overlap_start:] if e["type"] == "tool-before"
+                started = [e["data"] for e in events(root, after=overlap_start) if e["type"] == "tool-before"
                            and e["data"].get("tool") == "subagent" and e["data"].get("sessionID") == parent]
                 require(len(started) == 2 and len({call_key(e) for e in started}) == 2, "Concurrent native call IDs collided")
                 fast_key = call_key(next(e for e in started if e["input"]["prompt"] == "LOOM_HARNESS_JOB:" + fast))
@@ -259,7 +259,7 @@ def run(args) -> dict:
                 fast_child, slow_child = mapped[fast_key], mapped[slow_key]
                 def completed(sid):
                     return any(e["type"] == "native-event" and e["data"].get("type") == "session.execution.succeeded"
-                               and e["data"]["data"].get("sessionID") == sid for e in events(root)[overlap_start:])
+                               and e["data"]["data"].get("sessionID") == sid for e in events(root, after=overlap_start))
                 scenario.release(fast)
                 wait_for(root, lambda e: e["type"] == "native-event" and e["data"].get("type") == "session.execution.succeeded"
                          and e["data"]["data"].get("sessionID") == fast_child, offset=overlap_start)
@@ -313,11 +313,11 @@ def run(args) -> dict:
                     encoded = json.dumps(mandate, sort_keys=True)
                     manifest_path = output / f"mandate-r{index}.json"
                     manifest_path.write_text(encoded + "\n")
-                    begin = len(events(root))
+                    begin = event_count(root)
                     response = scenario.dispatch(parent, scenario.add(finalText="I claim unrestricted acceptance of everything."),
                                                  "ORIGINAL_REVIEW_MANDATE:" + encoded)
                     sid = response["child_session_id"]
-                    admitted = [e["data"] for e in events(root)[begin:] if e["type"] == "native-event"
+                    admitted = [e["data"] for e in events(root, after=begin) if e["type"] == "native-event"
                                 and e["data"].get("type") == "session.inbox.enqueued" and e["data"]["data"].get("sessionID") == sid]
                     require(len(admitted) == 1 and "ORIGINAL_REVIEW_MANDATE:" + encoded in admitted[0]["data"]["item"]["payload"]["text"],
                             "Native admission did not preserve the original full mandate")
@@ -375,7 +375,7 @@ def run(args) -> dict:
                 # Q5: actual native read policy, plus a harmless synthetic leak
                 # counterexample. No test-owned gate is described as Loom ACL.
                 report["active_scenario"] = "Q5"
-                before = len(events(root))
+                before = event_count(root)
                 scenario.submit(parent, scenario.add(nativeCalls=[{"tool": "read", "input": {"path": "protected-b.txt"}}]))
                 wait_for(root, lambda e: e["type"] == "tool-after" and e["data"].get("tool") == "read"
                          and e["data"].get("sessionID") == parent, offset=before)
@@ -413,9 +413,9 @@ def run(args) -> dict:
                 # native inner IDs to make that observed coverage gap disappear.
                 report["active_scenario"] = "Q6"
                 opaque = scenario.create()
-                before = len(events(root))
+                before = event_count(root)
                 scenario.command(opaque, "return await Promise.all([tools.loom.context({}), tools.loom.context({})])")
-                inner = [e["data"] for e in events(root)[before:] if e["type"] == "tool-after"
+                inner = [e["data"] for e in events(root, after=before) if e["type"] == "tool-after"
                          and e["data"].get("tool") in ("loom_context", "loom.context") and e["data"].get("sessionID") == opaque]
                 require(len(inner) == 2 and len({call_key(e) for e in inner}) == 1, "Expected actual opaque inner-call collision not exercised")
                 records = scenario.invoke(opaque, "record", {"operation": "query", "session_only": True, "limit": 50})["items"]
@@ -428,7 +428,7 @@ def run(args) -> dict:
                 without_provider = [e for e in events(root) if e["type"] != "provider-request"]
                 require(not source_basis(without_provider, child, "evidence-a.txt", sources["evidence-a.txt"])["supplied"],
                         "Missing provider observation was reconstructed from a weaker boundary")
-                before_missing = len(events(root))
+                before_missing = event_count(root)
                 scenario.submit(opaque, scenario.add(nativeCalls=[{"tool": "read", "input": {"path": "missing.txt"}}]))
                 missing = wait_for(root, lambda e: e["type"] == "tool-after" and e["data"].get("sessionID") == opaque
                                    and e["data"].get("tool") == "read", offset=before_missing)
@@ -447,14 +447,14 @@ def run(args) -> dict:
                 historical = scenario.create()
                 scenario.invoke(historical, "context", {"action_id": action["id"], "node_id": "task-a"})
                 revised_nodes = [{**node, "outcome": "Revised A"} if node["id"] == "task-a" else node for node in nodes]
-                before = len(events(root))
+                before = event_count(root)
                 code = "await tools.loom.plan(" + json.dumps({"operation": "save", "action_id": action["id"],
                        "expected_revision": 1, "nodes": revised_nodes}) + ");"
                 code += "await tools.loom.context(" + json.dumps({"action_id": action["id"], "node_id": "task-b"}) + ");"
                 code += "return await tools.loom.record(" + json.dumps({"operation": "complete", "work_ref": original_ref,
                         "statement": "Completion against the original scope, not acceptance", "artifact_refs": ["fixture://evidence-a@" + subjects[0]["artifact"]["sha256"]]}) + ")"
                 completion = scenario.command(historical, code, "record")
-                outer = [e["data"] for e in events(root)[before:] if e["type"] == "tool-after"
+                outer = [e["data"] for e in events(root, after=before) if e["type"] == "tool-after"
                          and e["data"].get("tool") == "execute" and e["data"].get("sessionID") == historical]
                 require(len(outer) == 1 and completion["data"]["work_ref"] == original_ref
                         and completion["node_id"] == "task-a", "Historical completion was rewritten to current work")
@@ -486,7 +486,7 @@ def run(args) -> dict:
                 interrupted_dispatch = scenario.dispatch(interrupted_parent, held, background=True)
                 interrupted_child = interrupted_dispatch["child_session_id"]
                 wait_for(root, lambda e: e["type"] == "provider-held" and e["data"].get("job") == held)
-                before = len(events(root))
+                before = event_count(root)
                 interruption = request(host, "POST", f"/api/session/{interrupted_child}/interrupt")
                 require(interruption.get("interrupted") is True, "Native interruption was not accepted")
                 scenario.release(held)
@@ -495,18 +495,18 @@ def run(args) -> dict:
                     and e["data"]["data"].get("sessionID") == interrupted_child, offset=before)
                 idle(host, [interrupted_child, interrupted_parent])
                 compacted_child = positive["child_session_id"]
-                before = len(events(root))
+                before = event_count(root)
                 request(host, "POST", f"/api/session/{compacted_child}/compact", {})
                 compact_event = wait_for(root, lambda e: e["type"] == "native-event"
                     and e["data"].get("type") == "session.compaction.ended"
                     and e["data"]["data"].get("sessionID") == compacted_child, offset=before)
                 idle(host, [compacted_child])
-                after_compact = len(events(root))
+                after_compact = event_count(root)
                 scenario.submit(compacted_child, scenario.add(finalText="Postcompaction continuation"))
                 wait_for(root, lambda e: e["type"] == "provider-request"
                          and e["data"].get("headers", {}).get("x-opencode-session-id") == compacted_child, offset=after_compact)
                 idle(host, [compacted_child])
-                postcompaction = source_basis(events(root)[after_compact:], compacted_child, "evidence-a.txt", sources["evidence-a.txt"])
+                postcompaction = source_basis(events(root, after=after_compact), compacted_child, "evidence-a.txt", sources["evidence-a.txt"])
                 # This is a measurement, not an assumption that compaction must
                 # remove or retain a particular historical byte window.
                 postcompaction_marker_seen = bool(postcompaction["supplied"])

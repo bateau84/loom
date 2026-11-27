@@ -3,6 +3,9 @@ on:
   pull_request:
   push:
     branches: [main]
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 permissions:
   contents: read
 jobs:
@@ -22,22 +25,14 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: git diff --exit-code -- bun.lock
       - run: bun run typecheck
-      - name: Typecheck external scripted provider fixture (not production code)
+      - name: Typecheck external provider and audit fixtures (not production code)
         run: >-
           ./node_modules/.bin/tsc --noEmit --ignoreConfig --target ES2022 --module NodeNext
-          --moduleResolution NodeNext --strict --skipLibCheck --types bun,node tests/question-host/server.ts tests/question-host/get-rejection.test.ts
-      - name: Typecheck passive real-model QA-B audit plugin (provider-free)
-        run: >-
-          ./node_modules/.bin/tsc --noEmit --ignoreConfig --target ES2022 --module NodeNext
-          --moduleResolution NodeNext --strict --skipLibCheck --types bun,node tests/retrospective-host/audit.ts
-      - name: Typecheck native trust-boundary fixture (provider-free)
-        run: >-
-          ./node_modules/.bin/tsc --noEmit --ignoreConfig --target ES2022 --module NodeNext
-          --moduleResolution NodeNext --strict --skipLibCheck --types bun,node tests/host-trust/server.ts
-      - name: Typecheck restricted execution fixture (local synthetic authority only)
-        run: >-
-          ./node_modules/.bin/tsc --noEmit --ignoreConfig --target ES2022 --module NodeNext
-          --moduleResolution NodeNext --strict --skipLibCheck --types bun,node tests/evaluator-execution-host/*.ts
+          --moduleResolution NodeNext --strict --skipLibCheck --types bun,node
+          tests/question-host/server.ts tests/question-host/get-rejection.test.ts
+          tests/retrospective-host/audit.ts tests/host-trust/server.ts
+          tests/evaluator-execution-host/*.ts tests/request-local-host/server.ts
+          tests/retrospective-source/server.ts tests/variant-host/server.ts
       - run: bun run test:core
       - run: bun run test:native
       - name: Install pinned search implementation outside plugin dependencies
