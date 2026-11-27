@@ -272,9 +272,10 @@ test("flagless CLI must prove exact bytes before owner reads, independent of its
         "fs.appendFileSync(" + JSON.stringify(calls) + ",JSON.stringify({args,local,isolated:process.env.GH_TOKEN!=='operator-sentinel',config:process.env.GH_CONFIG_DIR!==process.env.HOME?'different':'isolated'})+'\\n');",
         "if(args.join(' ')==='api --help'){console.log('Flagless API help');process.exit(0)}",
         "if(args.join(' ')==='--version'){console.log(" + JSON.stringify(version) + ");process.exit(0)}",
+        "const raw=args.includes('--allow-escape-sequences');if(raw&&mode!=='hidden-flag')process.exit(1);",
         "if(!local){process.stderr.write('gh: HTTP 404');process.exit(1)}",
         "(async()=>{const response=await fetch(endpoint);const body=Buffer.from(await response.arrayBuffer());if(!response.ok)process.exit(1);",
-        "const type=response.headers.get('content-type');if((mode==='text'&&type==='text/plain')||(mode==='binary'&&type==='application/octet-stream'))body[0]^=1;",
+        "const type=response.headers.get('content-type');if((mode==='text'&&type==='text/plain')||(mode==='binary'&&type==='application/octet-stream')||(mode==='hidden-flag'&&!raw))body[0]^=1;",
         "if(mode==='error')process.exit(1);process.stdout.write(body)})().catch(()=>process.exit(1));"
       ].join("\n")
       await writeFile(join(bin, "gh"), script, { mode: 0o700 })
@@ -296,6 +297,14 @@ test("flagless CLI must prove exact bytes before owner reads, independent of its
         "--header", "X-GitHub-Api-Version: 2022-11-28", prefix])
       expect(observed.at(-1)?.isolated).toBe(false)
     }
+    await writeFile(calls, "")
+    await writeCLI("hidden-flag", "gh version 2.999.0")
+    expect(await resolveExternalOriginal(request(`commit/${commit}`), options)).toMatchObject({ status: "missing" })
+    const hidden = await readCalls()
+    expect(hidden.some(call => call.local && !call.args.includes("--allow-escape-sequences"))).toBe(true)
+    expect(hidden.filter(call => call.local && call.args.includes("--allow-escape-sequences"))).toHaveLength(2)
+    expect(hidden.at(-1)?.args).toEqual(["api", "--hostname", "github.com", "--method", "GET",
+      "--allow-escape-sequences", "--header", "X-GitHub-Api-Version: 2022-11-28", prefix])
     for (const mode of ["text", "binary", "error"]) {
       await writeFile(calls, "")
       await writeCLI(mode, "gh version 2.87.3")
@@ -320,7 +329,7 @@ let qualifiedInstalledGH = false
 if (installedGH) {
   try {
     const help = execFileSync(installedGH, ["api", "--help"], { encoding: "utf8", maxBuffer: 32768, timeout: 5000 })
-    qualifiedInstalledGH = /^\s+--allow-escape-sequences(?:\s|=)/m.test(help)
+    qualifiedInstalledGH = /^\s*--allow-escape-sequences(?:\s|=)/m.test(help)
       || /^gh version (?:2\.46\.0|2\.87\.3)(?:\s|$)/.test(execFileSync(installedGH, ["--version"], { encoding: "utf8", maxBuffer: 4096, timeout: 5000 }))
   } catch { /* Unavailable/unsupported installed CLI is an explicit skipped check. */ }
 }

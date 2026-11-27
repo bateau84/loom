@@ -51,6 +51,8 @@ jobs:
           bin="$directory/gh_${VERSION}_linux_amd64/bin"
           "$bin/gh" --version
           "$bin/gh" --version | grep -E "^gh version $VERSION( |$)"
+          help="$(env -i PATH=/usr/bin:/bin HOME="$directory" GH_CONFIG_DIR="$directory/config" GH_TOKEN=controlled-not-a-real-token GH_PROMPT_DISABLED=1 GH_PAGER= PAGER= NO_COLOR=1 "$bin/gh" api --help)"
+          printf '%s\n' "$help" | grep -F -- '--allow-escape-sequences' || echo "Raw-output flag not advertised in nonterminal help"
           printf '%s\n' "$bin" >> "$GITHUB_PATH"
       - name: Exercise real non-TTY CLI through the resolver
         env:

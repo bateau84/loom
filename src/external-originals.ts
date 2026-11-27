@@ -123,12 +123,12 @@ const runGH = (args: string[], options: CLIOptions): Promise<{ status: number; b
 const apiArguments = (endpoint: string, explicitRaw: boolean) => ["api", "--hostname", "github.com", "--method", "GET",
   ...(explicitRaw ? ["--allow-escape-sequences"] : []), "--header", "X-GitHub-Api-Version: 2022-11-28", endpoint]
 
-/** Flagless CLIs must demonstrate byte-preserving nonterminal output. The
+/** CLIs without an advertised raw flag must demonstrate byte-preserving nonterminal output. The
  * only URLs admitted here are generated loopback probe URLs, with synthetic
  * bodies and a disposable credential-free configuration. No owner endpoint or
  * operator credentials enter this test. It is a capability test for a trusted
  * installed executable, not a sandbox for an adversarial executable. */
-async function qualifyFlaglessCLI(options: CLIOptions): Promise<void> {
+async function qualifyUnadvertisedCLI(options: CLIOptions): Promise<boolean> {
   let directory: string | undefined, stop: (() => void | Promise<void>) | undefined
   try {
     options.signal.throwIfAborted()
@@ -154,17 +154,27 @@ async function qualifyFlaglessCLI(options: CLIOptions): Promise<void> {
       XDG_CONFIG_HOME: directory, XDG_CACHE_HOME: directory, XDG_DATA_HOME: directory, XDG_STATE_HOME: directory,
       GH_CONFIG_DIR: directory, GH_TOKEN: "loom-local-probe-not-a-credential",
       GH_NO_UPDATE_NOTIFIER: "1", GH_NO_EXTENSION_UPDATE_NOTIFIER: "1" }
-    for (const [path, expected] of [["text", textBytes], ["redirect", binaryBytes]] as const) {
-      const response = await runGH(apiArguments(new URL(path, server.url).href, false), {
-        ...options, directory, environment, maxBytes: 4096, timeoutMs: 5000
-      })
-      if (response.status !== 200 || !Buffer.from(response.body).equals(Buffer.from(expected)))
-        throw new Error("byte mismatch")
+    // Some releases support the flag without advertising it in help.
+    // Only the isolated probe may try another mode; owner reads never retry.
+    for (const explicitRaw of [false, true]) {
+      try {
+        for (const [path, expected] of [["text", textBytes], ["redirect", binaryBytes]] as const) {
+          const response = await runGH(apiArguments(new URL(path, server.url).href, explicitRaw), {
+            ...options, directory, environment, maxBytes: 4096, timeoutMs: 5000
+          })
+          if (response.status !== 200 || !Buffer.from(response.body).equals(Buffer.from(expected)))
+            throw new Error("byte mismatch")
+        }
+        return explicitRaw
+      } catch {
+        options.signal.throwIfAborted()
+      }
     }
+    throw new Error("no qualified mode")
   } catch {
     options.signal.throwIfAborted()
     return gap("unsupported", "github-cli-byte-output-unqualified",
-      "The flagless GitHub CLI could not prove exact nonterminal text and redirected binary output using the isolated local probe. No GitHub owner read was attempted. Make loopback available or put a GitHub CLI with --allow-escape-sequences on PATH; check gh --version.")
+      "GitHub CLI did not demonstrate exact nonterminal text and redirected binary output in either isolated probe mode. No GitHub owner read was attempted. Ensure loopback is available and check gh --version and gh api --help; use a CLI with working raw byte output on PATH.")
   } finally {
     try { await stop?.() }
     finally { if (directory !== undefined) await rm(directory, { recursive: true, force: true }) }
@@ -184,8 +194,8 @@ function githubCLITransport(): ExternalOriginalTransport {
         "The existing authenticated GitHub CLI could not be found on PATH. No account or credentials were created.")
       const help = await runGH(["api", "--help"], { ...options, executable, maxBytes: 32768, timeoutMs: 5000 })
       if (help.status !== 200) return gap("unsupported", "github-cli-byte-output-unqualified", "GitHub CLI byte-output support could not be established. Check gh api --help.")
-      const explicitRaw = /^\s+--allow-escape-sequences(?:\s|=)/m.test(decode(help.body))
-      if (!explicitRaw) await qualifyFlaglessCLI({ ...options, executable })
+      const advertised = /^\s*--allow-escape-sequences(?:\s|=)/m.test(decode(help.body))
+      const explicitRaw = advertised || await qualifyUnadvertisedCLI({ ...options, executable })
       return { executable, explicitRaw }
     })()
     const { executable, explicitRaw } = await qualified

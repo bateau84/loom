@@ -130,12 +130,16 @@ Loom reference store.
 The adapter resolves the existing `gh` executable and performs a bounded
 `gh api --help` capability check before its first owner API request. A CLI
 advertising `--allow-escape-sequences` uses that explicit raw-output option.
-Otherwise a flagless CLI must reproduce exact synthetic nonterminal text
+Otherwise a CLI must reproduce exact synthetic nonterminal text
 (including a BOM, CRLF and terminal escape sequences) and all 256 byte values
-after a loopback HTTP redirect. A version string alone does not qualify a CLI.
+after a loopback HTTP redirect. Try without the flag, and only if this local
+test fails, try with the flag (a release may support it without advertising it).
+Both probes use identical fixed GET arguments except for that flag. A version
+string alone does not qualify a CLI.
 The fixed synthetic probe uses a private temporary configuration, a dummy token,
 no inherited credential or proxy environment, a loopback-only listener, a 4 KiB
-output bound and a five-second timeout per probe request. It releases the
+output bound and a five-second timeout per probe request (at most four
+subprocesses, inside the existing resolution deadline). It releases the
 listener and temporary configuration before owner reads. The same resolved
 executable performs the authorized owner GETs. Failed or unavailable probes
 produce `github-cli-byte-output-unqualified`; no GitHub owner request or
