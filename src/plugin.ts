@@ -97,7 +97,7 @@ const artifactRefInput = obj({ locator: str, version: { oneOf: [
   obj({ kind: { const: "git" }, repository: str, object_id: str, path: nullableString }, ["kind", "repository", "object_id", "path"]),
   obj({ kind: { const: "sha256" }, value: str }, ["kind", "value"]),
 ] }, content_ref: nullableString }, ["locator", "version", "content_ref"])
-const reviewRequestInput = { ...obj({
+const reviewRequestInput = obj({
   format: { const: "loom-review-request/v1" }, request_id: str,
   mandate: obj({ question: str, dimensions: list,
     criteria: { type: "array", maxItems: 100, items: obj({ text: str, source_ref: nullableString }, ["text", "source_ref"]) },
@@ -116,13 +116,17 @@ const reviewRequestInput = { ...obj({
   }, ["member_id", "work_ref", "producing_attempt_refs", "artifact_refs", "prior_review_request_id", "membership_source_refs", "gaps"]) },
   rechecks: { type: "array", maxItems: 100, items: obj({ request_id: str, finding_ids: list }, ["request_id", "finding_ids"]) },
   extensions: { type: "object", additionalProperties: true },
-}, ["format", "request_id", "mandate", "intended_recipient", "members", "rechecks"]),
-  allOf: [{
-    if: { properties: { mandate: { required: ["currentness"] } } },
-    then: { properties: { work_revision_policy: { const: "current-at-issue-claim" } } },
-    else: { properties: { work_revision_policy: { const: "frozen-historical" } } },
-  }],
-}
+}, ["format", "request_id", "mandate", "intended_recipient", "members", "rechecks"])
+// Effect imports nested property shapes but cannot import if/then/else.
+// Keep conditional constraints on the tool envelope; the full schema and
+// review owner enforce the original mandate's policy.
+const reviewPolicyRule = (field: "request" | "review") => ({
+  if: { required: [field], properties: { [field]: {
+    required: ["mandate"], properties: { mandate: { required: ["currentness"] } },
+  } } },
+  then: { properties: { [field]: { properties: { work_revision_policy: { const: "current-at-issue-claim" } } } } },
+  else: { properties: { [field]: { properties: { work_revision_policy: { const: "frozen-historical" } } } } },
+})
 const contextAttachments = { type: "array", items: { type: "string", maxLength: 2000 }, maxItems: 50 }
 const recipientInput = obj({ kind: choice("agent", "role", "dispatcher", "user"), id: str }, ["kind"])
 const choiceIDInput = { type: "string", minLength: 1, maxLength: QUESTION_CHOICE_LIMITS.id, pattern: "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$" }
@@ -151,17 +155,12 @@ const evaluatorMethodInput = preserveInput({
 }, ["format", "evaluator", "audit_skill", "rubric", "instruction_bundle", "result_format", "model", "adapter", "source_policy", "route_policy"])
 const evaluatorPrepareInput = { operation: { const: "prepare-evaluation" }, batch_id: str, method: evaluatorMethodInput,
   budget_policy: { anyOf: [evaluatorPolicyInput, { type: "null" }] } }
-const populationSelectionInput = { ...preserveInput({ mode: { const: "explicit-objective" }, objective_id: str,
+const populationSelectionInput = preserveInput({ mode: { const: "explicit-objective" }, objective_id: str,
   question: { type: "string", minLength: 1, maxLength: 8000 }, through: num,
   owner_boundary: preserveInput({ objective_links: { anyOf: [num, { type: "null" }] }, review_requests: num, review_relationships: num },
     ["objective_links", "review_requests", "review_relationships"]), owner_version: { type: "string", pattern: "^[a-f0-9]{64}$" },
   exclusions: { type: "array", maxItems: 2000, items: preserveInput({ record_id: str, reason: str }, ["record_id", "reason"]) },
-}, ["objective_id", "question"]),
-  allOf: [
-    { if: { required: ["owner_boundary"] }, then: { required: ["through"] } },
-    { if: { required: ["owner_version"] }, then: { required: ["owner_boundary"] } },
-  ],
-}
+}, ["objective_id", "question"])
 const frozenPopulationSelectionInput = { ...populationSelectionInput,
   required: ["objective_id", "question", "through", "owner_boundary", "owner_version"],
   description: "Copy the complete selection returned by preview-population; do not reconstruct boundaries or versions.",
@@ -205,6 +204,7 @@ const specs = [
         source_record_id: str, member_ids: list, supersedes: str }, ["operation", "request_id", "relationship", "source_record_id", "member_ids"]),
       obj({ operation: { const: "work" }, request_id: str, member_id: str }, ["operation", "request_id", "member_id"]),
     ],
+    allOf: [reviewPolicyRule("request")],
   } },
   { name: "trace", description: TOOL_HELP.trace, input: obj({ operation: choice("timeline", "children", "parts", "source"),
       session_id: str, export_path: { type: "string", minLength: 1, maxLength: 4096 },
@@ -303,6 +303,7 @@ const specs = [
       { if: { required: ["fields"] }, then: { properties: { projection: { const: "fields" } }, required: ["projection"] } },
       { if: { properties: { session_only: { const: true } }, required: ["session_only"] },
         then: { properties: { operation: choice("query", "add") }, not: { anyOf: [{ required: ["action_id"] }, { required: ["node_id"] }] } } },
+      reviewPolicyRule("review"),
     ] } },
 ] as const
 

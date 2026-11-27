@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test"
 import { Schema, SchemaRepresentation } from "effect"
 import { registeredLoom } from "./helpers/registered-loom.js"
+import { TOOL_EXAMPLES } from "../src/tool-help.js"
 
 // This independent decoder supports object envelopes, required fields and
 // propertyNames. It rejects active JSON Schema if/then/not, so this check does
@@ -78,6 +79,14 @@ test("valid source-derived IDs pass published envelopes and execute through the 
     expect(result.freeze.selection.owner_boundary).toHaveProperty("review_requests")
     expect(result.freeze.selection.owner_boundary).toHaveProperty("review_relationships")
     expect(result.freeze.selection.owner_version).toMatch(/^[a-f0-9]{64}$/)
+    const pinned = { ...preview, selection: result.freeze.selection }
+    expect(envelopeAccepts(f.tools.get("history").input, "preview-population", pinned)).toBe(true)
+    expect((await f.invoke("history", pinned)).result.manifest_sha256).toBe(result.manifest_sha256)
+    for (const field of ["through", "owner_boundary"]) {
+      const selection = { ...result.freeze.selection }
+      delete selection[field]
+      await expect(f.invoke("history", { ...preview, selection })).rejects.toThrow()
+    }
   } finally { await f.close() }
 })
 
@@ -97,6 +106,27 @@ test("freeze schema distinguishes the complete pinned selection from the first p
     // Schema validity never proves an existing objective or source authorization.
     await expect(f.invoke("review", pinned)).rejects.toThrow("Engineering history scope unavailable")
     expect((await f.invoke("objective", { operation: "list" })).result.items).toEqual([])
+  } finally { await f.close() }
+})
+
+test("published review request imports without nested conditionals and keeps historical semantics", async () => {
+  const f = await registeredLoom()
+  try {
+    const historical = TOOL_EXAMPLES.review[0]
+    const schema = f.tools.get("review").input.oneOf.find((branch: any) => branch.properties.operation.const === "freeze")
+    const accepts = Schema.is(SchemaRepresentation.fromJsonSchemaDocument({
+      dialect: "draft-2020-12", schema, definitions: {},
+    }, { patterns: "apply" }))
+    expect(accepts(historical)).toBe(true)
+    const frozen = (await f.invoke("review", historical)).result
+    const original = (await f.invoke("review", { operation: "read", request_id: frozen.request_id })).result.request
+    expect(original.work_revision_policy).toBe("frozen-historical")
+    expect(original.mandate.currentness).toBeUndefined()
+    const invalid = { ...historical, request: { ...historical.request, request_id: "invalid-policy",
+      work_revision_policy: "current-at-issue-claim" } }
+    await expect(f.invoke("review", invalid)).rejects.toThrow("work_revision_policy must follow")
+    expect(f.sessionCreates).toEqual([])
+    expect(f.nativeInputs).toEqual([])
   } finally { await f.close() }
 })
 

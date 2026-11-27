@@ -57,6 +57,15 @@ const phaseAssessment = (phases: string[], assessments: string[]) => ({
 })
 
 function combinations(name: string, operation: string): Record<string, unknown>[] {
+  // Keep conditional checks on the operation envelope, not the nested
+  // property shape imported by Effect. Full JSON Schema and the source
+  // owners still enforce both dependencies.
+  if (name === "history" && operation === "preview-population") return [
+    ...[["owner_boundary", "through"], ["owner_version", "owner_boundary"]].map(([field, prerequisite]) => ({
+      if: { properties: { selection: { required: [field] } } },
+      then: { properties: { selection: { required: [prerequisite] } } },
+    })),
+  ]
   if (name === "history" && operation === "read") return [
     { oneOf: ["action_id", "session_id", "objective_id"].map(field => ({ required: [field] })) },
     { not: { required: ["record_id", "branch_ref"] } },
