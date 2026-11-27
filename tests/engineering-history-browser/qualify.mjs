@@ -29,11 +29,34 @@ assert.ok(manifest.fixtures.length >= 6, "Qualify adversarial planned/unplanned 
 for (const name of ["planned-overview", "planned-discovery", "planned-selected", "planned-historical", "planned-children",
   "unplanned-overview", "unplanned-discovery", "unplanned-selected", "unplanned-children", "unplanned-children-next", "dense-hostile",
   "trajectory-discovery", "trajectory-connected", "trajectory-page", "trajectory-page-next",
+  "population-preview", "population-preview-next", "population-frozen", "population-frozen-next", "population-frozen-missing",
   "connections-source", "connections-groups", "connections-edges", "connections-review", "connections-review-next"])
   assert.ok(manifest.fixtures.some(fixture => fixture.name === name), `Required browser scene: ${name}`)
 const sha256 = value => createHash("sha256").update(value).digest("hex")
 const canonical = value => JSON.stringify(value, (_, item) => item && typeof item === "object" && !Array.isArray(item)
   ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item)
+const populationBoundary = manifest.boundaries.find(boundary => boundary.name === "frozen-population-complete-bounded-readback")
+assert.ok(populationBoundary?.pages.length > 1, "Frozen population qualification reconstructs more than one page")
+const reconstructed = []
+let expectedRequest
+for (const name of populationBoundary.pages) {
+  const fixture = manifest.fixtures.find(item => item.name === name)
+  assert.ok(fixture, `Frozen continuation scene exists: ${name}`)
+  const view = JSON.parse(await readFile(join(input, fixture.json), "utf8")).result
+  assert.equal(view.format, "loom-retrospective-population-view/v1")
+  assert.equal(view.population_id, populationBoundary.population_id)
+  assert.equal(view.manifest_sha256, populationBoundary.manifest_sha256)
+  assert.equal(view.member_count, populationBoundary.member_count)
+  if (expectedRequest) assert.equal(canonical(view.navigation.repeat), canonical(expectedRequest))
+  for (const item of view.items) {
+    assert.equal(item.ordinal, reconstructed.length + 1)
+    reconstructed.push(item.key)
+  }
+  expectedRequest = view.navigation.next
+}
+assert.equal(expectedRequest, null)
+assert.deepEqual(reconstructed, populationBoundary.source_keys)
+assert.equal(new Set(reconstructed).size, populationBoundary.member_count)
 const report = { format: "loom-engineering-history-browser-qualification/v1", head: manifest.head,
   generated_at: new Date().toISOString(), versions, node: process.version, browser: null,
   fixture_manifest_sha256: sha256(manifestText), source_sha256: manifest.source_sha256,
@@ -100,7 +123,11 @@ try {
       const jsonText = await readFile(join(input, fixture.json), "utf8")
       const markdown = await readFile(join(input, fixture.markdown), "utf8")
       const view = JSON.parse(jsonText).result
-      assert.equal(view.format, "loom-engineering-history/v1")
+      assert.ok(["loom-engineering-history/v1", "loom-retrospective-population-view/v1"].includes(view.format))
+      const population = view.format === "loom-retrospective-population-view/v1"
+      const navigationLabel = population ? "Population sections" : "History layers"
+      const firstSummary = population ? "#members details > summary" : "#overview details > summary"
+      const skipTarget = population ? "population" : "overview"
       await check("exact registered response digests", async () => {
         assert.equal(sha256(html), fixture.sha256.html)
         assert.equal(sha256(jsonText), fixture.sha256.json)
@@ -114,57 +141,99 @@ try {
         assert.equal(await page.locator("html").getAttribute("lang"), "en")
         assert.equal(await page.getByRole("main").count(), 1)
         assert.equal(await page.getByRole("heading", { level: 1 }).count(), 1)
-        assert.equal(await page.getByRole("navigation", { name: "History layers" }).count(), 1)
+        assert.equal(await page.getByRole("navigation", { name: navigationLabel }).count(), 1)
+        assert.equal(await page.locator("meta[http-equiv='Content-Security-Policy']").getAttribute("content"),
+          "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'")
+        assert.equal(await page.locator("meta[name='referrer']").getAttribute("content"), "no-referrer")
         const text = await page.locator("body").textContent()
-        for (const source of fixture.sources) for (const value of [source.record_id, source.sha256, source.ref]) {
-          assert.ok(text.includes(value), `HTML contains ${value}`)
-          assert.ok(markdown.includes(value), `Markdown contains ${value}`)
-        }
-        for (const value of fixture.required_text) assert.ok(text.includes(value), `Required view text: ${value}`)
-        const values = value => value && typeof value === "object" ? Object.values(value).flatMap(values) : [value]
-        for (const relationship of view.relationships) for (const value of values(relationship))
-          assert.ok(text.includes(String(value)), `Complete relationship value: ${value}`)
-        for (const source of fixture.owner_sources ?? []) for (const value of [source.ref, source.sha256, source.tool])
-          assert.ok(text.includes(value) && markdown.includes(value), `Original relationship owner: ${value}`)
-        if (view.mode === "trajectory" || view.mode === "connections") {
-          assert.equal(await page.getByRole("heading", { name: "Intended Plan", exact: true }).count(), 0)
-          assert.equal(await page.getByRole("heading", { name: "Significant recorded work", exact: true }).count(), 0)
-          assert.ok(text.includes(view.mode === "connections" ? "Relationship details" : "Connected trajectory"))
-          for (const review of view.connections.reviews) {
-            assert.ok(text.includes("Exact requested scope and recheck targets"))
-            assert.ok(text.includes("Observed and authored evidence scope"))
-            for (const exclusion of review.request.mandate.exclusions) assert.ok(text.includes(exclusion))
-            assert.ok(text.includes(`${review.relationships_omitted} omitted`))
-          }
-        }
-        if (view.mode === "connections") {
-          assert.deepEqual([view.records, view.highlights, view.branches], [[], [], []])
-          assert.equal(await page.locator("#overview .metrics, .source-index, #assessment details.card").count(), 0,
-            "Relationship pages do not repeat global counts or source record bodies")
-          assert.ok(view.connections.context.record_refs.length)
-          assert.ok(view.navigation.repeat.connection_cursor)
-          for (const ref of view.connections.context.record_refs)
-            assert.ok(text.includes(ref) && markdown.includes(ref), "Omitted source bodies retain their exact selected references")
-          for (const key of ["action_id", "session_id", "record_id", "through", "owner_boundary", "owner_version", "limit"])
-            assert.equal(canonical(view.navigation.repeat[key]), canonical(view.connections.context.read[key]),
-              `Connection continuation preserves source ${key}`)
-          assert.equal(view.connections.context.read.connection_cursor, undefined)
-          assert.ok(!markdown.includes("### Significant recorded work") && !markdown.includes("### Intended Plan"))
-        }
-        for (const record of [...view.highlights, ...view.records]) if (record.excerpt !== null)
-          assert.ok(text.includes(record.excerpt), "The complete projected excerpt remains present after shortening the overview preview")
         const parsedRequests = (await page.locator("pre > code").allTextContents()).flatMap(value => {
           try { return [JSON.parse(value)] } catch { return [] }
         })
         const markdownRequests = [...markdown.matchAll(/(?:^|\n)((?:    [^\n]*\n)+)/g)].flatMap(match => {
           try { return [JSON.parse(match[1].split("\n").map(line => line.slice(4)).join("\n"))] } catch { return [] }
         })
-        for (const request of fixture.history_requests) {
-          assert.ok(parsedRequests.some(value => canonical(value) === canonical(request)),
-            `Copyable exact HTML expansion request ${canonical(request)}`)
-          assert.ok(markdownRequests.some(value => canonical(value) === canonical(request)),
-            `Copyable exact Markdown expansion request ${canonical(request)}`)
+        if (population) {
+          const expected = [{ population_id: view.population_id, manifest_sha256: view.manifest_sha256,
+            owner_session: view.owner_session, frozen_by: view.frozen_by, created_at: view.created_at,
+            member_count: view.member_count, manifest: view.manifest }, ...view.items,
+          { navigation: view.navigation, freeze: view.freeze, availability_scope: view.availability_scope, execution_permit: view.execution_permit }]
+          assert.equal(canonical(parsedRequests), canonical(expected),
+            "HTML retains every selected member, version, view, relationship basis, qualification and navigation field")
+          assert.equal(canonical(markdownRequests), canonical(expected),
+            "Markdown retains the same complete population fields as JSON and HTML")
+          assert.equal(view.manifest.coverage.objective_count, 1)
+          assert.equal(view.manifest.coverage.complete_selected_membership, true)
+          assert.equal(view.execution_permit, null)
+          assert.equal(await page.locator("#members details.card").count(), view.items.length)
+          assert.ok(text.includes(view.manifest.selection.question))
+          assert.ok(text.includes(view.state === "frozen" ? "Frozen selected membership" : "Read-only selection preview"))
+          const objects = value => value && typeof value === "object" ? [value, ...Object.values(value).flatMap(objects)] : []
+          for (const request of fixture.population_requests) {
+            assert.ok(parsedRequests.flatMap(objects).some(value => canonical(value) === canonical(request)), "Exact HTML population request")
+            assert.ok(markdownRequests.flatMap(objects).some(value => canonical(value) === canonical(request)), "Exact Markdown population request")
+          }
+          for (const [index, item] of view.items.entries()) {
+            assert.equal(item.ordinal, view.navigation.repeat.after + index + 1)
+            if (view.state === "frozen") assert.deepEqual(item.inspect, { operation: "population-source",
+              population_id: view.population_id, manifest_sha256: view.manifest_sha256, member_key: item.key })
+            else assert.equal(item.inspect, null)
+          }
+          if (view.navigation.next) {
+            assert.equal(view.navigation.next.after, view.items.at(-1).ordinal)
+            const { after: _repeatAfter, ...repeat } = view.navigation.repeat
+            const { after: _nextAfter, ...next } = view.navigation.next
+            assert.deepEqual(next, repeat, "Continuation retains the exact population or pinned selection")
+          }
+          if (fixture.name === "population-frozen-missing") {
+            assert.equal(view.items[0].availability, "available")
+            assert.equal(view.items[0].current.status, "missing")
+            assert.ok(text.includes("frozen available") && text.includes("current missing"))
+          }
+        } else {
+          for (const source of fixture.sources) for (const value of [source.record_id, source.sha256, source.ref]) {
+            assert.ok(text.includes(value), `HTML contains ${value}`)
+            assert.ok(markdown.includes(value), `Markdown contains ${value}`)
+          }
+          const values = value => value && typeof value === "object" ? Object.values(value).flatMap(values) : [value]
+          for (const relationship of view.relationships) for (const value of values(relationship))
+            assert.ok(text.includes(String(value)), `Complete relationship value: ${value}`)
+          for (const source of fixture.owner_sources ?? []) for (const value of [source.ref, source.sha256, source.tool])
+            assert.ok(text.includes(value) && markdown.includes(value), `Original relationship owner: ${value}`)
+          if (view.mode === "trajectory" || view.mode === "connections") {
+            assert.equal(await page.getByRole("heading", { name: "Intended Plan", exact: true }).count(), 0)
+            assert.equal(await page.getByRole("heading", { name: "Significant recorded work", exact: true }).count(), 0)
+            assert.ok(text.includes(view.mode === "connections" ? "Relationship details" : "Connected trajectory"))
+            for (const review of view.connections.reviews) {
+              assert.ok(text.includes("Exact requested scope and recheck targets"))
+              assert.ok(text.includes("Observed and authored evidence scope"))
+              for (const exclusion of review.request.mandate.exclusions) assert.ok(text.includes(exclusion))
+              assert.ok(text.includes(`${review.relationships_omitted} omitted`))
+            }
+          }
+          if (view.mode === "connections") {
+            assert.deepEqual([view.records, view.highlights, view.branches], [[], [], []])
+            assert.equal(await page.locator("#overview .metrics, .source-index, #assessment details.card").count(), 0,
+              "Relationship pages do not repeat global counts or source record bodies")
+            assert.ok(view.connections.context.record_refs.length)
+            assert.ok(view.navigation.repeat.connection_cursor)
+            for (const ref of view.connections.context.record_refs)
+              assert.ok(text.includes(ref) && markdown.includes(ref), "Omitted source bodies retain their exact selected references")
+            for (const key of ["action_id", "session_id", "record_id", "through", "owner_boundary", "owner_version", "limit"])
+              assert.equal(canonical(view.navigation.repeat[key]), canonical(view.connections.context.read[key]),
+                `Connection continuation preserves source ${key}`)
+            assert.equal(view.connections.context.read.connection_cursor, undefined)
+            assert.ok(!markdown.includes("### Significant recorded work") && !markdown.includes("### Intended Plan"))
+          }
+          for (const record of [...view.highlights, ...view.records]) if (record.excerpt !== null)
+            assert.ok(text.includes(record.excerpt), "The complete projected excerpt remains present after shortening the overview preview")
+          for (const request of fixture.history_requests) {
+            assert.ok(parsedRequests.some(value => canonical(value) === canonical(request)),
+              `Copyable exact HTML expansion request ${canonical(request)}`)
+            assert.ok(markdownRequests.some(value => canonical(value) === canonical(request)),
+              `Copyable exact Markdown expansion request ${canonical(request)}`)
+          }
         }
+        for (const value of fixture.required_text) assert.ok(text.includes(value), `Required view text: ${value}`)
         const structure = await page.evaluate(() => ({
           unsafe: document.querySelectorAll("script,iframe,frame,object,embed,img,video,audio,form,input,button,link,base").length,
           handlers: [...document.querySelectorAll("*")].flatMap(element => [...element.attributes].filter(attr => /^on/i.test(attr.name))),
@@ -180,8 +249,9 @@ try {
         assert.deepEqual(structure.missingTargets, [])
         assert.equal(structure.injected, undefined)
         for (const hostile of fixture.hostile_text ?? []) assert.ok(text.includes(hostile), "Hostile source remains literal text")
-        return { source_count: fixture.sources.length, history_request_count: fixture.history_requests.length,
-          fragment_count: structure.urls.length, view_mode: view.mode }
+        return { source_count: fixture.sources.length, history_request_count: fixture.history_requests?.length ?? 0,
+          population_request_count: fixture.population_requests?.length ?? 0,
+          fragment_count: structure.urls.length, view_mode: population ? view.state : view.mode }
       })
       await check("real Tab order, skip link and native Enter/Space disclosure", async () => {
         await page.keyboard.press("Tab")
@@ -192,28 +262,47 @@ try {
         assert.ok(parseFloat(style.width) >= 2 && style.style !== "none")
         await inViewport(page.locator(".skip"))
         await screenshot("keyboard-focus-desktop")
-        for (const anchor of await page.locator("nav[aria-label='History layers'] > a").all()) {
+        for (const anchor of await page.locator(`nav[aria-label='${navigationLabel}'] > a`).all()) {
           await page.keyboard.press("Tab")
           assert.equal(await anchor.evaluate(element => element === document.activeElement), true)
         }
         await page.keyboard.press("Tab")
-        const summary = page.locator("#overview details > summary").first()
+        const summary = page.locator(firstSummary).first()
         assert.equal(await summary.evaluate(element => element === document.activeElement), true)
         await keyboardToggle(summary, "Enter", true)
         await keyboardToggle(summary, "Space", false)
         const cdp = await context.newCDPSession(page)
         const { nodes } = await cdp.send("Accessibility.getFullAXTree")
         await cdp.detach()
-        assert.ok(nodes.some(node => !node.ignored && node.name?.value === "Source scope and boundary"
+        assert.ok(nodes.some(node => !node.ignored && (population ? node.name?.value?.includes(view.items[0].source.id) : node.name?.value === "Source scope and boundary")
           && node.properties?.some(property => property.name === "expanded" && property.value.value === false)),
         "Chromium accessibility tree exposes collapsed disclosure state")
         await page.locator(".skip").press("Enter")
-        await page.waitForFunction(() => location.hash === "#overview")
-        assert.equal(await page.locator("#overview").evaluate(element => element === document.activeElement), true)
-        await inViewport(page.locator("#overview"))
+        await page.waitForFunction(id => location.hash === `#${id}`, skipTarget)
+        assert.equal(await page.locator(`#${skipTarget}`).evaluate(element => element === document.activeElement), true)
+        await inViewport(page.locator(`#${skipTarget}`))
         return style
       })
-      if (view.mode === "connections") await check("connection context and owner disclosure preserve keyboard access", async () => {
+      if (population) await check("population sections and source disclosures preserve keyboard access", async () => {
+        await page.locator("nav[aria-label='Population sections'] a[href='#members']").press("Enter")
+        await page.waitForFunction(() => document.activeElement?.id === "members")
+        await inViewport(page.locator("#members"))
+        const summary = page.locator(firstSummary).first()
+        await page.keyboard.press("Tab")
+        assert.equal(await summary.evaluate(element => element === document.activeElement), true)
+        await keyboardToggle(summary, "Enter", true)
+        await inViewport(summary)
+        await screenshot("population-source-revealed")
+        await keyboardToggle(summary, "Space", false)
+        for (const id of ["selection", "navigation"]) {
+          await page.locator(`nav[aria-label='Population sections'] a[href='#${id}']`).press("Enter")
+          await page.waitForFunction(target => document.activeElement?.id === target, id)
+          await inViewport(page.locator(`#${id}`))
+        }
+        return { state: view.state, population_id: view.population_id, manifest_sha256: view.manifest_sha256,
+          source_keys: view.items.map(item => item.key), selected_members: view.member_count }
+      })
+      else if (view.mode === "connections") await check("connection context and owner disclosure preserve keyboard access", async () => {
         await page.locator("nav[aria-label='History layers'] a[href='#connections']").press("Enter")
         await page.waitForFunction(() => document.activeElement?.id === "connections")
         await inViewport(page.locator("#connections"))
@@ -251,7 +340,7 @@ try {
         await keyboardToggle(summary, "Space", false)
         return { href, revealed_by: "native fragment navigation after keyboard Enter", closed_by: "keyboard Space" }
       })
-      await check("internal record references and typed relationship targets", async () => {
+      if (!population) await check("internal record references and typed relationship targets", async () => {
         const link = page.locator(".highlights a[href^='#record-']").first()
         if (await link.count()) {
           const href = await link.getAttribute("href")
@@ -278,7 +367,7 @@ try {
         return { highlighted_link: await link.count(), relationship_link: await relationship.count(),
           qualification_link: await qualification.count() }
       })
-      await check("owner and attribution links preserve keyboard navigation", async () => {
+      if (!population) await check("owner and attribution links preserve keyboard navigation", async () => {
         const followed = []
         for (const kind of ["objective", "review", "provenance"]) {
           const link = page.locator(`.relationships a[href^='#${kind}-']`).first()
@@ -314,18 +403,20 @@ try {
         assert.deepEqual(audit.violations, [], "See axe-collapsed-390px.json for violations")
         return { passes: audit.passes.length, incomplete: audit.incomplete.length }
       })
-      await check("native expansion of every returned hierarchy and record", async () => {
+      await check(population ? "native expansion of every returned population member" : "native expansion of every returned hierarchy and record", async () => {
         const summaries = await page.locator("details > summary").all()
         for (const summary of summaries) if (!await summary.evaluate(element => element.parentElement.open)) {
           await keyboardToggle(summary, "Enter", true)
         }
         assert.equal(await page.locator("details:not([open])").count(), 0)
-        assert.equal(await page.locator(".relationships > li").count(), view.relationships.length)
+        if (population) assert.equal(await page.locator("#members details[open]").count(), view.items.length)
+        else assert.equal(await page.locator(".relationships > li").count(), view.relationships.length)
         if (fixture.dense) assert.ok(view.relationships.length >= 100, "Dense qualification retains at least 100 typed edges")
         const sizes = await noOverflow()
-        await page.locator("#execution").scrollIntoViewIfNeeded()
+        await page.locator(population ? "#members" : "#execution").scrollIntoViewIfNeeded()
         await screenshot("expanded-hierarchy-390px")
-        return { expanded_disclosures: summaries.length, relationships: view.relationships.length, ...sizes }
+        return { expanded_disclosures: summaries.length, relationships: view.relationships?.length ?? 0,
+          population_members: view.items?.length ?? 0, ...sizes }
       })
       await check("Chromium accessibility tree exposes native expanded state", async () => {
         const cdp = await context.newCDPSession(page)
@@ -333,7 +424,7 @@ try {
         await cdp.detach()
         const exposed = nodes.filter(node => !node.ignored)
         assert.ok(exposed.some(node => node.role?.value === "main"))
-        assert.ok(exposed.some(node => node.role?.value === "navigation" && node.name?.value === "History layers"))
+        assert.ok(exposed.some(node => node.role?.value === "navigation" && node.name?.value === navigationLabel))
         assert.ok(exposed.some(node => ["DisclosureTriangle", "button"].includes(node.role?.value)
           && node.properties?.some(property => property.name === "expanded" && property.value.value === true)))
         await writeFile(join(directory, "chromium-accessibility-tree.json"), JSON.stringify({ nodes }, null, 2) + "\n")
@@ -350,7 +441,7 @@ try {
       })
       await check("forced colors retain visible keyboard focus", async () => {
         await page.emulateMedia({ forcedColors: "active", reducedMotion: "reduce" })
-        const summary = page.locator("#overview details > summary").first()
+        const summary = page.locator(firstSummary).first()
         await focus(summary)
         await page.keyboard.press("Space")
         const style = await summary.evaluate(element => ({ visible: element.matches(":focus-visible"),

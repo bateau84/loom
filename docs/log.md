@@ -6,6 +6,15 @@ type: Log
 
 ## 2026-11-26
 
+**Frozen retrospective evidence populations (#227):** Added explicit objective
+selection and a read-only preview, exact durable membership in EvaluationStore,
+source-owned asynchronous inspection, bounded shared readers and distinct v2
+Evaluator preparation. Frozen identities retain source versions, historical
+scope, relationship basis and gaps across later work and recovery. Complete
+Stage 3 batches keep their existing validation. Production execution remains
+disconnected; native/external original release and private operator qualification
+remain dependencies. See [the population contract](learning-retrospective-populations.md).
+
 **Connected engineering trajectories (#227):** Composed existing ObjectiveIndex,
 ReviewRequests and Store/Observer relationships into focused history navigation.
 Added optional attributed source relations, objective roots, exact requested

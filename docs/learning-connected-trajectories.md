@@ -212,7 +212,8 @@ hash budget.
 
 ## Frozen retrospective populations remain separate
 
-A future selected-population preview must resolve the chosen source identities,
+The [selected-population design](learning-retrospective-populations.md) follows
+this navigation increment. Its preview must resolve the chosen source identities,
 versions, membership basis, permitted views and gaps again under their owners.
 The EvaluationStore/preparation owner must freeze that exact authorized set.
 Neither a trajectory request nor `owner_version` is such a manifest. Existing

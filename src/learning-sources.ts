@@ -45,6 +45,26 @@ export class LearningSources {
     return source && source.ref.sha256 === ref.sha256 && source.ref.revision === ref.revision ? source : null
   }
 
+  /** Original-owner lookup for an already authorized retrospective selection.
+   * This is deliberately separate from Stage 3's calling-Session population.
+   * It supplies bytes/identity, never permission or a recipient release grant. */
+  retrospectiveOriginal(kind: string, id: string, sourceSession: string, requester: string): LearningSource | null {
+    if (kind === "ledger-record") return this.ledger(sourceSession, id)
+    if (kind === "review-request" || kind === "review-relationship") {
+      if (sourceSession !== requester) throw new Error("Retrospective source unavailable")
+      return this.reviewSource(sourceSession, kind, id)
+    }
+    if (kind !== "objective" && kind !== "objective-link") return null
+    const row = (kind === "objective"
+      ? this.learningDB.prepare("SELECT rowid AS sequence,* FROM learning_objectives WHERE id=? AND author_session=?").get(id, sourceSession)
+      : this.learningDB.prepare("SELECT l.* FROM learning_objective_links l JOIN learning_objectives o ON o.id=l.objective_id WHERE l.sequence=? AND l.author_session=?").get(id, sourceSession)) as Record<string, unknown> | undefined
+    if (!row) return null
+    if (kind === "objective-link" && row.relation === null) delete row.relation
+    const sequence = Number(row.sequence)
+    if (!Number.isSafeInteger(sequence) || sequence < 1) throw new Error("Retrospective source unavailable")
+    return { ref: { kind, id, session_id: sourceSession, revision: String(sequence), sha256: digest(row), required: true }, value: row, sequence }
+  }
+
   private objectiveSource(session: string, kind: "objective" | "objective-link", id: string): LearningSource | null {
     // A file-read permission does not turn another Session's authored index into
     // this worker's source population. Both parent and link authors must match.

@@ -66,6 +66,13 @@ requests. It is an explicit read snapshot, not an automatically refreshed UI.
 Advanced storage recovery, maintenance/capacity modes, strict WAL-growth quotas,
 scheduling, a continuously connected dashboard and legacy import are deferred,
 not alpha prerequisites.
+For evaluation, [retrospective populations](docs/learning-retrospective-populations.md)
+preview one objective and an explicit question, then freeze exact source membership,
+versions, relationship basis and gaps through `loom_review freeze-population`.
+Human and agent views read that same durable manifest through `loom_history`.
+Later records, relationships and Plan changes do not enter it. Preparation can
+consume this distinct population; Evaluator execution remains disconnected.
+
 No history-size or whole-process resource guarantee is advertised. The Action
 `paused`, `cancelled` and `completed` labels record intent/progress; they do not
 interrupt an OpenCode session or certify successful delivery.

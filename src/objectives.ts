@@ -341,6 +341,25 @@ export class ObjectiveIndex {
     return this.historyRead(() => this.historySelection(selection).sources)
   }
 
+  /** Metadata for the complete authored association population, including links
+   * whose originals have disappeared. Author/recorded source grants must precede
+   * reading those associations. This does not assert the referenced source exists. */
+  retrospectiveSources(objectiveID: string, through?: number) {
+    simple(objectiveID, "objective_id")
+    if (through !== undefined && !safeInt(through)) throw new Error("Invalid objective association boundary")
+    const objective = this.db.prepare("SELECT author_session FROM learning_objectives WHERE id=?").get(objectiveID) as { author_session: string } | undefined
+    if (!objective) throw new Error("Objective population unavailable")
+    const bound = through ?? (this.db.prepare("SELECT COALESCE(MAX(sequence),0) AS n FROM learning_objective_links WHERE objective_id=?").get(objectiveID) as { n: number }).n
+    const links = this.db.prepare("SELECT sequence,author_session,source_session_id FROM learning_objective_links WHERE objective_id=? AND sequence<=? ORDER BY sequence LIMIT ?")
+      .all(objectiveID, bound, HISTORY_LIMITS.links + 1) as Array<{ sequence: number; author_session: string; source_session_id: string | null }>
+    if (links.length > HISTORY_LIMITS.links) throw new Error("Objective population unavailable")
+    const contributors = [...new Set([objective.author_session, ...links.flatMap(link => [link.author_session,
+      ...(link.source_session_id === null ? [] : [link.source_session_id])])])].map(id => simple(id, "source contributor")).sort()
+    if (contributors.length > 2000) throw new Error("Objective population unavailable")
+    return { author_session: simple(objective.author_session, "objective author"), link_through: bound, links, contributors,
+      digest: historyDigest({ objectiveID, bound, objective, links }) }
+  }
+
   /** Read-only composition seam. It preserves original rows; omitted sources
    * never become identities or conclusions about a different scope. */
   historySnapshot(selection: ObjectiveHistorySelection): ObjectiveHistorySnapshot {
@@ -524,7 +543,7 @@ export class ObjectiveIndex {
     const visibleSequences = new Set(metadata.map(row => row.sequence)), visibleObjectives = new Set(metadata.map(row => row.objective_id))
     for (const row of metadata) if (row.related_sequence !== null && !visibleSequences.has(row.related_sequence)) row.related_sequence = null
     const objectives: Array<Omit<ObjectiveRow, "source_key" | "label">> = []
-    for (const id of ids.filter(id => visibleObjectives.has(id))) {
+    for (const id of ids.filter(id => visibleObjectives.has(id) || id === selection.objective_id)) {
       const row = this.db.prepare(`SELECT id,unit_key,created_at,author_session,author_agent,octet_length(label) AS label_bytes FROM learning_objectives WHERE id=?
         AND octet_length(id)+octet_length(unit_key)+octet_length(created_at)+octet_length(author_session)+octet_length(author_agent)+octet_length(label)<=2048`)
         .get(id) as Omit<ObjectiveRow, "source_key" | "label"> & { label_bytes: number } | undefined

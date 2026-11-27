@@ -16,6 +16,27 @@ The subsequent [execution-admission assessment](learning-stage4-admission.md) ad
 
 The [restricted execution consumer](learning-restricted-execution.md) subsequently adds immutable admission/outcome mirrors and a trusted-adapter lifecycle over that prepared chain. Production has no connected authority adapter. Preparation and its public readers retain the behavior described here; fixture-qualified execution is not a live account or genuine Evaluator qualification.
 
+## Distinct retrospective source path
+
+The [frozen-population increment](learning-retrospective-populations.md) adds an
+explicit alternative source to `prepare-evaluation`: `population_id` and its exact
+`manifest_sha256`, instead of `batch_id`. The declared method and `budget_policy`
+are unchanged. Current source-owner checks complete asynchronously before the
+local preparation chain is written. Previously available originals that changed
+or disappeared block preparation; gaps already frozen in the selection remain
+qualified inputs.
+
+Retrospective preparation uses `loom-evaluation-request/v2` with a
+`source.kind: retrospective-population` identity and a separate reserved batch
+scope. It never filters or reinterprets a Stage 3 batch. Both preparation scopes
+are excluded before Stage 3 inventory pagination. Existing dedicated preparation
+readers reconstruct the same canonical request, review and issue, while source
+reads route through the asynchronous population owner. Every reader and legacy
+review replay rechecks source permissions. The restricted execution consumer
+explicitly refuses the new source kind, even with a fixture authority adapter.
+
+The v1 calling-Session preparation contract below remains unchanged.
+
 ## What is usable
 
 | Capability | Meaning in this increment |

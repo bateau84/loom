@@ -28,6 +28,7 @@ scan root so the profile is discovered; it declares no mandatory link counts.
 - [Historical engineering evidence](learning-historical-evidence.md) — Authorized historical structure, record projections and exact native part references; protected originals and selected-population preparation dependencies
 - [Layered engineering history](learning-engineering-history.md) — Shared authorized overview, historical work branches, readable document and first HTML dashboard; live navigation and frozen-selection boundaries
 - [Connected engineering trajectories](learning-connected-trajectories.md) — Qualified objective, review and original-evidence relationships; retrospective associations, ready navigation and owner boundaries
+- [Frozen retrospective evidence populations](learning-retrospective-populations.md) — Objective-scoped selection, durable exact membership, source-owned inspection and Evaluator preparation
 - [Learning evidence and provisional experiments](learning-experiments.md) — Bounded insight statistics, content fingerprints and manual tweak trials
 - [Review-scoped evidence and whole-work retrospectives (approved concept)](learning-evidence-and-review-scope.md) — Accepted architecture and requirements direction for attribution and automatic multi-Session evaluation; not current runtime behavior
 - [Native execution and review evidence specification](learning-native-evidence-spec.md) — Exact identity, original mandate, evidence-basis, failure and recipient-transfer contracts; bounded Stage 2 persistence is implemented

@@ -209,7 +209,7 @@ export async function registerAutomaticLearning(ctx: Plugin.Context, options: Op
         const evaluator = options.learning!.evaluator
         const result = operation === "evaluation-preparation" ? evaluator.read(session, input.batch_id)
           : operation === "evaluation-preparation-members" ? evaluator.members(session, input.batch_id, input.request_id, input.manifest_sha256, input.after, input.limit)
-          : evaluator.source(session, input.batch_id, input.request_id, input.manifest_sha256, input.member_key, input.source_index)
+          : evaluator.sourceView(session, input.batch_id, input.request_id, input.manifest_sha256, input.member_key, input.source_index)
         canonical(result, new ProcessingBudget(PUBLIC_READ_CHARS))
         return result
       }
@@ -225,10 +225,10 @@ export async function registerAutomaticLearning(ctx: Plugin.Context, options: Op
         processing: "deterministic-descriptions-only", genuine_evaluator: EVALUATOR_BLOCK, automatic_model_calls: false,
         Q4: "partial", Q5: "unqualified-transfer-withheld", E11: "unqualified" }
       else if (operation === "evaluations") result = engine.history.list(session, { before: input.before as number | undefined,
-        limit: input.limit as number | undefined ?? 5, exclude_scope: "evaluator-preparation/calling-session" })
+        limit: input.limit as number | undefined ?? 5, exclude_scope: ["evaluator-preparation/calling-session", "evaluator-preparation/retrospective"] })
       else {
         if (typeof input.batch_id !== "string") throw new Error("Evaluation batch_id is required")
-        if (engine.history.get(input.batch_id, session).scope_key === "evaluator-preparation/calling-session")
+        if (["evaluator-preparation/calling-session", "evaluator-preparation/retrospective"].includes(engine.history.get(input.batch_id, session).scope_key))
           throw new Error("Evaluation unavailable")
         if (operation === "evaluation-members") {
           const page = engine.history.reports(input.batch_id, session, { after: input.after as number | undefined, limit: input.limit as number | undefined ?? 10 })

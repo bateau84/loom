@@ -77,6 +77,56 @@ external-original resolution and selected-population preparation.
 | `tests/test_installed_historical_evidence.py` | Profile P; counterexamples for the installed complete-field-envelope, audit and storage-generation oracles, not a replacement for the installed run. |
 | `.github/workflows/installed-historical-evidence.yml` | Exact pull-request head, separately packed/installed candidate and pinned CLI; runs the installed profile and retains its report for seven days. No external provider or operator data. |
 
+### Frozen retrospective populations
+
+The new population suites use the existing registered tools and SQLite owners:
+
+```sh
+bun test tests/retrospective-populations-native.test.ts tests/retrospective-source-resolution-native.test.ts tests/retrospective-preparation-native.test.ts tests/retrospective-store-native.test.ts tests/retrospective-backup-native.test.ts
+```
+
+They select one objective from controlled planned/unplanned work, retain shared
+source relationships without duplicate evidence, verify complete page readback,
+show original-version gaps, and deny unauthorized discovery/inspection/disclosure.
+The persistence suites inject write failures and lost acknowledgements, kill
+actual subprocesses during/after commit, and validate paired stopped-state
+backup/restore including application-level corruption behind recomputed outer
+backup hashes. Legacy complete Stage 3 and preparation tests remain required.
+
+The backup regression creates two populations and prepares both through the
+production owners, then deletes one complete population while retaining its
+preparation and the other valid population. Backup and checksum-rehashed restore
+must reject that state. Further controls bind request and batch references,
+digests, owners, source namespaces and full membership; valid interruptions
+before mapping, review, issue and final blocking must still restore and replay.
+
+| Exact path | Consumer and qualification boundary |
+| --- | --- |
+| `tests/retrospective-populations-native.test.ts` | Registered selection, freeze, complete pagination, same-call/different-message identity, dense later-page relationship continuations, original inspection and current authorization controls. |
+| `tests/retrospective-source-resolution-native.test.ts` | Awaited source-owner binding, denial, exact recipient/view/identity/version and returned-byte checks; controlled owners, no real external authority. |
+| `tests/retrospective-preparation-native.test.ts` | Interrupted preparation writes, restart, snapshot restore with a surviving consumed issue, missing mapping fence and explicit rejection before any supplied execution authority is called. |
+| `tests/retrospective-store-native.test.ts` | Atomic optional persistence, complete membership integrity, concurrent replay, lost acknowledgement and actual process termination. |
+| `tests/retrospective-backup-native.test.ts` | Stopped paired backup/restore, actual preparation-to-population reference closure, complete source projection, valid interrupted replay, mixed source-store rejection and malformed native source identities. |
+| `tests/helpers/retrospective-store-fixture.ts` | Controlled versioned metadata population for persistence and recovery; no real source authority. |
+| `tests/helpers/retrospective-store-process.ts` | Subprocess fault/commit control for the store recovery suite. |
+| `tests/installed_retrospective_populations.py` | Controlled setup and strict population/readback/source/denial oracles used by installed historical evidence qualification. |
+| `tests/test_installed_retrospective_populations.py` | Negative controls for the installed population oracles; does not replace the installed host run. |
+
+`tests/installed_historical_evidence.py` now includes a separate controlled
+#182/#187 population fixture. Its setup audit covers preview, freeze, replay and
+preparation; its inspection audit covers complete pages/originals, all formats,
+actual native permission denials, late associations and host restart. The existing
+workflow packages and verifies the exact candidate and checks zero Evaluator,
+external-provider and instruction effects. A local scripted driver is not a
+qualification of genuine Evaluator reasoning, private operator originals or
+provider/account authority. Runtime and qualification-input hashes bind reports
+to the installed candidate. Check delivery receipts for executed results.
+
+The operator-local reference remains separate: reconcile the earlier five-record
+selection with the later fix-chain selection, inspect permitted originals, preview
+the actual objective/question and approve its exact membership before freezing.
+Do not export private originals or present controlled fixtures as that rehearsal.
+
 ### Engineering-history browser and comparative qualification
 
 The shared fixture in `tests/helpers/engineering-history-scenarios.ts` creates
@@ -86,6 +136,12 @@ historical Plan revisions, reused Sessions, contradictory claims, partial
 rechecks and captured attribution gaps are part of the same scenario. The target
 is older than the initial representative selection. These fixtures do not access
 the operator's private history or claim unfamiliar-agent comprehension.
+
+Population scenes cover the read-only preview and its continuation, every frozen
+page, and a missing original under the same frozen identity. They check all
+manifest/member fields across JSON, Markdown and HTML, retained qualifications,
+hostile question text, authorized navigation and the shared keyboard/reflow
+requirements. These extend the existing browser harness and isolated CI job.
 
 | Entry | Invocation, outputs and proof limit |
 | --- | --- |

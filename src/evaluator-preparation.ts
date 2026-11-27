@@ -4,8 +4,10 @@ import { evaluatorRequestID, type EvaluationBatch, type EvaluationMember, type E
 import { evaluatorMethod, parseEvaluatorMethod, parseEvaluatorPolicy, type EvaluatorMethodManifest, type EvaluatorPolicyRef } from "./evaluator-method.js"
 import type { Store } from "./store.js"
 import type { ReviewRequest } from "./review-requests.js"
+import type { RetrospectivePopulation } from "./retrospective-contract.js"
 
 const SCOPE = "evaluator-preparation/calling-session"
+const RETROSPECTIVE_SCOPE = "evaluator-preparation/retrospective"
 const READ_CHARS = 262144
 const populationBudget = () => new ProcessingBudget(33554432, 2000000)
 const same = (a: unknown, b: unknown) => canonical(a, populationBudget()) === canonical(b, populationBudget())
@@ -21,6 +23,38 @@ type PreparedRequest = {
   source_scope: "calling-session-existing-evidence"; originating_request_independence: "unknown";
   method_binding: "declared-not-admitted"; original_review_requests: "frozen-manifest-source-references";
   review_request: ReviewRequest;
+}
+type RetrospectiveSource = { kind: "retrospective-population"; format: "loom-retrospective-population/v1"; population_id: string; manifest_sha256: string }
+type RetrospectiveManifest = Omit<Manifest, "format" | "source_batch_id"> & {
+  format: "loom-evaluation-manifest/v2"; source: RetrospectiveSource;
+  member_count_unit: "deduplicated-evidence-sources"; objective_count: 1;
+}
+type RetrospectiveRequest = Omit<PreparedRequest, "format" | "source_batch_id" | "source_scope"> & {
+  format: "loom-evaluation-request/v2"; source: RetrospectiveSource; source_scope: "frozen-retrospective-population";
+}
+const retrospectiveSource = (population: RetrospectivePopulation): RetrospectiveSource => ({ kind: "retrospective-population",
+  format: "loom-retrospective-population/v1", population_id: population.population_id, manifest_sha256: population.manifest_sha256 })
+const retrospectiveMembers = (population: RetrospectivePopulation): EvaluationMember[] => population.manifest.members.map(member => ({
+  key: member.key, kind: "objective", source_refs: [member.source],
+}))
+const retrospectiveBoundary = (population: RetrospectivePopulation, budget: EvaluatorPolicyRef | null) => ({
+  retrospective_population: population.population_id, retrospective_manifest: population.manifest_sha256, preparation_budget_policy: digest(budget),
+})
+function retrospectiveManifest(batch: EvaluationBatch, population: RetrospectivePopulation): RetrospectiveManifest {
+  return { format: "loom-evaluation-manifest/v2", batch_id: batch.id, source: retrospectiveSource(population),
+    source_store_id: batch.source_store_id, boundary: batch.boundary, method: batch.method,
+    membership_sha256: batch.membership_sha256, member_count: batch.member_count,
+    member_count_unit: "deduplicated-evidence-sources", objective_count: 1 }
+}
+function retrospectiveRequest(batch: EvaluationBatch, population: RetrospectivePopulation, method: EvaluatorMethodManifest,
+  budget: EvaluatorPolicyRef | null, manifestSHA: string, requestID: string, requester: Actor): RetrospectiveRequest {
+  const { format: _format, source_batch_id: _sourceBatch, source_scope: _sourceScope, ...base } = request(batch, "", method, budget, manifestSHA, requestID, requester)
+  const review: ReviewRequest = { ...base.review_request, mandate: { ...base.review_request.mandate,
+    question: population.manifest.selection.question,
+    inclusions: ["The complete exact frozen retrospective population, including attributed relationships, exclusions, permitted source views and explicit gaps."],
+    exclusions: [...base.review_request.mandate.exclusions, "Connected objectives outside the approved selection", "Substitution of changed originals or inferred missing historical relationships"],
+  } }
+  return { ...base, format: "loom-evaluation-request/v2", source: retrospectiveSource(population), source_scope: "frozen-retrospective-population", review_request: review }
 }
 
 function policy(input: unknown): EvaluatorPolicyRef | null {
@@ -87,7 +121,50 @@ export class EvaluatorPreparation {
     return this.read(actor.session_id, batch.id)
   }
 
+  /** The registered caller must complete async source-owner validation first.
+   * This method owns only the durable local preparation chain, never admission. */
+  prepareRetrospective(actor: Actor, selected: RetrospectivePopulation, rawMethod: unknown, rawBudget: unknown) {
+    const population = this.automatic.history.retrospectivePopulation(selected.population_id, actor.session_id)
+    if (population.manifest_sha256 !== selected.manifest_sha256 || population.manifest.source_store_id !== this.automatic.sources.namespace)
+      throw new Error("Retrospective preparation population mismatch")
+    const method = parseEvaluatorMethod(rawMethod), budget = policy(rawBudget), members = retrospectiveMembers(population)
+    const batch = this.automatic.history.freeze({ owner_session: actor.session_id, scope_key: RETROSPECTIVE_SCOPE,
+      source_store_id: population.manifest.source_store_id, method: evaluatorMethod(method), members,
+      boundary: retrospectiveBoundary(population, budget) })
+    const header = retrospectiveManifest(batch, population), sha256 = digest({ ...header, members }, populationBudget())
+    let origin = actor
+    try { origin = this.store.reviews.getRequest(actor, evaluatorRequestID(batch)).requester }
+    catch (error) { if (!(error instanceof Error) || !("code" in error) || error.code !== "not-authorized") throw error }
+    const mapped = this.automatic.history.prepareEvaluatorRequest(batch.id, actor.session_id, method, origin,
+      (id, originalActor) => retrospectiveRequest(batch, population, method, budget, sha256, id, originalActor))
+    const saved = this.checkedRetrospective(mapped, actor.session_id)
+    const { requester: _requester, ...review } = saved.request.review_request
+    const frozen = this.store.reviews.freezeEvaluatorPreparation(mapped.requester, review)
+    if (frozen.status === "conflict") throw new Error("Evaluator preparation review request conflict")
+    this.store.reviews.prepareIssue(actor, mapped.request_id, { kind: "initial" })
+    this.automatic.history.block(batch.id, "evaluator-dispatch-unavailable")
+    return this.read(actor.session_id, batch.id)
+  }
+
+  private checkedRetrospective(record: EvaluatorPreparationRecord, owner: string) {
+    const frozen = this.automatic.history.frozenPreparationPopulation(record.batch_id, owner), batch = frozen.batch
+    if (!record.data || typeof record.data !== "object" || Array.isArray(record.data) || !("source" in record.data)
+      || !record.data.source || typeof record.data.source !== "object" || Array.isArray(record.data.source)
+      || !("population_id" in record.data.source) || typeof record.data.source.population_id !== "string"
+      || !("budget_policy" in record.data)) throw new Error("Retrospective preparation unavailable")
+    const population = this.automatic.history.retrospectivePopulation(record.data.source.population_id, owner)
+    const members = retrospectiveMembers(population), budget = policy(record.data.budget_policy)
+    if (population.manifest.source_store_id !== this.automatic.sources.namespace || batch.source_store_id !== population.manifest.source_store_id
+      || !same(members, frozen.members) || !same(batch.boundary, retrospectiveBoundary(population, budget))) throw new Error("Retrospective preparation population integrity mismatch")
+    const header = retrospectiveManifest(batch, population), sha256 = digest({ ...header, members }, populationBudget())
+    const expected = retrospectiveRequest(batch, population, record.method, budget, sha256, record.request_id, record.requester)
+    if (!same(expected, record.data)) throw new Error("Retrospective preparation request integrity mismatch")
+    return { request: expected, manifest: header, members }
+  }
+
   private checked(record: EvaluatorPreparationRecord, owner: string) {
+    if (record.data && typeof record.data === "object" && "format" in record.data && record.data.format === "loom-evaluation-request/v2")
+      return this.checkedRetrospective(record, owner)
     const population = this.automatic.history.preparationPopulation(record.batch_id, owner), batch = population.batch
     if (batch.source_store_id !== this.automatic.sources.namespace || batch.scope_key !== SCOPE || !record.data || typeof record.data !== "object"
       || Array.isArray(record.data) || !("budget_policy" in record.data) || !("source_batch_id" in record.data)
@@ -118,6 +195,19 @@ export class EvaluatorPreparation {
       throw new Error("Evaluator preparation unavailable")
   }
 
+  /** Metadata routing only; callers still authorize the population before read. */
+  retrospectiveReference(owner: string, batchID: string): RetrospectiveSource | null {
+    const record = this.automatic.history.readEvaluatorRequest(batchID, owner)
+    if (!record) throw new Error("Evaluator preparation unavailable")
+    if (record.data && typeof record.data === "object" && "format" in record.data && record.data.format === "loom-evaluation-request/v2") {
+      const source = "source" in record.data ? record.data.source : undefined
+      if (!source || typeof source !== "object" || !("population_id" in source) || typeof source.population_id !== "string"
+        || !("manifest_sha256" in source) || typeof source.manifest_sha256 !== "string") throw new Error("Retrospective preparation unavailable")
+      return { kind: "retrospective-population", format: "loom-retrospective-population/v1", population_id: source.population_id, manifest_sha256: source.manifest_sha256 }
+    }
+    return null
+  }
+
   read(owner: string, batchID: string) {
     const { record, request: saved, manifest: header } = this.load(owner, batchID)
     let issue: ReturnType<Store["reviews"]["readIssue"]> | null = null
@@ -137,7 +227,9 @@ export class EvaluatorPreparation {
       request: saved, method_manifest: record.method, method_binding: "declared-not-admitted", policy_authority: "not-established",
       issue, interpretation: null, dispatch: EVALUATOR_BLOCK, automatic_model_calls: false, budget_reservation: null,
       Q4: "partial-unqualified", Q5: "unqualified-transfer-withheld", E11: "unqualified",
-      qualifications: ["preparation-not-evaluator-reasoning", "same-session-originals-only", "foreign-linked-content-not-inspected",
+      qualifications: ["preparation-not-evaluator-reasoning", ...(saved.format === "loom-evaluation-request/v2"
+        ? ["frozen-retrospective-membership", "current-source-authority-required", "retrospective-execution-disconnected"]
+        : ["same-session-originals-only", "foreign-linked-content-not-inspected"]),
         "originating-request-independence-unknown", "method-content-not-loaded-or-attested", "no-native-recipient-or-admission"] }
   }
 
@@ -164,6 +256,7 @@ export class EvaluatorPreparation {
       { capability: "native-reconciliation", state: "unsupported", reason: "native-effect-reconciliation-unavailable" },
     ]
     if (!captureEnabled) blockers.unshift({ capability: "source-processing", state: "blocked", reason: "source-processing-disabled" })
+    if (prepared.request.format === "loom-evaluation-request/v2") blockers.unshift({ capability: "population-execution", state: "unsupported", reason: "retrospective-execution-disconnected" })
     if (issue.attempt.state !== "prepared") blockers.unshift({ capability: "canonical-issue", state: "blocked",
       reason: consumed ? "canonical-issue-consumed" : "canonical-issue-rejected" })
     return {
@@ -218,6 +311,7 @@ export class EvaluatorPreparation {
     if (!member || !Number.isSafeInteger(sourceIndex) || (sourceIndex as number) < 0 || (sourceIndex as number) >= member.source_refs.length)
       throw new Error("Invalid evaluator preparation source selection")
     const ref = member.source_refs[sourceIndex as number]!
+    if (saved.format === "loom-evaluation-request/v2") throw new Error("Retrospective originals require the asynchronous source-owner reader")
     const original = this.automatic.sources.resolve(ref, this.automatic.sources.namespace)
     if (!original) throw new Error("Evaluator preparation unavailable")
     const result = { batch_id: batchID, request_id: record.request_id, manifest_sha256: saved.manifest_sha256,
@@ -225,5 +319,18 @@ export class EvaluatorPreparation {
       coverage: "existing-stored-record", receiving_session: owner, native_evaluator_retrieval: "not-established" }
     canonical(result, new ProcessingBudget(READ_CHARS))
     return result
+  }
+
+  sourceView(owner: string, batchID: string, requestID: unknown, manifestSHA: unknown, memberKey: unknown, sourceIndex: unknown) {
+    const source = this.retrospectiveReference(owner, batchID)
+    if (!source) return this.source(owner, batchID, requestID, manifestSHA, memberKey, sourceIndex)
+    const { record, request: saved, members } = this.load(owner, batchID)
+    if (requestID !== record.request_id || manifestSHA !== saved.manifest_sha256) throw new Error("Evaluator preparation page identity mismatch")
+    const member = members.find(item => item.key === memberKey)
+    if (!member || sourceIndex !== 0) throw new Error("Invalid evaluator preparation source selection")
+    return { batch_id: batchID, request_id: record.request_id, manifest_sha256: saved.manifest_sha256,
+      member_key: member.key, source_index: sourceIndex, source: member.source_refs[0],
+      source_owner_request: { operation: "population-source", population_id: source.population_id,
+        manifest_sha256: source.manifest_sha256, member_key: member.key }, native_evaluator_retrieval: "not-established" }
   }
 }
