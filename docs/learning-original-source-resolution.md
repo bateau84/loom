@@ -130,16 +130,15 @@ Loom reference store.
 The adapter resolves the existing `gh` executable and performs a bounded
 `gh api --help` capability check before its first owner API request. A CLI
 advertising `--allow-escape-sequences` uses that explicit raw-output option.
-Otherwise a CLI must reproduce exact synthetic nonterminal text
-(including a BOM, CRLF and terminal escape sequences) and all 256 byte values
-after a loopback HTTP redirect. Try without the flag, and only if this local
-test fails, try with the flag (a release may support it without advertising it).
-Both probes use identical fixed GET arguments except for that flag. A version
-string alone does not qualify a CLI.
+The flag may be rendered as `--allow-escape-sequences[=true|false]` in
+modern CLI help. Otherwise a flagless CLI must reproduce exact synthetic
+nonterminal text (including a BOM, CRLF and terminal escape sequences) and
+all 256 byte values after a loopback HTTP redirect. A version string alone
+does not qualify a CLI.
 The fixed synthetic probe uses a private temporary configuration, a dummy token,
 no inherited credential or proxy environment, a loopback-only listener, a 4 KiB
-output bound and a five-second timeout per probe request (at most four
-subprocesses, inside the existing resolution deadline). It releases the
+output bound and a five-second timeout per probe request (two subprocesses
+inside the existing resolution deadline). It releases the
 listener and temporary configuration before owner reads. The same resolved
 executable performs the authorized owner GETs. Failed or unavailable probes
 produce `github-cli-byte-output-unqualified`; no GitHub owner request or
@@ -147,7 +146,7 @@ flag-dropping retry occurs. This is capability qualification for the trusted
 installed CLI, not sandboxing arbitrary executables or account qualification.
 
 The actual-binary CI matrix exercises official releases 2.46.0, 2.87.3 and
-2.106.0 with exact file, redirected CI job log and redirected digest-verified
+2.106.0 with exact file, direct/redirected CI job log and redirected digest-verified
 archive checks; it does not establish live GitHub-account authorization.
 CLI diagnostics and credentials are never returned to the reader. Source
 references: [2.46.0 API output](https://github.com/cli/cli/blob/v2.46.0/pkg/cmd/api/api.go),
