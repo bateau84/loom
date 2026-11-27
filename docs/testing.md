@@ -93,13 +93,20 @@ actual subprocesses during/after commit, and validate paired stopped-state
 backup/restore including application-level corruption behind recomputed outer
 backup hashes. Legacy complete Stage 3 and preparation tests remain required.
 
+The backup regression creates two populations and prepares both through the
+production owners, then deletes one complete population while retaining its
+preparation and the other valid population. Backup and checksum-rehashed restore
+must reject that state. Further controls bind request and batch references,
+digests, owners, source namespaces and full membership; valid interruptions
+before mapping, review, issue and final blocking must still restore and replay.
+
 | Exact path | Consumer and qualification boundary |
 | --- | --- |
 | `tests/retrospective-populations-native.test.ts` | Registered selection, freeze, complete pagination, same-call/different-message identity, dense later-page relationship continuations, original inspection and current authorization controls. |
 | `tests/retrospective-source-resolution-native.test.ts` | Awaited source-owner binding, denial, exact recipient/view/identity/version and returned-byte checks; controlled owners, no real external authority. |
 | `tests/retrospective-preparation-native.test.ts` | Interrupted preparation writes, restart, snapshot restore with a surviving consumed issue, missing mapping fence and explicit rejection before any supplied execution authority is called. |
 | `tests/retrospective-store-native.test.ts` | Atomic optional persistence, complete membership integrity, concurrent replay, lost acknowledgement and actual process termination. |
-| `tests/retrospective-backup-native.test.ts` | Stopped paired backup/restore, complete content integrity, mixed source-store rejection and malformed native source identities. |
+| `tests/retrospective-backup-native.test.ts` | Stopped paired backup/restore, actual preparation-to-population reference closure, complete source projection, valid interrupted replay, mixed source-store rejection and malformed native source identities. |
 | `tests/helpers/retrospective-store-fixture.ts` | Controlled versioned metadata population for persistence and recovery; no real source authority. |
 | `tests/helpers/retrospective-store-process.ts` | Subprocess fault/commit control for the store recovery suite. |
 | `tests/installed_retrospective_populations.py` | Controlled setup and strict population/readback/source/denial oracles used by installed historical evidence qualification. |

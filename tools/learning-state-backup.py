@@ -115,48 +115,60 @@ def require(condition, message):
         raise ValueError(message)
 
 
-def retrospective_integrity(db, ledger_store_id):
-    """Independently validate stored shape, row closure and exact frozen bytes.
+def encoded(value):
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def sha_text(value):
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def object_text(values):
+    return "{" + ",".join(encoded(key) + ":" + values[key] for key in sorted(values)) + "}"
+
+
+def raw_object(text):
+    """Read canonical contract fields without changing nested frozen bytes.
 
     Retain nested canonical value slices rather than recanonicalizing them with
     Python's different Unicode collation/float formatter. Top-level contract
     keys below are fixed ASCII, with identical canonical ordering in Loom.
     """
+    require(isinstance(text, str) and len(text) <= 33554432 and text.startswith("{") and text.endswith("}"),
+            "Invalid retrospective canonical mapping")
+    decoder = json.JSONDecoder()
+    result = {}
+    offset = 1
+    while offset < len(text) - 1:
+        key, end = decoder.raw_decode(text, offset)
+        require(isinstance(key, str) and key not in result and text[end:end + 1] == ":",
+                "Invalid retrospective canonical mapping fields")
+        start = end + 1
+        _, offset = decoder.raw_decode(text, start)
+        result[key] = text[start:offset]
+        if text[offset:offset + 1] == ",":
+            offset += 1
+        else:
+            require(offset == len(text) - 1, "Invalid retrospective canonical mapping suffix")
+            break
+    require(object_text(result) == text, "Noncanonical retrospective contract mapping")
+    return result
+
+
+def shape(value, fields, optional=()):
+    require(isinstance(value, dict) and set(fields) <= set(value) <= set(fields) | set(optional),
+            "Invalid retrospective contract fields")
+
+
+def retrospective_integrity(db, ledger_store_id):
+    """Validate populations and return their exact preparation projections."""
     maximum = 33554432
     identifier = lambda value: isinstance(value, str) and bool(re.fullmatch(
         r"[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}", value))
     fingerprint = lambda value: isinstance(value, str) and bool(re.fullmatch(r"[a-f0-9]{64}", value))
     integer = lambda value: type(value) is int and 0 <= value <= 9007199254740991
     plain = lambda value, limit=8000: isinstance(value, str) and bool(value.strip()) and len(value) <= limit and not re.search(r"[\x00-\x1f]", value)
-    encoded = lambda value: json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-    sha_text = lambda value: hashlib.sha256(value.encode("utf-8")).hexdigest()
-    object_text = lambda values: "{" + ",".join(encoded(key) + ":" + values[key] for key in sorted(values)) + "}"
-    decoder = json.JSONDecoder()
-
-    def raw_object(text):
-        require(isinstance(text, str) and len(text) <= maximum and text.startswith("{") and text.endswith("}"),
-                "Invalid retrospective canonical mapping")
-        result = {}
-        offset = 1
-        while offset < len(text) - 1:
-            key, end = decoder.raw_decode(text, offset)
-            require(isinstance(key, str) and key not in result and text[end:end + 1] == ":",
-                    "Invalid retrospective canonical mapping fields")
-            start = end + 1
-            _, offset = decoder.raw_decode(text, start)
-            result[key] = text[start:offset]
-            if text[offset:offset + 1] == ",":
-                offset += 1
-            else:
-                require(offset == len(text) - 1, "Invalid retrospective canonical mapping suffix")
-                break
-        require(object_text(result) == text, "Noncanonical retrospective contract mapping")
-        return result
-
-    def shape(value, fields, optional=()):
-        require(isinstance(value, dict) and set(fields) <= set(value) <= set(fields) | set(optional),
-                "Invalid retrospective contract fields")
-
+    populations = {}
     local_views = {"ledger-record": "record-full", "objective": "objective", "objective-link": "objective-link",
                    "review-request": "review-request", "review-relationship": "review-relationship"}
     rows = db.execute("SELECT id,owner_session,owner_agent,source_store_id,manifest_sha256,header_json,contributors_json,"
@@ -204,6 +216,7 @@ def retrospective_integrity(db, ledger_store_id):
                              (population_id,)).fetchall()
         require(len(members) == member_count, "Incomplete retrospective frozen membership")
         size, observed_private, seen, encoded_members = len(header_json), False, set(), []
+        preparation_members = []
         for ordinal, (key, actual_ordinal, data_json) in enumerate(members, 1):
             require(actual_ordinal == ordinal and isinstance(data_json, str), "Incomplete retrospective frozen ordinals")
             size += len(data_json)
@@ -243,6 +256,7 @@ def retrospective_integrity(db, ledger_store_id):
                     and all(plain(item) for item in member["qualifications"]), "Invalid retrospective member basis")
             observed_private = observed_private or source["kind"] in ("review-request", "review-relationship")
             encoded_members.append(data_json)
+            preparation_members.append((key, "[" + member_values["source"] + "]"))
         require([key for key, _, _ in members] == sorted(seen), "Noncanonical retrospective source order")
         require(observed_private == bool(private_reviews), "Retrospective private-source metadata mismatch")
         manifest_text = object_text({**header_values, "members": "[" + ",".join(encoded_members) + "]"})
@@ -255,6 +269,139 @@ def retrospective_integrity(db, ledger_store_id):
                                      "contains_private_reviews": encoded(bool(private_reviews)), "member_count": encoded(member_count),
                                      "frozen_by": object_text({"session_id": encoded(owner), "agent": encoded(agent)}), "created_at": encoded(created_at)})
         require(sha_text(metadata_text) == metadata_sha, "Retrospective metadata digest mismatch")
+        populations[population_id] = {"owner": owner, "namespace": namespace, "manifest_sha256": manifest_sha,
+                                      "members": preparation_members}
+    return populations
+
+
+def retrospective_preparation_integrity(db, populations, has_evaluator):
+    """Close JSON references that SQLite foreign keys cannot enforce.
+
+    A batch can commit before its request mapping. A mapping can commit before
+    the ledger's review/issue writes. Both are replayable; neither permits a
+    missing or substituted frozen population. This checks descriptors only,
+    without fetching originals or asserting current source authorization.
+    """
+    scope = "evaluator-preparation/retrospective"
+    fields = ("id", "identity", "owner_session", "scope_key", "source_store_id",
+              "boundary_json", "method_json", "membership_sha256", "blocked_reason")
+    batches = {}
+    for row in db.execute("SELECT " + ",".join(fields) + " FROM learning_evaluation_batches"):
+        batch = dict(zip(fields, row))
+        boundary = json.loads(batch["boundary_json"])
+        # A changed scope must not hide a retained retrospective boundary.
+        if batch["scope_key"] == scope or (isinstance(boundary, dict) and
+                {"retrospective_population", "retrospective_manifest"} & set(boundary)):
+            require(batch["scope_key"] == scope, "Retrospective preparation scope mismatch")
+            batches[batch["id"]] = batch
+
+    requests = {}
+    if has_evaluator:
+        fields = ("batch_id", "slot", "method_id", "request_id", "data_json", "sha256")
+        for row in db.execute("SELECT " + ",".join(fields) + " FROM learning_evaluator_requests"):
+            record = dict(zip(fields, row))
+            envelope = json.loads(record["data_json"])
+            data = envelope.get("data") if isinstance(envelope, dict) else None
+            source = data.get("source") if isinstance(data, dict) else None
+            marked = isinstance(data, dict) and (data.get("format") == "loom-evaluation-request/v2"
+                or data.get("source_scope") == "frozen-retrospective-population"
+                or isinstance(source, dict) and (source.get("kind") == "retrospective-population"
+                    or source.get("format") == "loom-retrospective-population/v1"))
+            if record["batch_id"] not in batches and not marked:
+                continue  # Existing v1 preparation semantics are unchanged.
+            require(record["batch_id"] in batches, "Retrospective request has no matching preparation batch")
+            require(record["slot"] == "overall" and record["batch_id"] not in requests,
+                    "Invalid retrospective preparation request slot")
+            requests[record["batch_id"]] = record
+
+    for batch_id, batch in batches.items():
+        boundary_values = raw_object(batch["boundary_json"])
+        boundary = json.loads(batch["boundary_json"])
+        shape(boundary, ("retrospective_population", "retrospective_manifest", "preparation_budget_policy"))
+        population_id = boundary["retrospective_population"]
+        require(isinstance(population_id, str) and population_id in populations,
+                "Missing retrospective population for preparation")
+        population = populations[population_id]
+        require(boundary["retrospective_manifest"] == population["manifest_sha256"]
+                and batch["owner_session"] == population["owner"]
+                and batch["source_store_id"] == population["namespace"],
+                "Retrospective preparation population binding mismatch")
+        require(isinstance(boundary["preparation_budget_policy"], str)
+                and re.fullmatch(r"[a-f0-9]{64}", boundary["preparation_budget_policy"]),
+                "Invalid retrospective preparation budget binding")
+        expected_rows = [(key, ordinal, "objective", refs) for ordinal, (key, refs)
+                         in enumerate(population["members"], 1)]
+        actual_rows = db.execute("SELECT key,ordinal,kind,source_refs FROM learning_evaluation_members "
+                                 "WHERE batch_id=? ORDER BY ordinal", (batch_id,)).fetchall()
+        require(actual_rows == expected_rows, "Incomplete or substituted retrospective preparation membership")
+        members_text = "[" + ",".join(object_text({"key": encoded(key), "kind": encoded(kind), "source_refs": refs})
+                                      for key, _, kind, refs in expected_rows) + "]"
+        membership_sha = sha_text(members_text)
+        require(batch["membership_sha256"] == membership_sha, "Retrospective preparation membership digest mismatch")
+        method_values = raw_object(batch["method_json"])
+        method = json.loads(batch["method_json"])
+        shape(method, ("id", "instruction_sha256"))
+        identity = sha_text(object_text({"owner": encoded(population["owner"]), "scope": encoded(scope),
+            "namespace": encoded(population["namespace"]), "boundary": object_text(boundary_values),
+            "method": object_text(method_values), "membership": encoded(membership_sha)}))
+        require(batch["identity"] == identity and batch_id == "eval-preparation-" + identity,
+                "Retrospective preparation identity mismatch")
+        record = requests.get(batch_id)
+        if record is None:
+            require(batch["blocked_reason"] not in ("evaluator-request-mapped", "evaluator-dispatch-unavailable"),
+                    "Missing retrospective preparation request mapping; restore required")
+            continue
+
+        envelope_values = raw_object(record["data_json"])
+        envelope = json.loads(record["data_json"])
+        shape(envelope, ("requester", "data"))
+        requester = envelope["requester"]
+        shape(requester, ("session_id", "agent"))
+        require(requester["session_id"] == population["owner"]
+                and sha_text(record["data_json"]) == record["sha256"],
+                "Retrospective preparation requester or envelope mismatch")
+        data_values = raw_object(envelope_values["data"])
+        data = envelope["data"]
+        shape(data, ("format", "request_id", "review_request_id", "batch_id", "slot", "source_store_id",
+                     "manifest_sha256", "method", "target_agent", "source_policy", "route_policy", "budget_policy",
+                     "source_scope", "originating_request_independence", "method_binding", "original_review_requests",
+                     "review_request", "source"))
+        source_text = object_text({"kind": encoded("retrospective-population"),
+            "format": encoded("loom-retrospective-population/v1"), "population_id": encoded(population_id),
+            "manifest_sha256": encoded(population["manifest_sha256"])})
+        require(data["format"] == "loom-evaluation-request/v2" and data_values["source"] == source_text
+                and data["source_scope"] == "frozen-retrospective-population"
+                and data["source_store_id"] == population["namespace"] and data["batch_id"] == batch_id,
+                "Retrospective request population binding mismatch")
+        require(sha_text(data_values["budget_policy"]) == boundary["preparation_budget_policy"]
+                and data_values["method"] == batch["method_json"] and record["method_id"] == method["id"],
+                "Retrospective preparation method or budget binding mismatch")
+        request_id = "evaluator-" + sha_text(object_text({"format": encoded("loom-evaluation-request-key/v1"),
+            "batch_id": encoded(batch_id), "source_store_id": encoded(population["namespace"]),
+            "method": batch["method_json"], "slot": encoded("overall")}))
+        require(record["request_id"] == data["request_id"] == data["review_request_id"] == request_id
+                and data["slot"] == "overall", "Retrospective preparation request identity mismatch")
+        manifest_text = object_text({"format": encoded("loom-evaluation-manifest/v2"), "batch_id": encoded(batch_id),
+            "source": source_text, "source_store_id": encoded(population["namespace"]), "boundary": batch["boundary_json"],
+            "method": batch["method_json"], "membership_sha256": encoded(membership_sha),
+            "member_count": encoded(len(expected_rows)), "member_count_unit": encoded("deduplicated-evidence-sources"),
+            "objective_count": "1", "members": members_text})
+        require(data["manifest_sha256"] == sha_text(manifest_text),
+                "Retrospective preparation manifest digest mismatch")
+        # The ledger review/issue may not exist yet, but the retained canonical
+        # request must still point to this exact preparation manifest.
+        review = data["review_request"]
+        locator = "loom-evaluation://" + population["namespace"] + "/" + batch_id + "/manifest"
+        require(isinstance(review, dict) and review.get("request_id") == request_id
+                and review.get("requester") == requester and isinstance(review.get("members"), list)
+                and len(review["members"]) == 1 and isinstance(review["members"][0], dict),
+                "Retrospective preparation review binding mismatch")
+        member = review["members"][0]
+        require(member.get("member_id") == "evaluation-manifest" and member.get("membership_source_refs") == [locator]
+                and member.get("artifact_refs") == [{"locator": locator,
+                    "version": {"kind": "sha256", "value": data["manifest_sha256"]},
+                    "content_ref": "loom_insights:evaluation-preparation-members:" + batch_id}],
+                "Retrospective preparation review manifest mismatch")
 
 
 def sha256(path):
@@ -361,6 +508,7 @@ def inspect_sql(directory, file_names):
                         EVALUATOR_COLUMNS["learning_evaluator_requests"] |
                         {"execution_admission_sha256"}
                     )
+                populations = {}
                 if has_retrospective:
                     required_columns = {**required_columns, **RETROSPECTIVE_COLUMNS}
                 required_tables = REQUIRED_TABLES[name] | set(required_columns)
@@ -400,7 +548,7 @@ def inspect_sql(directory, file_names):
                             "Missing or invalid retrospective population schema marker")
                     require(markers[0][1] == 1,
                             "Unsupported retrospective population schema version: " + str(markers[0][1]))
-                    retrospective_integrity(db, ledger_store_id)
+                    populations = retrospective_integrity(db, ledger_store_id)
                 if has_evaluator:
                     markers = db.execute(
                         "SELECT singleton,version FROM learning_evaluator_schema"
@@ -419,6 +567,8 @@ def inspect_sql(directory, file_names):
                         ).fetchone()
                         require(has_execution or not enrolled,
                                 "Missing required learning_execution_ tables for enrolled evaluator execution")
+                if has_evaluation or has_evaluator:
+                    retrospective_preparation_integrity(db, populations, has_evaluator)
                 if has_execution:
                     markers = db.execute(
                         "SELECT singleton,version FROM learning_execution_schema"

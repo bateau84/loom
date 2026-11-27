@@ -224,6 +224,20 @@ references, complete membership and content hashes. Recomputing a checksum over
 arbitrary malformed data is insufficient. Restored state grants no new source
 or execution authority.
 
+Every retrospective preparation batch must resolve its exact frozen population,
+owner, source namespace and population digest, and contain the complete ordered
+projection of that population's source descriptors. Retained v2 requests must
+agree with the batch and its separately calculated preparation-manifest digest.
+These JSON references are not SQLite foreign keys: validating all surviving
+populations cannot certify a preparation whose population was deleted while
+another valid population remains. The offline validator enforces both sides of
+the binding, including scope/source discriminants and committed mapping markers.
+
+A frozen batch before request mapping, or a mapping before the ledger's canonical
+review/issue write, remains a valid replay state. Recovery checks persisted
+descriptors without consulting current originals; later source changes or loss
+remain explicit gaps and do not rewrite the selected population.
+
 Qualification uses planned and unplanned fixtures structurally equivalent to
 the #182/#187 trajectory, more than one page of membership, and actual registered
 tools. Keep installed-host, backup/recovery and existing Stage 3/4/#249 regression
