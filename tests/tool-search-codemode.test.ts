@@ -7,7 +7,7 @@ import { registeredLoom } from "./helpers/registered-loom.js"
 
 // Isolated exact upstream test dependency; not a new Loom runtime dependency.
 const root = process.env.LOOM_CODEMODE_ROOT
-if (!root) throw new Error("Set LOOM_CODEMODE_ROOT to an isolated npm prefix containing @opencode/codemode@2.0.29; see docs/tool-discovery.md")
+if (!root) throw new Error("Set LOOM_CODEMODE_ROOT to an isolated npm prefix containing @opencode/codemode@2.0.29; see docs/architecture/spec/ars-013-tool-discovery.md")
 const packageRoot = join(root, "node_modules/@opencode/codemode")
 const metadata = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"))
 if (metadata.version !== "2.0.29") throw new Error(`Expected Code Mode 2.0.29, found ${metadata.version}`)
@@ -353,7 +353,7 @@ test("documented measured-record snippet executes exact field retrieval with ret
         catch: (error: unknown) => toolError(error instanceof Error ? error.message : String(error)),
       }),
     }) } }) } })
-    const doc = await readFile(new URL("../docs/tool-discovery.md", import.meta.url), "utf8")
+    const doc = await readFile(new URL("../docs/architecture/spec/ars-013-tool-discovery.md", import.meta.url), "utf8")
     const snippet = doc.match(/```js\n(\/\/ example: measured-record[\s\S]*?)\n```/)![1]!
     const result = await Effect.runPromise(runtime.execute(snippet.replaceAll('"ACTION_ID"', JSON.stringify(action.id))
       .replaceAll('"RECORD_ID"', JSON.stringify(record.id))))

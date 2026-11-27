@@ -3,9 +3,14 @@ type: Log
 title: Automatic learning requirements change log
 description: History of the proposed source-linked review and retrospective behavioral baseline.
 tags: [learning, requirements]
-timestamp: 2026-11-12T00:00:00Z
+timestamp: 2026-11-27T00:00:00Z
 ---
 # Change log
+
+## 2026-11-27
+
+- Reorganized [behavioral requirements](/docs/requirements/requirements/learning-retrospectives/index.md), [obligation contracts](/docs/requirements/obligation-contracts/learning-retrospectives/index.md), and [quality scenarios](/docs/requirements/quality-scenarios/learning-retrospectives/index.md) by type, preserving learning-local identifiers and the existing topic overview.
+- Updated link destinations and metadata without changing the requirement statements, acceptance context, or existing history.
 
 ## 2026-11-26
 

@@ -7,7 +7,7 @@ on:
       - tests/installed_instruction_variants.py
       - tests/test_installed_instruction_variants.py
       - tests/variant-host/**
-      - docs/session-instruction-qualification.md
+      - docs/architecture/qualification/session-instruction-qualification.md
 permissions:
   contents: read
 jobs:

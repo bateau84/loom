@@ -4,7 +4,7 @@ Five cases are source-modeled, not installed-host tests or billing receipts.
 Two additional checks replay retained native evidence and compare the modeled
 hook fields with the exact installed SDK. No new native host runs here.
 Hidden _attempt/_account annotations construct two plausible native histories
-with identical public observations. See docs/native-attempt-qualification-205.md.
+with identical public observations. See docs/architecture/qualification/native-attempt-qualification-205.md.
 """
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ def retry(origin: str) -> dict:
 class Tagged230AttemptWitnesses(unittest.TestCase):
     def test_retained_native_generate_trace_has_no_session_retry_callback(self):
         """Replay prior CI evidence; this is not a new host/account qualification."""
-        evidence = json.loads((REPOSITORY / "docs/native-request-identity-230-evidence.json").read_text())
+        evidence = json.loads((REPOSITORY / "docs/architecture/qualification/native-request-identity-230-evidence.json").read_text())
         excerpt = next(item for item in evidence["prior_installed_evidence"]["retry_excerpts"]
                        if item["case"] == "native-generate-prepared-retry")
         events = [item["event"] for item in excerpt["events"]]

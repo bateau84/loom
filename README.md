@@ -44,7 +44,7 @@ separately before replacing a config-root checkout. The migration is deliberatel
 not automatic: legacy exported prompts may reference removed Loom tools.
 Current native agent mappings use the migrated definitions; do not reinstall
 removed external Loom skills. The bundled `loom` skill is the usage guide.
-See [Migration](docs/migration.md) for other installations and legacy exports.
+See [Migration](docs/user-docs/migration.md) for other installations and legacy exports.
 
 The alpha milestone is useful Research → Worker handoff and fresh-session
 resumption with trustworthy history, clear tool guidance, and one tested manual
@@ -53,27 +53,27 @@ its acceptance does not qualify this replacement. A historical real native hando
 completion/replan/removal and independently checked fresh-Session recovery trial
 also passed its declared scope; it sent no automatic continuation. Successful
 context reads now survive selection-save failures with a separate truthful outcome.
-See the [alpha policy and evidence limits](docs/operating-policy.md),
-[coordination direction](docs/coordination.md) and
-[manual stopped-writers backup/restore](docs/manual-backup-restore.md).
+See the [alpha policy and evidence limits](docs/user-docs/operating-policy.md),
+[coordination direction](docs/architecture/design/ard-002-coordination.md) and
+[manual stopped-writers backup/restore](docs/user-docs/manual-backup-restore.md).
 
 For recorded engineering work, `loom_history` provides a compact Action or
 Session overview, selective branch expansion, and shared Markdown/HTML views.
-The [read-only history dashboard](docs/learning-engineering-history.md) expands
+The [read-only history dashboard](docs/architecture/design/ard-008-learning-engineering-history.md) expands
 included details locally; further reads use the displayed authorized tool
 requests. It is an explicit read snapshot, not an automatically refreshed UI.
 
 Advanced storage recovery, maintenance/capacity modes, strict WAL-growth quotas,
 scheduling, a continuously connected dashboard and legacy import are deferred,
 not alpha prerequisites.
-For evaluation, [retrospective populations](docs/learning-retrospective-populations.md)
+For evaluation, [retrospective populations](docs/architecture/design/ard-010-learning-retrospective-populations.md)
 preview one objective and an explicit question, then freeze exact source membership,
 versions, relationship basis and gaps through `loom_review freeze-population`.
 Human and agent views read that same durable manifest through `loom_history`.
 Later records, relationships and Plan changes do not enter it. Preparation can
 consume this distinct population; Evaluator execution remains disconnected.
 
-[Original-source resolution](docs/learning-original-source-resolution.md) now
+[Original-source resolution](docs/architecture/design/ard-011-learning-original-source-resolution.md) now
 pins supported originals during a new preview and retrieves them through
 `loom_history population-source`. The bounded views include the caller's native
 user text and tool fields, exact GitHub commit/file objects, explicit CI
@@ -81,7 +81,7 @@ attempt/job logs and digest-verified artifact archives. External reads reuse an
 already authenticated `gh`; no account setup is performed. Each continuation
 checks the frozen version and current access. Old reference-only populations
 remain unchanged. Native full history and cross-Session raw release require the
-[source-owner interface described in the upstream handoff](docs/learning-native-source-handoff.md).
+[source-owner interface described in the upstream handoff](docs/architecture/spec/ars-003-learning-native-source-handoff.md).
 
 No history-size or whole-process resource guarantee is advertised. The Action
 `paused`, `cancelled` and `completed` labels record intent/progress; they do not
@@ -102,9 +102,9 @@ databases until separately qualified. Its existing 2.2.6 negative controls
 run on an isolated legacy host, not as claimed 2.3.0 scanner support.
 The Code Mode search fixture stays pinned to 2.0.29.
 This change does not upgrade a developer's installed CLI or configuration.
-See [2.3.0 host qualification](docs/opencode-2.3.0.md),
-[historical 2.2.6 compatibility plan](docs/opencode-2.2.6.md) and
-[installed-host validation](docs/installed-host-validation.md).
+See [2.3.0 host qualification](docs/architecture/qualification/opencode-2.3.0.md),
+[historical 2.2.6 compatibility plan](docs/architecture/history/opencode-2.2.6.md) and
+[installed-host validation](docs/user-docs/installed-host-validation.md).
 
 **Model-routing boundary:** SDK/CLI 2.3.0 remains unqualified for
 managed-subscription initial routing. The production adapter stays
@@ -112,7 +112,7 @@ managed-subscription initial routing. The production adapter stays
 opt-in routing with `LOOM_MODEL_ROUTING_HOST_UNQUALIFIED`.
 Explicitly disabled routing preserves native OpenCode behavior.
 No test-only billing attestation proves real provider eligibility;
-see [model routing](docs/model-routing.md).
+see [model routing](docs/architecture/design/ard-013-model-routing.md).
 
 **Bun support: `>=1.4.2 <2.0.0`. Use Bun 1.4.2 to reproduce validation.**
 The exact tested baseline is recorded in `.bun-version` and used by the CI jobs.
@@ -133,13 +133,13 @@ optional entrypoints; an unsupported test runtime fails with a version message.
 upgrade Bun, replace OpenCode's embedded runtime, or enforce plugin loading.
 Changing the Bun executable on PATH does not establish the runtime used inside a
 packaged OpenCode executable. Test that installed host separately using
-[the boot probe](docs/installed-host-validation.md) before switching normal work.
+[the boot probe](docs/user-docs/installed-host-validation.md) before switching normal work.
 The boot probe still proves only loading and equivalent intact empty-ledger checks,
 not two-agent behavior, meaningful-record persistence, or graceful teardown.
 
 The capture-gap repair also requires a **full OpenCode host restart on first
 installation**; hot-upgrading cannot recover uncertainty discarded by the old
-implementation. See [Evidence pairing](docs/evidence-reliability.md).
+implementation. See [Evidence pairing](docs/architecture/design/ard-005-evidence-reliability.md).
 The CI jobs install Loom dependencies from the committed lockfile with frozen
 installation and a lock-stability check. The separately installed host's dependency
 graph remains a separate concern. The historical manual ledger-only procedure retains its isolated
@@ -199,8 +199,8 @@ invent successful request accounting or a provider reset. Once the active
 model becomes unavailable, its request is rejected rather than switched or
 silently charged to OpenCode's global default.
 `loom_agents` exposes `model_routing_runtime` and selected/unavailable
-agents. See [model routing](docs/model-routing.md) and
-[shared subscription quota](docs/shared-subscription-quota.md) for the
+agents. See [model routing](docs/architecture/design/ard-013-model-routing.md) and
+[shared subscription quota](docs/architecture/design/ard-014-shared-subscription-quota.md) for the
 exact host/account-affinity and recovery limits. The current
 No current SDK 2.2.0 host is qualified for managed routing, including CLI 2.1.4.
 Invalid configuration continues to disable guidance and
@@ -263,16 +263,16 @@ load to use an updated body, not just a YAML reread. This documentation change
 does not reload or restart the host. The guide describes typed OQ routing through native OpenCode 2.2.0 APIs,
 legacy fail-closed manual questions, one-shot best-effort first-answer resume,
 and complete stored history.
-See [collaboration](docs/collaboration.md). Historical assignment/delivery records
+See [collaboration](docs/architecture/design/ard-003-collaboration.md). Historical assignment/delivery records
 remain inert; guide loading or configuration cannot authorize/replay old intents.
 
 ## Agent experience
 
-Start with the [tool guide and Research → Worker example](docs/tools.md).
+Start with the [tool guide and Research → Worker example](docs/user-docs/tools.md).
 It covers operation inputs, side effects, exact dependency-record retrieval,
 replanning, review records and fresh-session resumption. Usage is also registered
 directly in tool descriptions and returned by tool search; agents do not need to
-fetch this Markdown first. See [tool discovery](docs/tool-discovery.md). Live-model
+fetch this Markdown first. See [tool discovery](docs/architecture/spec/ars-013-tool-discovery.md). Live-model
 usefulness of the guidance remains separate from scripted-host feasibility.
 
 For work worth retaining, optionally create an Action and save a Plan if useful.
@@ -292,7 +292,7 @@ Ask uses `question`, explicit Boolean `blocking`, and exactly one of
 or legacy `to_agent` (manual), or a verified existing destination `session_id`.
 Provide `id` for agent/role, not for dispatcher/user. Explicit Session delivery
 requires native `loom.question.deliver` permission for `session:<destination ID>`
-evaluated for the actual caller. See [the delivery policy](docs/cross-session-delivery-authorization.md).
+evaluated for the actual caller. See [the delivery policy](docs/architecture/decisions/adr-001-cross-session-delivery-authorization.md).
 Optional `context`, `context_attachments`, `reference:{action_id,kind,id}`, or
 explicit `action_id` association without a `reference`.
 Answer uses `question_id`, `answer`, optional `context_attachments`;
@@ -334,7 +334,7 @@ cursor with the same scope until null; a short page can still be incomplete.
 No recursive evidence expansion, invented raw bodies, cross-project/native Session
 reads, frozen concurrent snapshot or perpetual-cursor guarantee is provided.
 
-For [historical evidence discovery](docs/learning-historical-evidence.md),
+For [historical evidence discovery](docs/architecture/design/ard-007-learning-historical-evidence.md),
 `loom_record query` also supports metadata-only or allowlisted exact-record field
 projections, source-Session/kind filters and inclusive `through` sequence bounds.
 `loom_trace` adds explicitly authorized historical child inventory, native tool-part
@@ -353,7 +353,7 @@ OpenCode's flat `<skill-id>.md` entries are supported too: any companion lives
 under a separate `<skill-id>/` sibling directory to avoid mixing review lenses
 between flat skills. The bundled `loom` skill has no companions, so its result
 is `available:false`, not a path error.
-See [Assessment and QA companions](docs/review-companions.md) for configuration,
+See [Assessment and QA companions](docs/user-docs/review-companions.md) for configuration,
 examples and limits. Loading instructions and recording findings are separate;
 neither guarantees independent review. `loom_record add` stores results,
 claims, concerns, Assessment and QA under the calling Session when no Action
@@ -389,16 +389,16 @@ security boundary against other programs running as your user. Capture can be
 disabled with `ledger.capture: off`. Explicitly recorded text is not redacted;
 never put credentials or other secrets in a result, claim or artifact reference.
 
-Before an upgrade, preserve state using the [offline procedure](docs/manual-backup-restore.md).
+Before an upgrade, preserve state using the [offline procedure](docs/user-docs/manual-backup-restore.md).
 Retired sender tables are preserved without operational hydration or sending.
 Meaningful populated history has a frozen synthetic preservation fixture; that is
 not universal migration or installed-host acceptance. No destructive repair or
 legacy workflow-ledger import is provided. See
-[state and rollback](docs/migration.md#state-and-rollback).
+[state and rollback](docs/user-docs/migration.md#state-and-rollback).
 
 ## Development
 
-See the maintained [test, script and CI guide](docs/testing.md) for every entrypoint,
+See the maintained [test, script and CI guide](docs/user-docs/testing.md) for every entrypoint,
 fixture, prerequisite, safety boundary and workflow trigger.
 
 Use the Bun version in `.bun-version` (currently **1.4.2**).
@@ -415,19 +415,19 @@ Tests isolate config and state in temporary directories. No paid inference is
 required by CI. The native contract test uses a fake host API with real Bun
 primitives; it does **not** replace a live OpenCode installation smoke test.
 
-The [Stage 2 review foundation](docs/learning-review-stage2.md) records persistent
+The [Stage 2 review foundation](docs/user-docs/learning-review-stage2.md) records persistent
 review mandates, historical reconstruction, retry authority and qualified host limits.
 
-The [Stage 4 preparation increment](docs/learning-stage4-preparation.md) adds
+The [Stage 4 preparation increment](docs/user-docs/learning-stage4-preparation.md) adds
 declared Evaluator/Audit methods, immutable source manifests and recoverable
 canonical review linkage. Its authorized readers expose existing originals;
 genuine Evaluator reasoning and native dispatch remain unavailable.
 
-The [restricted execution lifecycle](docs/learning-restricted-execution.md)
+The [restricted execution lifecycle](docs/architecture/design/ard-012-learning-restricted-execution.md)
 adds immutable admission, exclusive effect ordering and outcome recovery behind
 a trusted authority interface. Controlled-provider tests exercise that consumer;
-the production authority adapter remains absent. The [original-work audit handoff](docs/learning-evaluator-s3-handoff.md)
+the production authority adapter remains absent. The [original-work audit handoff](docs/user-docs/learning-evaluator-s3-handoff.md)
 specifies the separate authorization and qualification needed for genuine reasoning.
 
-See [Design and implementation boundaries](docs/design.md) and [Coordination](docs/coordination.md);
-[the alpha operating policy](docs/operating-policy.md) defines the narrower release scope.
+See [Design and implementation boundaries](docs/architecture/design/ard-001-implementation-boundaries.md) and [Coordination](docs/architecture/design/ard-002-coordination.md);
+[the alpha operating policy](docs/user-docs/operating-policy.md) defines the narrower release scope.

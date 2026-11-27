@@ -149,10 +149,10 @@ test("repository OKF profile matches current corpus types, headings and grounded
     expect(allows(spec.allowed_source_types, sourceType)).toBe(true)
     expect(allows(spec.allowed_target_types, targetType)).toBe(true)
   }
-  await linkedUnder("model-routing.md", "Depends on", "configuration-parser.md", "depends-on")
-  await linkedUnder("model-routing.md", "Depends on", "opencode-2.1.1.md", "depends-on")
-  await linkedUnder("configuration-parser.md", "Audited primary sources", "configuration-limits.md", "references")
-  await linkedUnder("configuration-parser.md", "Audited primary sources", "processing-limits.md", "references")
+  await linkedUnder("architecture/design/ard-013-model-routing.md", "Depends on", "../spec/ars-007-configuration-parser.md", "depends-on")
+  await linkedUnder("architecture/design/ard-013-model-routing.md", "Depends on", "../history/opencode-2.1.1.md", "depends-on")
+  await linkedUnder("architecture/spec/ars-007-configuration-parser.md", "Audited primary sources", "ars-006-configuration-limits.md", "references")
+  await linkedUnder("architecture/spec/ars-007-configuration-parser.md", "Audited primary sources", "ars-008-processing-limits.md", "references")
 })
 
 

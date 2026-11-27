@@ -6,14 +6,23 @@ type: Log
 
 ## 2026-11-27
 
+**Documentation organization:** Moved the existing corpus into
+[anchors](/docs/anchors/index.md), [requirements](/docs/requirements/index.md),
+[product design](/docs/design/index.md), [architecture](/docs/architecture/index.md),
+and [user documentation](/docs/user-docs/index.md). Preserved substantive document
+wording, topic-local requirement identifiers, historical qualifications, and all
+nine evidence assets. Updated link destinations, current path references, indexes,
+metadata, and the OKF profile. No standalone anchors or product-design concepts
+were invented to populate the new structure.
+
 **Controlled retrospective execution (#227):** Connected the distinct frozen
 v2 preparation to the existing restricted execution consumer through explicit
 trusted source authority. Preserved complete Stage 3 semantics, actual-recipient
 source checks, canonical claim ownership, durable accounting and restore fences.
 Extended the installed local-provider fixture with native evidence-tool retrieval
 and negative controls. Production account authority and genuine reasoning remain
-unqualified; see [the lifecycle](learning-restricted-execution.md) and
-[the fixed-route owner handoff](learning-retrospective-execution-authority.md).
+unqualified; see [the lifecycle](architecture/design/ard-012-learning-restricted-execution.md) and
+[the fixed-route owner handoff](architecture/spec/ars-014-learning-retrospective-execution-authority.md).
 
 **Public tool usability (#227):** Refined optional skill guidance, operation
 descriptions and schemas, safe diagnostics and complete continuation requests.
@@ -22,7 +31,7 @@ actual failures, response bytes, authorization stages and independently checked
 raw evidence. Retained guidance budgets and the distinct historical investigation,
 evidence preparation and execution boundaries. Integrated exact-original paging
 from #256, pinned selection dependencies and published-example schema checks. See
-[the usability qualification](tool-usability.md).
+[the usability qualification](architecture/qualification/tool-usability.md).
 
 ## 2026-11-26
 
@@ -33,7 +42,7 @@ Evaluator preparation. Frozen identities retain source versions, historical
 scope, relationship basis and gaps across later work and recovery. Complete
 Stage 3 batches keep their existing validation. Production execution remains
 disconnected; native/external original release and private operator qualification
-remain dependencies. See [the population contract](learning-retrospective-populations.md).
+remain dependencies. See [the population contract](architecture/design/ard-010-learning-retrospective-populations.md).
 
 **Connected engineering trajectories (#227):** Composed existing ObjectiveIndex,
 ReviewRequests and Store/Observer relationships into focused history navigation.
@@ -42,7 +51,7 @@ review/recheck scope and ready continuation requests. JSON, Markdown and HTML
 retain the same source meanings and boundaries. Legacy Stage 3 source hashes and
 complete batches remain stable. Live trajectories are not frozen evaluation
 subjects; production Evaluator dispatch remains disabled. See
-[the integration and qualification boundaries](learning-connected-trajectories.md).
+[the integration and qualification boundaries](architecture/design/ard-009-learning-connected-trajectories.md).
 
 **Layered engineering history (#227):** Added a Store-owned live projection and
 the `loom_history` reader for compact Action/Session overviews, historical work
@@ -51,7 +60,7 @@ Markdown and the first self-contained HTML dashboard share the same model and
 scope/contributing-Session permission checks. Current intended Plans remain
 separate from historical WorkRefs. Native originals, objective/review expansion,
 frozen retrospective selections and production Evaluator authority remain
-separate work. See [the delivery boundary](learning-engineering-history.md).
+separate work. See [the delivery boundary](architecture/design/ard-008-learning-engineering-history.md).
 
 **PR #252 review corrections:** Added selective history discovery before result
 limits, actionable historical Plan ancestry and observed/analytical Session
@@ -72,7 +81,7 @@ inventory metadata from their mandatory envelope, so a dispatch-only grant does
 not disclose lifecycle status, timestamps, field availability or byte counts.
 Registered and installed selective-policy checks inspect the complete response.
 Marker-shaped content remains withheld with unverified redaction provenance.
-See [the field authorization contract](learning-historical-evidence.md).
+See [the field authorization contract](architecture/design/ard-007-learning-historical-evidence.md).
 
 **Historical engineering evidence (#227):** Extended existing record and trace
 tools with historical child discovery, record metadata and exact selected fields,
@@ -80,7 +89,7 @@ native part inventory, structural matching and exact status/dispatch projections
 Raw native fields are limited to the caller's current context. Documented the
 source-owner release dependency, distinct future selected-population scope,
 external-source responsibilities and preserved Stage 3/4 execution boundaries.
-See [the delivery boundary and interfaces](learning-historical-evidence.md).
+See [the delivery boundary and interfaces](architecture/design/ard-007-learning-historical-evidence.md).
 
 ## 2026-11-24
 
@@ -90,7 +99,7 @@ insights reader. Capability-specific blockers, consumed claims and uncertain
 outcomes remain explicit; the read grants no effect permit, reserves no budget
 and performs no repair or dispatch. Documented the bounded acceptance criteria,
 remaining authority dependencies and source-inspected OpenCode 2.4.1 changes
-without upgrading the pinned host. See [the assessment boundary](learning-stage4-admission.md).
+without upgrading the pinned host. See [the assessment boundary](architecture/spec/ars-005-learning-stage4-admission.md).
 
 ## 2026-11-19
 
@@ -128,7 +137,7 @@ only by isolated qualification fixtures; production routing remains
 unqualified and the candidate journal is not execution authority. Selection,
 request preparation and auxiliary retries are distinct native events; this
 work does not claim per-send billing admission or account settlement. See
-[the mechanics qualification and remaining gates](initial-routing-qualification-206.md).
+[the mechanics qualification and remaining gates](architecture/qualification/initial-routing-qualification-206.md).
 
 **Accepted routing scope separation (#239/#240):** Product-owner approval on
 2026-11-19 separates the reviewed provider-free policy foundation from
@@ -164,13 +173,13 @@ work decisions bound to existing current saved Action/plan selection, and refuse
 conflicting/unsafe reuse after restart. This does not register a native model
 hook, attest safe native work admission, persist authoritative routing receipts,
 qualify billing or enable live managed routing. All #205/#206 and independent acceptance gates remain open. See
-[the candidate policy and limits](workload-routing.md).
+[the candidate policy and limits](architecture/design/ard-015-workload-routing.md).
 
 ## 2026-11-17
 
 **PR #237 bounded remediation:** Retained existing-Session question delivery and
 added native caller/destination permission under the Architect's
-[delivery policy](cross-session-delivery-authorization.md). Inbox lookup now uses
+[delivery policy](architecture/decisions/adr-001-cross-session-delivery-authorization.md). Inbox lookup now uses
 one additive destination index and the complete existing answer index. Peer
 dispatch reasons are distinct from parent notices; structured questions consistently
 allow typed recipients or verified destinations. Recovery checks cover persisted
@@ -184,11 +193,11 @@ bounded native readers. Preparation remains explicitly blocked before recipient
 creation, model effects, budget reservation and interpretation publication.
 Recovery fences missing committed mappings and preserves consumed canonical
 issues. Generated preparation reviews are excluded from engineering source
-populations. See the [implementation boundary and operations](learning-stage4-preparation.md).
+populations. See the [implementation boundary and operations](user-docs/learning-stage4-preparation.md).
 
 **Stage 4 architecture and host qualification:** Added the proposed
-[whole-objective learning contract](learning-stage4-contract.md) and its
-[fresh evidence record](learning-stage4-host-evidence.json). Inspected OpenCode
+[whole-objective learning contract](architecture/spec/ars-004-learning-stage4-contract.md) and its
+[fresh evidence record](architecture/spec/evidence/learning-stage4-host-evidence.json). Inspected OpenCode
 2.2.6, released 2.3.0 and development snapshot `d432a06`; reran the unchanged
 installed 2.2.6 native review probe against clean merged Stage 3 `e1c6a66`.
 Eight mechanical checks and 19 oracle tests pass; Q4 stays unqualified and the
@@ -202,7 +211,7 @@ code, dependencies, capture policy or real-model dispatch changed.
 source `4cf442510c29aa1387b1ce7e2de6716d926f5452` with OpenCode 2.2.6. All eleven
 Stage 3 mechanics and six supplemental reader/source-loss checks pass, together
 with ordinary boot, routing controls and 70 supporting native regressions. The
-[Stage 3 playbook](learning-automatic-stage3.md) now records the six registered
+[Stage 3 playbook](user-docs/learning-automatic-stage3.md) now records the six registered
 readers, resolved F-06/F-07, current CI counts, exact source versus merge-composition
 evidence and reproducible commands. Bounded Stage 3 receives GO; Q4/Q5 remain
 UNQUALIFIED and E11 remains NO-GO / UNPROVEN. Merging requires explicit user approval.
@@ -223,7 +232,7 @@ usage and joint composition with PR #233 remain separate, unproven claims.
 choice IDs and explicit cannot-select responses in the existing ask/answer flow.
 Preserved text compatibility, respondent identity and first-response continuation.
 Corrected advertised legacy-only examples and made conditional question guidance
-explicit. See [the contract and usage investigation](structured-questions.md);
+explicit. See [the contract and usage investigation](architecture/spec/ars-012-structured-questions.md);
 real-model usage improvement remains unproven.
 
 **Native audit completeness (NRQ-003):** Qualification now preserves the complete observed
@@ -233,9 +242,9 @@ Retained diagnostic bytes and successful report hashes/counts share one captured
 Routing's per-mode request counts use the finalized audit. Native capability classifications
 remain separate from these evidence-integrity checks.
 
-**Native review cold-review corrections:** The [evidence contract](learning-native-evidence-spec.md)
+**Native review cold-review corrections:** The [evidence contract](architecture/spec/ars-001-learning-native-evidence-spec.md)
 now arbitrates initial issue and authorized retry intents before creating or claiming an attempt
-(NRQ-001). The [qualification oracle](native-review-qualification.md) rejects reversed causal
+(NRQ-001). The [qualification oracle](architecture/qualification/native-review-qualification.md) rejects reversed causal
 receipts, replayed hooks and cross-observer joins while preserving valid delayed native progress
 (NRQ-002). Original native evidence remains distinguishable from offline adversarial controls.
 Fresh qualification failed during live audit parsing; a partial-append control reproduced
@@ -247,8 +256,8 @@ recipient-transfer gaps retain their unqualified/unsupported classifications.
 
 ## 2026-11-12
 
-**First learning engineering stage:** Added the [native review qualification](native-review-qualification.md)
-and [implementation-facing specification](learning-native-evidence-spec.md) in the existing draft PR #233.
+**First learning engineering stage:** Added the [native review qualification](architecture/qualification/native-review-qualification.md)
+and [implementation-facing specification](architecture/spec/ars-001-learning-native-evidence-spec.md) in the existing draft PR #233.
 The isolated installed-host probe reuses the scripted provider and exercises actual native dispatch,
 admission, reads, read denial, child reuse, opaque inner calls, historical scope, interruption,
 compaction and process reopen. Exact input-to-execution causality and incoming protected-content
@@ -256,8 +265,8 @@ transfer enforcement remain unqualified/unsupported. Native read denial is not a
 No production runtime code, capture policy, routing protection or automatic learning engine changed.
 
 **Learning architecture requirements (proposal):** The user accepted the independently reviewed
-[review-scoped evidence architecture](learning-evidence-and-review-scope.md) (PR #233), and the
-[automatic learning requirements](requirements/learning-retrospectives/br-001-preserve-execution-attribution.md)
+[review-scoped evidence architecture](architecture/design/ard-006-learning-evidence-and-review-scope.md) (PR #233), and the
+[automatic learning requirements](requirements/requirements/learning-retrospectives/br-001-preserve-execution-attribution.md)
 were added under the same draft PR. The new indexed bundle defines 9 Behavioral Requirements,
 5 Quality Scenarios and 4 Obligation Contracts for attribution, actual review evidence,
 automatic multi-Session evaluation, interruption recovery and protected derived reports.
@@ -267,9 +276,9 @@ remain pending independent assessment, and there are no runtime/reporting activa
 ## 2026-11-11
 
 **Learning Phase 2 qualification and recovery:** Added actual-host provenance
-and permission counterexamples, a [host-owned trust contract](learning-host-trust-contract.md),
-an explicit [stopped-host treatment recovery inspector](experiment-recovery.md)
-and scoped [Evaluator observation and receipt collection](native-evaluator-audit-qualification.md).
+and permission counterexamples, a [host-owned trust contract](architecture/spec/ars-002-learning-host-trust-contract.md),
+an explicit [stopped-host treatment recovery inspector](user-docs/experiment-recovery.md)
+and scoped [Evaluator observation and receipt collection](user-docs/native-evaluator-audit-qualification.md).
 Native storage, withdrawal history and public receipt mechanics are qualified
 separately from trusted human consent and real-model reasoning. Independent
 review corrected a report-path collision that could create an input database's
@@ -285,7 +294,7 @@ controls, child exclusion, interruption, native compaction, restart and
 withdrawal observations. This is an **additive** Session context channel, not
 live skill replacement, provider-effectiveness proof or production activation.
 The installed fixture has a bounded mechanics PASS; unsupported routes still
-require manual isolation. See [the qualification contract](session-instruction-qualification.md).
+require manual isolation. See [the qualification contract](architecture/qualification/session-instruction-qualification.md).
 
 ## 2026-11-06
 
@@ -319,12 +328,12 @@ result handback guidance. No workflow gates or runtime behavior changed.
 **Independent review remediation for #204:** Expanded Copilot Individual/Business/Enterprise/access coverage and Go Teams member/service-account handling; separated generic Codex terms from legacy OpenCode billing claims. Tightened the proposed included-only proof to a host-bound native attempt, exact auth method, credential revision and effective billing account. Removed unverified metered authorization from the included-only decision. No provider gained qualification or production routing.
 
 **Investigation #204 — account-bound included billing:** Added the
-[source-backed qualification matrix](subscription-billing-qualification.md)
+[source-backed qualification matrix](architecture/qualification/subscription-billing-qualification.md)
 for OpenCode Go, both native ChatGPT OAuth routes and GitHub Copilot,
 including the proposed provider-enforced no-paid contract, deterministic
 negative tests and safe live-verification prerequisites. No provider is
 qualified; production managed routing remains disabled. Linked the audit
-from the [routing contract](model-routing.md) and [documentation index](index.md).
+from the [routing contract](architecture/design/ard-013-model-routing.md) and [documentation index](index.md).
 
 
 **Independent review remediation for #205:** Matched modeled HTTP hooks to native `request: Request` and `response: Response` fields, first retry ordinal 2, and explicit HTTP-200-then-stream-failure/success cases. Tightened the upstream proposal to a unique native send attempt and provider-verified effective billing principal; logical request grouping is optional, not an unexplained safety prerequisite. Added auth refresh, account-equivalence, WebSocket reuse, step events and background-compaction limitations. No production routing was enabled.
@@ -333,7 +342,7 @@ from the [routing contract](model-routing.md) and [documentation index](index.md
 OpenCode 2.2.0 SDK/CLI pairing and source-only 2.2.4 follow-up.
 The native model hook exposes request kind, but retry and completion lack
 stable request/attempt and transport-bound credential identity. Added
-[source audit and proposed minimum host guarantees](native-request-identity.md)
+[source audit and proposed minimum host guarantees](architecture/history/native-request-identity.md)
 plus deterministic source-modeled ambiguity witnesses. This investigation
 **does not enable managed routing**, claim live acceptance or implement an
 upstream API.
@@ -343,9 +352,9 @@ upstream API.
 `loom_trace` tool added by PR #202 changes the registered fixture
 tool count from five to six. Updated the routing-configuration regression
 to assert the actual six tools without changing routing behavior.
-[Deep retrospective tracing](retrospective-trace.md),
-[QA-B retrospective acceptance](retrospective-qa-b.md), and
-[QA-B control evidence](retrospective-qa-b-controls.md) now have
+[Deep retrospective tracing](user-docs/retrospective-trace.md),
+[QA-B retrospective acceptance](user-docs/retrospective-qa-b.md), and
+[QA-B control evidence](user-docs/retrospective-qa-b-controls.md) now have
 repository-compatible OKF document metadata and entries in the
 [documentation index](index.md). This is an index/representation repair:
 the source documents' accepted evidence and safety limits are unchanged.
@@ -383,10 +392,10 @@ merge decision are still required.
 
 ## 2026-10-27
 
-**Critic safety corrections:** [Shared quota](shared-subscription-quota.md)
+**Critic safety corrections:** [Shared quota](architecture/design/ard-014-shared-subscription-quota.md)
 now refuses positive quota evidence while an account remains blocked by
 a confirmed HTTP 401, and rejects contradictory persisted provider-available
-rows with zero/missing allowance. [Model routing](model-routing.md) rejects
+rows with zero/missing allowance. [Model routing](architecture/design/ard-013-model-routing.md) rejects
 an auxiliary request that changes the active native account on the managed
 provider; auxiliary dispatch invalidates stale primary retry attribution.
 One pending primary record per Session makes the 512-Session limit accurate,
@@ -400,13 +409,13 @@ version-specific 2.1.4 model-routing attestation or dispatch semantics were
 also qualified on 2.2.0. A valid disabled policy preserves native execution;
 opt-in managed routing on 2.2.0 is explicitly host-unqualified and blocked
 before provider transport pending independent qualification. The
-[2.2.0 host audit](opencode-2.2.0.md) is an indexed OKF concept.
+[2.2.0 host audit](architecture/history/opencode-2.2.0.md) is an indexed OKF concept.
 This does not establish live subscription billing or seamless fallback.
 
 ## 2026-10-25
 
 **Cold-review startup and terminal-event corrections (PR #190):**
-The [routing adapter](model-routing.md) installs an early native model
+The [routing adapter](architecture/design/ard-013-model-routing.md) installs an early native model
 request deny hook before Action-ledger or quota initialization in OpenCode
 2.1.4. If guarded startup fails, the denial hook remains installed instead
 of letting native dispatch fall through to a potentially metered default.
@@ -422,8 +431,8 @@ provider/account streaming leases and live fallback remain unproven.
 **Consolidation into PR #190 (draft):** The previously separate initial native
 routing, shared per-account SQLite quota implementation, installed-host
 acceptance tests and independent-review remediation now share one candidate
-branch. The [OpenCode Go entitlement audit](opencode-go-eligibility.md) and
-[safe V2 live-fallback proposal](opencode-v2-safe-live-fallback.md) have also
+branch. The [OpenCode Go entitlement audit](architecture/qualification/opencode-go-eligibility.md) and
+[safe V2 live-fallback proposal](architecture/design/ard-016-opencode-v2-safe-live-fallback.md) have also
 been incorporated with the Go fail-closed regression tests. The local
 OpenCode 2.1.4 acceptance suite proves its scoped protective controls,
 not positive authorized subscription dispatch or in-flight provider
@@ -431,14 +440,14 @@ switching. No changes have been merged into `main`; previous dated
 entries describe their original separate PRs for historical context.
 
 **Review remediation (draft, pending CI and independent re-review):**
-[Shared subscription quota](shared-subscription-quota.md) now validates all
+[Shared subscription quota](architecture/design/ard-014-shared-subscription-quota.md) now validates all
 persisted numeric/lease fields before route eligibility, migrates existing
 quota schema v1 to v2 without resetting state, and preserves concurrent
 confirmed exhaustion against weaker negative reports. Recovery revisions
 still reject older failures and stale success. Native provider
 `retryAfterMs` is retained, with the later trusted deadline winning;
 ambiguous HTTP 403 is not account-wide authentication evidence.
-[Model routing](model-routing.md) now blocks dispatch when its startup
+[Model routing](architecture/design/ard-013-model-routing.md) now blocks dispatch when its startup
 configuration is unreadable, or when the native terminal-event stream
 ends unexpectedly; valid explicit disabling remains unchanged.
 Quota/native-adapter regression tests cover these failure sequences.
@@ -448,8 +457,8 @@ sanitized per-case traces, and adds an invalid-config negative control.
 Positive real included-billing dispatch, native account affinity and
 live provider fallback remain unproven.
 
-**Integration**: [Shared subscription quota](shared-subscription-quota.md) now
-feeds [guarded initial model routing](model-routing.md). Imported the
+**Integration**: [Shared subscription quota](architecture/design/ard-014-shared-subscription-quota.md) now
+feeds [guarded initial model routing](architecture/design/ard-013-model-routing.md). Imported the
 unmodified account-aware planner and quota manager from draft PR #192 onto
 the separate integration branch stacked on #191. Native account IDs are
 read from non-secret credential-record metadata, and active OpenCode
@@ -460,12 +469,12 @@ Added isolated cross-process/native-hook integration tests. No automatic
 provider-success, reset or remaining-quota accounting is claimed, because
 OpenCode does not expose a safe request/account correlation for it. Existing
 PRs #190/#191/#192 remain unchanged; live fallback stays blocked.
-[Model-dispatch investigation](model-routing-v2-dispatch.md) retains the
+[Model-dispatch investigation](architecture/history/model-routing-v2-dispatch.md) retains the
 unsupported V2 interface boundary.
 
 ## 2026-10-24
 
-**Implementation**: [Initial OpenCode 2.1.4 model routing](model-routing.md)
+**Implementation**: [Initial OpenCode 2.1.4 model routing](architecture/design/ard-013-model-routing.md)
 added `src/model-routing-runtime.ts` and
 `src/model-routing-adapter.ts` to apply role-selected eligible native models
 with exact reasoning variants, opaque native connection and verified-billing
@@ -473,38 +482,38 @@ checks, cooldown/attestation interface, and a pre-dispatch guard that rejects
 unexpected or ineligible provider calls. Added focused pure and mock V2
 adapter tests plus the isolated 2.1.4 installed-host negative-control workflow.
 Native stream/account leasing and live fallback remain unproven and are not
-implemented. [V2 dispatch investigation](model-routing-v2-dispatch.md)
+implemented. [V2 dispatch investigation](architecture/history/model-routing-v2-dispatch.md)
 records the updated seam and restrictions; [README](../README.md) explains
 the host/SDK combination. Routing disabled preserves native behavior.
 
 
-**Creation**: [OpenCode 2.1.1 model-dispatch investigation](model-routing-v2-dispatch.md) —
+**Creation**: [OpenCode 2.1.1 model-dispatch investigation](architecture/history/model-routing-v2-dispatch.md) —
 Audited the pinned V2 request, retry, model resolver and stream/tool boundaries.
 Recorded the absent atomic pre-output route-change seam, unproven account affinity,
 rejected unsafe workarounds, the separate opaque quota-attestation interface and
 minimal upstream host changes required. Source-only; no live failover or host
-qualification claimed. [Model routing](model-routing.md), the
-[compatibility guide](opencode-2.1.1.md), and this [index](index.md) now link
+qualification claimed. [Model routing](architecture/design/ard-013-model-routing.md), the
+[compatibility guide](architecture/history/opencode-2.1.1.md), and this [index](index.md) now link
 that blocker. No runtime behavior changed.
 
 
-**Update**: [`design.md`](design.md) now links to the three indexed
+**Update**: [`design.md`](architecture/design/ard-001-implementation-boundaries.md) now links to the three indexed
 concern requirements rather than the reserved nested `index.md`.
-[`installed-host-validation.md`](installed-host-validation.md),
-[`manual-backup-restore.md`](manual-backup-restore.md),
-[`read-consistency.md`](read-consistency.md),
-[`retrieval-limits.md`](retrieval-limits.md), and
-[`tools.md`](tools.md) now link to indexed files while preserving intended
+[`installed-host-validation.md`](user-docs/installed-host-validation.md),
+[`manual-backup-restore.md`](user-docs/manual-backup-restore.md),
+[`read-consistency.md`](architecture/spec/ars-010-read-consistency.md),
+[`retrieval-limits.md`](architecture/spec/ars-009-retrieval-limits.md), and
+[`tools.md`](user-docs/tools.md) now link to indexed files while preserving intended
 section titles in prose. The backup guide refers to the repository `README.md`
-without treating it as an OKF concept. [`handoffs.md`](handoffs.md) and
-[`reviewer-corrections.md`](reviewer-corrections.md) gained grounded references
+without treating it as an OKF concept. [`handoffs.md`](user-docs/handoffs.md) and
+[`reviewer-corrections.md`](architecture/history/reviewer-corrections.md) gained grounded references
 to their existing implementation contracts. No new dependency obligations.
 
 **Creation**: [Repository OKF profile](../.okf-profile.yaml) — Declared
 the observed concept types and evidence-backed `references` and `depends-on`
 heading relationships. No unsupported cardinality obligations were added.
 
-**Update**: [`model-routing.md`](model-routing.md) — Linked the actual
+**Update**: [`model-routing.md`](architecture/design/ard-013-model-routing.md) — Linked the actual
 configuration decoder and OpenCode compatibility contracts under
 `Depends on`, establishing typed edges grounded in the draft implementation.
 
@@ -519,9 +528,9 @@ profile loading and graph-integrity acceptance remain unverified.
 **Update**: Added OKF concept metadata (type, title, description, tags and
 timestamp) to 24 previously unindexed documents, in three groups:
 
-- [assignment-delivery.md](assignment-delivery.md), [collaboration.md](collaboration.md), [configuration-limits.md](configuration-limits.md), [configuration-parser.md](configuration-parser.md), [context-relevance.md](context-relevance.md), [coordination.md](coordination.md), [design.md](design.md), [evidence-reliability.md](evidence-reliability.md).
-- [handback-comparison.md](handback-comparison.md), [handback-experiment.md](handback-experiment.md), [handoffs.md](handoffs.md), [manual-backup-restore.md](manual-backup-restore.md), [migration.md](migration.md), [model-routing.md](model-routing.md), [opencode-2.1.1.md](opencode-2.1.1.md), [processing-limits.md](processing-limits.md).
-- [read-consistency.md](read-consistency.md), [retrieval-limits.md](retrieval-limits.md), [review-companions.md](review-companions.md), [reviewer-corrections.md](reviewer-corrections.md), [sender-qualification.md](sender-qualification.md), [task-selection-recovery.md](task-selection-recovery.md), [tool-discovery.md](tool-discovery.md), [tools.md](tools.md).
+- [assignment-delivery.md](architecture/history/assignment-delivery.md), [collaboration.md](architecture/design/ard-003-collaboration.md), [configuration-limits.md](architecture/spec/ars-006-configuration-limits.md), [configuration-parser.md](architecture/spec/ars-007-configuration-parser.md), [context-relevance.md](architecture/design/ard-004-context-relevance.md), [coordination.md](architecture/design/ard-002-coordination.md), [design.md](architecture/design/ard-001-implementation-boundaries.md), [evidence-reliability.md](architecture/design/ard-005-evidence-reliability.md).
+- [handback-comparison.md](architecture/history/handback-comparison.md), [handback-experiment.md](architecture/history/handback-experiment.md), [handoffs.md](user-docs/handoffs.md), [manual-backup-restore.md](user-docs/manual-backup-restore.md), [migration.md](user-docs/migration.md), [model-routing.md](architecture/design/ard-013-model-routing.md), [opencode-2.1.1.md](architecture/history/opencode-2.1.1.md), [processing-limits.md](architecture/spec/ars-008-processing-limits.md).
+- [read-consistency.md](architecture/spec/ars-010-read-consistency.md), [retrieval-limits.md](architecture/spec/ars-009-retrieval-limits.md), [review-companions.md](user-docs/review-companions.md), [reviewer-corrections.md](architecture/history/reviewer-corrections.md), [sender-qualification.md](architecture/history/sender-qualification.md), [task-selection-recovery.md](architecture/spec/ars-011-task-selection-recovery.md), [tool-discovery.md](architecture/spec/ars-013-tool-discovery.md), [tools.md](user-docs/tools.md).
 
 **Update**: [`index.md`](index.md) now inventories every direct concept
 (28 documents), the nested [requirements bundle](requirements/index.md), and the
@@ -533,7 +542,7 @@ superseded. Existing nested bundle ownership is unchanged.
 classes, provider-first fallback policy, billing guardrails, and the separate
 runtime adapter work still required. This is supporting Markdown outside the
 four-source OKF bundle; it does not claim live OpenCode V2 quota failover —
-[Draft: provider-first model routing](/docs/model-routing.md).
+[Draft: provider-first model routing](/docs/architecture/design/ard-013-model-routing.md).
 
 **Update**: `index.md` — Added the model-routing guide to the supporting-
 document inventory without adding it to the OKF source bundle —
@@ -556,7 +565,7 @@ companions. These are read-only instructions, not a restored workflow engine.
 **Update**: README, tool reference, documentation index and bundled guide describe
 the seven-tool interface while preserving handoff and independent-review guidance.
 
-**Creation**: `handoffs.md` — Documented exact result handoffs, independent review context, limits and recovery; it remains outside the four-source OKF bundle without OKF frontmatter or typed relationships — [Useful handoffs and independent review](/docs/handoffs.md).
+**Creation**: `handoffs.md` — Documented exact result handoffs, independent review context, limits and recovery; it remains outside the four-source OKF bundle without OKF frontmatter or typed relationships — [Useful handoffs and independent review](/docs/user-docs/handoffs.md).
 
 **Update**: `index.md` — Added the handoff guide to the supporting-document inventory without treating it as an OKF source document — [bundle index](/docs/index.md).
 
@@ -566,44 +575,44 @@ the seven-tool interface while preserving handoff and independent-review guidanc
 
 **Update**: `README.md` — Reconciled installed-question status with the passed packed-candidate 2.0.32 qualification and stated its scope and limits — [Loading the plugin](../README.md#loading-the-plugin).
 
-**Update**: `installed-host-validation.md`, `testing.md` — Recorded completed 2.0.32 installed-question qualification: exact candidate SHA-256 `ef7dad9a30ade952cd055fe5c637ff19d1b7b75ef8da590cde07fad58e7efd15`, SDK/CLI 2.0.32/2.0.32, E1-E3 plus restart and duplicate-input control passed by T2 and independent reviewer rerun. Scripted local-model traffic only; temporary reports are not committed. Selective session-read remains source-qualified N/A (`executed:false`), not PASS. — [Installed-host validation](/docs/installed-host-validation.md), [Tests, scripts and CI](/docs/testing.md).
+**Update**: `installed-host-validation.md`, `testing.md` — Recorded completed 2.0.32 installed-question qualification: exact candidate SHA-256 `ef7dad9a30ade952cd055fe5c637ff19d1b7b75ef8da590cde07fad58e7efd15`, SDK/CLI 2.0.32/2.0.32, E1-E3 plus restart and duplicate-input control passed by T2 and independent reviewer rerun. Scripted local-model traffic only; temporary reports are not committed. Selective session-read remains source-qualified N/A (`executed:false`), not PASS. — [Installed-host validation](/docs/user-docs/installed-host-validation.md), [Tests, scripts and CI](/docs/user-docs/testing.md).
 
-**Update**: `testing.md` — Retargeted installed-question workflow inventory to the exact packed 2.0.32 candidate and removed obsolete active 2.0.29 host support — [Tests, scripts and CI](/docs/testing.md).
+**Update**: `testing.md` — Retargeted installed-question workflow inventory to the exact packed 2.0.32 candidate and removed obsolete active 2.0.29 host support — [Tests, scripts and CI](/docs/user-docs/testing.md).
 
-**Update**: `installed-host-validation.md` — Separated historical 2.0.29 boot evidence from sole supported 2.0.32 host/SDK target and documented the unrun T2 candidate E2E — [Installed-host validation](/docs/installed-host-validation.md).
+**Update**: `installed-host-validation.md` — Separated historical 2.0.29 boot evidence from sole supported 2.0.32 host/SDK target and documented the unrun T2 candidate E2E — [Installed-host validation](/docs/user-docs/installed-host-validation.md).
 
-**Update**: `opencode-2.0.29.md` — Reclassified the document as historical upgrade analysis, not a compatibility claim — [Historical OpenCode 2.0.29 analysis](/docs/opencode-2.0.29.md).
+**Update**: `opencode-2.0.29.md` — Reclassified the document as historical upgrade analysis, not a compatibility claim — [Historical OpenCode 2.0.29 analysis](/docs/architecture/history/opencode-2.0.29.md).
 
-**Update**: `operating-policy.md` — Clarified current 2.0.32 applicability and separated boot from question qualification — [Alpha operating policy](/docs/operating-policy.md).
+**Update**: `operating-policy.md` — Clarified current 2.0.32 applicability and separated boot from question qualification — [Alpha operating policy](/docs/user-docs/operating-policy.md).
 
 **Update**: `index.md` — Reconciled title and purpose of the historical-version document — [bundle index](/docs/index.md).
 
 **Update**: `log.md` — Recorded 2.0.32-only support and installed-question workflow documentation changes — [change log](/docs/log.md).
 
-**Update**: `assignment-delivery.md` — Updated supporting ordinary Markdown documentation; it remains outside the four-source OKF bundle without OKF frontmatter or typed relationships — [Retired assignment/delivery protocol](/docs/assignment-delivery.md).
+**Update**: `assignment-delivery.md` — Updated supporting ordinary Markdown documentation; it remains outside the four-source OKF bundle without OKF frontmatter or typed relationships — [Retired assignment/delivery protocol](/docs/architecture/history/assignment-delivery.md).
 
-**Update**: `collaboration.md` — Updated supporting ordinary Markdown documentation; it remains outside the four-source OKF bundle without OKF frontmatter or typed relationships — [Reported progress and contextual questions](/docs/collaboration.md).
+**Update**: `collaboration.md` — Updated supporting ordinary Markdown documentation; it remains outside the four-source OKF bundle without OKF frontmatter or typed relationships — [Reported progress and contextual questions](/docs/architecture/design/ard-003-collaboration.md).
 
-**Update**: `coordination.md` — Updated supporting ordinary Markdown documentation; it remains outside the four-source OKF bundle without OKF frontmatter or typed relationships — [Simple collaboration, native execution](/docs/coordination.md).
+**Update**: `coordination.md` — Updated supporting ordinary Markdown documentation; it remains outside the four-source OKF bundle without OKF frontmatter or typed relationships — [Simple collaboration, native execution](/docs/architecture/design/ard-002-coordination.md).
 
-**Update**: `design.md` — Updated supporting ordinary Markdown documentation; it remains outside the four-source OKF bundle without OKF frontmatter or typed relationships — [Implementation boundaries](/docs/design.md).
+**Update**: `design.md` — Updated supporting ordinary Markdown documentation; it remains outside the four-source OKF bundle without OKF frontmatter or typed relationships — [Implementation boundaries](/docs/architecture/design/ard-001-implementation-boundaries.md).
 
-**Update**: `handback-experiment.md` — Updated supporting ordinary Markdown documentation; it remains outside the four-source OKF bundle without OKF frontmatter or typed relationships — [Historical handback experiment](/docs/handback-experiment.md).
+**Update**: `handback-experiment.md` — Updated supporting ordinary Markdown documentation; it remains outside the four-source OKF bundle without OKF frontmatter or typed relationships — [Historical handback experiment](/docs/architecture/history/handback-experiment.md).
 
-**Update**: `tool-discovery.md` — Updated supporting ordinary Markdown documentation; it remains outside the four-source OKF bundle without OKF frontmatter or typed relationships — [Tool help is part of discovery](/docs/tool-discovery.md).
+**Update**: `tool-discovery.md` — Updated supporting ordinary Markdown documentation; it remains outside the four-source OKF bundle without OKF frontmatter or typed relationships — [Tool help is part of discovery](/docs/architecture/spec/ars-013-tool-discovery.md).
 
-**Update**: `tools.md` — Updated supporting ordinary Markdown documentation; it remains outside the four-source OKF bundle without OKF frontmatter or typed relationships — [Five tools, optional structure](/docs/tools.md).
+**Update**: `tools.md` — Updated supporting ordinary Markdown documentation; it remains outside the four-source OKF bundle without OKF frontmatter or typed relationships — [Five tools, optional structure](/docs/user-docs/tools.md).
 
 **Update**: `index.md` — Clarified the four-source OKF bundle inventory and linked all seven updated supporting Markdown files outside the bundle — [bundle index](/docs/index.md).
 
 **Update**: `log.md` — Recorded the seven supporting-document updates and the index/log reconciliation — [change log](/docs/log.md).
 
-**Update**: `testing.md` — Added OKF metadata and recorded the test/support inventory for the bounded 2.0.32 bundle — [Tests, scripts and CI](/docs/testing.md).
+**Update**: `testing.md` — Added OKF metadata and recorded the test/support inventory for the bounded 2.0.32 bundle — [Tests, scripts and CI](/docs/user-docs/testing.md).
 
-**Update**: `installed-host-validation.md` — Added OKF metadata and recorded the boot-only validation boundary — [Installed-host validation](/docs/installed-host-validation.md).
+**Update**: `installed-host-validation.md` — Added OKF metadata and recorded the boot-only validation boundary — [Installed-host validation](/docs/user-docs/installed-host-validation.md).
 
-**Update**: `opencode-2.0.29.md` — Added OKF metadata and recorded the separate compatibility-profile scope — [OpenCode 2.0.29 compatibility](/docs/opencode-2.0.29.md).
+**Update**: `opencode-2.0.29.md` — Added OKF metadata and recorded the separate compatibility-profile scope — [OpenCode 2.0.29 compatibility](/docs/architecture/history/opencode-2.0.29.md).
 
-**Update**: `operating-policy.md` — Added OKF metadata and recorded the bounded support evidence and limitations — [Alpha operating policy](/docs/operating-policy.md).
+**Update**: `operating-policy.md` — Added OKF metadata and recorded the bounded support evidence and limitations — [Alpha operating policy](/docs/user-docs/operating-policy.md).
 
 **Creation**: `index.md` — Created the bundle inventory for the four source documents and log — [bundle index](/docs/index.md).

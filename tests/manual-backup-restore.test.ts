@@ -10,7 +10,7 @@ import { workReference } from "../src/collaboration.js"
 import { taskContext, taskContextOrRecovery } from "../src/context.js"
 
 // Execute the published procedure itself, not an independently implemented copy.
-const manual = readFileSync(new URL("../docs/manual-backup-restore.md", import.meta.url), "utf8")
+const manual = readFileSync(new URL("../docs/user-docs/manual-backup-restore.md", import.meta.url), "utf8")
 const blocks = [...manual.matchAll(/```python\n([\s\S]*?)\n```/g)].map(match => match[1])
 if (blocks.length !== 2) throw new Error("Expected the copy and verification Python blocks")
 const [copyScript, verifyScript] = blocks

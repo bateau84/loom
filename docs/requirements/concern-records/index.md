@@ -2,9 +2,9 @@
 
 Status: bounded implementation added on 2026-10-19; registered-tool/SQLite acceptance evidence below. Source is the user-authorized intent relayed in this assignment; each normative artifact preserves the relevant wording and derivation. The assignment also supplied prior research summaries; these are compatibility context, not authority for additional behavior.
 
-- [BR-001 — Record traceable concerns](br-001-record-traceable-concerns.md)
-- [BR-002 — Expose concerns through ledger views](br-002-expose-concerns-through-ledger-views.md)
-- [OC-001 — Concern interpretation and agent duties](oc-001-concern-interpretation-and-agent-duties.md)
+- [BR-001 — Record traceable concerns](../requirements/concern-records/br-001-record-traceable-concerns.md)
+- [BR-002 — Expose concerns through ledger views](../requirements/concern-records/br-002-expose-concerns-through-ledger-views.md)
+- [OC-001 — Concern interpretation and agent duties](../obligation-contracts/concern-records/oc-001-concern-interpretation-and-agent-duties.md)
 - [Change log](log.md)
 
 ## Scope and dependencies
@@ -17,10 +17,10 @@ Deferred: concern-specific lifecycle/update/resolve API, structured record-to-re
 
 | Classification | Existing material | Consequence / owner |
 | --- | --- | --- |
-| Aligned | [Implementation boundaries](../../design.md): attributed history, optional structure, no scheduler/gates, completion is not independent acceptance. | Preserve these boundaries; implementer. |
-| Aligned | [Tool guide](../../tools.md): Action/selection scope, same-Action observation-only evidence IDs, unverified artifact pointers, bounded exact/history reads. | Concern uses these existing contracts. Concern IDs must not be passed as evidence IDs; implementer. |
-| Missing coverage | [Tool guide](../../tools.md) and [bundled guide](../../../src/skills/loom/SKILL.md) omit concern capture and the agent responsibilities. | Update affected published/live help and guidance with the implementation; implementer. Do not describe the new kind as already shipped in this specification-only change. |
-| Missing coverage | [Context relevance](../../context-relevance.md) explicitly lists four conclusion kinds; assignment research reports analogous full-history kind admission. | Include concerns in existing bounded selection/history. Do not increase established limits or promise mandatory delivery; implementer. Update the affected explanatory document with implementation. |
+| Aligned | [Implementation boundaries](../../architecture/design/ard-001-implementation-boundaries.md): attributed history, optional structure, no scheduler/gates, completion is not independent acceptance. | Preserve these boundaries; implementer. |
+| Aligned | [Tool guide](../../user-docs/tools.md): Action/selection scope, same-Action observation-only evidence IDs, unverified artifact pointers, bounded exact/history reads. | Concern uses these existing contracts. Concern IDs must not be passed as evidence IDs; implementer. |
+| Missing coverage | [Tool guide](../../user-docs/tools.md) and [bundled guide](../../../src/skills/loom/SKILL.md) omit concern capture and the agent responsibilities. | Update affected published/live help and guidance with the implementation; implementer. Do not describe the new kind as already shipped in this specification-only change. |
+| Missing coverage | [Context relevance](../../architecture/design/ard-004-context-relevance.md) explicitly lists four conclusion kinds; assignment research reports analogous full-history kind admission. | Include concerns in existing bounded selection/history. Do not increase established limits or promise mandatory delivery; implementer. Update the affected explanatory document with implementation. |
 | Open realization, not product question | Existing record references do not provide a general verified record-link field. | Existing prose can cite source Action and concern IDs and readers can retrieve exact records. No new relationship schema is needed. Exact syntax/schema integration remains with architecture/implementer. |
 | Downstream-only | Existing documentation includes specific pagination, format and storage mechanisms. | Preserve compatibility; none becomes a new product guarantee solely through this requirement bundle. |
 
