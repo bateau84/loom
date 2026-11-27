@@ -3113,7 +3113,7 @@
     ],
     "reviewed_markdown_sha256": "fb33e0f397e6300469395a6cfc913a2750ab27244e5ca6fdb829ac581e596ca5",
     "reviewed_archive_sha256": "7e970d188d42cbcca2d11dae1ef1563f4675a1823f53e492c0b212011230c064",
-    "scope": "Independent read-only audit of public responses, archive, accounting and report claims; no implementation inspection. Later Markdown changes record this verdict and parallel-PR coordination only."
+    "scope": "Independent read-only audit of public responses, archive, accounting and report claims; no implementation inspection. Later Markdown changes record this verdict, parallel-PR coordination and documentation CI corrections; raw run evidence is unchanged."
   },
   "ci": {
     "tested_published_commit": "918652b517983c8daaf5f249a5283a21c1545f78",
@@ -3128,7 +3128,29 @@
     "typecheck": "pass",
     "production_bundle": "pass",
     "current_head_checks": "https://github.com/bateau84/loom/pull/257/checks",
-    "qualification": "Initial published snapshot passed. Current-head results remain the PR checks; later source edits are not credited with earlier CI."
+    "qualification": "Initial published snapshot passed. Current-head results remain the PR checks; later source edits are not credited with earlier CI.",
+    "intermediate_failure": {
+      "published_commit": "68089c269aa1327c88fe91ee6574599c4c69b2db",
+      "test_merge_commit": "eee5f79db25548c98acd1dbbe171594ac24bfa05",
+      "test_merge_tree": "c9a0958b2e4c833a1cc30d38931779de9d831d7a",
+      "failed_runs": [
+        "https://github.com/bateau84/loom/actions/runs/45973427002",
+        "https://github.com/bateau84/loom/actions/runs/45973427113"
+      ],
+      "native_result": {
+        "passed": 983,
+        "failed": 2
+      },
+      "cause": "New report omitted from docs/index.md and used a local section-fragment link prohibited by the repository documentation contract.",
+      "correction": "Add documentation index/log entries and link to the whole discovery document. No production code changed.",
+      "focused_verification": {
+        "command": "bun test tests/okf-native.test.ts",
+        "passed": 5,
+        "failed": 0,
+        "assertions": 1497
+      },
+      "qualification": "These failures occurred before the routing installed-host phase. Final-head CI must run after the documentation correction."
+    }
   },
   "parallel_integration": {
     "pull_request": "https://github.com/bateau84/loom/pull/256",
@@ -3146,6 +3168,7 @@
       "Preparation-source continuation targets history.population-source and uses the population manifest hash, distinct from preparation hash.",
       "Current history navigation adapter leaves population-source continuation untouched.",
       "Previously reference-only frozen identity remains unchanged; new original availability requires fresh preview/freeze."
-    ]
+    ],
+    "documentation": "Later documentation index/log additions must retain both initiatives at eventual integration. Source-owner boundaries remain unchanged."
   }
 }

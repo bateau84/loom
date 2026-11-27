@@ -77,6 +77,8 @@ request. Document its `unresolved` status and the fresh preview/freeze needed fo
 previously reference-only members. Recheck schema/runtime cases, large-source
 and preparation continuations, and help/search budgets on the combination.
 Neither branch is combined or merged here; both target the same main baseline.
+Later documentation index/log entries must also retain both initiatives at
+integration; those additive records do not change either source contract.
 
 ## Method and revisions
 
@@ -251,8 +253,12 @@ Published `918652b` passed all eight workflows, including main CI's 438 core,
 985 native, 11 Code Mode and 322 Python tests, typechecking and production bundle.
 The final delta requires its own CI; PR checks are authoritative for the current
 head. An earlier producer native run had one stale literal guidance assertion;
-wording was corrected before the tested candidate. A failed run is not relabelled
-as passing.
+wording was corrected before the tested candidate. Published `68089c2` then failed
+two documentation-bundle checks in main CI and the routing workflow's unit gate:
+this report lacked an index entry and used an unsupported local section-fragment
+link. The correction adds the index/log entries and uses the complete document
+link. The five focused documentation checks pass; current-head CI remains the
+separate final gate. Failed runs are not relabelled as passing.
 
 ## Independent review
 
@@ -277,7 +283,7 @@ remains separate from unmerged delivery.
 ## Reproduction
 
 Run normal native/Python suites and the pinned Code Mode command in
-[tool discovery](tool-discovery.md#tests-and-reproduction). Python schema tests
+[tool discovery](tool-discovery.md). Python schema tests
 use test-only `jsonschema==4.26.0`, installed outside plugin dependencies in CI.
 For a new fresh-agent exercise:
 
