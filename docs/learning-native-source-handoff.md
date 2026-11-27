@@ -176,5 +176,7 @@ Once the supported owner interface and its release controls pass the table,
 replace only the native historical resolver's unsupported branch. Keep the
 existing #251 restrictions until that qualification succeeds. Re-run composed
 frozen readers, authorization, restart/restore and the separately authorized
-operator-local reference case. The retrospective v2 preparation execution fence,
+operator-local reference case. The retrospective v2 production execution fence,
 #249 safeguards and the prohibition on automatic scheduling remain unchanged.
+The later controlled retrospective lifecycle uses permitted ledger originals;
+its fresh Evaluator cannot inherit the investigator's same-Session native access.

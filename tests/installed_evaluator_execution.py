@@ -42,6 +42,18 @@ CHECKS = {
     "losing-validation-failure-preserves-native-winner",
     "losing-caller-abort-preserves-native-winner",
 }
+RETROSPECTIVE_CHECKS = (CHECKS - {"positive-native-one-send-and-completed-result"}) | {
+    "positive-native-two-send-retrieval-and-completed-result",
+    "exact-frozen-v2-preparation-and-native-recipient-retrieval",
+    "later-history-cannot-change-evaluated-population",
+    "wrong-request-cannot-authorize-execution",
+    "wrong-population-cannot-authorize-execution",
+    "denied-recipient-cannot-retrieve-or-execute",
+    "changed-original-cannot-authorize-execution",
+    "invalid-reservation-cannot-authorize-execution",
+    "cancelled-native-execution-cannot-dispatch-again",
+    "truncated-native-source-cannot-authorize-second-send",
+}
 
 
 def encoded(value):
@@ -87,7 +99,12 @@ def assert_admissions(value, expected):
     admitted = [event for event in value["events"] if event["type"] == "provider-admitted"]
     attempts = [event for event in value["events"] if event["type"] == "provider-attempt" and event["data"]["admitted"]]
     require(len(admitted) == len(attempts) == expected, "Unexpected actual provider admission count")
-    require(len({event["data"]["issue_key"] for event in admitted}) == len(admitted), "Duplicate invocation of a legitimate native recipient")
+    require(len({(event["data"]["issue_key"], event["data"]["request_number"]) for event in admitted}) == len(admitted),
+            "Duplicate invocation of a legitimate native recipient stage")
+    for row in value["enrollments"]:
+        numbers = [event["data"]["request_number"] for event in admitted if event["data"]["issue_key"] == row["issue_key"]]
+        require(numbers == list(range(1, row["sends"] + 1)) and row["sends"] <= row["request_limit"],
+                "Native requests escaped the exact reserved stage sequence")
     require(sum(row["sends"] for row in value["enrollments"]) == expected, "Provider journal and enrollment disagree")
     require(sum(pool["consumed"] for pool in value["pools"]) == expected, "Provider journal and shared accounting disagree")
     require(all(pool["consumed"] <= pool["reserved"] <= pool["capacity"] for pool in value["pools"]), "Shared pool overdraw")
@@ -130,6 +147,92 @@ def native(host, method_name, path, body=None):
     return result.get("data", result) if isinstance(result, dict) else result
 
 
+def native_source_result(case, row):
+    messages = native(case.host, "GET", "/api/session/" + row["session_id"] + "/message?order=asc&limit=200")
+    require(isinstance(messages, list) and len(messages) < 200, "Native retrospective readback incomplete")
+    tool_id = "call_eval_" + row["issue_key"][:32]
+    tool_parts = [(message, part) for message in messages for part in message.get("content", [])
+                  if part.get("type") == "tool" and part.get("id") == tool_id]
+    require(len(tool_parts) == 1, "Actual native Evaluator source tool call is absent or repeated")
+    message, part = tool_parts[0]
+    require(message.get("agent") == "evaluator" and part.get("state", {}).get("status") == "completed",
+            "Source retrieval did not complete in the actual Evaluator recipient")
+
+    def strings(node):
+        if isinstance(node, str):
+            yield node
+        elif isinstance(node, list):
+            for child in node:
+                yield from strings(child)
+        elif isinstance(node, dict):
+            for child in node.values():
+                yield from strings(child)
+
+    bodies = [text for text in strings(part) if text.startswith('{"format":"loom-controlled-retrospective-evidence/v1"')]
+    require(len(bodies) == 1, "Native tool result did not retain the exact delivered evidence envelope")
+    return message, tool_id, bodies[0]
+
+
+def assert_retrospective_delivery(case):
+    """Compare actual native tool output/provider input with the frozen owner data."""
+    value = inventory(case.root)
+    row = value["enrollments"][0]
+    expected = json.loads((case.root / "consumers/first/case.json").read_text())
+    message, tool_id, body = native_source_result(case, row)
+    delivery = json.loads(body)
+    digest = hashlib.sha256(body.encode()).hexdigest()
+    require(delivery["recipient"]["session_id"] == row["session_id"] and delivery["recipient"]["agent"] == "evaluator"
+            and delivery["subject"]["semantic_key"] == row["issue_key"]
+            and delivery["subject"]["source"]["population_id"] == expected["population_id"]
+            and delivery["subject"]["source"]["manifest_sha256"] == expected["population_sha256"],
+            "Native evidence recipient/admission mismatch")
+    originals = delivery["originals"]
+    require(len(originals) == len(expected["members"]) and row["source_delivery_count"] == 1,
+            "Native evidence retrieval omitted or repeated frozen members")
+    require([item["member_key"] for item in originals] == [item["key"] for item in expected["members"]],
+            "Native retrieval changed frozen membership or order")
+    for original, member in zip(originals, expected["members"]):
+        require(all(original[key] == expected["pins"][key] for key in ("batch_id", "request_id", "manifest_sha256")),
+                "Native source callback changed preparation identity")
+        require(original["population_id"] == expected["population_id"]
+                and original["population_manifest_sha256"] == expected["population_sha256"]
+                and original["source_index"] == 0 and original["source"] == member["source"]
+                and original["source_store_id"] == member["source_store_id"]
+                and original["permitted_view"] == member["permitted_view"]
+                and original["receiving_session"] == row["session_id"], "Native original identity/version/view changed")
+        if member["availability"] == "available":
+            require(original["status"] == "available"
+                    and hashlib.sha256(encoded(original["value"]).encode()).hexdigest() == member["source"]["sha256"],
+                    "Native Evaluator did not retrieve the exact permitted original bytes")
+        else:
+            require(original["status"] == member["availability"] and "value" not in original
+                    and original["gap"]["code"] == "unresolved-at-freeze",
+                    "Native Evaluator received invented bytes or changed frozen source coverage")
+    require("LATER_HISTORY_MUST_NOT_ENTER_FROZEN_EVALUATION" not in body, "Later history leaked into frozen evaluation")
+    returned = [event["data"] for event in value["events"] if event["type"] == "native-source-tool-returned"]
+    supplied = [event["data"] for event in value["events"] if event["type"] == "consumer-source-returned"]
+    provider = [event["data"] for event in value["events"] if event["type"] == "provider-returned"]
+    require(len(returned) == len(supplied) == len(provider) == 1
+            and returned[0]["sha256"] == supplied[0]["sha256"] == provider[0]["source_result_sha256"] == digest
+            and returned[0]["bytes"] == supplied[0]["bytes"] == provider[0]["source_bytes"] == len(body.encode())
+            and returned[0]["message_id"] == message["id"] and returned[0]["call_id"] == tool_id,
+            "Source callback, actual native tool and provider-visible evidence disagree")
+    reads = [event["data"] for event in value["events"] if event["type"] == "source-owner-read"]
+    require(reads and all(read["recipient_session_id"] == row["session_id"] for read in reads),
+            "Execution resolved originals under the requester instead of the actual recipient")
+    duplicate_denials = [event for event in value["events"] if event["type"] == "duplicate-source-callback-denied"]
+    require(len(duplicate_denials) == 1 and len(supplied) == 1,
+            "Concurrent duplicate source callback was not rejected before another original read")
+    return {"population_id": expected["population_id"], "population_manifest_sha256": expected["population_sha256"],
+            "preparation_manifest_sha256": expected["pins"]["manifest_sha256"], "member_count": len(originals),
+            "native_session_id": row["session_id"], "native_message_id": message["id"], "native_tool_id": tool_id,
+            "native_tool_result_sha256": digest, "requests": row["sends"],
+            "callback_bytes": supplied[0]["bytes"], "native_tool_bytes": len(body.encode()), "provider_bytes": provider[0]["source_bytes"],
+            "concurrent_source_callback_denials": len(duplicate_denials),
+            "available_originals": sum(item["status"] == "available" for item in originals),
+            "explicit_gaps": sum(item["status"] != "available" for item in originals)}
+
+
 class Case:
     def __init__(self, args, root, output, name, mode="complete", lose_ack=False):
         self.args, self.root, self.output, self.name = args, root, output, name
@@ -141,13 +244,22 @@ class Case:
             self.env["OPENCODE_FILEWATCHER_DISABLE"] = "1"
         self.policy = {"enabled": True, "source_enabled": True,
                        "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
-                       "capacity": 1, "account": "local-fixture-account", "mode": mode,
+                       "capacity": 2 if args.preparation_source == "retrospective" else 1,
+                       "preparation_source": args.preparation_source,
+                       "duplicate_source_probe": args.preparation_source == "retrospective" and name == "complete",
+                       "account": "local-fixture-account", "mode": mode,
                        "method": method(args.repository), "lose_ack": lose_ack}
         config = {"plugins": ["*", str(args.plugin), str(args.repository / "tests/evaluator-execution-host")],
                   "agents": {"evaluator": {"description": "Scripted restricted execution mechanics fixture; not genuine reasoning",
                     "mode": "primary", "system": "Return only the local scripted mechanics response.",
-                    "model": PROVIDER + "/audit", "permissions": [{"action": "*", "resource": "*", "effect": "deny"}]}},
+                    "model": PROVIDER + "/audit", "permissions": [{"action": "*", "resource": "*", "effect": "deny"}]
+                    + ([{"action": "evaluator_evidence", "resource": "*", "effect": "allow"}]
+                       if args.preparation_source == "retrospective" else [])}},
                   "model": PROVIDER + "/audit", "update": "disable", "share": "disabled"}
+        if args.preparation_source == "retrospective" and name != "truncated-source":
+            # Exact complete controlled evidence must fit the host's tool-output
+            # policy; never accept truncated JSON merely because its prefix fits.
+            config["tool_output"] = {"max_bytes": 180000}
         configuration = Path(self.env["OPENCODE_CONFIG_DIR"]) / "opencode.json"
         configuration.write_text(encoded(config))
         self.policy["configuration_sha256"] = sha(configuration)
@@ -227,7 +339,10 @@ class Case:
 def run(args):
     output = args.report_directory
     output.mkdir(parents=True, exist_ok=False, mode=0o700)
+    retrospective = args.preparation_source == "retrospective"
+    request_units = 2 if retrospective else 1
     result = {"format": "loom-installed-evaluator-execution-consumer/v1", "status": "UNPROVEN", "checks": [],
+              "preparation_source": args.preparation_source, "requests_per_execution": request_units,
               "genuine_evaluator": "UNPROVEN", "real_account_authority": "UNPROVEN", "q4": "UNQUALIFIED",
               "q5": "UNQUALIFIED", "e11": "UNPROVEN", "model_spending": "LOCAL_SCRIPTED_PROVIDER_ONLY",
               "limitations": ["Direct composition of packed consumer; no production tool, scheduler or authority adapter is registered.",
@@ -256,7 +371,8 @@ def run(args):
         result["journals"] = {}
 
         def check(name, **evidence):
-            require(name in CHECKS and name not in {item["name"] for item in result["checks"]}, "Unexpected or duplicate check")
+            require(name in (RETROSPECTIVE_CHECKS if retrospective else CHECKS)
+                    and name not in {item["name"] for item in result["checks"]}, "Unexpected or duplicate check")
             result["checks"].append({"name": name, "status": "PASS", **evidence})
             print("PASS " + name, flush=True)
 
@@ -265,48 +381,65 @@ def run(args):
             version_env = isolated_environment(base / "version")
             result["host_version"] = subprocess.check_output([str(args.opencode), "--version"], env=version_env, text=True, timeout=15).strip()
             verify_host_version(result["host_version"])
-            for name, mode, lose_ack in (("complete", "complete", False), ("lost-ack", "hold", True),
+            cases = [("complete", "complete", False), ("lost-ack", "hold", True),
                                          ("reject", "reject", False), ("crash", "hold", False),
                                          ("uncertain", "complete", False), ("loser-failure", "hold", False),
                                          ("loser-abort", "hold", False),
-                                         ("capacity", "complete", False)):
+                                         ("capacity", "complete", False)]
+            if retrospective:
+                cases += [(name, "complete", False) for name in
+                          ("wrong-request", "wrong-population", "denied-recipient", "changed-source", "invalid-reservation", "truncated-source")]
+                cases.append(("cancel", "hold", False))
+            for name, mode, lose_ack in cases:
                 root = base / name
                 root.mkdir(mode=0o700)
                 case = Case(args, root, output, name, mode, lose_ack)
                 completed = False
                 try:
-                    case.driver("init")
+                    prepared = case.driver("init")
                     if name == "complete":
+                        if retrospective:
+                            require(prepared["request_format"] == "loom-evaluation-request/v2", "Retrospective preparation was not v2")
+                            appended = case.driver("append-history")
+                            require(appended["population_id"] == prepared["population_id"]
+                                    and appended["manifest_sha256"] == prepared["population_sha256"]
+                                    and appended["member_count"] == prepared["member_count"],
+                                    "Later source history altered the frozen manifest")
                         case.snapshot()
                         first = case.driver("execute")
                         require(first["qualification"] == "execution-consumer-only" and first["interpretation"] is None,
                                 "Fixture upgraded qualification or manufactured interpretation")
                         require(first["receipt"]["execution"] == "completed" and first["receipt"]["budget"] == "settled",
                                 "Native completed result not reconciled")
-                        assert_admissions(inventory(root), 1)
-                        check("positive-native-one-send-and-completed-result", result=first["receipt"]["result"])
+                        assert_admissions(inventory(root), request_units)
+                        check("positive-native-two-send-retrieval-and-completed-result" if retrospective
+                              else "positive-native-one-send-and-completed-result", result=first["receipt"]["result"])
+                        if retrospective:
+                            delivered = assert_retrospective_delivery(case)
+                            check("exact-frozen-v2-preparation-and-native-recipient-retrieval", **delivered)
+                            check("later-history-cannot-change-evaluated-population", **appended)
                         case.restart()
                         recovered = case.driver("recover")
                         require(recovered["receipt"] == first["receipt"], "Host restart changed original result")
-                        assert_admissions(inventory(root), 1)
+                        assert_admissions(inventory(root), request_units)
                         check("original-result-recovered-after-host-restart")
                         case.restore()
                         restored = case.driver("execute")
                         require(restored["receipt"] == first["receipt"], "Older local snapshot authorized another effect")
-                        assert_admissions(inventory(root), 1)
+                        assert_admissions(inventory(root), request_units)
                         check("old-loom-snapshot-recovers-without-new-effect")
                         row = inventory(root)["enrollments"][0]
                         native(case.host, "POST", "/api/session/" + row["session_id"] + "/prompt", {
                             "id": "msg_fixture_duplicate", "text": "Unexpected extra invocation", "resume": True})
                         observed = until(lambda: inventory(root), lambda value: value["enrollments"][0]["denied_sends"] >= 1,
                                          "additional provider invocation denied")
-                        assert_admissions(observed, 1)
+                        assert_admissions(observed, request_units)
                         check("additional-native-send-denied-by-durable-owner", denied_sends=observed["enrollments"][0]["denied_sends"])
                         broken = json.loads(encoded(observed))
                         duplicate = next(event for event in broken["events"] if event["type"] == "provider-admitted")
                         broken["events"].append(duplicate.copy())
                         try:
-                            assert_admissions(broken, 1)
+                            assert_admissions(broken, request_units)
                         except RuntimeError:
                             check("provider-admission-oracle-rejects-duplicate")
                         else:
@@ -332,7 +465,7 @@ def run(args):
                         case.restart()
                         recovered = case.driver("recover")
                         require(recovered["receipt"]["execution"] == "completed", "Lost ACK failed to recover original result")
-                        assert_admissions(inventory(root), 1)
+                        assert_admissions(inventory(root), request_units)
                         check("lost-ack-recovered-without-new-effect")
                     elif name == "reject":
                         rejected = case.driver("execute")
@@ -384,13 +517,13 @@ def run(args):
                         uncertain = case.driver("execute")
                         require(uncertain["receipt"]["execution"] == "unknown" and uncertain["receipt"]["budget"] == "uncertain",
                                 "Provider barrier did not preserve uncertainty")
-                        assert_admissions(inventory(root), 1)
+                        assert_admissions(inventory(root), request_units)
                         case.restart(crash=True)
                         # Recovery reads uncertainty, and repeated consumer execution may not dispatch.
                         recovered = case.driver("recover")
                         replayed = case.driver("execute")
                         require(recovered["receipt"] == replayed["receipt"], "Consumer replay changed uncertain outcome")
-                        assert_admissions(inventory(root), 1)
+                        assert_admissions(inventory(root), request_units)
                         # Exercise a real second native request after restart. Native restart may
                         # also resume its own persisted claim; both must use the same send fence.
                         row = inventory(root)["enrollments"][0]
@@ -400,8 +533,8 @@ def run(args):
                                          "native restart/repeated wake fence")
                         recovered = case.driver("recover")
                         require(recovered["receipt"]["budget"] == "uncertain", "Unknown admission released potentially consumed budget")
-                        assert_admissions(observed, 1)
-                        require(observed["pools"][0]["reserved"] == 1, "Restart released consumed reservation")
+                        assert_admissions(observed, request_units)
+                        require(observed["pools"][0]["reserved"] == request_units, "Restart released consumed reservation")
                         check("crashed-native-send-retains-uncertain-reservation", denied_sends=observed["enrollments"][0]["denied_sends"])
                     elif name == "uncertain":
                         first = case.driver("execute-uncertain")
@@ -416,7 +549,7 @@ def run(args):
                         observed = inventory(root)
                         assert_admissions(observed, 0)
                         assert_no_cancellation(observed)
-                        require(len(observed["enrollments"]) == 1 and observed["pools"][0]["reserved"] == 1,
+                        require(len(observed["enrollments"]) == 1 and observed["pools"][0]["reserved"] == request_units,
                                 "Uncertain reservation disappeared or released capacity")
                         require(not any(event["type"] in ("consumer-execute-entry", "model-request", "provider-attempt")
                                         or (event["type"] == "native-event"
@@ -424,7 +557,7 @@ def run(args):
                                         for event in observed["events"]),
                                 "Uncertain reservation reached execution or native input admission")
                         check("uncertain-reservation-never-claims-or-dispatches", canonical_claims=0,
-                              execute_entries=0, native_inputs=0, model_sends=0, reserved_capacity=1)
+                              execute_entries=0, native_inputs=0, model_sends=0, reserved_capacity=request_units)
                     elif name in ("loser-failure", "loser-abort"):
                         loser = case.worker("execute-" + name)
                         workers = [loser]
@@ -435,7 +568,7 @@ def run(args):
                             held = until(lambda: inventory(root), lambda value: any(
                                 event["type"] == "provider-held" for event in value["events"]),
                                 "winning native provider request held")
-                            assert_admissions(held, 1)
+                            assert_admissions(held, request_units)
                             before = case.driver("inspect")["issue"]["attempt"]
                             require(before["claimant_id"] and before["claimed_at"], "Native winner has no canonical claim")
                             claim = {key: before[key] for key in ("attempt_id", "claimant_id", "claimed_at")}
@@ -444,7 +577,7 @@ def run(args):
                             expected = "losing claim validation failed" if name == "loser-failure" else "losing caller aborted"
                             require(expected in failed["error"], "Losing caller did not cross the intended failure boundary")
                             observed = inventory(root)
-                            assert_admissions(observed, 1)
+                            assert_admissions(observed, request_units)
                             assert_no_cancellation(observed)
                             after = case.driver("inspect")["issue"]["attempt"]
                             require({key: after[key] for key in claim} == claim, "Losing caller changed the canonical winner")
@@ -463,7 +596,7 @@ def run(args):
                                 require(recovered["receipt"] == completed_winner["receipt"],
                                         "Winner recovery changed the original result")
                             final = inventory(root)
-                            assert_admissions(final, 1)
+                            assert_admissions(final, request_units)
                             assert_no_cancellation(final)
                             require([event for event in final["events"] if event["type"] in (
                                 "consumer-execute-entry", "model-request", "provider-attempt")] == [
@@ -473,12 +606,95 @@ def run(args):
                             check("losing-validation-failure-preserves-native-winner" if name == "loser-failure"
                                   else "losing-caller-abort-preserves-native-winner",
                                   canonical_claim_retained=True, authority_cancellations=0, native_interrupts=0,
-                                  execute_entries=1, model_sends=1, result=completed_winner["receipt"]["result"])
+                                  execute_entries=1, model_sends=request_units, result=completed_winner["receipt"]["result"])
                         finally:
                             for worker in workers:
                                 if worker.poll() is None:
                                     worker.kill()
                                     worker.communicate(timeout=5)
+                    elif name in ("wrong-request", "wrong-population", "denied-recipient", "changed-source", "invalid-reservation"):
+                        if name == "changed-source":
+                            case.driver("change-original")
+                        failure = case.driver("execute" if name == "changed-source" else "execute-" + name, success=False)
+                        expected_error = {"wrong-request": "preparation mismatch", "wrong-population": "authority changed",
+                                          "denied-recipient": "recipient denied", "changed-source": "unavailable or changed",
+                                          "invalid-reservation": "admission mismatched"}[name]
+                        require(expected_error in failure["error"], "Negative control failed at an unintended boundary: " + failure["error"])
+                        issue = case.driver("inspect")["issue"]["attempt"]
+                        require(issue["state"] == "prepared" and not issue["claimant_id"] and not issue["claimed_at"],
+                                "Rejected retrospective input acquired a canonical claim")
+                        observed = inventory(root)
+                        assert_admissions(observed, 0)
+                        require(not any(event["type"] in ("consumer-execute-entry", "model-request", "provider-attempt",
+                                                         "consumer-source-returned", "native-source-tool-returned")
+                                        or event["type"] == "native-event" and event["data"].get("type") == "session.inbox.enqueued"
+                                        for event in observed["events"]), "Rejected retrospective input reached native execution or source release")
+                        label = {"wrong-request": "wrong-request-cannot-authorize-execution",
+                                 "wrong-population": "wrong-population-cannot-authorize-execution",
+                                 "denied-recipient": "denied-recipient-cannot-retrieve-or-execute",
+                                 "changed-source": "changed-original-cannot-authorize-execution",
+                                 "invalid-reservation": "invalid-reservation-cannot-authorize-execution"}[name]
+                        check(label, canonical_claims=0, model_sends=0, native_inputs=0, source_releases=0)
+                    elif name == "truncated-source":
+                        first = case.driver("execute")
+                        require(first["receipt"]["execution"] == "unknown" and first["receipt"]["budget"] == "uncertain",
+                                "Truncated source lost the already admitted first effect")
+                        observed = inventory(root)
+                        row = observed["enrollments"][0]
+                        assert_admissions(observed, 1)
+                        _, _, body = native_source_result(case, row)
+                        supplied = [event["data"] for event in observed["events"] if event["type"] == "consumer-source-returned"]
+                        provider = [event["data"] for event in observed["events"] if event["type"] == "provider-source-observed"]
+                        native_sha = hashlib.sha256(body.encode()).hexdigest()
+                        require(len(supplied) == len(provider) == 1 and len(body.encode()) == 51200
+                                and supplied[0]["bytes"] > 51200 and native_sha != supplied[0]["sha256"]
+                                and provider[0]["output_type"] == "content" and provider[0]["bytes"] is None
+                                and any(part["bytes"] == 51200 and part["sha256"] == native_sha
+                                        for part in provider[0]["content_texts"]),
+                                "Control did not exercise actual default native tool-output truncation")
+                        require(row["denied_sends"] == 1 and observed["pools"][0]["reserved"] == request_units,
+                                "Truncated source authorized another send or released uncertain capacity")
+                        claim = case.driver("inspect")["issue"]["attempt"]
+                        attempts = [event for event in observed["events"] if event["type"] in ("consumer-execute-entry", "model-request", "provider-attempt")]
+                        for command in ("recover", "execute"):
+                            recovered = case.driver(command)
+                            require(recovered["receipt"] == first["receipt"], "Truncation recovery invented a terminal outcome")
+                            after = case.driver("inspect")["issue"]["attempt"]
+                            require(all(after[key] == claim[key] for key in ("attempt_id", "claimant_id", "claimed_at")),
+                                    "Truncation recovery reopened the consumed claim")
+                            replayed = inventory(root)
+                            assert_admissions(replayed, 1)
+                            require([event for event in replayed["events"] if event["type"] in (
+                                "consumer-execute-entry", "model-request", "provider-attempt")] == attempts,
+                                "Truncation recovery or replay dispatched another request")
+                        check("truncated-native-source-cannot-authorize-second-send", callback_bytes=supplied[0]["bytes"],
+                              native_tool_bytes=len(body.encode()),
+                              provider_text_bytes=sum(part["bytes"] for part in provider[0]["content_texts"]),
+                              provider_serialized_output_bytes=provider[0]["output_bytes"], provider_output_type=provider[0]["output_type"],
+                              admitted_model_sends=1, denied_model_sends=1, budget="uncertain", reserved_capacity=request_units)
+                    elif name == "cancel":
+                        first = case.driver("execute")
+                        require(first["receipt"]["execution"] == "unknown" and first["receipt"]["budget"] == "uncertain",
+                                "Cancellation control did not reach held actual native request")
+                        before = case.driver("inspect")["issue"]["attempt"]
+                        cancelled = case.driver("cancel")
+                        require(cancelled["receipt"]["fenced"] and cancelled["receipt"]["budget"] == "uncertain",
+                                "Cancellation released potentially consumed capacity")
+                        case.restart()
+                        for command in ("recover", "execute"):
+                            recovered = case.driver(command)
+                            require(recovered["receipt"] == cancelled["receipt"], "Cancellation recovery changed uncertainty")
+                        after = case.driver("inspect")["issue"]["attempt"]
+                        require(all(after[key] == before[key] for key in ("attempt_id", "claimant_id", "claimed_at")),
+                                "Cancellation or restart reopened the consumed claim")
+                        observed = inventory(root)
+                        assert_admissions(observed, request_units)
+                        require(observed["enrollments"][0]["revoked"] and observed["pools"][0]["reserved"] == request_units,
+                                "Cancellation lost the durable effect fence or retained accounting")
+                        require(sum(event["type"] == "consumer-execute-entry" for event in observed["events"]) == 1,
+                                "Cancelled execution was dispatched again")
+                        check("cancelled-native-execution-cannot-dispatch-again", canonical_claim_retained=True,
+                              model_sends=request_units, budget="uncertain", reserved_capacity=request_units)
                     elif name == "capacity":
                         case.driver("init", "second")
                         workers = [subprocess.Popen(case.arguments("execute", who), env=case.env, stdout=subprocess.PIPE,
@@ -496,7 +712,7 @@ def run(args):
                                     worker.wait(timeout=5)
                         require(sum(value["ok"] for value in outcomes) == 1, "Shared capacity admitted wrong number of independent issues")
                         require(any("insufficient capacity" in value.get("error", "") for value in outcomes), "Capacity loser did not fail at pool owner")
-                        assert_admissions(inventory(root), 1)
+                        assert_admissions(inventory(root), request_units)
                         check("concurrent-issues-share-one-capacity-pool")
                     value = inventory(root)
                     result["journals"][name] = value
@@ -507,8 +723,9 @@ def run(args):
                     if (root / "fixture-authority.sqlite").is_file():
                         result["journals"][name] = inventory(root)
                         if completed:
-                            assert_admissions(result["journals"][name], 0 if name in ("reject", "uncertain") else 1)
-        require({item["name"] for item in result["checks"]} == CHECKS, "Missing installed execution checks")
+                            expected_sends = 0 if name in ("reject", "uncertain", "wrong-request", "wrong-population", "denied-recipient", "changed-source", "invalid-reservation") else 1 if name == "truncated-source" else request_units
+                            assert_admissions(result["journals"][name], expected_sends)
+        require({item["name"] for item in result["checks"]} == (RETROSPECTIVE_CHECKS if retrospective else CHECKS), "Missing installed execution checks")
         result["status"] = "PASS"
     except Exception as error:
         result["status"], result["error"] = "FAIL", f"{type(error).__name__}: {error}"
@@ -531,6 +748,7 @@ def main():
     parser.add_argument("--expect-head", required=True)
     parser.add_argument("--report-directory", type=Path, required=True)
     parser.add_argument("--disable-filewatcher", action="store_true")
+    parser.add_argument("--preparation-source", choices=("stage3", "retrospective"), default="stage3")
     parser.add_argument("--allow-dirty-development", action="store_true",
                         help="Debug only; report is explicitly development-only and cannot qualify a reviewed commit")
     args = parser.parse_args()

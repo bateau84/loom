@@ -60,6 +60,76 @@ Resource accounting belongs to the actual shared pool, including independent iss
 
 The source callback rechecks current authorization, source availability, expiry and recipient authority for every original read. It does not broaden `LearningSources`, retain a new raw transcript, or turn a parent read into recipient transfer authority. The adapter must authorize the actual recipient and transfer before receiving content; general Q5 protection is not claimed.
 
+### Frozen retrospective enrollment
+
+The retrospective increment extends this same consumer to the distinct v2
+preparation from [frozen populations](learning-retrospective-populations.md).
+It starts from main `902d4f3` after #249 and #251–#257. A trusted integration must
+explicitly supply the existing `RetrospectivePopulations` service, its
+asynchronous source resolver and current population/source authorization. An
+ordinary preparation, available originals, or a legacy execution adapter without
+that capability still cannot dispatch v2. Production `Learning` still supplies
+no execution integration.
+
+The v2 subject adds the exact population kind, format, ID and population-manifest
+digest. Its enrollment key uses a separate v2 domain and binds that source to the
+complete preparation membership, method and policies. Existing v1 subjects,
+enrollment-key bytes and complete Stage 3 batches retain their meaning. The same
+admission, reservation, canonical initial claim, receipt journal and authority
+inventory serve both sources; there is no new execution state or account pool.
+
+For example, a population containing an initial failure, its correction and
+scoped verification remains that population after later work is recorded. An
+admitted Evaluator reads its exact pinned originals and declared gaps. A newly
+missing or changed original that was available at freeze rejects admission or
+the affected source read. A source already frozen as unavailable stays an
+explicit gap and is never silently upgraded or made a universal analysis gate.
+
+The trusted authorization callback checks the **complete population and selected
+source-view inspection/disclosure union** for the actual reader. Its input pins
+identify the manifest from which that union is derived; permission for metadata
+alone is insufficient. This covers contributor identities, counts, relationship
+basis and gaps even when no original resolver runs. Check metadata before
+hydrating the population, and check exact durable identity again after awaits.
+The resolver validates the exact source namespace, identity, version, view and
+returned content digest for the actual grant recipient, never an impersonated
+requester. Private requester-owned reviews remain withheld from a fresh
+Evaluator. Available native originals cannot cross Sessions through this
+consumer; the existing [native owner handoff](learning-native-source-handoff.md)
+remains necessary for that separate capability.
+
+Complete source validation runs before reservation and again inside the
+authority's awaited claim callback. The authority then observes its current
+reservation and the consumer claims synchronously, retaining the established
+ordering. After a claim, source validation does not mint another claim. Every
+source read rechecks cancellation and expiry after awaited recipient checks,
+before accessing another original. The final permission observation covers the
+actual recipient's whole source-view union after authority/caller checks and
+before synchronous binding and return. These observations do not establish an
+atomic cross-owner snapshot or native Q5 release fence.
+
+Source responses carry both preparation and population pins, the selected
+manifest header and full member descriptor, exact original or declared gap,
+and actual receiving Session. Returning that object does not assert native
+retrieval or Q4: the integration must observe those independently. The controlled
+installed fixture exercises a real native recipient tool call and compares its
+returned evidence with the next provider input.
+
+Recovery first retains authoritative accounting. Result disclosure then checks
+the current **caller** and its exact originals, not the expired inference grant
+or a now-ineligible execution recipient. Denied or lost sources withhold result
+identifiers while preserving terminal receipts. Restore cannot redispatch a
+completed or uncertain execution. Runtime and stopped-state validators bind the
+population, complete ordered preparation projection, request, method, admission
+and canonical initial issue. Checksums alone cannot certify a substituted
+population. The offline validator checks scoped receipt bindings; runtime
+parsers retain ownership of terminal/resource semantics and receipt progression.
+
+The [fixed production-route handoff](learning-retrospective-execution-authority.md)
+names the remaining OpenCode/provider/account work under #203, #205 and #206.
+The controlled route supplies zero-cost scripted mechanics only. It establishes
+neither production account authority nor genuine S3 Evaluator reasoning.
+
 Claim validation completes its asynchronous native checks, invokes and awaits the consumer's final caller-authorization callback, then reads the current durable reservation and applicable local authority policy without further awaited work. The consumer requires that callback to have completed, validates and mirrors the returned receipt, and checks the latest accepted observation before synchronously claiming. The immutable reservation envelope and an earlier inventory response are insufficient. Source validation remains separate: ongoing execution may legitimately retain uncertain accounting while its source reads require live permission.
 
 This ordering detects reservation changes during the consumer's awaited checks. It is not a transaction across authority and review databases. Another process can change authority after the final observation; the authority must reject that change at the actual send, retaining a consumed local claim if no effect is admitted. A production adapter unable to provide this final authoritative observation remains unqualified.

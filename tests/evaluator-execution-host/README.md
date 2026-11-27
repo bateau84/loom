@@ -4,38 +4,46 @@ This is a test-only authority and provider. It gives no production component
 permission to execute an Evaluator. The installed qualification imports the
 production consumer from the packed candidate, prepares synthetic authored
 originals through the existing Stage 3 and preparation owners, and connects that
-consumer directly to this private fixture. Native execution uses the actual
+consumer directly to this private fixture. With `--preparation-source
+retrospective`, the same driver selects one real ObjectiveIndex trajectory,
+previews and freezes it through RetrospectivePopulations/EvaluationStore and
+prepares its distinct v2 request. Native execution uses the actual
 OpenCode 2.3.0 Session and streaming provider path. No public Loom tool or
 configuration can install this authority.
 
 `installed_evaluator_execution.py` creates isolated HOME/XDG directories and a
 loopback private host. Its only provider is the in-process scripted model in
-`server.ts`; `provider.mjs` rejects use without that hook. The fixture denies
-all tools, external providers, fallback models, auxiliary requests and native
-retries. The native title hook supplies a fixed title without a provider call.
+`server.ts`; `provider.mjs` rejects use without that hook. The Stage 3 fixture
+denies all tools. The retrospective fixture permits only its private
+`evaluator_evidence` tool. Both deny external providers, fallback models,
+auxiliary requests and native retries. The native title hook supplies a fixed
+title without a provider call.
 The retry hook is exercised by an actual provider rejection, not a fabricated
 consumer receipt.
 
 `authority.ts` owns immutable synthetic grants, shared reservations and readback.
 `fixture-store.ts` owns actual provider-send admission in a separate durable
-SQLite database. Its immediate transaction consumes a reservation once, before
-returning a scripted result. It checks current synthetic authority, expiry,
+SQLite database. Its immediate transaction consumes each exact authorized request
+stage once, before returning scripted output. It checks current synthetic authority, expiry,
 source permission, method/configuration, recipient, model, account and the
 original prompt digest at every send. Already consumed entries remain consumed
 through host restart, lease expiry, lost acknowledgements and restoration of the
 Loom store pair. Admission requires an empty native recipient history. The
 fixture only reports completion after finding the exact original native input
-and one finished native assistant result in that exclusive one-send Session.
-That restricted first-response association does not establish Q4 contributing
+and one finished native assistant result in that exclusive Session, with exactly
+the reserved number of requests consumed.
+That restricted input/result association does not establish Q4 contributing
 input provenance. Recovery never submits a prompt or wakes a Session.
 
 The resource unit is a synthetic request with fixed scripted input/output usage
-of one each. This tests reservation and settlement mechanics; these numbers are
+of one each. Stage 3 reserves one request. Retrospective execution reserves two:
+one native request asks for evidence, and the next consumes its exact tool result
+and produces the final response. This tests reservation and settlement mechanics; these numbers are
 not tokenization, cost, provider spending enforcement or subscription evidence.
 The provider is wholly owned by this fixture and has no network fallback.
 Authority loss or rollback alongside Loom is outside the qualified boundary.
 
-The twelve installed checks cover:
+The twelve Stage 3 installed checks cover:
 
 - One authorized native logical execution and a completed result.
 - Original-result recovery after native host restart.
@@ -80,6 +88,56 @@ The crash case does not assert that every restart automatically retries. It
 proves that the consumed fixture reservation survives restart, and deliberately
 exercises a later native request against that same durable fence. Native startup
 resume remains a required boundary for any eventual production owner.
+
+## Retrospective native retrieval
+
+Run the same harness with `--preparation-source retrospective` to qualify the v2
+population path. It runs twenty-one checks: the existing twelve lifecycle controls
+with their two-request reservation, plus exact v2 preparation/native retrieval,
+later-history stability, wrong request/population, denied recipient, changed
+original, invalid reservation, cancellation after actual provider admission and
+native tool-output truncation before the second request.
+
+The first provider response calls `evaluator_evidence`. OpenCode supplies the
+actual tool Session, agent, message and call identity. The private fixture tool
+checks that identity and uses an authenticated ephemeral loopback callback to
+the packed consumer's existing source closure. The consumer authorizes and
+resolves each frozen member for that actual Evaluator recipient. The callback
+retains no original bodies; its short-lived locator/token is deleted when
+execution returns. This is fixture wiring, not a registered production adapter.
+The positive case issues two simultaneous authenticated callback requests from
+the same real native tool context; exactly one can begin source retrieval.
+The second is denied before another source read, and only one tool result is
+returned to OpenCode. Setup failures close the listener and cleanup removes only
+the callback file this invocation created.
+
+The native tool retrieves all nine frozen members: eight permitted ledger,
+objective and association originals plus one explicit unresolved source gap.
+It never acquires historical or cross-Session native raw evidence. The oracle
+compares the actual stored native tool result with the complete ordered frozen
+membership, preparation/population pins, original source/view hashes and actual
+recipient. The second provider request must contain the same exact tool result
+digest. Later appended history must be absent. A third request, another tool
+read, a retry, an auxiliary request or a request with changed evidence is denied.
+
+The nine-member envelope exceeds OpenCode 2.3.0's default 51,200-byte tool-output
+limit. The qualified fixture explicitly sets the supported `tool_output.max_bytes`
+to 180,000, matching its existing complete-response bound; it still compares every
+delivered byte. A negative control retains the default limit. It observes the
+actual truncated native tool result and the provider's structured content
+representation (including the matching truncated text part), rejects the second send,
+retains the first effect and uncertain reservation, and proves recovery/replay
+cannot dispatch again. Reports include callback, stored native and provider byte
+counts; structured provider output also reports its serialized representation
+size separately from visible text bytes. This is a bounded fixture policy, not a claim of unlimited production
+evidence transfer.
+
+Both turns share one canonical claim, one exact execution admission and one
+reservation. A native interruption or uncertain outcome retains consumed
+capacity and cannot re-enter consumer dispatch. Completed result recovery is
+read-only. The scripted provider proves retrieval/execution mechanics only;
+it provides no evidence of genuine Evaluator reasoning, Q4 contributing-input
+provenance, Q5 protected transfer or real-account billing authority.
 
 The harness requires a clean exact candidate, its installed tarball, Bun and the
 pinned OpenCode binary. `--allow-dirty-development` is a debugging option: its

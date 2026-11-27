@@ -6,6 +6,15 @@ type: Log
 
 ## 2026-11-27
 
+**Controlled retrospective execution (#227):** Connected the distinct frozen
+v2 preparation to the existing restricted execution consumer through explicit
+trusted source authority. Preserved complete Stage 3 semantics, actual-recipient
+source checks, canonical claim ownership, durable accounting and restore fences.
+Extended the installed local-provider fixture with native evidence-tool retrieval
+and negative controls. Production account authority and genuine reasoning remain
+unqualified; see [the lifecycle](learning-restricted-execution.md) and
+[the fixed-route owner handoff](learning-retrospective-execution-authority.md).
+
 **Public tool usability (#227):** Refined optional skill guidance, operation
 descriptions and schemas, safe diagnostics and complete continuation requests.
 Recorded fresh-agent baseline/candidate and missing-objective workflows with

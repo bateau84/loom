@@ -41,6 +41,7 @@ scan root so the profile is discovered; it declares no mandatory link counts.
 - [Stage 4 durable Evaluator preparation](learning-stage4-preparation.md) — Declared methods, authorized frozen sources, canonical review linkage and recovery; genuine evaluation and dispatch remain unavailable
 - [Stage 4 execution-admission assessment](learning-stage4-admission.md) — Authorized, read-only capability blockers and canonical issue recovery state; no effect permit or budget reservation
 - [Restricted Evaluator execution lifecycle](learning-restricted-execution.md) — Durable execution consumer, controlled native mechanics and the missing production authority boundary
+- [Retrospective execution authority](learning-retrospective-execution-authority.md) — Smallest owner-side implementation and falsifiable controls for one fixed production route, with source transfer, Q4 and Q5 kept distinct
 - [One genuine Evaluator audit](learning-evaluator-s3-handoff.md) — Original-work scope, separate operator authorization and independent reasoning assessment
 - [Native review qualification](native-review-qualification.md) — Installed 2.2.6 Q1–Q7 observations, negative controls, capability matrix and unsupported host guarantees
 - [Native Evaluator audit qualification](native-evaluator-audit-qualification.md) — Source preflight and installed scripted recovery; real original-work audit pending

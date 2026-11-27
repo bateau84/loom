@@ -109,7 +109,7 @@ The following are falsifiable acceptance criteria, not claims that tests or inde
 5. Preparation replay and structured-review replay keep their existing restrictions. Stage 3 history, scheduling and public readers, ordinary engineering tools and routing guards remain functional under optional admission failure.
 6. Registered-tool and isolated installed-host checks observe no native recipient creation, Evaluator dispatch, new provider effect or instruction mutation attributable to this operation. Scripted-provider mechanics remain distinct from real reasoning and account qualification.
 
-Positive shared-budget contention, crash-after-reservation, authoritative result reconciliation and rollback after real native execution remain **unimplemented/unqualified**. Denial tests and preserved local claim history do not close those full S4 cases. Execution receipts and independent review belong in the implementation PR and issue register with their exact revisions and limitations.
+Positive shared-budget contention, crash-after-reservation, authoritative result reconciliation and rollback after native execution are outside this read-only operation. The subsequent [restricted execution lifecycle](learning-restricted-execution.md) implements and exercises those mechanics with controlled authority. Production host/provider/account authority and genuine Evaluator reasoning remain **unqualified**. Denial tests and preserved local claim history do not close those full S4 cases. Execution receipts and independent review belong in the implementation PR and issue register with their exact revisions and limitations.
 
 ## Smallest next increment
 

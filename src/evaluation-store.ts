@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 import { canonical, digest, ProcessingBudget, uid, type Actor } from "./model.js"
 import type { SQL } from "./store.js"
 import { evaluatorMethod, parseEvaluatorMethod, type EvaluatorMethodManifest } from "./evaluator-method.js"
-import { assertEvaluatorReceiptProgress, parseEvaluatorAdmission, parseEvaluatorReceipt,
+import { assertEvaluatorReceiptProgress, evaluatorEnrollmentKey, parseEvaluatorAdmission, parseEvaluatorReceipt,
   type EvaluatorExecutionAdmission, type EvaluatorExecutionReceipt } from "./evaluator-execution-contract.js"
 import { parseRetrospectiveManifest, retrospectiveBudget, retrospectiveDigest, RETROSPECTIVE_LIMITS,
   type RetrospectiveManifest, type RetrospectivePopulation, type RetrospectiveSources } from "./retrospective-contract.js"
@@ -483,12 +483,35 @@ export class EvaluationStore {
 
   private executionBinding(batchID: string, owner: string, admission: EvaluatorExecutionAdmission): EvaluatorPreparationRecord {
     const batch = this.row(batchID, owner), prepared = this.readEvaluatorRequest(batchID, owner), subject = admission.grant.subject
-    if (batch.scope_key === "evaluator-preparation/retrospective") throw new Error("Retrospective evaluator execution is disconnected")
     if (!prepared || !prepared.data || typeof prepared.data !== "object" || Array.isArray(prepared.data)
         || !("manifest_sha256" in prepared.data) || subject.batch_id !== batchID || subject.owner_session !== owner
         || subject.request_id !== prepared.request_id || subject.source_store_id !== batch.source_store_id
         || subject.manifest_sha256 !== prepared.data.manifest_sha256 || canonical(admission.grant.method) !== canonical(prepared.method))
       throw new Error("Evaluator execution preparation binding mismatch")
+    const data = prepared.data as Record<string, unknown>
+    if (batch.scope_key === "evaluator-preparation/retrospective") {
+      if (!subject.source || data.format !== "loom-evaluation-request/v2" || data.source_scope !== "frozen-retrospective-population"
+          || canonical(data.source) !== canonical(subject.source)) throw new Error("Evaluator execution population binding mismatch")
+      const population = this.retrospectivePopulation(subject.source.population_id, owner)
+      const frozen = this.frozenPreparationPopulation(batchID, owner)
+      const members: EvaluationMember[] = population.manifest.members.map(member => ({ key: member.key, kind: "objective", source_refs: [member.source] }))
+      const boundary = { retrospective_population: population.population_id, retrospective_manifest: population.manifest_sha256,
+        preparation_budget_policy: digest(data.budget_policy) }
+      const manifest = { format: "loom-evaluation-manifest/v2", batch_id: batchID, source: subject.source,
+        source_store_id: batch.source_store_id, boundary, method: frozen.batch.method,
+        membership_sha256: frozen.batch.membership_sha256, member_count: members.length,
+        member_count_unit: "deduplicated-evidence-sources", objective_count: 1 }
+      if (population.manifest_sha256 !== subject.source.manifest_sha256 || population.manifest.source_store_id !== batch.source_store_id
+          || canonical(frozen.batch.boundary) !== canonical(boundary)
+          || encoded(frozen.members) !== encoded(members)
+          || digest({ ...manifest, members }, retrospectiveBudget()) !== subject.manifest_sha256
+          || subject.semantic_key !== evaluatorEnrollmentKey({ source_store_id: batch.source_store_id, owner_session: owner,
+            boundary, membership_sha256: frozen.batch.membership_sha256, method: data.method, source_policy: data.source_policy,
+            route_policy: data.route_policy, budget_policy: data.budget_policy, source: subject.source }))
+        throw new Error("Evaluator execution population integrity mismatch")
+    } else if (subject.source || data.format !== "loom-evaluation-request/v1" || batch.scope_key !== "evaluator-preparation/calling-session") {
+      throw new Error("Evaluator execution source kind mismatch")
+    }
     // The ReviewIssues owner checks attempt identity and the authority adapter
     // checks semantic enrollment. This store cannot certify either relationship.
     return prepared

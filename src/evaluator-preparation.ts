@@ -4,7 +4,7 @@ import { evaluatorRequestID, type EvaluationBatch, type EvaluationMember, type E
 import { evaluatorMethod, parseEvaluatorMethod, parseEvaluatorPolicy, type EvaluatorMethodManifest, type EvaluatorPolicyRef } from "./evaluator-method.js"
 import type { Store } from "./store.js"
 import type { ReviewRequest } from "./review-requests.js"
-import type { RetrospectivePopulation } from "./retrospective-contract.js"
+import type { RetrospectivePopulation, RetrospectivePopulationRef } from "./retrospective-contract.js"
 
 const SCOPE = "evaluator-preparation/calling-session"
 const RETROSPECTIVE_SCOPE = "evaluator-preparation/retrospective"
@@ -24,7 +24,7 @@ type PreparedRequest = {
   method_binding: "declared-not-admitted"; original_review_requests: "frozen-manifest-source-references";
   review_request: ReviewRequest;
 }
-type RetrospectiveSource = { kind: "retrospective-population"; format: "loom-retrospective-population/v1"; population_id: string; manifest_sha256: string }
+type RetrospectiveSource = RetrospectivePopulationRef
 type RetrospectiveManifest = Omit<Manifest, "format" | "source_batch_id"> & {
   format: "loom-evaluation-manifest/v2"; source: RetrospectiveSource;
   member_count_unit: "deduplicated-evidence-sources"; objective_count: 1;

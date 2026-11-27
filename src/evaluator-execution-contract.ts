@@ -1,10 +1,28 @@
 import { canonical, digest, ProcessingBudget, uid } from "./model.js"
 import { parseEvaluatorMethod, type EvaluatorMethodManifest, type EvaluatorPolicyRef } from "./evaluator-method.js"
+import type { RetrospectivePopulationRef } from "./retrospective-contract.js"
 
 /** Idempotency selectors, not evidence of permission or native provenance. */
 export type EvaluatorExecutionSubject = {
   source_store_id: string; owner_session: string; batch_id: string; request_id: string;
   attempt_id: string; manifest_sha256: string; semantic_key: string;
+  // Absent for the existing complete Stage 3 source. Presence is the distinct
+  // v2 enrollment contract, never an implicit conversion of a Stage 3 batch.
+  source?: RetrospectivePopulationRef;
+}
+/** Stable enrollment identity only. Keep legacy key bytes unchanged; v2 names
+ * the exact frozen source and separates its meaning from complete Stage 3. */
+export function evaluatorEnrollmentKey(input: {
+  source_store_id: string; owner_session: string; boundary: Record<string, string | number>;
+  membership_sha256: string; method: unknown; source_policy: unknown; route_policy: unknown; budget_policy: unknown;
+  source?: RetrospectivePopulationRef;
+}): string {
+  const { preparation_source_batch: _sourceBatch, preparation_budget_policy: _budget, ...boundary } = input.boundary
+  return digest({ format: input.source ? "loom-evaluation-enrollment-key/v2" : "loom-evaluation-enrollment-key/v1",
+    source_store_id: input.source_store_id, owner_session: input.owner_session, slot: "overall", boundary,
+    membership_sha256: input.membership_sha256, method: input.method, source_policy: input.source_policy,
+    route_policy: input.route_policy, budget_policy: input.budget_policy,
+    ...(input.source ? { request_format: "loom-evaluation-request/v2", source: input.source } : {}) })
 }
 export type EvaluatorResources = { requests: number; input_tokens: number; output_tokens: number }
 export type EvaluatorExecutionGrant = {
@@ -98,9 +116,17 @@ function resources(value: unknown, minimum: number): EvaluatorResources {
   return { requests: integer(x.requests, minimum), input_tokens: integer(x.input_tokens, minimum), output_tokens: integer(x.output_tokens, minimum) }
 }
 function subject(value: unknown): EvaluatorExecutionSubject {
-  const x = object(value, ["source_store_id", "owner_session", "batch_id", "request_id", "attempt_id", "manifest_sha256", "semantic_key"])
+  const hasSource = !!value && typeof value === "object" && Object.hasOwn(value, "source")
+  const x = object(value, ["source_store_id", "owner_session", "batch_id", "request_id", "attempt_id", "manifest_sha256", "semantic_key", ...(hasSource ? ["source"] : [])])
+  let source: RetrospectivePopulationRef | undefined
+  if (hasSource) {
+    const s = object(x.source, ["kind", "format", "population_id", "manifest_sha256"])
+    if (s.kind !== "retrospective-population" || s.format !== "loom-retrospective-population/v1") throw new Error("Unsupported execution source")
+    source = { kind: s.kind, format: s.format, population_id: uid(s.population_id), manifest_sha256: hash(s.manifest_sha256) }
+  }
   return { source_store_id: uid(x.source_store_id), owner_session: uid(x.owner_session), batch_id: uid(x.batch_id),
-    request_id: uid(x.request_id), attempt_id: uid(x.attempt_id), manifest_sha256: hash(x.manifest_sha256), semantic_key: hash(x.semantic_key) }
+    request_id: uid(x.request_id), attempt_id: uid(x.attempt_id), manifest_sha256: hash(x.manifest_sha256), semantic_key: hash(x.semantic_key),
+    ...(source ? { source } : {}) }
 }
 export function parseEvaluatorGrant(value: unknown): EvaluatorExecutionGrant {
   bounded(value)

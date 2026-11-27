@@ -198,11 +198,14 @@ prepared subject; preparation is not a claim that a future Evaluator has
 received every original. No new preparation or successful source check claims
 an issue, creates a native recipient, reserves spend or dispatches a provider.
 
-The new source kind is explicitly outside the qualified restricted execution
-binding until its semantic enrollment and authority are separately supported.
-The absence of a production adapter is not the only fence. Existing #249
-reservation, claimant ownership, cancellation and restore protections are not
-weakened to accommodate the new source kind.
+The [restricted execution consumer](learning-restricted-execution.md)
+now supports this source through a separately declared trusted retrospective
+integration. The v2 subject and semantic enrollment bind the exact population;
+the resolver and whole-source authorization use the actual grant recipient.
+Without that explicit capability the consumer still rejects v2, including when
+an otherwise valid legacy execution adapter is supplied. Production has no
+adapter. Existing #249 reservation, claimant ownership, cancellation and restore
+protections apply unchanged; preparation and source availability are not grants.
 
 ## Failure, recovery and verification obligations
 
@@ -216,7 +219,7 @@ weakened to accommodate the new source kind.
 | No protected discovery or disclosure | Existing native discovery/inspection/disclosure controls plus final view check | Deny one contributor or revoke during an awaited permission check; JSON, Markdown, HTML, source reads and continuations reveal no protected details. |
 | Replay and recovery preserve identity | Deterministic identity, transactional publication and existing preparation replay owners | Lost commit acknowledgement, restart, process interruption, concurrent replay and stopped-state restore retain the same complete population and consumed issue state. |
 | Optional damage stays contained | Retrospective schema validator and paired backup validator | Partial/unsupported extension or checksum-consistent structural corruption blocks retrospective certification while existing Stage 3 remains usable. |
-| Preparation remains effect-free | Explicit source discriminator and execution binding fence | Exercise registered preparation/readback and attempt execution binding; no Evaluator/native/provider effect occurs. |
+| Preparation remains effect-free | Explicit source discriminator and required qualified execution integration | Exercise registered preparation/readback and a legacy adapter without retrospective authority; no Evaluator/native/provider effect occurs. |
 
 Read-only preview performs no persistence repair. A failed freeze before commit
 publishes nothing; after a durable commit, replay recovers that identity. No

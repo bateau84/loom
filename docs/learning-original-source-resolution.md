@@ -41,7 +41,10 @@ This architecture describes the bounded realization and its required proof.
 Implementation, test results and installed-host receipts are separate evidence.
 It grants no production Evaluator execution, scheduling, raw-content capture,
 cross-Session native disclosure or merge authority. The distinct retrospective
-v2 preparation remains fenced from execution.
+v2 preparation remains fenced from production execution. Its later
+[controlled execution integration](learning-restricted-execution.md)
+requires separately qualified enrollment and actual-recipient source authority;
+ordinary source resolution does not provide either.
 
 ## Requirement coverage and owners
 
