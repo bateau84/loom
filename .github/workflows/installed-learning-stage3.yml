@@ -9,7 +9,7 @@ permissions:
 jobs:
   stage3:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -101,5 +101,22 @@ jobs:
         with:
           name: installed-retrospective-execution-${{ github.sha }}
           path: ${{ runner.temp }}/loom-retrospective-execution-installed-report/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Verify durable Evaluator publication through the controlled native lifecycle
+        run: >-
+          python3 tests/installed_evaluator_interpretations.py
+          --opencode "$RUNNER_TEMP/loom-stage3-host/node_modules/.bin/opencode"
+          --plugin "$RUNNER_TEMP/loom-stage3-install/node_modules/loom-plugin"
+          --artifact "$(find "$RUNNER_TEMP/loom-stage3-package" -maxdepth 1 -name 'loom-plugin-*.tgz' -print -quit)"
+          --repository "$GITHUB_WORKSPACE"
+          --expect-head "${{ github.event.pull_request.head.sha }}"
+          --expect-plugin-version "$(node -p 'require("./package.json").version')"
+          --report-directory "$RUNNER_TEMP/loom-interpretations-installed-report"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: installed-evaluator-interpretations-${{ github.sha }}
+          path: ${{ runner.temp }}/loom-interpretations-installed-report/
           if-no-files-found: warn
           retention-days: 7

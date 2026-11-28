@@ -24,6 +24,12 @@ FORMAT = "loom-stopped-state/v1"
 MANIFEST = "loom-state-manifest.json"
 DATABASES = ("ledger.sqlite", "learning.sqlite")
 SIDECARS = ("-wal", "-shm", "-journal")
+# Mirror the runtime derivation, not a separate restore allowance. A report can
+# inherit at most 32 public selections; each selection reserves one freeze page
+# and a second validation within the ordinary 128-read budget.
+INTERPRETATION_REPORT_LIMIT = 32
+INTERPRETATION_ORIGINAL_LIMIT = INTERPRETATION_REPORT_LIMIT * ((128 - 20) // 2)
+INTERPRETATION_DEPENDENCY_LIMIT = 100000
 REQUIRED_TABLES = {
     # Historical sender/fence tables are optional in fresh installations.
     "ledger.sqlite": {
@@ -155,6 +161,25 @@ def raw_object(text):
     return result
 
 
+def raw_array(text):
+    """Retain exact canonical element bytes for descriptor/checksum checks."""
+    require(isinstance(text, str) and len(text) <= 33554432 and text.startswith("[") and text.endswith("]"),
+            "Invalid retrospective canonical array")
+    decoder = json.JSONDecoder()
+    result, offset = [], 1
+    while offset < len(text) - 1:
+        start = offset
+        _, offset = decoder.raw_decode(text, start)
+        result.append(text[start:offset])
+        if text[offset:offset + 1] == ",":
+            offset += 1
+        else:
+            require(offset == len(text) - 1, "Invalid retrospective canonical array suffix")
+            break
+    require("[" + ",".join(result) + "]" == text, "Noncanonical retrospective contract array")
+    return result
+
+
 def shape(value, fields, optional=()):
     require(isinstance(value, dict) and set(fields) <= set(value) <= set(fields) | set(optional),
             "Invalid retrospective contract fields")
@@ -216,7 +241,7 @@ def retrospective_integrity(db, ledger_store_id):
                              (population_id,)).fetchall()
         require(len(members) == member_count, "Incomplete retrospective frozen membership")
         size, observed_private, seen, encoded_members = len(header_json), False, set(), []
-        preparation_members = []
+        preparation_members, manifest_members = [], {}
         for ordinal, (key, actual_ordinal, data_json) in enumerate(members, 1):
             require(actual_ordinal == ordinal and isinstance(data_json, str), "Incomplete retrospective frozen ordinals")
             size += len(data_json)
@@ -257,6 +282,7 @@ def retrospective_integrity(db, ledger_store_id):
             observed_private = observed_private or source["kind"] in ("review-request", "review-relationship")
             encoded_members.append(data_json)
             preparation_members.append((key, "[" + member_values["source"] + "]"))
+            manifest_members[key] = member
         require([key for key, _, _ in members] == sorted(seen), "Noncanonical retrospective source order")
         require(observed_private == bool(private_reviews), "Retrospective private-source metadata mismatch")
         manifest_text = object_text({**header_values, "members": "[" + ",".join(encoded_members) + "]"})
@@ -270,7 +296,8 @@ def retrospective_integrity(db, ledger_store_id):
                                      "frozen_by": object_text({"session_id": encoded(owner), "agent": encoded(agent)}), "created_at": encoded(created_at)})
         require(sha_text(metadata_text) == metadata_sha, "Retrospective metadata digest mismatch")
         populations[population_id] = {"owner": owner, "namespace": namespace, "manifest_sha256": manifest_sha,
-                                      "members": preparation_members}
+                                      "members": preparation_members, "manifest_members": manifest_members,
+                                      "objective_id": selected["objective_id"]}
     return populations
 
 
@@ -402,7 +429,7 @@ def retrospective_preparation_integrity(db, populations, has_evaluator):
                     "version": {"kind": "sha256", "value": data["manifest_sha256"]},
                     "content_ref": "loom_insights:evaluation-preparation-members:" + batch_id}],
                 "Retrospective preparation review manifest mismatch")
-        prepared[batch_id] = {"batch": batch, "request": data, "values": data_values,
+        prepared[batch_id] = {"batch": batch, "request": data, "values": data_values, "population": population,
                               "boundary": boundary_values, "membership_sha256": membership_sha}
     return prepared
 
@@ -492,6 +519,352 @@ def retrospective_execution_integrity(db, prepared, issues):
                 require(receipt["result"]["host_id"] == grant["recipient"]["host_id"]
                         and receipt["result"]["session_id"] == grant["recipient"]["session_id"],
                         "Retrospective execution result recipient mismatch")
+
+
+def interpretation_source_refs(values):
+    """The existing EvaluationStore source identity, including required union."""
+    found = {}
+    for text in values:
+        fields = raw_object(text)
+        value = json.loads(text)
+        shape(value, ("kind", "id", "required"), ("session_id", "message_id", "revision", "sha256"))
+        require(type(value["required"]) is bool, "Invalid interpretation source requirement")
+        identity = {key: item for key, item in fields.items() if key != "required"}
+        key = sha_text(object_text(identity))
+        previous = found.get(key)
+        required = value["required"] or previous is not None and json.loads(previous)["required"]
+        found[key] = object_text({**identity, "required": encoded(required)})
+    return dict(sorted(found.items()))
+
+
+def interpretation_json_equal(left, right):
+    """Match JSON values without Python's bool/int equality coercion.
+
+    JavaScript has one JSON number type, so 0 and 0.0 describe the same value.
+    Booleans remain a different type at every nested object/array boundary.
+    """
+    if type(left) is dict:
+        return type(right) is dict and left.keys() == right.keys() and all(
+            interpretation_json_equal(value, right[key]) for key, value in left.items())
+    if type(left) is list:
+        return type(right) is list and len(left) == len(right) and all(
+            interpretation_json_equal(a, b) for a, b in zip(left, right))
+    if type(left) in (int, float):
+        return type(right) in (int, float) and left == right
+    return type(left) is type(right) and left == right
+
+
+def interpretation_content(value, members, retrieved):
+    """Check the versioned result's retained referential/coverage contract.
+
+    These are descriptor checks, not an entailment review or a claim of live
+    source authorization. Original native result bytes are checked separately.
+    """
+    identifier = lambda item: isinstance(item, str) and re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}", item)
+    fingerprint = lambda item: isinstance(item, str) and re.fullmatch(r"[a-f0-9]{64}", item)
+
+    def items(value, limit=20000):
+        require(isinstance(value, list) and len(value) <= limit, "Invalid interpretation collection")
+        return value
+
+    def narrative(value):
+        require(isinstance(value, str) and value.strip() and len(value.encode("utf-16-le", "surrogatepass")) <= 32000
+                and not re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", value), "Invalid interpretation narrative")
+
+    def narratives(value):
+        for item in items(value, 200):
+            narrative(item)
+
+    def scoped(value):
+        scope = items(value)
+        require(scope and all(isinstance(key, str) and key in members for key in scope)
+                and len(set(scope)) == len(scope), "Interpretation member scope mismatch")
+        return scope
+
+    shape(value, ("format", "covered_members", "conclusion", "trajectory", "claims", "review_coverage",
+                  "gaps", "qualifications", "prior_interpretations"))
+    require(value["format"] == "loom-evaluator-interpretation/v1", "Unsupported interpretation format")
+    require(set(scoped(value["covered_members"])) == set(members), "Incomplete interpretation coverage")
+    receipt_keys, retrieved_keys = set(), set()
+    for receipt in items(retrieved, 100000):
+        shape(receipt, ("member_key", "source_index", "receipt_id", "boundary", "source_sha256"))
+        key = receipt["member_key"]
+        require(isinstance(key, str) and key in members and type(receipt["source_index"]) is int
+                and receipt["source_index"] == 0 and identifier(receipt["receipt_id"])
+                and receipt["boundary"] in ("native-tool-result", "provider-input"), "Invalid interpretation retrieval receipt")
+        member = members[key]
+        require(member["availability"] == "available" and member["source"].get("revision")
+                and member["source"].get("sha256") == receipt["source_sha256"], "Interpretation retrieval source mismatch")
+        identity = (key, receipt["receipt_id"], receipt["boundary"])
+        require(identity not in receipt_keys, "Duplicate interpretation retrieval receipt")
+        receipt_keys.add(identity)
+        retrieved_keys.add(key)
+
+    def citations(value, scope):
+        seen = set()
+        for ref in items(value):
+            shape(ref, ("member_key", "source_index"))
+            key = ref["member_key"]
+            require(isinstance(key, str) and key in scope and key in retrieved_keys and key not in seen
+                    and type(ref["source_index"]) is int and ref["source_index"] == 0,
+                    "Interpretation citation lacks retrieved scoped evidence")
+            seen.add(key)
+        return seen
+
+    conclusion = value["conclusion"]
+    shape(conclusion, ("kind", "statement", "limitations"))
+    require(conclusion["kind"] in ("recommendations", "no-change", "insufficient-evidence"), "Unsupported interpretation conclusion")
+    narrative(conclusion["statement"])
+    narratives(conclusion["limitations"])
+    for collection, id_field, fields in (("trajectory", "event_id", ("statement",)),
+                                          ("review_coverage", "review_id", ("requested", "covered"))):
+        seen = set()
+        for entry in items(value[collection]):
+            shape(entry, (id_field, *fields, "members", "supporting", "limitations"))
+            require(identifier(entry[id_field]) and entry[id_field] not in seen, "Duplicate or invalid interpretation item identity")
+            seen.add(entry[id_field])
+            for field in fields:
+                (narrative if field == "statement" else narratives)(entry[field])
+            require(citations(entry["supporting"], scoped(entry["members"])), "Unsupported interpretation trajectory or review coverage")
+            narratives(entry["limitations"])
+    claim_ids, recommendations, supported, prior_recommendations = set(), 0, False, []
+    for claim in items(value["claims"]):
+        shape(claim, ("claim_id", "kind", "category", "basis", "statement", "members", "supporting", "contradicting",
+                      "limitations", "applicability", "recommendation"))
+        require(identifier(claim["claim_id"]) and claim["claim_id"] not in claim_ids, "Duplicate or invalid interpretation claim identity")
+        claim_ids.add(claim["claim_id"])
+        require(claim["kind"] in ("observed", "authored", "interpretation", "verification", "recommendation")
+                and claim["category"] in ("finding", "successful-practice", "avoidable-failure", "necessary-exploration", "recovery")
+                and claim["basis"] in ("supported", "hypothesis"), "Unsupported interpretation claim")
+        narrative(claim["statement"])
+        scope = scoped(claim["members"])
+        supports, contradicts = citations(claim["supporting"], scope), citations(claim["contradicting"], scope)
+        narratives(claim["limitations"])
+        narratives(claim["applicability"])
+        require((claim["basis"] != "supported" or supports)
+                and (claim["basis"] != "hypothesis" or claim["kind"] in ("interpretation", "recommendation") and claim["limitations"])
+                and (not contradicts or claim["limitations"]), "Unsupported or unqualified interpretation claim")
+        supported = supported or claim["basis"] == "supported"
+        proposal = claim["recommendation"]
+        if claim["kind"] != "recommendation":
+            require(proposal is None, "Unexpected interpretation recommendation")
+            continue
+        recommendations += 1
+        shape(proposal, ("target", "mechanism", "risks", "validation", "prior_recommendations"))
+        narrative(proposal["target"])
+        narrative(proposal["mechanism"])
+        narratives(proposal["risks"])
+        narratives(proposal["validation"])
+        require(claim["applicability"] and proposal["risks"] and proposal["validation"], "Incomplete interpretation recommendation")
+        seen = set()
+        for prior in items(proposal["prior_recommendations"], 32):
+            shape(prior, ("report_id", "report_sha256", "claim_id"))
+            require(identifier(prior["report_id"]) and fingerprint(prior["report_sha256"]) and identifier(prior["claim_id"]),
+                    "Invalid prior interpretation recommendation")
+            key = (prior["report_id"], prior["claim_id"])
+            require(key not in seen, "Duplicate prior interpretation recommendation")
+            seen.add(key)
+            prior_recommendations.append(prior)
+    gaps = set()
+    for gap in items(value["gaps"]):
+        shape(gap, ("member_key", "kind", "reason"))
+        key = gap["member_key"]
+        require(isinstance(key, str) and key in members and gap["kind"] in ("unavailable", "not-retrieved", "coverage"),
+                "Invalid interpretation source gap")
+        narrative(gap["reason"])
+        identity = (key, gap["kind"])
+        require(identity not in gaps and (gap["kind"] != "unavailable" or members[key]["availability"] != "available")
+                and (gap["kind"] != "not-retrieved" or members[key]["availability"] == "available" and key not in retrieved_keys),
+                "Interpretation gap contradicts frozen source availability or retrieval")
+        gaps.add(identity)
+    for key, member in members.items():
+        required = "unavailable" if member["availability"] != "available" else "not-retrieved" if key not in retrieved_keys else None
+        require(required is None or (key, required) in gaps, "Interpretation omits a source coverage gap")
+    qualifications = value["qualifications"]
+    shape(qualifications, ("chronology", "independence"))
+    narratives(qualifications["chronology"])
+    require(qualifications["independence"] == "unknown", "Unsupported interpretation independence assertion")
+    priors = {}
+    for prior in items(value["prior_interpretations"], 32):
+        shape(prior, ("report_id", "report_sha256", "relation", "reason"))
+        require(identifier(prior["report_id"]) and fingerprint(prior["report_sha256"])
+                and prior["relation"] in ("supersedes", "contests") and prior["report_id"] not in priors,
+                "Invalid prior interpretation identity")
+        narrative(prior["reason"])
+        priors[prior["report_id"]] = prior["report_sha256"]
+    require(all(priors.get(prior["report_id"]) == prior["report_sha256"] for prior in prior_recommendations),
+            "Prior recommendation lacks attributable prior interpretation")
+    require((conclusion["kind"] == "recommendations") == bool(recommendations)
+            and (conclusion["kind"] != "no-change" or supported or value["trajectory"] or value["review_coverage"])
+            and (conclusion["kind"] != "insufficient-evidence" or conclusion["limitations"] or value["gaps"]),
+            "Interpretation conclusion lacks consistent evidence coverage")
+    return priors, prior_recommendations
+
+
+def retrospective_interpretation_integrity(db, prepared, has_execution):
+    """Validate atomic S5 publications without granting live source access.
+
+    Native result bytes remain in the existing report, not an import channel or
+    evidence store. Their hash closes the result-to-interpretation link even if
+    the outer backup/report checksums were recomputed after a substitution.
+    Internal checkpoints retain their own frozen source and the exact parent
+    report ID/checksum. They inherit the authenticated parent's full dependency
+    union; they are not independently readable interpretation content.
+    """
+    qualification = ["Machine-validated publication; reasoning quality and review independence are not established."]
+    fields = ("id", "batch_id", "member_key", "slot", "body_json", "qualifications_json", "sha256")
+    reports, by_batch = {}, {}
+    for row in db.execute("SELECT " + ",".join(fields) + " FROM learning_evaluation_reports"):
+        record = dict(zip(fields, row))
+        marked = isinstance(record["id"], str) and record["id"].startswith("interpretation-")
+        if not marked and isinstance(record["body_json"], str):
+            try:
+                body = json.loads(record["body_json"])
+                marker = body.get("format") if isinstance(body, dict) else None
+                marked = isinstance(marker, str) and marker.startswith(("loom-evaluator-publication/", "loom-evaluator-member/"))
+            except ValueError:
+                pass  # Legacy report decoding is unchanged by this extension.
+        if record["batch_id"] not in prepared and not marked:
+            continue  # Existing Stage 3 reports remain unchanged.
+        require(record["batch_id"] in prepared, "Interpretation has no frozen preparation mapping")
+        require(record["id"] not in reports, "Duplicate interpretation report identity")
+        reports[record["id"]] = record
+        by_batch.setdefault(record["batch_id"], []).append(record)
+
+    publications = {}
+    for batch_id, state, report_id in db.execute("SELECT id,state,report_id FROM learning_evaluation_batches "
+            "WHERE scope_key='evaluator-preparation/retrospective'"):
+        records = by_batch.get(batch_id, [])
+        member_rows = db.execute("SELECT key,report_id FROM learning_evaluation_members WHERE batch_id=? ORDER BY ordinal", (batch_id,)).fetchall()
+        if not records and report_id is None and not any(row[1] is not None for row in member_rows):
+            require(state != "complete", "Completed interpretation lacks durable publication")
+            continue
+        require(has_execution and batch_id in prepared, "Interpretation lacks execution authority binding")
+        require(state == "complete" and report_id is not None and all(row[1] is not None for row in member_rows)
+                and len(records) == len(member_rows) + 1, "Incomplete interpretation publication/checkpoints")
+        overall = reports.get(report_id)
+        require(overall is not None and overall["batch_id"] == batch_id and overall["slot"] == "overall"
+                and overall["member_key"] is None, "Interpretation overall report slot mismatch")
+        values = raw_object(overall["body_json"])
+        body = json.loads(overall["body_json"])
+        shape(body, ("format", "binding", "original_result_text", "retrieved", "interpretation"))
+        require(body["format"] == "loom-evaluator-publication/v1", "Unsupported interpretation publication format")
+        binding_values = raw_object(values["binding"])
+        binding = body["binding"]
+        shape(binding, ("subject", "admission_sha256", "method_sha256", "result"))
+        admissions = db.execute("SELECT data_json,sha256 FROM learning_execution_admissions WHERE batch_id=?", (batch_id,)).fetchall()
+        require(len(admissions) == 1, "Interpretation lacks exact execution admission")
+        admission_json, admission_sha = admissions[0]
+        admission_values = raw_object(admission_json)
+        grant_values = raw_object(admission_values["grant"])
+        require(binding["admission_sha256"] == admission_sha == sha_text(admission_json)
+                and binding_values["subject"] == grant_values["subject"]
+                and binding["method_sha256"] == sha_text(grant_values["method"]),
+                "Interpretation execution subject/method/admission mismatch")
+        receipt = db.execute("SELECT data_json FROM learning_execution_receipts WHERE batch_id=? ORDER BY sequence DESC LIMIT 1", (batch_id,)).fetchone()
+        require(receipt is not None, "Interpretation lacks original execution result")
+        receipt_value = json.loads(receipt[0])
+        require(receipt_value["execution"] == "completed" and receipt_value["budget"] == "settled"
+                and receipt_value["fenced"] is True and receipt_value["usage"] is not None and receipt_value["result"] is not None
+                and raw_object(receipt[0])["result"] == binding_values["result"], "Interpretation original execution result mismatch")
+        require(type(receipt_value.get("sequence")) is int and 1 <= receipt_value["sequence"] <= 9007199254740991,
+                "Invalid interpretation execution sequence")
+        usage, limits = receipt_value["usage"], json.loads(grant_values["limits"])
+        resource_fields = {"requests", "input_tokens", "output_tokens"}
+        for quantities, minimum in ((usage, 0), (limits, 1)):
+            require(type(quantities) is dict and set(quantities) == resource_fields
+                    and all(type(value) is int and minimum <= value <= 9007199254740991 for value in quantities.values()),
+                    "Invalid interpretation execution resources")
+        require(all(usage[field] <= limits[field] for field in resource_fields),
+                "Interpretation execution usage exceeds admission limits")
+        require(isinstance(body["original_result_text"], str) and sha_text(body["original_result_text"]) == binding["result"]["sha256"],
+                "Interpretation original result bytes mismatch")
+        require(interpretation_json_equal(json.loads(body["original_result_text"]), body["interpretation"]),
+                "Interpretation differs from original execution result")
+        expected_id = "interpretation-" + sha_text(object_text({"format": encoded("loom-evaluator-report-id/v1"),
+            "admission_sha256": binding_values["admission_sha256"], "result": binding_values["result"]}))
+        require(report_id == expected_id, "Interpretation durable report identity mismatch")
+        retained = prepared[batch_id]
+        priors, recommendations = interpretation_content(body["interpretation"], retained["population"]["manifest_members"], body["retrieved"])
+        for record in records:
+            dependencies = db.execute("SELECT source_key,source_ref FROM learning_evaluation_dependencies WHERE report_id=? ORDER BY source_key", (record["id"],)).fetchall()
+            refs = interpretation_source_refs([ref for _, ref in dependencies])
+            require(dependencies == list(refs.items()), "Interpretation dependency identity mismatch")
+            require(json.loads(record["qualifications_json"]) == qualification, "Interpretation publication qualifications mismatch")
+            checksum = sha_text(object_text({"batch_id": encoded(batch_id), "member_key": encoded(record["member_key"]),
+                "body": record["body_json"], "qualifications": encoded(qualification), "source_refs": "[" + ",".join(refs.values()) + "]"}))
+            require(checksum == record["sha256"], "Interpretation report digest mismatch")
+            record["dependencies"] = refs
+        for key, checkpoint_id in member_rows:
+            record = reports.get(checkpoint_id)
+            require(record is not None and record["batch_id"] == batch_id and record["member_key"] == key
+                    and record["slot"] == "member:" + key, "Interpretation member report slot mismatch")
+            checkpoint = object_text({"format": encoded("loom-evaluator-member/v1"), "report_id": encoded(report_id),
+                "report_sha256": encoded(overall["sha256"]), "member_key": encoded(key)})
+            checkpoint_identity = "interpretation-member-" + sha_text(object_text({"format": encoded("loom-evaluator-member-id/v1"),
+                "report_id": encoded(report_id), "member_key": encoded(key)}))
+            require(record["body_json"] == checkpoint and record["id"] == checkpoint_identity,
+                    "Interpretation member checkpoint binding mismatch")
+        publications[report_id] = {"report": overall, "body": body, "prepared": retained,
+                                   "priors": priors, "recommendations": recommendations, "records": records}
+
+    resolved, ancestors, visiting = {}, {}, set()
+    original_unions, member_unions = {}, {}
+
+    def dependencies(report_id):
+        if report_id in resolved:
+            return resolved[report_id]
+        require(report_id not in visiting, "Cyclic interpretation revision provenance")
+        visiting.add(report_id)
+        require(len(visiting) <= INTERPRETATION_REPORT_LIMIT, "Interpretation revision history exceeds 32 reports")
+        current = publications[report_id]
+        population = current["prepared"]["population"]
+        refs = [ref for _, source_refs in population["members"] for ref in raw_array(source_refs)]
+        selected = set(population["manifest_members"])
+        originals = {key for key, member in population["manifest_members"].items()
+                     if member["availability"] == "available"
+                     and member["source"]["kind"] in ("native-message", "native-call", "external-ref")}
+        ancestry = {report_id}
+        for prior_id, fingerprint in current["priors"].items():
+            require(prior_id in publications, "Missing prior interpretation publication")
+            prior = publications[prior_id]
+            old = prior["prepared"]["population"]
+            require(prior["report"]["sha256"] == fingerprint and old["owner"] == population["owner"]
+                    and old["namespace"] == population["namespace"] and old["objective_id"] == population["objective_id"],
+                    "Prior interpretation provenance mismatch")
+            refs.extend(dependencies(prior_id).values())
+            selected.update(member_unions[prior_id])
+            originals.update(original_unions[prior_id])
+            ancestry.update(ancestors[prior_id])
+            require(len(ancestry) <= INTERPRETATION_REPORT_LIMIT, "Interpretation revision history exceeds 32 reports")
+            link = next(item for item in current["body"]["interpretation"]["prior_interpretations"] if item["report_id"] == prior_id)
+            invalidation = db.execute("SELECT 1 FROM learning_evaluation_invalidations WHERE batch_id=? AND source_key=? AND reason=?",
+                                      (prior["report"]["batch_id"], report_id, "interpretation-" + link["relation"])).fetchone()
+            require(invalidation is not None, "Prior interpretation lacks revision invalidation")
+        for recommendation in current["recommendations"]:
+            prior = publications[recommendation["report_id"]]
+            require(any(claim["claim_id"] == recommendation["claim_id"] and claim["kind"] == "recommendation"
+                        for claim in prior["body"]["interpretation"]["claims"]), "Missing prior recommendation claim")
+        expected = interpretation_source_refs(refs)
+        require(len(expected) <= INTERPRETATION_DEPENDENCY_LIMIT and len(selected) <= INTERPRETATION_DEPENDENCY_LIMIT,
+                "Interpretation dependency limit exceeded")
+        require(len(originals) <= INTERPRETATION_ORIGINAL_LIMIT,
+                "Interpretation exceeds 1728 unique pinned native/external originals")
+        require(current["report"]["dependencies"] == expected, "Interpretation source dependency union mismatch")
+        member_refs = dict(population["members"])
+        for record in current["records"]:
+            if record["member_key"] is not None:
+                own_source = interpretation_source_refs(raw_array(member_refs[record["member_key"]]))
+                require(record["dependencies"] == own_source, "Interpretation member checkpoint source mismatch")
+        visiting.remove(report_id)
+        resolved[report_id] = expected
+        ancestors[report_id] = ancestry
+        original_unions[report_id] = originals
+        member_unions[report_id] = selected
+        return expected
+
+    for report_id in publications:
+        dependencies(report_id)
 
 
 def sha256(path):
@@ -687,6 +1060,8 @@ def inspect_sql(directory, file_names):
                     require(not missing and not unmarked,
                             "Evaluator execution enrollment/mirror mismatch")
                     retrospective_execution_integrity(db, preparations, issues)
+                if has_evaluation:
+                    retrospective_interpretation_integrity(db, preparations, has_execution)
                 if name == "ledger.sqlite" and version == 2:
                     identity = db.execute(
                         "SELECT singleton,store_id FROM review_store_identity"

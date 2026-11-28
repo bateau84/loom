@@ -202,6 +202,31 @@ execution permit. A configured positive bound qualifies only the tested
 complete evidence envelope, not arbitrary larger populations or production
 source-transfer authority.
 
+### Durable Evaluator interpretations (S5)
+
+The [S5 implementation](../architecture/design/ard-017-learning-evaluator-interpretations.md)
+extends the existing consumer with result validation, atomic publication,
+attributable revisions and authorized readers. `tests/installed_evaluator_interpretations.py`
+qualifies this path using the exact installed candidate and the existing
+controlled native lifecycle. Scripted results establish publication mechanics,
+not genuine Evaluator reasoning or production authority.
+
+For revision-capacity and registered-reader composition checks:
+
+```sh
+bun test tests/evaluator-interpretation-capacity-native.test.ts tests/evaluator-interpretations-history-native.test.ts tests/evaluator-interpretations-scaling-native.test.ts
+```
+
+The history suite uses a disposable, credential-free controlled `gh` executable
+through the production original-source reader. The scaling suite invokes the
+registered tool above 500 members and checks complete pagination, denial, source
+loss, final resource union and exact response hashing. Its permission owner is
+simulated with zero delay. Permission-call/resource counts measure the actual
+callback; latency and sampled memory do not include a real native permission
+server or transport. Set `LOOM_S5_REGISTERED_METRICS` to a new output path under
+`/tmp` to retain its JSONL measurements. Delivery receipts identify the measured
+source revision and distinguish these checks from installed-host results.
+
 ### Engineering-history browser and comparative qualification
 
 The shared fixture in `tests/helpers/engineering-history-scenarios.ts` creates
@@ -455,7 +480,7 @@ current candidate.
 | `.github/workflows/ci.yml` | All PRs; push to `main`. **Loom plugin CI** / `test`, 15m. | Root and external-fixture typechecks; C/N/S/P; frozen dependency guards; production build; baseline generation; decoding probe; review mutation controls. Retains countercheck reports. |
 | `.github/workflows/installed-host.yml` | PRs to `main`. **Installed OpenCode boot and trust regression** / `installed-host`, 10m. | Exact packed candidate and SDK/CLI 2.3.0 boot/trust probes; separate CLI 2.2.6 for the version-bound recovery scanner. Retains all three reports. |
 | `.github/workflows/installed-questions.yml` | PRs to `main`. **Installed question production-path qualification** / `questions`, 15m. | Packed candidate on CLI 2.3.0: native review, audit-loss controls, Evaluator observer, Stage 2 persistence, objectives, questions/duplicate-input control, structured choices and two source-only QA-B controls. Retains synthetic audits and reports. |
-| `.github/workflows/installed-learning-stage3.yml` | All PRs. **Installed Stage 3 and Stage 4 learning mechanics** / `stage3`, 20m. | Exact PR head, packed candidate and CLI 2.3.0: automatic Stage 3 publication/recovery, Stage 4 preparation, legacy restricted execution and retrospective execution with a local scripted provider. Retains separate reports. |
+| `.github/workflows/installed-learning-stage3.yml` | All PRs. **Installed Stage 3 and Stage 4 learning mechanics** / `stage3`, 30m. | Exact PR head, packed candidate and CLI 2.3.0: automatic Stage 3 publication/recovery, Stage 4 preparation, legacy restricted execution, retrospective execution and S5 interpretation publication/readback with a local scripted provider. Retains separate reports. |
 | `.github/workflows/installed-historical-evidence.yml` | All PRs. **Installed historical engineering evidence** / `historical-evidence`, 20m. | Exact PR head, packed candidate and CLI 2.3.0: registered historical readers, frozen populations, original-source resolution, source denials and restart controls. Retains complete synthetic audit and retrieval report. |
 | `.github/workflows/installed-model-routing-v214.yml` | All PRs. **Installed OpenCode 2.3.0 unqualified routing guard** / `routing`, 15m. | Packed candidate on CLI 2.3.0; native-request negative and routing-disabled controls. Retains routing report. The filename is historical, not the host version. |
 | `.github/workflows/installed-model-routing-acceptance-v214.yml` | All PRs. **Installed V2 routing acceptance (local providers)** / `installed-routing`, 25m. | Packed candidate on CLI 2.3.0; controlled-provider continuation/restart, optional replay/group failure and request-local selection. Retains acceptance reports; broad unit suites run once in main CI. |

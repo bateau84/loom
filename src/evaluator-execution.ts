@@ -8,6 +8,8 @@ import { evaluatorEnrollmentKey, evaluatorReservationHeld, parseEvaluatorAdmissi
   type EvaluatorExecutionGrant, type EvaluatorExecutionSnapshot, type EvaluatorExecutionSubject } from "./evaluator-execution-contract.js"
 import type { RetrospectivePopulations, RetrospectiveSourceResolver } from "./retrospective-populations.js"
 import { retrospectiveBudget, type RetrospectiveSources } from "./retrospective-contract.js"
+import { evaluatorPublication } from "./evaluator-publication.js"
+import { EvaluatorInterpretations } from "./evaluator-interpretations.js"
 
 export type EvaluatorExecutionPins = { batch_id: string; request_id: string; manifest_sha256: string; attempt_id: string }
 type Integration = {
@@ -20,6 +22,9 @@ type Integration = {
   retrospective?: {
     populations: RetrospectivePopulations; resolve: RetrospectiveSourceResolver;
     authorize: (recipient: Actor, population: RetrospectiveSources) => Promise<void>;
+    /** S5 revisions inherit multiple populations. Their final disclosure gate
+     * must decide the complete union together, not combine stale grants. */
+    authorizeUnion?: (recipient: Actor, populations: RetrospectiveSources[]) => Promise<void>;
   };
 }
 type Prepared = ReturnType<EvaluatorPreparation["read"]>
@@ -28,7 +33,8 @@ const same = (a: unknown, b: unknown) => canonical(a) === canonical(b)
 /** Consumer of a trusted execution owner, not an authority issuer or runtime.
  * Learning constructs this WITHOUT integration. Only qualification code supplies
  * the controlled fixture adapter; no public tool/configuration can install one.
- * There is intentionally no automatic scheduler, retry, or report publisher.
+ * There is intentionally no automatic scheduler or retry. Publication is an
+ * explicit no-inference read of the already completed original result.
  */
 export class EvaluatorExecution {
   constructor(private readonly preparation: EvaluatorPreparation, private readonly history: EvaluationStore,
@@ -168,6 +174,32 @@ export class EvaluatorExecution {
     if (!snapshot) throw new Error("Evaluator execution inventory unavailable; no absence inferred")
     const remembered = this.remember(actor, subject, snapshot)
     return this.disclose(actor, pins, remembered)
+  }
+  /** S5 consumes only the existing owner's original completed result. There is
+   * no public result-body argument and no execution path inside publication. */
+  async publish(actor: Actor, pins: EvaluatorExecutionPins, signal?: AbortSignal) {
+    const integration = this.connected(), { authority, retrospective } = integration
+    if (!authority.readResult || !retrospective) throw new Error("evaluator-result-readback-unavailable")
+    signal?.throwIfAborted()
+    const recovered = await this.recover(actor, pins)
+    signal?.throwIfAborted()
+    if (recovered.receipt.execution !== "completed" || recovered.receipt.budget !== "settled")
+      throw new Error("Evaluator publication requires a completed result with authoritative accounting")
+    const original = await authority.readResult(recovered.admission, recovered.receipt)
+    signal?.throwIfAborted()
+    await integration.authorize(actor)
+    const population = await this.population(actor, pins)
+    if (!population) throw new Error("Evaluator publication requires a frozen retrospective population")
+    const body = evaluatorPublication(recovered.admission, recovered.receipt, original, population)
+    const interpretations = new EvaluatorInterpretations(this.history, retrospective.populations, retrospective)
+    // The final source/disclosure decision must follow this caller await. A
+    // permission change during it must not commit or reveal a report identity.
+    await integration.authorize(actor)
+    await interpretations.authorizePublication(actor, population, body, signal)
+    signal?.throwIfAborted()
+    this.prepared(actor, pins)
+    const report = this.history.publishEvaluatorInterpretation(pins.batch_id, actor.session_id, body).report
+    return { batch_id: pins.batch_id, report_id: report.id, report_sha256: report.sha256, qualification: "publication-mechanics-only" as const }
   }
   async cancel(actor: Actor, pins: EvaluatorExecutionPins) {
     const { authority } = this.connected(), { subject } = await this.existing(actor, pins)

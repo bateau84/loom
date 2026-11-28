@@ -20,6 +20,13 @@ This document is a **proposed Stage 4 implementation contract**, derived from th
 
 The later [admission-assessment increment](ars-005-learning-stage4-admission.md) adds capability-specific read-only assessment of one prepared request and its canonical issue. The subsequent [restricted execution consumer](../design/ard-012-learning-restricted-execution.md) implements immutable admission, claim ordering and outcome reconciliation against a trusted adapter, with controlled-provider qualification kept separate from production authority. A qualified production adapter, real account/budget authorization and genuine reasoning remain unavailable. Those documents scope newer OpenCode 2.4.1 source findings separately from the historical host evidence below; no dependency upgrade or dispatch activation follows.
 
+The [S5 interpretation implementation](../design/ard-017-learning-evaluator-interpretations.md)
+adds the versioned result validator, atomic publication, attributable revisions
+and bounded authorized readers specified below. Its controlled execution tests
+qualify publication mechanics only. The historical qualification claims in this
+contract remain unchanged; S3 genuine reasoning and production authority are
+still separate, unresolved acceptance items.
+
 Example: three Coder handbacks concern one goal. The first two fail later verification; the third fixes the defect. R1 reviewed artifact A for security, while R2 checked only the correction in B. An Evaluator should explain the whole trajectory, recovery, useful practices and remaining uncertainty. It must neither count three wins nor promote either scoped review into general acceptance. It can conclude that no system change is justified.
 
 ## Derived from

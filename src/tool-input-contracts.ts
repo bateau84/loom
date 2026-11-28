@@ -44,6 +44,7 @@ const operationRequirements: Readonly<Record<string, Readonly<Record<string, rea
     "evaluation-preparation-members": ["batch_id", "request_id", "manifest_sha256"],
     "evaluation-preparation-source": ["batch_id", "request_id", "manifest_sha256", "member_key", "source_index"],
     "evaluation-admission": ["batch_id", "request_id", "manifest_sha256", "attempt_id"],
+    "evaluation-interpretation": ["batch_id"],
   },
 }
 

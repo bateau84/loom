@@ -117,7 +117,7 @@ export class EvaluatorPreparation {
     const frozen = this.store.reviews.freezeEvaluatorPreparation(mapped.requester, review)
     if (frozen.status === "conflict") throw new Error("Evaluator preparation review request conflict")
     this.store.reviews.prepareIssue(actor, mapped.request_id, { kind: "initial" })
-    this.automatic.history.block(batch.id, "evaluator-dispatch-unavailable")
+    if (batch.published_state !== "complete") this.automatic.history.block(batch.id, "evaluator-dispatch-unavailable")
     return this.read(actor.session_id, batch.id)
   }
 
@@ -142,7 +142,7 @@ export class EvaluatorPreparation {
     const frozen = this.store.reviews.freezeEvaluatorPreparation(mapped.requester, review)
     if (frozen.status === "conflict") throw new Error("Evaluator preparation review request conflict")
     this.store.reviews.prepareIssue(actor, mapped.request_id, { kind: "initial" })
-    this.automatic.history.block(batch.id, "evaluator-dispatch-unavailable")
+    if (batch.published_state !== "complete") this.automatic.history.block(batch.id, "evaluator-dispatch-unavailable")
     return this.read(actor.session_id, batch.id)
   }
 
