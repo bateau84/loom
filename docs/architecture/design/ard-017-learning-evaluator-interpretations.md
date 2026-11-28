@@ -125,6 +125,24 @@ wrong prior hashes, cross-objective references and cycles reject. A revision
 inherits the entire earlier report dependency union, not only the sources it
 cites. Up to 32 reports may participate in this bounded history graph.
 
+Publication admission and interpretation reads share a limit of **1,728 unique
+available native/external originals** across the complete dependency union:
+32 reports multiplied by the existing 54-attempt population-selection allowance.
+Exact identity includes the source namespace, pinned version/hash and permitted
+view. Repeated references to the same original consume one validation; a different
+version or view is a different dependency. This limit does not enlarge the
+ordinary population tools' 128-read budget, the 54-attempt selection allowance,
+or any inference reservation. The existing shared 60-second original-resolution
+deadline also remains in force.
+
+A report list validates its complete candidate union once, rather than resolving
+the same population separately for every entry. That union has the same 1,728
+original and 100,000 distinct selected-dependency bounds. A list that exceeds
+either bound rejects without returning a successful prefix or a cursor; reduce
+the requested list `limit`. A report exceeding the publication bound is rejected
+before any report/checkpoint is committed. Report pagination cannot reduce its
+dependency union, so changing the section or page size cannot bypass admission.
+
 Every read and publication checks current original availability and the complete
 selected/inherited disclosure union, including uncited inputs and frozen gaps.
 When that union contains multiple populations, the trusted integration must
@@ -133,6 +151,23 @@ combined into permission. The public plugin uses one native assertion over its
 accumulated source-view resources, followed by its existing final decision over
 the exact serialized response hash. This is a current read check, not a claim
 that the unresolved upstream atomic transfer boundary has been qualified.
+
+The registered reader batches selected-member permissions before source
+resolution. It reuses exact source-validation outcomes and immutable population
+hydration only within that invocation, and discards resolved original values
+after checking their pins. It does not retain grants or source observations for
+later pages. Source Session locations are checked again before the final
+serialized-response decision. This avoids repeatedly sending an expanding
+resource list to the permission owner for every member or population while retaining the full
+union, including unavailable and uncited sources, in both final decisions.
+
+The registered tool uses the same unavailable response for source/read failures,
+capacity rejection and final disclosure denial. It does not expose an inherited
+protected threshold through a more specific error. Check current source/report
+permissions, use the exact returned inspection/continuation command, or reduce
+the report-list `limit`. Trusted publication and stopped-backup diagnostics retain
+the precise admission reason. Cancellation remains cancellation. Empty lists also
+require the final current file-union decision over their exact serialized bytes.
 
 A source available at freeze that is now missing, changed or denied withholds
 dependent content, metadata, counts and cursors. It is not silently converted
@@ -214,6 +249,19 @@ Qualification entry points:
 - `tests/evaluator-interpretations-public-native.test.ts`: actual registered
   public tools, all representations, uncited dependency authorization, source
   loss, final disclosure denial and absence of import/dispatch operations.
+- `tests/evaluator-interpretation-capacity-native.test.ts`: shared publication
+  and readback admission at 1,728/1,729 originals, no partial list beyond the
+  union budget, per-invocation source revalidation and independent report lists.
+- `tests/evaluator-interpretations-history-native.test.ts`: registered-tool
+  revision and list readback at 128/129/162 distinct originals, exact owner-read
+  deduplication and inherited-source denial/loss through a controlled GitHub CLI
+  executable. This does not use a real account or qualify external availability.
+- `tests/evaluator-interpretations-scaling-native.test.ts`: registered-tool
+  readback, complete pagination and multi-population lists above 500 members, measured permission calls,
+  cumulative resources, latency and sampled memory, with exact final union and
+  serialized-response checks. Its native permission owner is a zero-delay
+  simulation: these measurements qualify the production callback's work, not
+  native permission-server or transport latency.
 - `tests/evaluator-interpretation-backup-native.test.ts` and
   `tests/test_evaluator_interpretation_backup.py`: stopped restore and
   checksum-consistent corruption controls.

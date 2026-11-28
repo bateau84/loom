@@ -7,7 +7,8 @@ import { assertEvaluatorReceiptProgress, evaluatorEnrollmentKey, parseEvaluatorA
 import { parseRetrospectiveManifest, retrospectiveBudget, retrospectiveDigest, RETROSPECTIVE_LIMITS,
   type RetrospectiveManifest, type RetrospectivePopulation, type RetrospectiveSources } from "./retrospective-contract.js"
 import { evaluatorInterpretationID, evaluatorMemberInterpretationID, evaluatorPriorReports,
-  INTERPRETATION_QUALIFICATIONS, validateEvaluatorPublication, type EvaluatorPublication } from "./evaluator-publication.js"
+  evaluatorInterpretationOriginals, EVALUATOR_INTERPRETATION_LIMITS, INTERPRETATION_QUALIFICATIONS,
+  validateEvaluatorPublication, type EvaluatorPublication } from "./evaluator-publication.js"
 
 export type EvaluationSourceRef = { kind: string; id: string; session_id?: string; message_id?: string; revision?: string; sha256?: string; required: boolean }
 export type EvaluationMember = { key: string; kind: "session" | "objective"; source_refs: EvaluationSourceRef[] }
@@ -79,6 +80,8 @@ export type EvaluatorInterpretationRecord = {
   report: EvaluationReport & { body: EvaluatorPublication }; batch: EvaluationBatch;
   population: RetrospectivePopulation; populations: RetrospectivePopulation[];
 }
+const interpretationPopulationSnapshot = () => ({ populations: new Map<string, RetrospectivePopulation>(),
+  originals: new Set<string>(), dependencies: new Set<string>() })
 export const EXECUTION_COLUMNS = {
   schema: ["singleton", "version"],
   admissions: ["batch_id", "request_id", "attempt_id", "authority_id", "reservation_id", "semantic_key", "data_json", "sha256"],
@@ -182,8 +185,8 @@ export class EvaluationStore {
     })
   }
 
-  private transaction<T>(run: () => T): T {
-    this.db.exec("BEGIN IMMEDIATE")
+  private transaction<T>(run: () => T, mode: "read" | "write" = "write"): T {
+    this.db.exec(mode === "read" ? "BEGIN" : "BEGIN IMMEDIATE")
     try { const result = run(); this.db.exec("COMMIT"); return result }
     catch (error) { try { this.db.exec("ROLLBACK") } catch { /* A lost COMMIT acknowledgement may follow a durable commit. */ } throw error }
   }
@@ -656,12 +659,12 @@ export class EvaluationStore {
   }
 
   private interpretationDependencies(body: EvaluatorPublication, population: RetrospectivePopulation, owner: string,
-    visiting: Set<string>, checked: Map<string, EvaluatorInterpretationRecord>) {
+    visiting: Set<string>, checked: Map<string, EvaluatorInterpretationRecord>, populationCache = interpretationPopulationSnapshot()) {
     const dependencies = population.manifest.members.map(member => member.source), populations = new Map([[population.population_id, population]])
     for (const reference of evaluatorPriorReports(body.interpretation)) {
       const row = this.db.prepare("SELECT batch_id FROM learning_evaluation_reports WHERE id=? AND slot='overall'").get(reference.report_id) as { batch_id: string } | undefined
       if (!row) throw new Error("Prior evaluator interpretation unavailable")
-      const prior = this.interpretationRecord(row.batch_id, owner, visiting, checked)
+      const prior = this.interpretationRecord(row.batch_id, owner, visiting, checked, populationCache)
       if (!prior || prior.report.id !== reference.report_id || prior.report.sha256 !== reference.report_sha256
         || prior.batch.source_store_id !== population.manifest.source_store_id
         || prior.population.manifest.selection.objective_id !== population.manifest.selection.objective_id)
@@ -673,13 +676,16 @@ export class EvaluationStore {
       dependencies.push(...prior.report.source_refs)
       for (const item of prior.populations) populations.set(item.population_id, item)
     }
-    return { dependencies: refs(dependencies), populations: [...populations.values()] }
+    const selected = [...populations.values()]
+    evaluatorInterpretationOriginals(selected)
+    return { dependencies: refs(dependencies), populations: selected }
   }
-  private interpretationRecord(batchID: string, owner: string, visiting = new Set<string>(), checked = new Map<string, EvaluatorInterpretationRecord>()): EvaluatorInterpretationRecord | null {
+  private interpretationRecord(batchID: string, owner: string, visiting = new Set<string>(), checked = new Map<string, EvaluatorInterpretationRecord>(),
+    populationCache = interpretationPopulationSnapshot()): EvaluatorInterpretationRecord | null {
     if (visiting.has(batchID)) throw new Error("Cyclic evaluator interpretation history")
     const known = checked.get(batchID)
     if (known) return known
-    if (checked.size + visiting.size >= 32) throw new Error("Evaluator interpretation history exceeds 32 reports")
+    if (checked.size + visiting.size >= EVALUATOR_INTERPRETATION_LIMITS.reports) throw new Error("Evaluator interpretation history exceeds 32 reports")
     const batch = this.row(batchID, owner), members = this.verifyMembership(batch)
     if (batch.scope_key !== "evaluator-preparation/retrospective") throw new Error("Evaluator interpretation unavailable")
     if (!batch.report_id) {
@@ -689,13 +695,19 @@ export class EvaluationStore {
     if (batch.state !== "complete") throw new Error("Evaluator interpretation publication is incomplete")
     const execution = this.executionRecord(batchID, owner), receipt = execution?.receipts.at(-1)
     if (!execution || !receipt || !execution.admission.grant.subject.source) throw new Error("Evaluator interpretation execution unavailable")
-    const population = this.retrospectivePopulation(execution.admission.grant.subject.source.population_id, owner)
+    const populationID = execution.admission.grant.subject.source.population_id
+    let population = populationCache.populations.get(populationID)
+    if (!population) {
+      population = this.retrospectivePopulation(populationID, owner)
+      evaluatorInterpretationOriginals([population], populationCache)
+      populationCache.populations.set(populationID, population)
+    }
     const report = this.structuralReport(batch.report_id, batch, null)
     const body = validateEvaluatorPublication(report.body, execution.admission, receipt, population)
     if (report.id !== evaluatorInterpretationID(body.binding) || encoded(report.qualifications) !== encoded(INTERPRETATION_QUALIFICATIONS))
       throw new Error("Evaluator interpretation identity mismatch")
     visiting.add(batchID)
-    const linked = this.interpretationDependencies(body, population, owner, visiting, checked)
+    const linked = this.interpretationDependencies(body, population, owner, visiting, checked, populationCache)
     if (encoded(report.source_refs) !== encoded(linked.dependencies)) throw new Error("Evaluator interpretation dependency union mismatch")
     for (const link of body.interpretation.prior_interpretations) {
       const prior = this.db.prepare("SELECT batch_id FROM learning_evaluation_reports WHERE id=?").get(link.report_id) as { batch_id: string }
@@ -718,7 +730,17 @@ export class EvaluationStore {
     return result
   }
   readEvaluatorInterpretation(batchID: string, owner: string): EvaluatorInterpretationRecord | null {
-    return this.transaction(() => this.interpretationRecord(batchID, owner))
+    return this.readEvaluatorInterpretations([batchID], owner)[0]!
+  }
+  /** One structural snapshot for a bounded list. Immutable populations are
+   * hydrated once, never reused across an asynchronous boundary. Each report's
+   * recursive history still has its own complete 32-report admission check. */
+  readEvaluatorInterpretations(batchIDs: string[], owner: string): Array<EvaluatorInterpretationRecord | null> {
+    if (batchIDs.length > 100) throw new Error("Evaluator interpretation read exceeds 100 reports")
+    return this.transaction(() => {
+      const populations = interpretationPopulationSnapshot()
+      return batchIDs.map(batchID => this.interpretationRecord(batchID, owner, new Set(), new Map(), populations))
+    }, "read")
   }
 
   /** Publish through the existing evaluation/report/dependency owners in one

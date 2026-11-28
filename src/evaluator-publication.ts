@@ -3,9 +3,33 @@ import { canonical, digest } from "./model.js"
 import type { EvaluatorExecutionAdmission, EvaluatorExecutionReceipt, EvaluatorExecutionSubject, EvaluatorOriginalResult,
   EvaluatorRetrievedSource } from "./evaluator-execution-contract.js"
 import { parseEvaluatorInterpretation, type EvaluatorInterpretation } from "./evaluator-interpretation.js"
-import { retrospectiveBudget, type RetrospectivePopulation } from "./retrospective-contract.js"
+import { retrospectiveBudget, RETROSPECTIVE_ORIGINAL_LIMITS, type RetrospectivePopulation } from "./retrospective-contract.js"
 
 export const INTERPRETATION_QUALIFICATIONS = ["Machine-validated publication; reasoning quality and review independence are not established."]
+// One interpretation may inherit the existing bounded 32-report history. Its
+// original-validation budget admits the union of 32 maximum public selections;
+// this does not enlarge ordinary population operations or inference budgets.
+const INTERPRETATION_REPORTS = 32
+export const EVALUATOR_INTERPRETATION_LIMITS = Object.freeze({ reports: INTERPRETATION_REPORTS,
+  originals: INTERPRETATION_REPORTS * RETROSPECTIVE_ORIGINAL_LIMITS.selection, dependencies: 100000 })
+
+/** Count exact available originals, not aliases, repeated report references or
+ * frozen gaps. Member identities bind namespace, version and permitted view.
+ * Publication and readback use the same bounds; no successful prefix is valid. */
+export function evaluatorInterpretationOriginals(populations: Iterable<RetrospectivePopulation>,
+  budget = { originals: new Set<string>(), dependencies: new Set<string>() }): Set<string> {
+  const { originals, dependencies } = budget
+  for (const population of populations) for (const member of population.manifest.members) {
+    dependencies.add(member.key)
+    if (dependencies.size > EVALUATOR_INTERPRETATION_LIMITS.dependencies)
+      throw new Error("Evaluator interpretation dependency union exceeds 100000 sources; narrow the publication dependency union or reduce the report-list limit")
+    if (member.availability !== "available" || !["native-message", "native-call", "external-ref"].includes(member.source.kind)) continue
+    originals.add(member.key)
+    if (originals.size > EVALUATOR_INTERPRETATION_LIMITS.originals)
+      throw new Error(`Evaluator interpretation exceeds ${EVALUATOR_INTERPRETATION_LIMITS.originals} unique pinned native/external originals; narrow the publication dependency union or reduce the report-list limit`)
+  }
+  return originals
+}
 export type EvaluatorPublication = {
   format: "loom-evaluator-publication/v1";
   binding: { subject: EvaluatorExecutionSubject; admission_sha256: string; method_sha256: string;
@@ -75,6 +99,6 @@ export function evaluatorPriorReports(interpretation: EvaluatorInterpretation) {
     if (old && old.report_sha256 !== reference.report_sha256) throw new Error("Conflicting prior interpretation identity")
     found.set(reference.report_id, { report_id: reference.report_id, report_sha256: reference.report_sha256 })
   }
-  if (found.size > 32) throw new Error("Evaluator interpretation history exceeds 32 reports")
+  if (found.size > EVALUATOR_INTERPRETATION_LIMITS.reports) throw new Error("Evaluator interpretation history exceeds 32 reports")
   return [...found.values()]
 }

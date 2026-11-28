@@ -1,10 +1,12 @@
 import { expect, test } from "bun:test"
+import { createHash } from "node:crypto"
 import { join } from "node:path"
 import { digest } from "../src/model.js"
 import { EvaluatorInterpretations } from "../src/evaluator-interpretations.js"
 import { registeredLoom } from "./helpers/registered-loom.js"
 import { openState } from "./helpers/evaluator-execution-fixture.js"
 import { publicationFixture } from "./helpers/evaluator-publication-fixture.js"
+import { expectInterpretationUnavailable } from "./helpers/evaluator-public-failure.js"
 
 async function fixture() {
   const host = await registeredLoom()
@@ -75,7 +77,7 @@ test("metadata, lists, pages and human views require the uncited source disclosu
     }
     for (const run of [() => f.read({ section: "overview" }), () => f.read({ section: "sources", limit: 1 }),
       () => f.host.invoke("insights", { operation: "evaluation-interpretations" }, "owner"), () => f.render("markdown"), () => f.render("html")])
-      await expect(run()).rejects.toThrow("Uncited source disclosure denied")
+      await expectInterpretationUnavailable(run())
     expect(f.controlled.base.counts().effects).toBe(1)
   } finally { f.host.permission.beforeReturn = undefined; await f.close() }
 })
@@ -87,7 +89,7 @@ test("current loss of an uncited original withholds the entire retained interpre
     f.state.ledger.query("DELETE FROM ledger WHERE id=?").run(member.source.id)
     for (const run of [() => f.read({}), () => f.read({ section: "gaps" }),
       () => f.host.invoke("insights", { operation: "evaluation-interpretations" }, "owner"), () => f.render("html")])
-      await expect(run()).rejects.toThrow("source unavailable or changed")
+      await expectInterpretationUnavailable(run())
     const saved = f.state.learning.automatic.history.readEvaluatorInterpretation(f.report.batch_id, "owner")
     expect(saved!.report.id).toBe(f.report.report_id)
     expect(saved!.report.body.interpretation.claims).toHaveLength(37)
@@ -100,7 +102,7 @@ test("final serialized-response authorization can deny both human representation
     f.host.permission.beforeReturn = async () => {
       if (f.host.permissionRequests.at(-1)?.metadata?.view_sha256) throw new Error("Final report disclosure revoked")
     }
-    for (const format of ["html", "markdown"] as const) await expect(f.render(format)).rejects.toThrow("Final report disclosure revoked")
+    for (const format of ["html", "markdown"] as const) await expectInterpretationUnavailable(f.render(format))
     expect(f.controlled.base.counts().effects).toBe(1)
   } finally { f.host.permission.beforeReturn = undefined; await f.close() }
 })
@@ -108,12 +110,13 @@ test("final serialized-response authorization can deny both human representation
 test("foreign owners, mixed fields and a forged continuation cannot disclose S5 content", async () => {
   const f = await fixture()
   try {
-    await expect(f.read({}, "foreign")).rejects.toThrow()
+    await expectInterpretationUnavailable(f.read({}, "foreign"))
+    await expectInterpretationUnavailable(f.read({ batch_id: "eval-preparation-unknown" }))
     const page = await f.read({ section: "claims", limit: 1 })
-    await expect(f.read({ ...page.navigation.next, report_sha256: "f".repeat(64) })).rejects.toThrow("identity changed")
-    await expect(f.read({ ...page.navigation.next, section: "sources" })).rejects.toThrow("cursor")
-    await expect(f.read({ original_result_text: "caller-import" })).rejects.toThrow("Invalid evaluator interpretation read")
-    await expect(f.read({ authority: true })).rejects.toThrow("Invalid evaluator interpretation read")
+    await expectInterpretationUnavailable(f.read({ ...page.navigation.next, report_sha256: "f".repeat(64) }))
+    await expectInterpretationUnavailable(f.read({ ...page.navigation.next, section: "sources" }))
+    await expectInterpretationUnavailable(f.read({ original_result_text: "caller-import" }))
+    await expectInterpretationUnavailable(f.read({ authority: true }))
     await expect(f.host.invoke("insights", { operation: "evaluation-status", section: "claims" }, "owner")).rejects.toThrow("Interpretation fields")
     for (const operation of ["publish-evaluation", "import-interpretation", "execute-evaluation"])
       await expect(f.host.invoke("insights", { operation, batch_id: f.report.batch_id }, "owner")).rejects.toThrow()
@@ -142,7 +145,77 @@ test("an older report does not disclose the existence of a later restricted inte
     const after = await f.read({ section: "overview" })
     expect(after).toEqual(before)
     expect(after.revision_status).toBe("not-assessed-by-this-view")
-    await expect(f.read({ batch_id: revised.batch_id })).rejects.toThrow("Later interpretation source denied")
-    await expect(f.host.invoke("insights", { operation: "evaluation-interpretations" }, "owner")).rejects.toThrow("Later interpretation source denied")
+    await expectInterpretationUnavailable(f.read({ batch_id: revised.batch_id }))
+    await expectInterpretationUnavailable(f.host.invoke("insights", { operation: "evaluation-interpretations" }, "owner"))
   } finally { later.close(); f.host.permission.beforeReturn = undefined; await f.close() }
+})
+
+test("source and final-grant exceptions expose no original detail, cause, count or continuation", async () => {
+  const f = await fixture()
+  try {
+    for (const phase of ["file", "source", "final"]) {
+      let denied = false
+      f.host.permission.beforeReturn = async () => {
+        const request = f.host.permissionRequests.at(-1)
+        const matching = phase === "file" ? !request.metadata
+          : phase === "final" ? !!request.metadata?.view_sha256
+          : request.resources?.some((resource: string) => resource.includes(":record:"))
+        if (matching) {
+          denied = true
+          throw Object.assign(new Error("Hidden source count=1779; cursor=secret; original=private"), {
+            content: "private original", count: 1779, cursor: "secret", cause: new Error("private cause"),
+          })
+        }
+      }
+      await expectInterpretationUnavailable(f.read({ section: "overview" }))
+      expect(denied).toBe(true)
+    }
+  } finally { f.host.permission.beforeReturn = undefined; await f.close() }
+})
+
+test("an empty registered interpretation list still requires a final exact-response decision", async () => {
+  const host = await registeredLoom()
+  try {
+    const path = join(host.directory, "state", "loom", "actions-v1", digest({ project: "tool-help", canonical: host.directory }))
+    const read = () => host.tools.get("insights").execute({ operation: "evaluation-interpretations", limit: 1 },
+      { sessionID: "owner", agent: "author", messageID: "empty-list", id: "empty-list", signal: new AbortController().signal })
+    const output = await read(), page = JSON.parse(output.content).result
+    expect(page.items).toEqual([]); expect(page.next_before).toBeNull()
+    const final = host.permissionRequests.at(-1)
+    expect(new Set(final.resources)).toEqual(new Set([join(path, "ledger.sqlite"), join(path, "learning.sqlite")]))
+    expect(final.metadata.view_sha256).toBe(createHash("sha256").update(output.content).digest("hex"))
+    host.permission.beforeReturn = async () => {
+      if (host.permissionRequests.at(-1)?.metadata?.view_sha256) throw new Error("Hidden empty-list disclosure denied")
+    }
+    await expectInterpretationUnavailable(read())
+    expect(host.sessionCreates).toEqual([]); expect(host.sessionPrompts).toEqual([])
+  } finally { host.permission.beforeReturn = undefined; await host.close() }
+})
+
+test("caller cancellation wins over a racing private source or final-grant exception", async () => {
+  const f = await fixture()
+  try {
+    for (const phase of ["source", "final"]) {
+      const controller = new AbortController(), reason = new Error("Controlled caller cancellation")
+      let aborted = false
+      f.host.permission.beforeReturn = async () => {
+        const request = f.host.permissionRequests.at(-1)
+        if (phase === "final" ? !!request.metadata?.view_sha256
+          : request.resources?.some((resource: string) => resource.includes(":record:"))) {
+          aborted = true
+          controller.abort(reason)
+          throw Object.assign(new Error("Private source text raced with cancellation"), { cause: new Error("Private owner cause") })
+        }
+      }
+      const failure = await f.host.tools.get("insights").execute({ operation: "evaluation-interpretation",
+        batch_id: f.report.batch_id, section: "overview" },
+      { sessionID: "owner", agent: "author", messageID: "cancelled-read", id: "cancelled-read", signal: controller.signal })
+        .then(() => undefined, (error: unknown) => error)
+      expect(aborted).toBe(true)
+      expect(failure).toBe(reason)
+      expect(failure.message).toBe("Controlled caller cancellation")
+      expect(failure.cause).toBeUndefined()
+    }
+    expect(f.controlled.base.counts().effects).toBe(1)
+  } finally { f.host.permission.beforeReturn = undefined; await f.close() }
 })

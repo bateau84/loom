@@ -42,16 +42,23 @@ class InterpretationBackupTest(unittest.TestCase):
     def record(self, table, values):
         self.db.execute("INSERT INTO " + table + " (" + ",".join(values) + ") VALUES (" + ",".join("?" for _ in values) + ")", tuple(values.values()))
 
-    def publication(self, name="first", prior=None, objective="selected-objective", original_text=None):
+    def publication(self, name="first", prior=None, objective="selected-objective", original_text=None, originals=None, source_prefix=None):
         members = {}
-        for ordinal, available in enumerate((True, False), 1):
-            source = {"kind": "ledger-record", "id": name + "-source-" + str(ordinal), "session_id": "contributor",
-                      "revision": "1", "sha256": fingerprint(name + str(ordinal)), "required": True}
-            key = "source-" + fingerprint({"source_store_id": "namespace", "source": {k: v for k, v in source.items() if k != "required"},
-                                           "permitted_view": "record-full"})
-            members[key] = {"key": key, "source": source, "source_store_id": "namespace", "permitted_view": "record-full",
+        selected = source_prefix or name
+        for ordinal, available in enumerate((True, False) if originals is None else [True] * originals, 1):
+            source = {"kind": "ledger-record", "id": selected + "-source-" + str(ordinal), "session_id": "contributor",
+                      "revision": "1", "sha256": fingerprint(selected + str(ordinal)), "required": True}
+            namespace, view = "namespace", "record-full"
+            if originals is not None:
+                source["kind"] = "external-ref"
+                source["id"] = "https://github.com/fixture/evidence/blob/" + "a" * 40 + "/" + selected + "-" + str(ordinal)
+                del source["session_id"]
+                namespace, view = "github-controlled-owner", "github-original/v1"
+            key = "source-" + fingerprint({"source_store_id": namespace, "source": {k: v for k, v in source.items() if k != "required"},
+                                           "permitted_view": view})
+            members[key] = {"key": key, "source": source, "source_store_id": namespace, "permitted_view": view,
                             "availability": "available" if available else "missing"}
-        first, missing = members
+        first = next(iter(members))
         interpretation = {
             "format": "loom-evaluator-interpretation/v1", "covered_members": list(members),
             "conclusion": {"kind": "no-change", "statement": "Retain the observed bounded validation practice.", "limitations": ["Fixture mechanics only."]},
@@ -61,7 +68,9 @@ class InterpretationBackupTest(unittest.TestCase):
                         "statement": "The result records a focused verification step.", "members": [first],
                         "supporting": [{"member_key": first, "source_index": 0}], "contradicting": [], "limitations": [],
                         "applicability": ["The selected frozen objective."], "recommendation": None}],
-            "review_coverage": [], "gaps": [{"member_key": missing, "kind": "unavailable", "reason": "The frozen source was missing."}],
+            "review_coverage": [], "gaps": [{"member_key": key,
+                "kind": "unavailable" if member["availability"] == "missing" else "not-retrieved",
+                "reason": "The frozen source was missing or not retrieved."} for key, member in members.items() if key != first],
             "qualifications": {"chronology": [], "independence": "unknown"},
             "prior_interpretations": [] if prior is None else [{"report_id": prior["id"], "report_sha256": prior["sha256"],
                 "relation": "contests", "reason": "Later evidence limits the earlier conclusion."}],
@@ -141,6 +150,22 @@ class InterpretationBackupTest(unittest.TestCase):
 
     def test_accepts_exact_native_result_bytes_without_live_source_lookup(self):
         self.publication(original_text=lambda value: json.dumps(value, indent=2, ensure_ascii=False))
+        self.validate()
+
+    def test_accepts_the_full_1728_original_revision_union(self):
+        first = self.publication("first", originals=900)
+        self.publication("second", prior=first, originals=828)
+        self.validate()
+
+    def test_rejects_a_1729_original_revision_union_even_with_valid_report_checksums(self):
+        first = self.publication("first", originals=900)
+        self.publication("second", prior=first, originals=829)
+        with self.assertRaisesRegex(ValueError, "exceeds 1728 unique pinned"):
+            self.validate()
+
+    def test_deduplicates_exact_originals_in_overlapping_revision_populations(self):
+        first = self.publication("first", originals=900, source_prefix="shared")
+        self.publication("second", prior=first, originals=900, source_prefix="shared")
         self.validate()
 
     def test_rejects_boolean_result_index_as_equivalent_to_numeric_interpretation_index(self):

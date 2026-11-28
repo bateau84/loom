@@ -33,19 +33,20 @@ import { withToolNavigation } from "./tool-navigation.js"
 import { findTraceSource, readSessionExport, traceTimeline } from "./session-trace.js"
 import { nativeEvidenceDigest, nativeEvidenceParts, nativeEvidenceSource, type NativeEvidenceField, type NativeEvidenceMatchField } from "./native-evidence.js"
 import { retrospectiveProposal, type RetrospectiveSourceResolver, type RetrospectivePopulationView } from "./retrospective-populations.js"
-import { retrospectiveDigest, type RetrospectiveManifest, type RetrospectivePopulation } from "./retrospective-contract.js"
+import { retrospectiveDigest, RETROSPECTIVE_ORIGINAL_LIMITS, type RetrospectiveManifest, type RetrospectivePopulation } from "./retrospective-contract.js"
 import { externalOriginalDescriptor, resolveExternalOriginal } from "./external-originals.js"
 import { nativeOriginalDescriptor, resolveNativeOriginal } from "./native-originals.js"
 import { retrospectiveSourceView, renderRetrospectiveSourceHTML, renderRetrospectiveSourceMarkdown } from "./retrospective-source-view.js"
 import { EvaluatorInterpretations, INTERPRETATION_READS } from "./evaluator-interpretations.js"
+import { EVALUATOR_INTERPRETATION_LIMITS } from "./evaluator-publication.js"
 import { renderEvaluatorInterpretationHTML, renderEvaluatorInterpretationMarkdown, type EvaluatorInterpretationPage } from "./evaluator-interpretation-view.js"
 
-const ORIGINAL_READ_LIMIT = 128
-const FREEZE_POPULATION_PAGE_LIMIT = 20
+const ORIGINAL_READ_LIMIT = RETROSPECTIVE_ORIGINAL_LIMITS.reads
+const FREEZE_POPULATION_PAGE_LIMIT = RETROSPECTIVE_ORIGINAL_LIMITS.freezePage
 // Reserve a fresh owner validation for every selected original and every item
 // in the freeze response. Deduplication may reduce work; admission never relies
 // on it. Preview presentation (at most 50 items) also fits the same total cap.
-const ORIGINAL_SELECTION_LIMIT = Math.floor((ORIGINAL_READ_LIMIT - FREEZE_POPULATION_PAGE_LIMIT) / 2)
+const ORIGINAL_SELECTION_LIMIT = RETROSPECTIVE_ORIGINAL_LIMITS.selection
 
 function payload(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected an object")
@@ -477,6 +478,23 @@ export default Plugin.define({
             // This observes native policy; it is not a qualified atomic transfer fence.
             const evidenceResources = new Set<string>()
             const evidenceSessions = new Set<string>([actor.session_id])
+            const interpretationRead = spec.name === "insights" && (INTERPRETATION_READS as readonly unknown[]).includes(input.operation)
+            const interpretationUnavailable = (error: unknown): never => {
+              if (!interpretationRead) throw error
+              // Preserve the actual cancellation reason, not an unrelated
+              // source exception that happened to race with cancellation.
+              lifetime.signal.throwIfAborted(); toolContext.signal.throwIfAborted()
+              throw new Error("Evaluator interpretation unavailable; check current source permissions or reduce the report-list limit")
+            }
+            const serializeEvidence = (render: () => string): string => {
+              try { return render() } catch (error) { return interpretationUnavailable(error) }
+            }
+            // These observations belong to this invocation only. A report's
+            // complete union is authorized again after source validation, then
+            // once more over the exact serialized response immediately before
+            // return. Other historical tools retain their existing read gates.
+            const interpretationGrants = new Set<string>()
+            const interpretationSessions = new Map<string, Record<string, unknown>>()
             // uid permits ':' in native identities. Encode components so an ID
             // cannot impersonate resource separators or another exact tuple.
             const evidenceID = (value: unknown, label: string) => encodeURIComponent(uid(value, label))
@@ -488,18 +506,34 @@ export default Plugin.define({
                 metadata: { purpose: "historical-engineering-evidence", recipient_session_id: actor.session_id,
                   ...(viewSha256 ? { view_sha256: viewSha256 } : {}) } })
               lifetime.signal.throwIfAborted(); toolContext.signal.throwIfAborted()
+              if (interpretationRead) for (const resource of resources) interpretationGrants.add(resource)
+            }
+            const sourceEvidenceResources = (scope: string, views: string[], inspect: string[] = []) => [
+              `loom:evidence:discover:${scope}`,
+              ...views.map(view => `loom:evidence:disclose:${scope}:view:${view}:recipient:${evidenceID(actor.session_id, "recipient Session")}`),
+              ...inspect.map(view => `loom:evidence:inspect:${scope}:view:${view}`),
+            ]
+            const addInterpretationEvidence = async (resources: string[]) => {
+              const pending = [...new Set(resources)].filter(resource => !interpretationGrants.has(resource))
+              for (const resource of resources) evidenceResources.add(resource)
+              if (pending.length) await assertEvidence(pending)
             }
             const beginEvidence = async (scope: string, views: string[], inspect: string[] = []) => {
               const discovery = `loom:evidence:discover:${scope}`
               // Do not look up the target, return a cursor, or count its records first.
-              await assertEvidence([discovery])
-              evidenceResources.add(discovery)
-              for (const view of views) evidenceResources.add(`loom:evidence:disclose:${scope}:view:${view}:recipient:${evidenceID(actor.session_id, "recipient Session")}`)
-              for (const view of inspect) evidenceResources.add(`loom:evidence:inspect:${scope}:view:${view}`)
+              if (!interpretationRead || !interpretationGrants.has(discovery)) await assertEvidence([discovery])
+              const resources = sourceEvidenceResources(scope, views, inspect)
+              if (interpretationRead) { await addInterpretationEvidence(resources); return }
+              for (const resource of resources) evidenceResources.add(resource)
               await assertEvidence([...evidenceResources])
             }
-            const evidenceSession = async (id: string) => {
-              try { return await checkedSession(id) }
+            const evidenceSession = async (id: string, fresh = false) => {
+              try {
+                if (interpretationRead && !fresh && interpretationSessions.has(id)) return interpretationSessions.get(id)!
+                const session = await checkedSession(id)
+                if (interpretationRead) interpretationSessions.set(id, session)
+                return session
+              }
               catch { throw new Error("Evidence source unavailable in the authorized scope") }
             }
             const authorizeReview = async () => {
@@ -637,19 +671,23 @@ export default Plugin.define({
               return { query, view, owners, associations: sources.associations, contributors: sourceSessions }
             }
             const populationContributors = async (contributors: string[]) => {
+              const resources: string[] = []
               for (const session of contributors) for (const view of ["engineering-history", "retrospective-population"]) {
                 const scope = "session:" + evidenceID(session, "source contributor")
-                evidenceResources.add(`loom:evidence:discover:${scope}`)
-                evidenceResources.add(`loom:evidence:inspect:${scope}:view:${view}`)
-                evidenceResources.add(`loom:evidence:disclose:${scope}:view:${view}:recipient:${evidenceID(actor.session_id, "recipient Session")}`)
+                resources.push(`loom:evidence:discover:${scope}`,
+                  `loom:evidence:inspect:${scope}:view:${view}`,
+                  `loom:evidence:disclose:${scope}:view:${view}:recipient:${evidenceID(actor.session_id, "recipient Session")}`)
               }
+              if (interpretationRead) { await addInterpretationEvidence(resources); return }
+              for (const resource of resources) evidenceResources.add(resource)
               await assertEvidence([...evidenceResources])
             }
             let originalReads = 0, originalSelectionReads: number | undefined, originalSignal: AbortSignal | undefined
+            const originalReadLimit = interpretationRead ? EVALUATOR_INTERPRETATION_LIMITS.originals : ORIGINAL_READ_LIMIT
             const originalReadSignal = () => {
               if (originalSelectionReads !== undefined && ++originalSelectionReads > ORIGINAL_SELECTION_LIMIT)
                 throw new Error(`Retrospective selection exceeds ${ORIGINAL_SELECTION_LIMIT} native/external resolution attempts; narrow the selection to reserve freeze revalidation and readback within ${ORIGINAL_READ_LIMIT} reads`)
-              if (++originalReads > ORIGINAL_READ_LIMIT) throw new Error("Original-source resolution exceeds the complete bounded read; narrow the selected population")
+              if (++originalReads > originalReadLimit) throw new Error("Original-source resolution exceeds the complete bounded read; narrow the selected population")
               return originalSignal ??= AbortSignal.any([lifetime.signal, toolContext.signal, AbortSignal.timeout(60000)])
             }
             const populationResolver: RetrospectiveSourceResolver = async request => {
@@ -664,6 +702,7 @@ export default Plugin.define({
                 return resolveExternalOriginal(request, { directory,
                   signal: originalReadSignal(),
                   authorize: async resources => {
+                    if (interpretationRead) { await addInterpretationEvidence(resources); return }
                     for (const resource of resources) evidenceResources.add(resource)
                     await assertEvidence([...evidenceResources])
                   } })
@@ -714,8 +753,11 @@ export default Plugin.define({
               const populationID = uid(id, "population_id")
               if (typeof sha256 !== "string" || !/^[a-f0-9]{64}$/.test(sha256)) throw new Error("Invalid retrospective manifest fingerprint")
               await beginEvidence("population:" + evidenceID(populationID, "population_id"), ["retrospective-population"], ["retrospective-population"])
-              evidenceResources.add(filename); evidenceResources.add(learningFilename)
-              await assertEvidence([...evidenceResources])
+              if (interpretationRead) await addInterpretationEvidence([filename, learningFilename])
+              else {
+                evidenceResources.add(filename); evidenceResources.add(learningFilename)
+                await assertEvidence([...evidenceResources])
+              }
               const owner = requiredLearning().automatic.history
               let sources: ReturnType<typeof owner.retrospectiveSources>
               try { sources = owner.retrospectiveSources(populationID, ownerOnly ? actor.session_id : undefined) }
@@ -1081,10 +1123,15 @@ export default Plugin.define({
               }
               case "insights":
                 if ((INTERPRETATION_READS as readonly unknown[]).includes(input.operation)) {
-                  await ctx.permission.assert({ action: "read", resources: [filename, learningFilename],
-                    sessionID: toolContext.sessionID, agent: toolContext.agent,
-                    source: { type: "tool", messageID: toolContext.messageID, id: toolContext.id } })
-                  await checkedSession(actor.session_id)
+                  try {
+                    await ctx.permission.assert({ action: "read", resources: [filename, learningFilename],
+                      sessionID: toolContext.sessionID, agent: toolContext.agent,
+                      source: { type: "tool", messageID: toolContext.messageID, id: toolContext.id } })
+                    await checkedSession(actor.session_id)
+                    // Even an empty report list must receive the final current
+                    // file-union decision bound to its exact serialized bytes.
+                    evidenceResources.add(filename); evidenceResources.add(learningFilename)
+                  } catch (error) { interpretationUnavailable(error) }
                   const history = requiredLearning().automatic.history, selected = new Map<string, string>(), scope = store.captureScope()
                   const interpretations = new EvaluatorInterpretations(history, requiredLearning().populations, {
                     resolve: populationResolver,
@@ -1093,9 +1140,15 @@ export default Plugin.define({
                     authorizeUnion: async () => { await assertEvidence([...evidenceResources]) },
                     authorize: async (recipient, metadata) => {
                       if (recipient.session_id !== actor.session_id) throw new Error("Evaluator interpretation unavailable")
+                      const prior = selected.get(metadata.population_id)
+                      if (prior !== undefined) {
+                        if (prior !== metadata.manifest_sha256) throw new Error("Evaluator interpretation population changed")
+                        return
+                      }
                       const population = await populationRead(metadata.population_id, metadata.manifest_sha256, true)
                       // Report metadata and an uncited/frozen-gap source still
                       // depend on the complete selected disclosure union.
+                      const resources: string[] = []
                       for (const member of population.manifest.members) {
                         const ref = member.source
                         let sourceScope = `${ref.kind}:${encodeURIComponent(ref.id)}`, views = [member.permitted_view]
@@ -1107,12 +1160,24 @@ export default Plugin.define({
                             + (ref.kind === "native-call" ? `:part:${evidenceID(ref.id, "source part")}` : "")
                           views = ref.kind === "native-call" ? ["input", "output", "error", "status", "dispatch"].map(field => "native-" + field) : ["native-user-text"]
                         }
-                        await beginEvidence(sourceScope, views, views)
+                        resources.push(...sourceEvidenceResources(sourceScope, views, views))
                       }
+                      // Authorize the selected member resources together before
+                      // any original is resolved; never grow/assert the full
+                      // union once per member. Repeated exact resources and
+                      // populations share only this invocation's observations.
+                      await addInterpretationEvidence(resources)
                       selected.set(population.population_id, population.manifest_sha256)
                     },
                   })
-                  result = await interpretations.read(actor, input, AbortSignal.any([lifetime.signal, toolContext.signal]))
+                  try { result = await interpretations.read(actor, input, AbortSignal.any([lifetime.signal, toolContext.signal])) }
+                  catch (error) {
+                    // Structural admission can encounter inherited populations
+                    // before all source grants are known. Source loss, denial,
+                    // capacity and unavailable history must not identify which
+                    // protected condition failed. Trusted owners retain detail.
+                    interpretationUnavailable(error)
+                  }
                   evidenceSourceCheck = async () => {
                     if (store.captureScope() !== scope) throw new Error("Evaluator interpretation sources changed")
                     for (const [id, sha256] of selected) if (history.retrospectivePopulation(id, actor.session_id).manifest_sha256 !== sha256)
@@ -1624,7 +1689,7 @@ export default Plugin.define({
             const populationView = spec.name === "history" && ["preview-population", "population"].includes(String(input.operation))
             const sourceView = spec.name === "history" && input.operation === "population-source"
             const interpretationView = spec.name === "insights" && input.operation === "evaluation-interpretation"
-            const content = interpretationView && input.response_format === "html" ? renderEvaluatorInterpretationHTML(result as EvaluatorInterpretationPage)
+            const content = serializeEvidence(() => interpretationView && input.response_format === "html" ? renderEvaluatorInterpretationHTML(result as EvaluatorInterpretationPage)
               : interpretationView && input.response_format === "markdown" ? renderEvaluatorInterpretationMarkdown(result as EvaluatorInterpretationPage)
               : sourceView && input.response_format === "html" ? renderRetrospectiveSourceHTML(result)
               : sourceView && input.response_format === "markdown" ? renderRetrospectiveSourceMarkdown(result)
@@ -1634,7 +1699,7 @@ export default Plugin.define({
               ? renderEngineeringHistoryHTML(result as EngineeringHistoryView)
               : spec.name === "history" && input.response_format === "markdown"
                 ? renderEngineeringHistoryMarkdown(result as EngineeringHistoryView)
-                : JSON.stringify({ result, ...diagnostics })
+                : JSON.stringify({ result, ...diagnostics }))
             if (spec.name === "trace" && Buffer.byteLength(content, "utf8") > 262144)
               throw new Error("Trace response exceeds the 262144-byte limit; reduce limit or disable include_text")
             if (spec.name === "record" && input.view === "full_thread") {
@@ -1648,14 +1713,16 @@ export default Plugin.define({
               }
             }
             if (evidenceResources.size) {
-              if (Buffer.byteLength(content, "utf8") > 262144) throw new Error(spec.name === "history"
-                ? "History response exceeds 262144 bytes; reduce limit or narrow the filters or scope"
-                : "Evidence response exceeds 262144 bytes; reduce the page or selected fields")
-              await evidenceSourceCheck?.()
-              for (const session of evidenceSessions) await evidenceSession(session)
-              // The serialized response and all source/location work precede the
-              // final native decision. Do not await anything between it and return.
-              await assertEvidence([...evidenceResources], createHash("sha256").update(content).digest("hex"))
+              try {
+                if (Buffer.byteLength(content, "utf8") > 262144) throw new Error(spec.name === "history"
+                  ? "History response exceeds 262144 bytes; reduce limit or narrow the filters or scope"
+                  : "Evidence response exceeds 262144 bytes; reduce the page or selected fields")
+                await evidenceSourceCheck?.()
+                for (const session of evidenceSessions) await evidenceSession(session, true)
+                // The serialized response and all source/location work precede
+                // the final native decision. Do not await between it and return.
+                await assertEvidence([...evidenceResources], createHash("sha256").update(content).digest("hex"))
+              } catch (error) { interpretationUnavailable(error) }
             }
             return { content }
           },

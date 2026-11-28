@@ -202,6 +202,31 @@ execution permit. A configured positive bound qualifies only the tested
 complete evidence envelope, not arbitrary larger populations or production
 source-transfer authority.
 
+### Durable Evaluator interpretations (S5)
+
+The [S5 implementation](../architecture/design/ard-017-learning-evaluator-interpretations.md)
+extends the existing consumer with result validation, atomic publication,
+attributable revisions and authorized readers. `tests/installed_evaluator_interpretations.py`
+qualifies this path using the exact installed candidate and the existing
+controlled native lifecycle. Scripted results establish publication mechanics,
+not genuine Evaluator reasoning or production authority.
+
+For revision-capacity and registered-reader composition checks:
+
+```sh
+bun test tests/evaluator-interpretation-capacity-native.test.ts tests/evaluator-interpretations-history-native.test.ts tests/evaluator-interpretations-scaling-native.test.ts
+```
+
+The history suite uses a disposable, credential-free controlled `gh` executable
+through the production original-source reader. The scaling suite invokes the
+registered tool above 500 members and checks complete pagination, denial, source
+loss, final resource union and exact response hashing. Its permission owner is
+simulated with zero delay. Permission-call/resource counts measure the actual
+callback; latency and sampled memory do not include a real native permission
+server or transport. Set `LOOM_S5_REGISTERED_METRICS` to a new output path under
+`/tmp` to retain its JSONL measurements. Delivery receipts identify the measured
+source revision and distinguish these checks from installed-host results.
+
 ### Engineering-history browser and comparative qualification
 
 The shared fixture in `tests/helpers/engineering-history-scenarios.ts` creates

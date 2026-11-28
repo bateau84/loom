@@ -24,6 +24,12 @@ FORMAT = "loom-stopped-state/v1"
 MANIFEST = "loom-state-manifest.json"
 DATABASES = ("ledger.sqlite", "learning.sqlite")
 SIDECARS = ("-wal", "-shm", "-journal")
+# Mirror the runtime derivation, not a separate restore allowance. A report can
+# inherit at most 32 public selections; each selection reserves one freeze page
+# and a second validation within the ordinary 128-read budget.
+INTERPRETATION_REPORT_LIMIT = 32
+INTERPRETATION_ORIGINAL_LIMIT = INTERPRETATION_REPORT_LIMIT * ((128 - 20) // 2)
+INTERPRETATION_DEPENDENCY_LIMIT = 100000
 REQUIRED_TABLES = {
     # Historical sender/fence tables are optional in fresh installations.
     "ledger.sqlite": {
@@ -803,16 +809,21 @@ def retrospective_interpretation_integrity(db, prepared, has_execution):
                                    "priors": priors, "recommendations": recommendations, "records": records}
 
     resolved, ancestors, visiting = {}, {}, set()
+    original_unions, member_unions = {}, {}
 
     def dependencies(report_id):
         if report_id in resolved:
             return resolved[report_id]
         require(report_id not in visiting, "Cyclic interpretation revision provenance")
         visiting.add(report_id)
-        require(len(visiting) <= 32, "Interpretation revision history exceeds 32 reports")
+        require(len(visiting) <= INTERPRETATION_REPORT_LIMIT, "Interpretation revision history exceeds 32 reports")
         current = publications[report_id]
         population = current["prepared"]["population"]
         refs = [ref for _, source_refs in population["members"] for ref in raw_array(source_refs)]
+        selected = set(population["manifest_members"])
+        originals = {key for key, member in population["manifest_members"].items()
+                     if member["availability"] == "available"
+                     and member["source"]["kind"] in ("native-message", "native-call", "external-ref")}
         ancestry = {report_id}
         for prior_id, fingerprint in current["priors"].items():
             require(prior_id in publications, "Missing prior interpretation publication")
@@ -822,8 +833,10 @@ def retrospective_interpretation_integrity(db, prepared, has_execution):
                     and old["namespace"] == population["namespace"] and old["objective_id"] == population["objective_id"],
                     "Prior interpretation provenance mismatch")
             refs.extend(dependencies(prior_id).values())
+            selected.update(member_unions[prior_id])
+            originals.update(original_unions[prior_id])
             ancestry.update(ancestors[prior_id])
-            require(len(ancestry) <= 32, "Interpretation revision history exceeds 32 reports")
+            require(len(ancestry) <= INTERPRETATION_REPORT_LIMIT, "Interpretation revision history exceeds 32 reports")
             link = next(item for item in current["body"]["interpretation"]["prior_interpretations"] if item["report_id"] == prior_id)
             invalidation = db.execute("SELECT 1 FROM learning_evaluation_invalidations WHERE batch_id=? AND source_key=? AND reason=?",
                                       (prior["report"]["batch_id"], report_id, "interpretation-" + link["relation"])).fetchone()
@@ -833,7 +846,10 @@ def retrospective_interpretation_integrity(db, prepared, has_execution):
             require(any(claim["claim_id"] == recommendation["claim_id"] and claim["kind"] == "recommendation"
                         for claim in prior["body"]["interpretation"]["claims"]), "Missing prior recommendation claim")
         expected = interpretation_source_refs(refs)
-        require(len(expected) <= 100000, "Interpretation dependency limit exceeded")
+        require(len(expected) <= INTERPRETATION_DEPENDENCY_LIMIT and len(selected) <= INTERPRETATION_DEPENDENCY_LIMIT,
+                "Interpretation dependency limit exceeded")
+        require(len(originals) <= INTERPRETATION_ORIGINAL_LIMIT,
+                "Interpretation exceeds 1728 unique pinned native/external originals")
         require(current["report"]["dependencies"] == expected, "Interpretation source dependency union mismatch")
         member_refs = dict(population["members"])
         for record in current["records"]:
@@ -843,6 +859,8 @@ def retrospective_interpretation_integrity(db, prepared, has_execution):
         visiting.remove(report_id)
         resolved[report_id] = expected
         ancestors[report_id] = ancestry
+        original_unions[report_id] = originals
+        member_unions[report_id] = selected
         return expected
 
     for report_id in publications:

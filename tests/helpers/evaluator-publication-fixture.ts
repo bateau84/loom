@@ -6,25 +6,31 @@ import { EvaluatorInterpretations } from "../../src/evaluator-interpretations.js
 import type { EvaluatorExecutionAuthority, EvaluatorRetrievedSource } from "../../src/evaluator-execution-contract.js"
 import type { EvaluatorInterpretation } from "../../src/evaluator-interpretation.js"
 import type { RetrospectiveSourceResolver } from "../../src/retrospective-populations.js"
-import { retrospectiveMemberKey } from "../../src/retrospective-contract.js"
+import { retrospectiveMemberKey, type RetrospectiveManifest } from "../../src/retrospective-contract.js"
 import { ACTOR, NOW, POLICY, FixtureExecutionAuthority, freshSignal, method, pins, type FixtureState } from "./evaluator-execution-fixture.js"
 import { retrospectiveFixture } from "./retrospective-store-fixture.js"
 
 /** Synthetic unit fixture using the existing #249/#259 consumer and owner.
  * Real installed OpenCode provenance is qualified by the separate host suite. */
-export function publicationFixture(state: FixtureState, actor: Actor = ACTOR, options: { gaps?: boolean; claims?: number; members?: number; authorityPath?: string } = {}) {
-  const history = state.learning.automatic.history, manifest = retrospectiveFixture(options.members ?? 3, state.store.reviews.storeID)
-  manifest.members = manifest.members.map((member, index) => {
+export function publicationFixture(state: FixtureState, actor: Actor = ACTOR, options: { gaps?: boolean; claims?: number; members?: number; authorityPath?: string;
+  manifest?: RetrospectiveManifest; resolve?: RetrospectiveSourceResolver } = {}) {
+  const history = state.learning.automatic.history, manifest = options.manifest ? structuredClone(options.manifest)
+    : retrospectiveFixture(options.members ?? 3, state.store.reviews.storeID)
+  if (!options.manifest) manifest.members = manifest.members.map((member, index) => {
     const original = state.store.record({ session_id: actor.session_id, agent: "author" }, undefined,
       { kind: "result", statement: "Controlled original " + index + ": scoped verification; causal independence unproven." })
     const source = state.learning.automatic.sources.retrospectiveOriginal("ledger-record", original.id, actor.session_id, actor.session_id)!
     return { ...member, source: source.ref, key: retrospectiveMemberKey(manifest.source_store_id, source.ref, member.permitted_view),
       availability: options.gaps && index === 2 ? "unresolved" as const : "available" as const }
   })
-  manifest.contributors = [actor.session_id]
+  if (!options.manifest) manifest.contributors = [actor.session_id]
   const population = history.freezeRetrospective(actor, manifest)
   const prepared = state.learning.evaluator.prepareRetrospective(actor, population, method(), POLICY)
-  const first = population.manifest.members[0]!, reference = { member_key: first.key, source_index: 0 as const }
+  // Freezing sorts member keys. A deliberately unavailable member can sort
+  // first, so choose an actual available original for the scripted citation.
+  const first = population.manifest.members.find(member => member.availability === "available")
+  if (!first) throw new Error("Controlled publication fixture requires an available original")
+  const reference = { member_key: first.key, source_index: 0 as const }
   const interpretation: EvaluatorInterpretation = {
     format: "loom-evaluator-interpretation/v1", covered_members: population.manifest.members.map(member => member.key),
     conclusion: { kind: "no-change", statement: "The controlled fixture supports no automatic configuration change.", limitations: ["Scripted publication mechanics only."] },
@@ -67,6 +73,7 @@ export function publicationFixture(state: FixtureState, actor: Actor = ACTOR, op
   const authorize = async () => { if (!allowed) throw new Error("Controlled source authorization denied") }
   const resolve: RetrospectiveSourceResolver = async request => {
     await authorize()
+    if (options.resolve) return options.resolve(request)
     const ref = request.source, original = state.learning.automatic.sources.retrospectiveOriginal(ref.kind, ref.id, ref.session_id!, request.recipient_session_id)
     return original ? { ...request, status: "available", source: original.ref, value: original.value } : { ...request, status: "missing" }
   }

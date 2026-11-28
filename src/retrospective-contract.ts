@@ -2,6 +2,11 @@ import { canonical, digest, ProcessingBudget, uid, type Actor } from "./model.js
 import type { EvaluationSourceRef } from "./evaluation-store.js"
 
 export const RETROSPECTIVE_LIMITS = Object.freeze({ members: 20000, contributors: 2000, chars: 33554432, values: 2000000 })
+/** A single population operation keeps its existing owner-resolution budget.
+ * Selection reserves room for freeze revalidation and bounded readback. */
+const ORIGINAL_READS = 128, ORIGINAL_FREEZE_PAGE = 20
+export const RETROSPECTIVE_ORIGINAL_LIMITS = Object.freeze({ reads: ORIGINAL_READS, freezePage: ORIGINAL_FREEZE_PAGE,
+  selection: (ORIGINAL_READS - ORIGINAL_FREEZE_PAGE) / 2 })
 export const retrospectiveBudget = () => new ProcessingBudget(RETROSPECTIVE_LIMITS.chars, RETROSPECTIVE_LIMITS.values)
 const LOCAL_VIEWS: Readonly<Record<string, string>> = { "ledger-record": "record-full", objective: "objective", "objective-link": "objective-link",
   "review-request": "review-request", "review-relationship": "review-relationship" }
