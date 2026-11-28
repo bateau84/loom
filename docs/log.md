@@ -15,6 +15,14 @@ nine evidence assets. Updated link destinations, current path references, indexe
 metadata, and the OKF profile. No standalone anchors or product-design concepts
 were invented to populate the new structure.
 
+**Durable Evaluator interpretations (#227 S5):** Added strict validation of the
+existing versioned result, atomic overall/member publication, exact source
+dependencies and attributable revision links. Authorized JSON, Markdown and HTML
+readers distinguish selected, retrieved, cited and unavailable evidence. Extended
+the controlled #259 lifecycle and stopped recovery tests without enabling
+production dispatch or claiming genuine reasoning. See
+[the implementation and qualification boundary](architecture/design/ard-017-learning-evaluator-interpretations.md).
+
 **Controlled retrospective execution (#227):** Connected the distinct frozen
 v2 preparation to the existing restricted execution consumer through explicit
 trusted source authority. Preserved complete Stage 3 semantics, actual-recipient

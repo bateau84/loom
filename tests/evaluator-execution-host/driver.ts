@@ -1,8 +1,10 @@
 /** Direct composed consumer from the installed package. TEST ONLY; no production tool activation. */
 import { Database } from "bun:sqlite"
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
+import type { Actor } from "../../src/model.js"
+import type { RetrospectiveSources } from "../../src/retrospective-contract.js"
 import { NativeFixtureAuthority } from "./authority.js"
 
 const [command, rootArg, packageArg, caseName = "first"] = process.argv.slice(2)
@@ -31,19 +33,29 @@ try {
       permitted_view: request.permitted_view, source_store_id: request.source_store_id })
     return { ...request, ...(original ? { status: "available", source: original.ref, value: original.value } : { status: "missing" }) }
   }
-  if (command === "init") {
-    const original = store.record(actor, undefined, { kind: "result", statement:
-      "Synthetic original engineering objective " + caseName + ": correction must preserve verified scope." })
-    const objective = learning.objectives.create(actor, learning.objectives.ledgerSource(original.id), "Scripted execution mechanics")
-    for (const [index, verdict] of ["fail", "pass"].entries()) {
-      const record = store.record(actor, undefined, { kind: "result", statement: "Synthetic attempt " + index + " verification: " + verdict })
-      learning.objectives.link(actor, { objective_id: objective.id, phase: "verification", assessment: verdict,
-        source: learning.objectives.ledgerSource(record.id) })
+  if (command === "init" || command === "revision-init") {
+    const previous = command === "revision-init" ? JSON.parse(readFileSync(join(folder, "case.json"), "utf8")) : undefined
+    let objective: { id: string }
+    if (previous) {
+      objective = { id: previous.objective_id }
+      const later = store.record(actor, undefined, { kind: "result", statement:
+        "Contradictory follow-up verification: fail. The earlier passing assertion did not cover this regression." })
+      learning.objectives.link(actor, { objective_id: objective.id, phase: "verification", assessment: "fail",
+        source: learning.objectives.ledgerSource(later.id) })
+    } else {
+      const original = store.record(actor, undefined, { kind: "result", statement:
+        "Synthetic original engineering objective " + caseName + ": correction must preserve verified scope." })
+      objective = learning.objectives.create(actor, learning.objectives.ledgerSource(original.id), "Scripted execution mechanics")
+      for (const [index, verdict] of ["fail", "pass"].entries()) {
+        const record = store.record(actor, undefined, { kind: "result", statement: "Synthetic attempt " + index + " verification: " + verdict })
+        learning.objectives.link(actor, { objective_id: objective.id, phase: "verification", assessment: verdict,
+          source: learning.objectives.ledgerSource(record.id) })
+      }
     }
     const budget = { id: "fixture-controlled-provider-budget", revision: "1", sha256: digest({ capacity: policy.capacity }) }
     let prepared, population
     if (policy.preparation_source === "retrospective") {
-      learning.objectives.link(actor, { objective_id: objective.id, phase: "coverage-gap", gap_reason: "missing-source",
+      if (!previous) learning.objectives.link(actor, { objective_id: objective.id, phase: "coverage-gap", gap_reason: "missing-source",
         source: { type: "unavailable", id: "fixture-missing-historical-original", verification: "reported-gap" },
         note: "No original was retained; the Evaluator must receive this frozen gap without invented source bytes." })
       const selected = { objective_id: objective.id }, associations = learning.objectives.retrospectiveSources(objective.id)
@@ -75,6 +87,7 @@ try {
       manifest_sha256: prepared.manifest_sha256, attempt_id: prepared.issue.attempt.attempt_id },
       selected: (population ? members.items : members.items.slice(0, 1)).map((member: any) => ({ member: member.key, index: 0 })),
       objective_id: objective.id, request_format: prepared.request.format,
+      ...(previous ? { previous } : {}),
       ...(population ? { population_id: population.population_id, population_sha256: population.manifest_sha256,
         members: population.manifest.members.map((member: any) => ({ key: member.key, source: member.source,
           permitted_view: member.permitted_view, source_store_id: member.source_store_id, availability: member.availability })) } : {}) }
@@ -151,15 +164,42 @@ try {
       if (path.includes("/interrupt")) owner.journal.event("consumer-native-interrupt", { command })
       return native(method, path, value)
     }
+    const authorizeCaller = async (caller: Actor) => {
+      if (caller.session_id !== actor.session_id || caller.agent !== actor.agent
+        || JSON.parse(readFileSync(join(root, "policy.json"), "utf8")).source_enabled === false)
+        throw new Error("Fixture original source disclosure revoked")
+    }
+    const knownPopulation = (sources: RetrospectiveSources) => [data, data.previous].filter(Boolean).some(item =>
+      sources.population_id === item.population_id && sources.manifest_sha256 === item.population_sha256)
+    const authorizeUnion = async (caller: Actor, populations: RetrospectiveSources[]) => {
+      await authorizeCaller(caller)
+      // One current source-policy decision covers the complete dependency union
+      // after the awaited caller check. No per-population await can revoke an
+      // earlier grant while a later dependency is being authorized.
+      if (populations.length > 2
+        || new Set(populations.map(source => source.population_id)).size !== populations.length)
+        throw new Error("Fixture interpretation dependency union denied")
+      for (const sources of populations) {
+        if (!knownPopulation(sources) || sources.owner_session !== actor.session_id
+          || sources.source_store_id !== learning.automatic.sources.namespace || sources.contains_private_reviews
+          || sources.contributors.some(session => session !== actor.session_id)
+          || digest(sources) !== digest(learning.automatic.history.retrospectiveSources(sources.population_id, actor.session_id)))
+          throw new Error("Fixture interpretation dependency union denied")
+      }
+      const current = JSON.parse(readFileSync(join(root, "policy.json"), "utf8"))
+      if (!current.source_enabled) throw new Error("Fixture interpretation disclosure denied")
+      owner.journal.event("population-union-authorized", { owner_session: caller.session_id,
+        populations: populations.map(source => ({ population_id: source.population_id, manifest_sha256: source.manifest_sha256 })) })
+    }
     const execution = new EvaluatorExecution(learning.evaluator, learning.automatic.history, store, {
-      authority, authorize: async (caller: { session_id: string }) => {
-        if (caller.session_id !== actor.session_id || JSON.parse(readFileSync(join(root, "policy.json"), "utf8")).source_enabled === false)
-          throw new Error("Fixture original source disclosure revoked")
-      },
+      authority, authorize: authorizeCaller,
       ...(policy.preparation_source === "retrospective" ? { retrospective: {
-        populations: learning.populations, resolve: resolveOriginal,
+        populations: learning.populations, resolve: resolveOriginal, authorizeUnion,
         authorize: async (recipient: { session_id: string; agent: string }, sources: any) => {
-          if (sources.population_id !== data.population_id || sources.manifest_sha256 !== data.population_sha256
+          // A later scripted result may explicitly depend on the earlier
+          // owner's frozen report. Keep both exact pins authorized for readback;
+          // actual Evaluator retrieval still requires its own matching grant.
+          if (!knownPopulation(sources)
             || sources.owner_session !== actor.session_id || sources.source_store_id !== learning.automatic.sources.namespace
             || sources.contains_private_reviews || sources.contributors.some((session: string) => session !== actor.session_id)
             || !JSON.parse(readFileSync(join(root, "policy.json"), "utf8")).source_enabled)
@@ -168,8 +208,8 @@ try {
           const grants = owner.journal.db.query("SELECT grant_json FROM fixture_grants").all() as Array<{ grant_json: string }>
           const grant = grants.map(row => JSON.parse(row.grant_json)).find(grant => grant.recipient.session_id === recipient.session_id)
           if (command === "execute-denied-recipient" || recipient.agent !== "evaluator" || !grant
-            || grant.subject.source?.population_id !== data.population_id
-            || grant.subject.source?.manifest_sha256 !== data.population_sha256)
+            || grant.subject.source?.population_id !== sources.population_id
+            || grant.subject.source?.manifest_sha256 !== sources.manifest_sha256)
             throw new Error("Fixture actual Evaluator recipient denied")
           owner.journal.event("population-recipient-authorized", { population_id: sources.population_id,
             recipient_session_id: recipient.session_id, agent: recipient.agent })
@@ -194,6 +234,34 @@ try {
       action.query("UPDATE ledger SET data=json_set(data,'$.statement',?) WHERE id=?")
         .run("CHANGED_ORIGINAL_MUST_NOT_AUTHORIZE_EXECUTION", member.source.id)
       console.log(JSON.stringify({ ok: true, result: { changed_source: member.source.id } }))
+    } else if (command === "lose-original") {
+      const member = data.members.find((item: any) => item.source.kind === "ledger-record")
+      const row = action.query("SELECT * FROM ledger WHERE id=?").get(member.source.id)
+      if (!row) throw new Error("Fixture source to remove is absent")
+      writeFileSync(join(folder, "lost-original.json"), JSON.stringify(row), { mode: 0o600, flag: "wx" })
+      action.query("DELETE FROM ledger WHERE id=?").run(member.source.id)
+      console.log(JSON.stringify({ ok: true, result: { missing_source: member.source.id } }))
+    } else if (command === "restore-original") {
+      const row = JSON.parse(readFileSync(join(folder, "lost-original.json"), "utf8"))
+      action.query("INSERT INTO ledger(seq,id,action_id,session_id,kind,data) VALUES(?,?,?,?,?,?)")
+        .run(row.seq, row.id, row.action_id, row.session_id, row.kind, row.data)
+      rmSync(join(folder, "lost-original.json"))
+      console.log(JSON.stringify({ ok: true, result: { restored_source: row.id } }))
+    } else if (command === "publish") {
+      const result = await execution.publish(actor, data.pins, stop.signal)
+      console.log(JSON.stringify({ ok: true, result }))
+    } else if (["read", "read-wrong-actor", "read-markdown", "read-html"].includes(command)) {
+      const { EvaluatorInterpretations } = await load("evaluator-interpretations")
+      const reader = new EvaluatorInterpretations(learning.automatic.history, learning.populations, {
+        resolve: resolveOriginal, authorizeUnion,
+        authorize: (caller: Actor, sources: RetrospectiveSources) => authorizeUnion(caller, [sources]),
+      })
+      const input = JSON.parse(readFileSync(join(folder, "read.json"), "utf8"))
+      const page = await reader.read(command === "read-wrong-actor" ? { session_id: "fixture-unrelated-reader", agent: "general" } : actor, input)
+      const view = command === "read-markdown" || command === "read-html" ? await load("evaluator-interpretation-view") : undefined
+      const result = command === "read-markdown" ? view!.renderEvaluatorInterpretationMarkdown(page)
+        : command === "read-html" ? view!.renderEvaluatorInterpretationHTML(page) : page
+      console.log(JSON.stringify({ ok: true, result }))
     } else if (["execute", "execute-uncertain", "execute-winner", "execute-loser-failure", "execute-loser-abort",
       "execute-wrong-population", "execute-invalid-reservation", "execute-denied-recipient", "execute-wrong-request", "recover", "cancel"].includes(command)) {
       const supplied = command === "execute-wrong-request" ? { ...data.pins, request_id: "wrong-execution-request" } : data.pins

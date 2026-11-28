@@ -16,6 +16,7 @@
 - [Shared subscription quota state and adapter contract](ard-014-shared-subscription-quota.md)
 - [Workload-aware model routing — provider-free foundation](ard-015-workload-routing.md)
 - [Proposal: safe native OpenCode V2 model fallback at a pre-output retry boundary](ard-016-opencode-v2-safe-live-fallback.md)
+- [Durable Evaluator interpretations](ard-017-learning-evaluator-interpretations.md) — Validated results, atomic publication, attributable revisions and authorized readback; controlled mechanics only.
 
 ## Evidence assets
 

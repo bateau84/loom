@@ -3,9 +3,10 @@ import { readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { createHash, randomUUID } from "node:crypto"
 import type { EvaluatorExecutionAuthority, EvaluatorExecutionSubject, EvaluatorExecutionGrant,
-  EvaluatorExecutionAdmission, EvaluatorExecutionReceipt, EvaluatorExecutionSnapshot } from "../../src/evaluator-execution-contract.js"
+  EvaluatorExecutionAdmission, EvaluatorExecutionReceipt, EvaluatorExecutionSnapshot,
+  EvaluatorOriginalResult } from "../../src/evaluator-execution-contract.js"
 import type { EvaluatorMethodManifest, EvaluatorPolicyRef } from "../../src/evaluator-method.js"
-import { FixtureStore, ACCOUNT, MODEL, PROVIDER, RESULT, SOURCE_TOOL } from "./fixture-store.js"
+import { FixtureStore, ACCOUNT, MODEL, PROVIDER, SOURCE_TOOL } from "./fixture-store.js"
 
 const HOST = "isolated-opencode-230-fixture"
 const sha = (text: string) => createHash("sha256").update(text).digest("hex")
@@ -152,6 +153,17 @@ export class NativeFixtureAuthority implements EvaluatorExecutionAuthority {
       return receipt
     }).immediate()
   }
+  private returned(key: string) {
+    const rows = this.journal.db.query("SELECT data FROM fixture_events WHERE type='provider-returned'").all() as Array<{ data: string }>
+    const matches = rows.map(row => JSON.parse(row.data)).filter(row => row.issue_key === key)
+    if (matches.length > 1) throw new Error("Fixture original provider result is ambiguous")
+    return matches[0] as { session_id: string; result_sha256: string; source_result_sha256?: string } | undefined
+  }
+  private text(message: any): string | null {
+    if (!Array.isArray(message.content)) return null
+    const parts = message.content.filter((part: any) => part.type === "text")
+    return parts.length === 1 && typeof parts[0].text === "string" ? parts[0].text : null
+  }
   async reconcile(subject: EvaluatorExecutionSubject): Promise<EvaluatorExecutionSnapshot | null> {
     const saved = this.saved(subject.semantic_key)
     if (!saved) return null
@@ -167,19 +179,78 @@ export class NativeFixtureAuthority implements EvaluatorExecutionAuthority {
     if (!Array.isArray(list) || list.length === 200) throw new Error("Fixture native history not bounded and complete")
     const original = list.find((message: any) => message.id === entry.input_id && message.type === "user")
     if (original && sha(original.text) !== entry.prompt_sha256) throw new Error("Fixture admitted original input changed")
-    const results = list.filter((message: any) => message.type === "assistant" && message.agent === "evaluator"
+    const returned = this.returned(subject.semantic_key)
+    const results = list.filter((message: any) => returned && returned.session_id === entry.session_id
+      && message.type === "assistant" && message.agent === "evaluator"
       && message.model?.providerID === PROVIDER && message.model?.id === MODEL
       && message.finish === "stop" && message.time?.completed && !message.error
-      && Array.isArray(message.content) && message.content.some((part: any) => part.type === "text" && part.text === RESULT))
+      && this.text(message) !== null && sha(this.text(message)!) === returned.result_sha256)
     if (results.length > 1) throw new Error("Fixture native result identity ambiguous")
     const result = results[0]
     if (result && original && entry.consumed && entry.sends === entry.request_limit) {
       this.journal.db.query("UPDATE fixture_enrollments SET enabled=0 WHERE issue_key=?").run(subject.semantic_key)
       receipt = this.observe(admission, "completed", "settled", true,
         { requests: entry.sends, input_tokens: entry.sends, output_tokens: entry.sends },
-        { host_id: HOST, session_id: entry.session_id, input_id: entry.input_id, result_id: result.id, sha256: sha(RESULT) })
+        { host_id: HOST, session_id: entry.session_id, input_id: entry.input_id, result_id: result.id, sha256: returned!.result_sha256 })
     }
     return { admission, receipt }
+  }
+  /** Read the one original native result. This method never submits a prompt.
+   * Retrieval facts come from the native tool and protected provider journal,
+   * not from the scripted interpretation's self-reported citations.
+   */
+  async readResult(admission: EvaluatorExecutionAdmission, receipt: EvaluatorExecutionReceipt): Promise<EvaluatorOriginalResult> {
+    const key = admission.grant.subject.semantic_key, saved = this.saved(key), entry = this.journal.enrollment(key)
+    if (!saved?.admission_json || !entry || this.digest(JSON.parse(saved.admission_json)) !== this.digest(admission)
+      || !saved.receipt_json || this.digest(JSON.parse(saved.receipt_json)) !== this.digest(receipt)
+      || receipt.execution !== "completed" || receipt.budget !== "settled" || !receipt.fenced || !receipt.result
+      || receipt.result.host_id !== HOST || receipt.result.session_id !== entry.session_id
+      || receipt.result.input_id !== entry.input_id) throw new Error("Fixture completed original result binding mismatch")
+    const messages = await this.native("GET", "/api/session/" + entry.session_id + "/message?order=asc&limit=200")
+    if (!Array.isArray(messages) || messages.length === 200) throw new Error("Fixture original result history incomplete")
+    const originals = messages.filter((message: any) => message.id === entry.input_id && message.type === "user")
+    const results = messages.filter((message: any) => message.id === receipt.result!.result_id && message.type === "assistant"
+      && message.agent === "evaluator" && message.model?.providerID === PROVIDER && message.model?.id === MODEL
+      && message.finish === "stop" && message.time?.completed && !message.error)
+    const returned = this.returned(key), text = results.length === 1 ? this.text(results[0]) : null
+    if (originals.length !== 1 || sha(originals[0].text) !== entry.prompt_sha256 || text === null
+      || sha(text) !== receipt.result.sha256 || returned?.result_sha256 !== receipt.result.sha256
+      || returned.session_id !== entry.session_id) throw new Error("Fixture original native result unavailable or changed")
+    const retrieved: EvaluatorOriginalResult["retrieved"] = []
+    if (entry.request_limit === 2) {
+      const callID = "call_eval_" + key.slice(0, 32)
+      const toolParts = messages.flatMap((message: any) => (message.content ?? []).filter((part: any) =>
+        part.type === "tool" && part.id === callID).map((part: any) => ({ message, part })))
+      if (toolParts.length !== 1 || toolParts[0].message.agent !== "evaluator"
+        || toolParts[0].part.state?.status !== "completed") throw new Error("Fixture native source retrieval unavailable")
+      function strings(value: unknown): string[] {
+        if (typeof value === "string") return [value]
+        if (value && typeof value === "object") return Object.values(value).flatMap(strings)
+        return []
+      }
+      const bodies = strings(toolParts[0].part).filter(value => value.startsWith('{"format":"loom-controlled-retrospective-evidence/v1"'))
+      if (bodies.length !== 1 || sha(bodies[0]!) !== entry.source_delivery_sha256
+        || returned.source_result_sha256 !== entry.source_delivery_sha256) throw new Error("Fixture source retrieval bytes changed")
+      const body = JSON.parse(bodies[0]!)
+      const deliveries = (this.journal.db.query("SELECT data FROM fixture_events WHERE type='native-source-tool-returned'")
+        .all() as Array<{ data: string }>).map(row => JSON.parse(row.data)).filter(row => row.issue_key === key)
+      if (deliveries.length !== 1 || deliveries[0].sha256 !== entry.source_delivery_sha256
+        || deliveries[0].session_id !== entry.session_id || deliveries[0].call_id !== callID
+        || deliveries[0].message_id !== toolParts[0].message.id
+        || this.digest(body.subject) !== this.digest(admission.grant.subject)
+        || this.digest(body.recipient) !== this.digest(admission.grant.recipient)) throw new Error("Fixture source retrieval provenance changed")
+      for (const original of body.originals) {
+        if (original.status !== "available") continue
+        if (original.source_index !== 0 || this.digest(original.value) !== original.source.sha256)
+          throw new Error("Fixture retrieved original version mismatch")
+        retrieved.push({ member_key: original.member_key, source_index: 0,
+          receipt_id: "fixture-native-tool:" + toolParts[0].message.id + ":" + callID,
+          boundary: "native-tool-result", source_sha256: original.source.sha256 })
+      }
+    }
+    this.journal.event("original-result-read", { issue_key: key, result_id: receipt.result.result_id,
+      result_sha256: receipt.result.sha256, retrieved: retrieved.length })
+    return { format: "loom-evaluator-result/v1", admission_sha256: this.digest(admission), result: receipt.result, text, retrieved }
   }
   async execute(admission: EvaluatorExecutionAdmission,
     source: (memberKey: string, sourceIndex: number) => Promise<unknown>, signal: AbortSignal) {

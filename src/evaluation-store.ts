@@ -6,6 +6,8 @@ import { assertEvaluatorReceiptProgress, evaluatorEnrollmentKey, parseEvaluatorA
   type EvaluatorExecutionAdmission, type EvaluatorExecutionReceipt } from "./evaluator-execution-contract.js"
 import { parseRetrospectiveManifest, retrospectiveBudget, retrospectiveDigest, RETROSPECTIVE_LIMITS,
   type RetrospectiveManifest, type RetrospectivePopulation, type RetrospectiveSources } from "./retrospective-contract.js"
+import { evaluatorInterpretationID, evaluatorMemberInterpretationID, evaluatorPriorReports,
+  INTERPRETATION_QUALIFICATIONS, validateEvaluatorPublication, type EvaluatorPublication } from "./evaluator-publication.js"
 
 export type EvaluationSourceRef = { kind: string; id: string; session_id?: string; message_id?: string; revision?: string; sha256?: string; required: boolean }
 export type EvaluationMember = { key: string; kind: "session" | "objective"; source_refs: EvaluationSourceRef[] }
@@ -71,6 +73,12 @@ const retrospectiveID = (owner: string, sourceStoreID: string, manifestSHA: stri
 })
 
 export type EvaluatorExecutionRecord = { admission: EvaluatorExecutionAdmission; receipts: EvaluatorExecutionReceipt[] }
+/** Internal structural read. Current source/disclosure authority belongs to the
+ * asynchronous interpretation service; this object must never be exposed raw. */
+export type EvaluatorInterpretationRecord = {
+  report: EvaluationReport & { body: EvaluatorPublication }; batch: EvaluationBatch;
+  population: RetrospectivePopulation; populations: RetrospectivePopulation[];
+}
 export const EXECUTION_COLUMNS = {
   schema: ["singleton", "version"],
   admissions: ["batch_id", "request_id", "attempt_id", "authority_id", "reservation_id", "semantic_key", "data_json", "sha256"],
@@ -395,7 +403,7 @@ export class EvaluationStore {
       if (canonical(JSON.parse(batch.method_json)) !== canonical(method)
         || !["evaluator-preparation/calling-session", "evaluator-preparation/retrospective"].includes(batch.scope_key))
         throw new Error("Evaluator preparation method or scope mismatch")
-      const mappedBefore = batch.blocked_reason === "evaluator-request-mapped" || batch.blocked_reason === "evaluator-dispatch-unavailable"
+      const mappedBefore = batch.blocked_reason === "evaluator-request-mapped" || batch.blocked_reason === "evaluator-dispatch-unavailable" || batch.report_id !== null
       if (!this.evaluatorSchema(false) && mappedBefore) throw new Error("Evaluator preparation mapping lost; restore required")
       this.evaluatorSchema(true)
       const prior = this.readEvaluatorRequest(batchID, owner)
@@ -599,6 +607,165 @@ export class EvaluationStore {
     })
   }
 
+  /** Metadata selectors only. The service authorizes before returning even a
+   * report identity, source gap, count, checksum or continuation cursor. */
+  evaluatorInterpretationSource(batchID: string, owner: string): RetrospectiveSources {
+    const batch = this.row(batchID, owner)
+    if (batch.scope_key !== "evaluator-preparation/retrospective") throw new Error("Evaluator interpretation unavailable")
+    const boundary = JSON.parse(batch.boundary_json)
+    const metadata = this.retrospectiveSources(boundary.retrospective_population, owner)
+    if (metadata.manifest_sha256 !== boundary.retrospective_manifest || metadata.source_store_id !== batch.source_store_id)
+      throw new Error("Evaluator interpretation population mismatch")
+    return metadata
+  }
+  evaluatorInterpretationCandidates(owner: string, input: { before?: number; limit?: number } = {}) {
+    const before = integer(input.before ?? Number.MAX_SAFE_INTEGER, "cursor", 1), take = integer(input.limit ?? 20, "page limit", 1, 100)
+    const rows = this.db.prepare("SELECT id,sequence FROM learning_evaluation_batches WHERE owner_session=? AND scope_key='evaluator-preparation/retrospective' AND report_id IS NOT NULL AND sequence<? ORDER BY sequence DESC LIMIT ?")
+      .all(text(owner, "owner", 200), before, take) as Array<{ id: string; sequence: number }>
+    // A full page carries a continuation derived only from its authorized last
+    // row. It makes no assertion about another (possibly protected) report.
+    return { items: rows, next_before: rows.length === take ? rows.at(-1)!.sequence : null }
+  }
+  evaluatorInterpretationBatch(reportID: string, owner: string): string {
+    const row = this.db.prepare("SELECT r.batch_id FROM learning_evaluation_reports r JOIN learning_evaluation_batches b ON b.id=r.batch_id WHERE r.id=? AND r.slot='overall' AND b.owner_session=?")
+      .get(text(reportID, "report ID", 200), text(owner, "owner", 200)) as { batch_id: string } | undefined
+    if (!row) throw new Error("Evaluator interpretation unavailable")
+    return row.batch_id
+  }
+
+  private structuralReport(id: string, batch: BatchRow, member: string | null): EvaluationReport {
+    const row = this.db.prepare(`SELECT id,batch_id,member_key,slot,created_at,qualifications_json,sha256,
+      CASE WHEN typeof(body_json)='text' AND octet_length(body_json)<=100663296 THEN body_json END AS body_json
+      FROM learning_evaluation_reports WHERE id=? AND batch_id=?`).get(id, batch.id) as ReportRow | undefined
+    if (!row?.body_json || row.body_json.length > 33554432 || row.member_key !== member
+      || row.slot !== (member === null ? "overall" : "member:" + member)) throw new Error("Evaluator interpretation report unavailable")
+    const dependencies = this.db.prepare("SELECT source_key,source_ref FROM learning_evaluation_dependencies WHERE report_id=? LIMIT 100001")
+      .all(id) as Array<{ source_key: string; source_ref: string }>
+    if (dependencies.length > 100000) throw new Error("Evaluator interpretation dependency limit exceeded")
+    const sourceRefs = refs(dependencies.map(item => {
+      const ref = JSON.parse(item.source_ref) as EvaluationSourceRef
+      if (sourceKey(ref) !== item.source_key) throw new Error("Evaluator interpretation dependency identity mismatch")
+      return ref
+    }))
+    const body: unknown = JSON.parse(row.body_json), qualifications = JSON.parse(row.qualifications_json) as string[]
+    if (sourceRefs.length !== dependencies.length
+      || fingerprint({ batch_id: batch.id, member_key: member, body, qualifications, source_refs: sourceRefs }) !== row.sha256)
+      throw new Error("Evaluator interpretation integrity mismatch")
+    return { id, batch_id: batch.id, member_key: member, created_at: row.created_at, sha256: row.sha256, body,
+      qualifications, source_refs: sourceRefs, availability: "available", missing_sources: [] }
+  }
+
+  private interpretationDependencies(body: EvaluatorPublication, population: RetrospectivePopulation, owner: string,
+    visiting: Set<string>, checked: Map<string, EvaluatorInterpretationRecord>) {
+    const dependencies = population.manifest.members.map(member => member.source), populations = new Map([[population.population_id, population]])
+    for (const reference of evaluatorPriorReports(body.interpretation)) {
+      const row = this.db.prepare("SELECT batch_id FROM learning_evaluation_reports WHERE id=? AND slot='overall'").get(reference.report_id) as { batch_id: string } | undefined
+      if (!row) throw new Error("Prior evaluator interpretation unavailable")
+      const prior = this.interpretationRecord(row.batch_id, owner, visiting, checked)
+      if (!prior || prior.report.id !== reference.report_id || prior.report.sha256 !== reference.report_sha256
+        || prior.batch.source_store_id !== population.manifest.source_store_id
+        || prior.population.manifest.selection.objective_id !== population.manifest.selection.objective_id)
+        throw new Error("Prior evaluator interpretation scope or identity mismatch")
+      for (const claim of body.interpretation.claims) for (const link of claim.recommendation?.prior_recommendations ?? []) {
+        if (link.report_id === reference.report_id && !prior.report.body.interpretation.claims.some(old => old.claim_id === link.claim_id && old.recommendation))
+          throw new Error("Prior evaluator recommendation unavailable")
+      }
+      dependencies.push(...prior.report.source_refs)
+      for (const item of prior.populations) populations.set(item.population_id, item)
+    }
+    return { dependencies: refs(dependencies), populations: [...populations.values()] }
+  }
+  private interpretationRecord(batchID: string, owner: string, visiting = new Set<string>(), checked = new Map<string, EvaluatorInterpretationRecord>()): EvaluatorInterpretationRecord | null {
+    if (visiting.has(batchID)) throw new Error("Cyclic evaluator interpretation history")
+    const known = checked.get(batchID)
+    if (known) return known
+    if (checked.size + visiting.size >= 32) throw new Error("Evaluator interpretation history exceeds 32 reports")
+    const batch = this.row(batchID, owner), members = this.verifyMembership(batch)
+    if (batch.scope_key !== "evaluator-preparation/retrospective") throw new Error("Evaluator interpretation unavailable")
+    if (!batch.report_id) {
+      if (batch.state === "complete" || members.some(member => member.report_id)) throw new Error("Evaluator interpretation publication is incomplete")
+      return null
+    }
+    if (batch.state !== "complete") throw new Error("Evaluator interpretation publication is incomplete")
+    const execution = this.executionRecord(batchID, owner), receipt = execution?.receipts.at(-1)
+    if (!execution || !receipt || !execution.admission.grant.subject.source) throw new Error("Evaluator interpretation execution unavailable")
+    const population = this.retrospectivePopulation(execution.admission.grant.subject.source.population_id, owner)
+    const report = this.structuralReport(batch.report_id, batch, null)
+    const body = validateEvaluatorPublication(report.body, execution.admission, receipt, population)
+    if (report.id !== evaluatorInterpretationID(body.binding) || encoded(report.qualifications) !== encoded(INTERPRETATION_QUALIFICATIONS))
+      throw new Error("Evaluator interpretation identity mismatch")
+    visiting.add(batchID)
+    const linked = this.interpretationDependencies(body, population, owner, visiting, checked)
+    if (encoded(report.source_refs) !== encoded(linked.dependencies)) throw new Error("Evaluator interpretation dependency union mismatch")
+    for (const link of body.interpretation.prior_interpretations) {
+      const prior = this.db.prepare("SELECT batch_id FROM learning_evaluation_reports WHERE id=?").get(link.report_id) as { batch_id: string }
+      if (!this.db.prepare("SELECT 1 FROM learning_evaluation_invalidations WHERE batch_id=? AND source_key=? AND reason=?")
+        .get(prior.batch_id, report.id, "interpretation-" + link.relation)) throw new Error("Evaluator interpretation revision marker unavailable")
+    }
+    for (const member of members) {
+      const id = evaluatorMemberInterpretationID(report.id, member.key)
+      if (member.report_id !== id) throw new Error("Evaluator interpretation member checkpoint unavailable")
+      const checkpoint = this.structuralReport(id, batch, member.key)
+      if (encoded(checkpoint.body) !== encoded({ format: "loom-evaluator-member/v1", report_id: report.id, report_sha256: report.sha256, member_key: member.key })
+        || encoded(checkpoint.qualifications) !== encoded(INTERPRETATION_QUALIFICATIONS)
+        || encoded(checkpoint.source_refs) !== encoded(refs(JSON.parse(member.source_refs)))) throw new Error("Evaluator interpretation member checkpoint mismatch")
+    }
+    const count = this.db.prepare("SELECT COUNT(*) AS count FROM learning_evaluation_reports WHERE batch_id=?").get(batchID) as { count: number }
+    if (count.count !== members.length + 1) throw new Error("Evaluator interpretation report population mismatch")
+    visiting.delete(batchID)
+    const result = { report: { ...report, body }, batch: this.get(batchID, owner), population, populations: linked.populations }
+    checked.set(batchID, result)
+    return result
+  }
+  readEvaluatorInterpretation(batchID: string, owner: string): EvaluatorInterpretationRecord | null {
+    return this.transaction(() => this.interpretationRecord(batchID, owner))
+  }
+
+  /** Publish through the existing evaluation/report/dependency owners in one
+   * transaction. No claim, reservation or native execution is created here.
+   * The execution consumer has just rechecked current disclosure authority. */
+  publishEvaluatorInterpretation(batchID: string, owner: string, input: EvaluatorPublication): EvaluatorInterpretationRecord {
+    return this.transaction(() => {
+      const batch = this.row(batchID, owner), execution = this.executionRecord(batchID, owner), receipt = execution?.receipts.at(-1)
+      if (!execution || !receipt || !execution.admission.grant.subject.source || batch.scope_key !== "evaluator-preparation/retrospective")
+        throw new Error("Evaluator interpretation execution unavailable")
+      const population = this.retrospectivePopulation(execution.admission.grant.subject.source.population_id, owner)
+      const body = validateEvaluatorPublication(input, execution.admission, receipt, population), id = evaluatorInterpretationID(body.binding)
+      const existing = this.interpretationRecord(batchID, owner)
+      if (existing) {
+        if (existing.report.id !== id || encoded(existing.report.body) !== encoded(body)) throw new Error("Conflicting evaluator interpretation replay")
+        return existing
+      }
+      if (batch.state === "processing" && (batch.lease_until_ms ?? 0) > this.clock()) throw new Error("Evaluation has an active claim")
+      const members = this.verifyMembership(batch), linked = this.interpretationDependencies(body, population, owner, new Set([batchID]), new Map())
+      const write = (reportID: string, member: string | null, value: unknown, dependencies = linked.dependencies) => {
+        const sha256 = fingerprint({ batch_id: batchID, member_key: member, body: value, qualifications: INTERPRETATION_QUALIFICATIONS, source_refs: dependencies })
+        this.db.prepare("INSERT INTO learning_evaluation_reports VALUES(?,?,?,?,?,?,?,?)").run(reportID, batchID, member,
+          member === null ? "overall" : "member:" + member, new Date(this.clock()).toISOString(), encoded(value), encoded(INTERPRETATION_QUALIFICATIONS), sha256)
+        const insert = this.db.prepare("INSERT INTO learning_evaluation_dependencies VALUES(?,?,?)")
+        for (const ref of dependencies) insert.run(reportID, sourceKey(ref), canonical(ref))
+        return sha256
+      }
+      const sha256 = write(id, null, body)
+      for (const member of members) {
+        const checkpoint = evaluatorMemberInterpretationID(id, member.key)
+        // A checkpoint records membership completion, not an independent
+        // interpretation. Its authenticated parent retains the full protection
+        // union, avoiding quadratic copies. No checkpoint reader is public.
+        write(checkpoint, member.key, { format: "loom-evaluator-member/v1", report_id: id, report_sha256: sha256, member_key: member.key }, refs(JSON.parse(member.source_refs)))
+        this.db.prepare("UPDATE learning_evaluation_members SET report_id=? WHERE batch_id=? AND key=?").run(checkpoint, batchID, member.key)
+      }
+      this.db.prepare("UPDATE learning_evaluation_batches SET state='complete',blocked_reason=NULL,report_id=?,claim_token=NULL,worker_id=NULL,lease_until_ms=NULL,updated_at=? WHERE id=?")
+        .run(id, new Date(this.clock()).toISOString(), batchID)
+      for (const link of body.interpretation.prior_interpretations) {
+        const prior = this.db.prepare("SELECT batch_id FROM learning_evaluation_reports WHERE id=?").get(link.report_id) as { batch_id: string }
+        this.db.prepare("INSERT INTO learning_evaluation_invalidations(batch_id,source_key,reason,recorded_at) VALUES(?,?,?,?) ON CONFLICT(batch_id,source_key,reason) DO NOTHING")
+          .run(prior.batch_id, id, "interpretation-" + link.relation, new Date(this.clock()).toISOString())
+      }
+      return this.interpretationRecord(batchID, owner)!
+    })
+  }
+
   noteOpportunity(sessionID: string, reason: string): void {
     this.db.prepare("INSERT INTO learning_evaluation_opportunities VALUES(?,'pending',?,1,?) ON CONFLICT(session_id) DO UPDATE SET state='pending',reason=excluded.reason,generation=generation+1,updated_at=excluded.updated_at")
       .run(text(sessionID, "Session", 200), text(reason, "opportunity reason"), new Date(this.clock()).toISOString())
@@ -740,10 +907,16 @@ export class EvaluationStore {
     if (state === "complete") {
       try {
         const members = this.verifyMembership(batch)
+        // Retrospective originals have asynchronous source owners. This metadata
+        // read checks structure only; the dedicated S5 service authorizes the
+        // whole dependency union before exposing any dependent content.
+        const structural = batch.scope_key === "evaluator-preparation/retrospective"
         for (const member of members) {
-          if (!member.report_id || this.reportByID(member.report_id, batch, member.key).availability !== "available") throw new Error("Evaluation member report is unavailable")
+          if (!member.report_id || (structural ? this.structuralReport(member.report_id, batch, member.key)
+            : this.reportByID(member.report_id, batch, member.key)).availability !== "available") throw new Error("Evaluation member report is unavailable")
         }
-        if (count.total !== count.done || !batch.report_id || this.reportByID(batch.report_id, batch, null).availability !== "available") state = "incomplete"
+        if (count.total !== count.done || !batch.report_id || (structural ? this.structuralReport(batch.report_id, batch, null)
+          : this.reportByID(batch.report_id, batch, null)).availability !== "available") state = "incomplete"
         else if (invalidations.length) state = "stale"
       } catch { state = "incomplete" }
     }
@@ -777,11 +950,13 @@ export class EvaluationStore {
   }
   reports(batchID: string, owner: string, input: { after?: number; limit?: number } = {}) {
     const batch = this.row(batchID, owner), page = this.members(batchID, owner, input)
+    if (batch.scope_key === "evaluator-preparation/retrospective") throw new Error("Use the authorized Evaluator interpretation reader")
     this.verifyMembership(batch)
     return { items: page.items.map(member => ({ ...member, report: member.report_id ? this.reportByID(member.report_id, batch, member.key) : null })), next_after: page.next_after }
   }
   report(batchID: string, owner: string, memberKey?: string): EvaluationReport | null {
     const batch = this.row(batchID, owner), members = this.verifyMembership(batch)
+    if (batch.scope_key === "evaluator-preparation/retrospective") throw new Error("Use the authorized Evaluator interpretation reader")
     if (memberKey === undefined && batch.report_id !== null) {
       // An overall report is not usable when any retained member receipt is missing or misattributed.
       // Source unavailability is represented separately by the overall report's dependency validation.

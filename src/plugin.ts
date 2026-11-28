@@ -37,6 +37,8 @@ import { retrospectiveDigest, type RetrospectiveManifest, type RetrospectivePopu
 import { externalOriginalDescriptor, resolveExternalOriginal } from "./external-originals.js"
 import { nativeOriginalDescriptor, resolveNativeOriginal } from "./native-originals.js"
 import { retrospectiveSourceView, renderRetrospectiveSourceHTML, renderRetrospectiveSourceMarkdown } from "./retrospective-source-view.js"
+import { EvaluatorInterpretations, INTERPRETATION_READS } from "./evaluator-interpretations.js"
+import { renderEvaluatorInterpretationHTML, renderEvaluatorInterpretationMarkdown, type EvaluatorInterpretationPage } from "./evaluator-interpretation-view.js"
 
 const ORIGINAL_READ_LIMIT = 128
 const FREEZE_POPULATION_PAGE_LIMIT = 20
@@ -215,8 +217,9 @@ const specs = [
       match_fields: { type: "array", minItems: 1, maxItems: 5, uniqueItems: true, items: choice("tool", "status", "dispatch", "input", "output") },
       source_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" }, part_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
       cursor: { type: "string", minLength: 1, maxLength: 4096 } }, ["operation"]) },
-  { name: "insights", description: TOOL_HELP.insights, input: preserveInput({ operation: choice("action", "window", "findings", ...EVALUATION_READS), batch_id: str, member_key: str, report_id: str,
-    request_id: str, manifest_sha256: str, attempt_id: str, source_index: num, after: num, finding_cursor: { type: "string", maxLength: 512 }, action_id: str, before: { type: "integer", minimum: 1 }, limit: { type: "integer", minimum: 1, maximum: 200 }, since_at: str, until_at: str }, ["operation"]) },
+  { name: "insights", description: TOOL_HELP.insights, input: preserveInput({ operation: choice("action", "window", "findings", ...EVALUATION_READS, ...INTERPRETATION_READS), batch_id: str, member_key: str, report_id: str,
+    report_sha256: str, section: choice("overview", "trajectory", "claims", "review_coverage", "gaps", "sources", "prior_interpretations"), response_format: choice("json", "markdown", "html"),
+    request_id: str, manifest_sha256: str, attempt_id: str, source_index: num, after: { oneOf: [num, { type: "string", maxLength: 4096 }] }, finding_cursor: { type: "string", maxLength: 512 }, action_id: str, before: { type: "integer", minimum: 1 }, limit: { type: "integer", minimum: 1, maximum: 200 }, since_at: str, until_at: str }, ["operation"]) },
   { name: "objective", description: TOOL_HELP.objective, input: obj({
       operation: choice("create", "link", "read", "list", "find"),
       objective_id: str, label: { type: "string", maxLength: 200 }, unit_key: str,
@@ -1077,7 +1080,47 @@ export default Plugin.define({
                 break
               }
               case "insights":
-                if ((EVALUATION_READS as readonly unknown[]).includes(input.operation)) {
+                if ((INTERPRETATION_READS as readonly unknown[]).includes(input.operation)) {
+                  await ctx.permission.assert({ action: "read", resources: [filename, learningFilename],
+                    sessionID: toolContext.sessionID, agent: toolContext.agent,
+                    source: { type: "tool", messageID: toolContext.messageID, id: toolContext.id } })
+                  await checkedSession(actor.session_id)
+                  const history = requiredLearning().automatic.history, selected = new Map<string, string>(), scope = store.captureScope()
+                  const interpretations = new EvaluatorInterpretations(history, requiredLearning().populations, {
+                    resolve: populationResolver,
+                    // Every selected/prior source resource is accumulated by
+                    // authorize below. One native decision covers that union.
+                    authorizeUnion: async () => { await assertEvidence([...evidenceResources]) },
+                    authorize: async (recipient, metadata) => {
+                      if (recipient.session_id !== actor.session_id) throw new Error("Evaluator interpretation unavailable")
+                      const population = await populationRead(metadata.population_id, metadata.manifest_sha256, true)
+                      // Report metadata and an uncited/frozen-gap source still
+                      // depend on the complete selected disclosure union.
+                      for (const member of population.manifest.members) {
+                        const ref = member.source
+                        let sourceScope = `${ref.kind}:${encodeURIComponent(ref.id)}`, views = [member.permitted_view]
+                        if (ref.kind === "external-ref") sourceScope = "external:" + encodeURIComponent(ref.id)
+                        else if (ref.kind === "ledger-record" && ref.session_id)
+                          sourceScope = `session:${evidenceID(ref.session_id, "source Session")}:record:${evidenceID(ref.id, "source record")}`
+                        else if ((ref.kind === "native-message" || ref.kind === "native-call") && ref.session_id) {
+                          sourceScope = `session:${evidenceID(ref.session_id, "source Session")}:message:${evidenceID(ref.kind === "native-call" ? ref.message_id : ref.id, "source message")}`
+                            + (ref.kind === "native-call" ? `:part:${evidenceID(ref.id, "source part")}` : "")
+                          views = ref.kind === "native-call" ? ["input", "output", "error", "status", "dispatch"].map(field => "native-" + field) : ["native-user-text"]
+                        }
+                        await beginEvidence(sourceScope, views, views)
+                      }
+                      selected.set(population.population_id, population.manifest_sha256)
+                    },
+                  })
+                  result = await interpretations.read(actor, input, AbortSignal.any([lifetime.signal, toolContext.signal]))
+                  evidenceSourceCheck = async () => {
+                    if (store.captureScope() !== scope) throw new Error("Evaluator interpretation sources changed")
+                    for (const [id, sha256] of selected) if (history.retrospectivePopulation(id, actor.session_id).manifest_sha256 !== sha256)
+                      throw new Error("Evaluator interpretation population changed")
+                  }
+                } else if ((EVALUATION_READS as readonly unknown[]).includes(input.operation)) {
+                  if (input.section !== undefined || input.report_sha256 !== undefined || input.response_format !== undefined)
+                    throw new Error("Interpretation fields require an interpretation read operation")
                   await ctx.permission.assert({ action: "read", resources: [filename, learningFilename],
                     sessionID: toolContext.sessionID, agent: toolContext.agent,
                     source: { type: "tool", messageID: toolContext.messageID, id: toolContext.id } })
@@ -1112,7 +1155,8 @@ export default Plugin.define({
                       population_manifest_sha256: population.manifest_sha256 }
                   }
                 } else if (input.batch_id !== undefined || input.member_key !== undefined || input.report_id !== undefined || input.after !== undefined
-                  || input.request_id !== undefined || input.manifest_sha256 !== undefined || input.attempt_id !== undefined || input.source_index !== undefined) {
+                  || input.request_id !== undefined || input.manifest_sha256 !== undefined || input.attempt_id !== undefined || input.source_index !== undefined
+                  || input.section !== undefined || input.report_sha256 !== undefined || input.response_format !== undefined) {
                   throw new Error("Evaluation fields require an evaluation read operation")
                 } else if (input.operation === "action") {
                   const actionID = input.action_id === undefined ? store.selected(actor.session_id)?.action_id : String(input.action_id)
@@ -1579,7 +1623,10 @@ export default Plugin.define({
             // authorization path. Hash the actual returned bytes, including HTML.
             const populationView = spec.name === "history" && ["preview-population", "population"].includes(String(input.operation))
             const sourceView = spec.name === "history" && input.operation === "population-source"
-            const content = sourceView && input.response_format === "html" ? renderRetrospectiveSourceHTML(result)
+            const interpretationView = spec.name === "insights" && input.operation === "evaluation-interpretation"
+            const content = interpretationView && input.response_format === "html" ? renderEvaluatorInterpretationHTML(result as EvaluatorInterpretationPage)
+              : interpretationView && input.response_format === "markdown" ? renderEvaluatorInterpretationMarkdown(result as EvaluatorInterpretationPage)
+              : sourceView && input.response_format === "html" ? renderRetrospectiveSourceHTML(result)
               : sourceView && input.response_format === "markdown" ? renderRetrospectiveSourceMarkdown(result)
               : populationView && input.response_format === "html" ? renderRetrospectivePopulationHTML(result as RetrospectivePopulationView)
               : populationView && input.response_format === "markdown" ? renderRetrospectivePopulationMarkdown(result as RetrospectivePopulationView)

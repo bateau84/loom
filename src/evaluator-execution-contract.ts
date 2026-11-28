@@ -51,6 +51,19 @@ export type EvaluatorExecutionReceipt = {
 }
 export type EvaluatorExecutionSnapshot = { admission: EvaluatorExecutionAdmission; receipt: EvaluatorExecutionReceipt }
 
+/** Source delivery is attested by the trusted owner at the actual native tool
+ * result/provider input boundary. Selection or an author's citation is not a
+ * retrieval receipt. No public tool accepts these records. */
+export type EvaluatorRetrievedSource = {
+  member_key: string; source_index: 0; receipt_id: string;
+  boundary: "native-tool-result" | "provider-input"; source_sha256: string;
+}
+export type EvaluatorOriginalResult = {
+  format: "loom-evaluator-result/v1"; admission_sha256: string;
+  result: NonNullable<EvaluatorExecutionReceipt["result"]>;
+  text: string; retrieved: EvaluatorRetrievedSource[];
+}
+
 /** Valid recovery observations need not authorize a fresh canonical claim. In
  * particular, reserved/uncertain is retainable evidence, never a usable budget. */
 export function evaluatorReservationHeld(receipt: EvaluatorExecutionReceipt): boolean {
@@ -85,6 +98,10 @@ export interface EvaluatorExecutionAuthority {
   execute(admission: EvaluatorExecutionAdmission,
     source: (memberKey: string, sourceIndex: number) => Promise<unknown>, signal: AbortSignal): Promise<EvaluatorExecutionReceipt>;
   cancel(admission: EvaluatorExecutionAdmission): Promise<EvaluatorExecutionReceipt>;
+  /** Read the exact original completed result and durable delivery receipts.
+   * This must never infer, resume, retry, enqueue or wake native work. A missing
+   * capability fails publication closed; caller-authored JSON is no substitute. */
+  readResult?(admission: EvaluatorExecutionAdmission, receipt: EvaluatorExecutionReceipt): Promise<EvaluatorOriginalResult>;
 }
 
 const bounded = (value: unknown) => canonical(value, new ProcessingBudget(65536, 2048))

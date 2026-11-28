@@ -429,5 +429,12 @@ a trusted authority interface. Controlled-provider tests exercise that consumer;
 the production authority adapter remains absent. The [original-work audit handoff](docs/user-docs/learning-evaluator-s3-handoff.md)
 specifies the separate authorization and qualification needed for genuine reasoning.
 
+The [durable interpretation increment](docs/architecture/design/ard-017-learning-evaluator-interpretations.md)
+validates a recovered original Evaluator result and publishes its findings,
+recommendations, evidence links and uncertainty through the existing evaluation
+store. `loom_insights` exposes authorized report pages in JSON, Markdown or HTML.
+Controlled results qualify publication and recovery mechanics; they do not
+establish genuine reasoning or enable production execution.
+
 See [Design and implementation boundaries](docs/architecture/design/ard-001-implementation-boundaries.md) and [Coordination](docs/architecture/design/ard-002-coordination.md);
 [the alpha operating policy](docs/user-docs/operating-policy.md) defines the narrower release scope.

@@ -6,6 +6,7 @@ import { createHash } from "node:crypto"
 import { existsSync, readFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { FixtureStore, MODEL, PROVIDER, RESULT, SOURCE_TOOL } from "./fixture-store.js"
+import { scriptedInterpretation } from "./interpretation.js"
 
 const providerPackage = "aisdk:" + new URL("./provider.mjs", import.meta.url).href
 const sha = (text: string) => createHash("sha256").update(text).digest("hex")
@@ -74,13 +75,16 @@ export default Plugin.define({
             await new Promise(done => setTimeout(done, 25))
           }
         }
+        const policy = JSON.parse(readFileSync(join(root, "policy.json"), "utf8"))
+        const response = !retrieve && policy.interpretation_mode
+          ? scriptedInterpretation(sourceText!, policy.interpretation_mode, policy.prior_report) : RESULT
         store.event(retrieve ? "provider-requested-source" : "provider-returned", { issue_key: admitted.issue_key,
-          session_id: session, ...(retrieve ? {} : { result_sha256: sha(RESULT),
+          session_id: session, ...(retrieve ? {} : { result_sha256: sha(response),
             ...(sourceText === undefined ? {} : { source_result_sha256: sha(sourceText), source_bytes: Buffer.byteLength(sourceText) }) }) })
         const events: unknown[] = [{ type: "stream-start", warnings: [] }]
         if (retrieve) events.push({ type: "tool-call", toolCallId: "call_eval_" + admitted.issue_key.slice(0, 32),
           toolName: SOURCE_TOOL, input: "{}" })
-        else events.push({ type: "text-start", id: "result" }, { type: "text-delta", id: "result", delta: RESULT },
+        else events.push({ type: "text-start", id: "result" }, { type: "text-delta", id: "result", delta: response },
           { type: "text-end", id: "result" })
         events.push({ type: "finish", finishReason: { unified: retrieve ? "tool-calls" : "stop",
           raw: retrieve ? "tool_calls" : "stop" }, usage })
