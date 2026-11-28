@@ -18,6 +18,7 @@ const files = (directory: string) => Object.fromEntries(readdirSync(directory).f
 
 function prepare(state: FixtureState, objective: string) {
   const manifest = retrospectiveFixture(4, state.store.reviews.storeID)
+  if (manifest.selection.mode !== "explicit-objective") throw new Error("This fixture exercises the legacy objective format")
   manifest.selection.objective_id = objective
   manifest.selection.question = "Evaluate " + objective
   manifest.objective.id = objective

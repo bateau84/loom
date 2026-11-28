@@ -4,7 +4,7 @@ import type { SQL } from "./store.js"
 import { evaluatorMethod, parseEvaluatorMethod, type EvaluatorMethodManifest } from "./evaluator-method.js"
 import { assertEvaluatorReceiptProgress, evaluatorEnrollmentKey, parseEvaluatorAdmission, parseEvaluatorReceipt,
   type EvaluatorExecutionAdmission, type EvaluatorExecutionReceipt } from "./evaluator-execution-contract.js"
-import { parseRetrospectiveManifest, retrospectiveBudget, retrospectiveDigest, RETROSPECTIVE_LIMITS,
+import { compatibleRetrospectiveContext, parseRetrospectiveManifest, retrospectiveBudget, retrospectiveDigest, RETROSPECTIVE_LIMITS,
   type RetrospectiveManifest, type RetrospectivePopulation, type RetrospectiveSources } from "./retrospective-contract.js"
 import { evaluatorInterpretationID, evaluatorMemberInterpretationID, evaluatorPriorReports,
   evaluatorInterpretationOriginals, EVALUATOR_INTERPRETATION_LIMITS, INTERPRETATION_QUALIFICATIONS,
@@ -16,7 +16,7 @@ export type EvaluationMethod = { id: string; instruction_sha256: string }
 export type EvaluationFreeze = {
   owner_session: string; scope_key: string; source_store_id: string;
   boundary: Record<string, number | string>; method: EvaluationMethod;
-  members: EvaluationMember[]; previous_batch_id?: string;
+  members: EvaluationMember[]; previous_batch_id?: string; expected_previous_batch_id?: string | null;
 }
 export type EvaluationClaim = { batch_id: string; token: string; worker_id: string }
 export type EvaluationReportInput = { body: unknown; dependencies: EvaluationSourceRef[]; qualifications: string[] }
@@ -667,7 +667,7 @@ export class EvaluationStore {
       const prior = this.interpretationRecord(row.batch_id, owner, visiting, checked, populationCache)
       if (!prior || prior.report.id !== reference.report_id || prior.report.sha256 !== reference.report_sha256
         || prior.batch.source_store_id !== population.manifest.source_store_id
-        || prior.population.manifest.selection.objective_id !== population.manifest.selection.objective_id)
+        || !compatibleRetrospectiveContext(population.manifest, prior.population.manifest))
         throw new Error("Prior evaluator interpretation scope or identity mismatch")
       for (const claim of body.interpretation.claims) for (const link of claim.recommendation?.prior_recommendations ?? []) {
         if (link.report_id === reference.report_id && !prior.report.body.interpretation.claims.some(old => old.claim_id === link.claim_id && old.recommendation))
@@ -828,6 +828,8 @@ export class EvaluationStore {
       const existing = this.db.prepare("SELECT id FROM learning_evaluation_batches WHERE identity=?").get(identity) as { id: string } | undefined
       if (existing) return existing.id
       const latest = this.db.prepare("SELECT * FROM learning_evaluation_batches WHERE owner_session=? AND scope_key=? ORDER BY sequence DESC LIMIT 1").get(owner, scope) as BatchRow | undefined
+      if (input.expected_previous_batch_id !== undefined && (latest?.id ?? null) !== input.expected_previous_batch_id)
+        throw new Error("Incremental checkpoint changed; retry from the committed cursor")
       const previous = input.previous_batch_id === undefined ? latest : this.row(input.previous_batch_id, owner)
       if (previous && (previous.scope_key !== scope || previous.id !== latest?.id)) throw new Error("Evaluation predecessor is not the current scope revision")
       const id = ["evaluator-preparation/calling-session", "evaluator-preparation/retrospective"].includes(scope) ? "eval-preparation-" + identity : randomUUID(), now = new Date(this.clock()).toISOString()
@@ -947,6 +949,71 @@ export class EvaluationStore {
       revision: batch.revision, previous_batch_id: batch.previous_batch_id, state, published_state: batch.state,
       blocked_reason: batch.blocked_reason, member_count: count.total, processed_count: count.done, report_id: batch.report_id,
       created_at: batch.created_at, updated_at: batch.updated_at, invalidations }
+  }
+  /** Metadata-only cursor lookup. This does not disclose or validate original
+   * content. Unchanged idle opportunities can avoid rereading retained sources;
+   * publication and report readers still validate all applicable dependencies. */
+  incrementalHead(owner: string, scope: string, completeOnly = false) {
+    if (!scope.startsWith("incremental-session-evidence/")) throw new Error("Incremental scope unavailable")
+    const row = this.db.prepare("SELECT * FROM learning_evaluation_batches WHERE owner_session=? AND scope_key=?"
+      + (completeOnly ? " AND state='complete'" : "") + " ORDER BY sequence DESC LIMIT 1")
+      .get(text(owner, "owner", 200), text(scope, "scope", 200)) as BatchRow | undefined
+    if (!row) return null
+    const boundary = JSON.parse(row.boundary_json) as Record<string, number | string>, method = JSON.parse(row.method_json) as EvaluationMethod
+    if (fingerprint({ owner: row.owner_session, scope: row.scope_key, namespace: row.source_store_id, boundary,
+      method, membership: row.membership_sha256 }) !== row.identity) throw new Error("Incremental boundary identity mismatch")
+    return { id: row.id, sequence: row.sequence, owner_session: row.owner_session, source_store_id: row.source_store_id,
+      scope_key: row.scope_key, boundary, method, previous_batch_id: row.previous_batch_id,
+      published_state: row.state, state: row.state, report_id: row.report_id }
+  }
+  /** A method-specific incremental cursor is the latest successfully committed
+   * batch boundary. Pending and blocked heads remain separate physical work. */
+  latestInScope(owner: string, scope: string, completeOnly = false): EvaluationBatch | null {
+    const row = this.db.prepare("SELECT id FROM learning_evaluation_batches WHERE owner_session=? AND scope_key=?"
+      + (completeOnly ? " AND state='complete'" : "") + " ORDER BY sequence DESC LIMIT 1")
+      .get(text(owner, "owner", 200), text(scope, "scope", 200)) as { id: string } | undefined
+    return row ? this.get(row.id, owner) : null
+  }
+  /** Ascending committed prefixes support incremental method catch-up without
+   * dropping the oldest unprocessed checkpoint when many have accumulated. */
+  listScope(owner: string, scope: string, input: { after?: number; before?: number; limit?: number; complete_only?: boolean; direction?: "asc" | "desc" } = {}) {
+    const take = integer(input.limit ?? 20, "page limit", 1, 100), after = integer(input.after ?? 0, "cursor"),
+      before = integer(input.before ?? Number.MAX_SAFE_INTEGER, "cursor", 1)
+    const rows = this.db.prepare("SELECT id,sequence FROM learning_evaluation_batches WHERE owner_session=? AND scope_key=? AND sequence>? AND sequence<?"
+      + (input.complete_only ? " AND state='complete'" : "") + (input.direction === "desc" ? " ORDER BY sequence DESC LIMIT ?" : " ORDER BY sequence ASC LIMIT ?"))
+      .all(text(owner, "owner", 200), text(scope, "scope", 200), after, before, take + 1) as Array<{ id: string; sequence: number }>
+    const selected = rows.slice(0, take)
+    return { items: selected.map(row => this.get(row.id, owner)), next_after: rows.length > take ? selected.at(-1)!.sequence : null }
+  }
+  /** Exact persisted membership without resolving unrelated originals. The
+   * caller still supplies native authority and resolves the selected original. */
+  frozenIncrement(batchID: string, owner: string) {
+    const batch = this.row(batchID, owner)
+    if (!batch.scope_key.startsWith("incremental-session-evidence/")) throw new Error("Incremental evaluation unavailable")
+    if (fingerprint({ owner: batch.owner_session, scope: batch.scope_key, namespace: batch.source_store_id,
+      boundary: JSON.parse(batch.boundary_json), method: JSON.parse(batch.method_json), membership: batch.membership_sha256 }) !== batch.identity)
+      throw new Error("Incremental boundary identity mismatch")
+    return { id: batch.id, sequence: batch.sequence, owner_session: batch.owner_session, source_store_id: batch.source_store_id,
+      scope_key: batch.scope_key, method: JSON.parse(batch.method_json) as EvaluationMethod,
+      boundary: JSON.parse(batch.boundary_json) as Record<string, number | string>, published_state: batch.state,
+      previous_batch_id: batch.previous_batch_id,
+      members: this.verifyMembership(batch).map(row => ({ key: row.key, kind: row.kind, source_refs: refs(JSON.parse(row.source_refs)) })) }
+  }
+  /** Internal recovery projection only. Every unavailable dependency must have
+   * exact source-owner evidence that it is learning activity; ordinary source
+   * loss cannot be converted into cursor advancement or a successful prefix.
+   * Public readers always use report(), which continues to withhold the body. */
+  incrementalRecoveryReport(batchID: string, owner: string, isEvaluationActivity: (ref: EvaluationSourceRef) => boolean) {
+    const batch = this.row(batchID, owner)
+    if (!batch.scope_key.startsWith("incremental-session-evidence/") || batch.state !== "complete" || !batch.report_id)
+      throw new Error("Incremental recovery report unavailable")
+    for (const member of this.verifyMembership(batch)) {
+      if (!member.report_id) throw new Error("Incremental member checkpoint missing")
+      this.structuralReport(member.report_id, batch, member.key)
+    }
+    const report = this.structuralReport(batch.report_id, batch, null), missing = this.originals(batch, report.source_refs)
+    if (missing.some(ref => !isEvaluationActivity(ref))) throw new Error("Original retained learning source unavailable")
+    return report
   }
   nextUnfinished(owner: string, scope: string): EvaluationBatch | null {
     const row = this.db.prepare("SELECT id FROM learning_evaluation_batches WHERE owner_session=? AND scope_key=? AND state IN ('pending','processing') ORDER BY sequence LIMIT 1")

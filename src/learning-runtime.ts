@@ -4,13 +4,15 @@ import { configLoadStatus } from "./config-admission.js"
 import type { Learning } from "./learning.js"
 import type { EvaluationReport, EvaluationSourceRef } from "./evaluation-store.js"
 import { canonical, ProcessingBudget, ProcessingLimitError, uid } from "./model.js"
-import { EVALUATOR_BLOCK } from "./automatic-learning.js"
+import { EVALUATOR_BLOCK, type AutomaticResult } from "./automatic-learning.js"
 
 type Options = {
   learning?: Learning; ledgerPath: string; learningPath: string; signal: AbortSignal;
   getConfig: (signal?: AbortSignal) => Promise<ConfigSnapshot>;
   checkedSession: (id: string) => Promise<Record<string, unknown>>;
   warn: (error: unknown) => void;
+  onIncrement?: (session: string, result: AutomaticResult, signal: AbortSignal) => Promise<void>;
+  onCatchUp?: (session: string, signal: AbortSignal) => Promise<void>;
 }
 export const EVALUATION_READS = ["evaluation-status", "evaluations", "evaluation", "evaluation-members", "evaluation-sources", "evaluation-observations",
   "evaluation-preparation", "evaluation-preparation-members", "evaluation-preparation-source", "evaluation-admission"] as const
@@ -68,8 +70,9 @@ export async function registerAutomaticLearning(ctx: Plugin.Context, options: Op
   const controller = new AbortController(), signal = AbortSignal.any([options.signal, controller.signal])
   const registrations: Array<{ dispose(): Promise<void> }> = []
   const dirty = new Set<string>()
-  let running: Promise<void> | undefined, scheduled: ReturnType<typeof setImmediate> | undefined
+  let running: Promise<void> | undefined, scheduled: ReturnType<typeof setTimeout> | undefined
   let retry: ReturnType<typeof setTimeout> | undefined, rescan = false, wasEnabled = false
+  let incremental = true, maxSources = 128, coalesceMS = 250
   const engine = options.learning?.automatic
   const enabled = async () => {
     // Optional catch-up yields admission to foreground config loads. It must not
@@ -79,6 +82,9 @@ export async function registerAutomaticLearning(ctx: Plugin.Context, options: Op
     }
     const config = await abortable(options.getConfig(signal), signal)
     const active = config.errors.length === 0 && config.config.ledger.capture === "automatic"
+    incremental = config.config.learning.incremental_enabled
+    maxSources = config.config.learning.max_sources
+    coalesceMS = config.config.learning.coalesce_ms
     if (active && !wasEnabled) rescan = true
     wasEnabled = active
     return active
@@ -129,7 +135,20 @@ export async function registerAutomaticLearning(ctx: Plugin.Context, options: Op
               stage = "native-authorization-unavailable"
               await authorize(opportunity.session_id)
               stage = "source-processing-unavailable"
-            }, signal)
+            }, signal, { incremental, max_sources: maxSources })
+            // Optional interpretation failure must not stop deterministic catch-up.
+            // The callback owns qualified inference admission, never this scheduler.
+            try {
+              if (result.state === "complete" && !result.replayed && options.onIncrement)
+                await abortable(options.onIncrement(opportunity.session_id, result, signal), signal)
+              if (options.onCatchUp) {
+                await authorize(opportunity.session_id)
+                await abortable(options.onCatchUp(opportunity.session_id, signal), signal)
+              }
+            } catch {
+              if (signal.aborted) return
+              options.warn("Incremental interpretation unavailable; deterministic source processing continues")
+            }
             if (result.state === "pending" || (result.state === "complete" && !result.replayed)) more = true
             else if (result.state === "busy") retryAt = Math.min(retryAt ?? Infinity, result.retry_at ?? Date.now() + 30000)
             else engine.history.setOpportunity(opportunity.session_id, "idle", null, opportunity.generation)
@@ -155,13 +174,15 @@ export async function registerAutomaticLearning(ctx: Plugin.Context, options: Op
   }
   function wake() {
     if (signal.aborted || running || scheduled || !engine) return
-    scheduled = setImmediate(() => {
+    // Fixed first-opportunity window: sustained activity cannot postpone work.
+    scheduled = setTimeout(() => {
       scheduled = undefined
       if (signal.aborted) return
       running = drain().catch(() => {
         if (!signal.aborted) options.warn("Automatic learning scheduling unavailable; original sources remain for restart recovery")
       }).finally(() => { running = undefined; if ((dirty.size || rescan) && !signal.aborted) wake() })
-    })
+    }, coalesceMS)
+    scheduled.unref()
   }
   function notify(sessionID: string) {
     if (signal.aborted || !engine) return
@@ -173,7 +194,7 @@ export async function registerAutomaticLearning(ctx: Plugin.Context, options: Op
   }
   async function dispose() {
     controller.abort()
-    if (scheduled) clearImmediate(scheduled)
+    if (scheduled) clearTimeout(scheduled)
     if (retry) clearTimeout(retry)
     dirty.clear()
     await running

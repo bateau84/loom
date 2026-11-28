@@ -48,6 +48,7 @@ function ok(result: ReturnType<ReturnType<typeof fixture>["run"]>) {
 
 function originalManifest(learning: Learning, store: Store, objective: string, count = 7) {
   const manifest = retrospectiveFixture(count, store.reviews.storeID)
+  if (manifest.selection.mode !== "explicit-objective") throw new Error("This fixture exercises the legacy objective format")
   manifest.selection.objective_id = objective
   manifest.selection.question = "Evaluate the controlled " + objective + " objective"
   manifest.objective.id = objective
