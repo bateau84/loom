@@ -25,6 +25,7 @@ type Checkpoint = {
   format: "loom-incremental-interpretation-checkpoint/v1";
   kind: "interpreted" | "no-eligible-change";
   from_sequence: number; through_sequence: number; through: LearningFrontier;
+  namespace_through?: LearningFrontier;
   subject: { subject_id: string; sha256: string };
   source_batches: Array<{ batch_id: string; report_id: string; sha256: string }>;
   new_sources: number; earlier_context_sources: number;
@@ -104,9 +105,10 @@ export class IncrementalInterpretation {
         : !config.budget_policy ? "resource-policy-not-configured" : pending && !this.execution ? "evaluator-execution-authority-unavailable" : pending?.blocked_reason ?? null,
       processed: complete ? { sequence, frontier: frontier(complete, "through_frontier"), batch_id: complete.id } : null,
       interpreted: interpretation ? { ...interpretation, inspect: { operation: "evaluation-interpretation", batch_id: interpretation.batch_id } } : null,
-      pending: pending ? { batch_id: pending.id, population_id: pending.boundary.population_id || null,
+      pending: pending ? { batch_id: pending.id,
         from_sequence: integer(pending.boundary.from_sequence, 0), through_sequence: throughSequence(pending),
-        preparation: pending.boundary.kind === "no-eligible-change" ? null : pins(pending) } : null,
+        preparation: pending.boundary.kind === "no-eligible-change" ? null : { batch_id: pins(pending).batch_id,
+          inspect: { operation: "evaluation-preparation", batch_id: pins(pending).batch_id } } } : null,
       execution_authority: this.execution ? "consumer-connected-not-admitted" : "unavailable", qualifications }
   }
 
@@ -120,9 +122,8 @@ export class IncrementalInterpretation {
     // not license skipping a missing engineering source or rewriting its report.
     if (report?.availability !== "available") report = this.automatic.history.incrementalRecoveryReport(row.id, session,
       ref => this.automatic.sources.isEvaluation(ref))
-    if (!report || !report.body || typeof report.body !== "object" || !("format" in report.body)
-      || report.body.format !== "loom-incremental-learning-report/v1") throw new Error("Increment source checkpoint unavailable")
-    return report.body as IncrementReportBody
+    if (!report) throw new Error("Increment source checkpoint unavailable")
+    return this.automatic.checkedIncrementReport(session, row.id, report)
   }
   private async plan(actor: Actor, config: IncrementalInterpretationConfig, access: IncrementalInterpretationAccess, signal: AbortSignal,
     state: ReturnType<IncrementalInterpretation["heads"]>): Promise<Metadata | IncrementalInterpretationResult> {
@@ -173,7 +174,8 @@ export class IncrementalInterpretation {
     // Establish the exact processed checkpoint, not its broader observed upper
     // frontier. A later concurrent append is outside this population forever.
     await this.checked(actor, access, signal)
-    const subject = this.automatic.subjects.establishAutomatic(actor.session_id, evaluatorMethod(method), from, lastBody.through)
+    const subject = this.automatic.subjects.establishAutomatic(actor.session_id, evaluatorMethod(method), from,
+      lastBody.through, lastBody.namespace_through ?? lastBody.through)
     const budget = parseEvaluatorPolicy(config.budget_policy), refs = [...sources.values()]
     let populationID = "", populationSHA = "", preparedPins: EvaluatorExecutionPins | null = null
     const kind = newCount || lastBody.withdrawn_learning_sources.length ? "interpreted" : "no-eligible-change"
@@ -204,6 +206,7 @@ export class IncrementalInterpretation {
       scope_key: scope, method: evaluatorMethod(method), members, expected_previous_batch_id: head?.id ?? null,
       boundary: { kind: infer ? "interpreted" : "no-eligible-change", from_sequence: after, through_sequence: last.sequence,
         from_frontier: canonical(from), through_frontier: canonical(lastBody.through), subject_id: subject.subject_id, subject_sha256: subject.sha256,
+        namespace_through: canonical(subject.namespace_frontier ?? lastBody.namespace_through ?? lastBody.through),
         source_batches: canonical(sourceBatches), new_sources: newCount, earlier_context_sources: earlierContext.length,
         previous_interpretation: canonical(lastModel), population_id: populationID, population_sha256: populationSHA,
         prepared_batch_id: preparedPins?.batch_id ?? "", request_id: preparedPins?.request_id ?? "",
@@ -224,6 +227,7 @@ export class IncrementalInterpretation {
     if (claim.status === "busy") return { state: "pending", reason: "checkpoint-claimed", batch_id: row.id, retry_at: claim.lease_until_ms }
     const body: Checkpoint = { format: "loom-incremental-interpretation-checkpoint/v1", kind: row.boundary.kind as Checkpoint["kind"],
       from_sequence: integer(row.boundary.from_sequence, 0), through_sequence: throughSequence(row), through: frontier(row, "through_frontier"),
+      ...(typeof row.boundary.namespace_through === "string" ? { namespace_through: evaluationFrontier(parsed(row.boundary.namespace_through)) } : {}),
       subject: { subject_id: String(row.boundary.subject_id), sha256: String(row.boundary.subject_sha256) },
       source_batches: parsed(row.boundary.source_batches), new_sources: integer(row.boundary.new_sources, 0),
       earlier_context_sources: integer(row.boundary.earlier_context_sources, 0), interpretation: interpreted,
@@ -263,6 +267,14 @@ export class IncrementalInterpretation {
     const planned = state.head && state.head.id !== state.complete?.id ? state.head : await this.plan(actor, config, access, signal, state)
     if (!("boundary" in planned)) return planned
     const row = planned
+    const subject = this.automatic.subjects.read(String(row.boundary.subject_id), actor.session_id, String(row.boundary.subject_sha256))
+    const through = frontier(row, "through_frontier"), namespace = typeof row.boundary.namespace_through === "string"
+      ? evaluationFrontier(parsed(row.boundary.namespace_through)) : through
+    if (subject.origin.kind !== "automatic-checkpoint" || canonical(subject.origin.method) !== canonical(row.method)
+      || canonical(subject.origin.after) !== canonical(frontier(row, "from_frontier")) || canonical(subject.through) !== canonical(through)
+      || subject.namespace_frontier && (typeof row.boundary.namespace_through !== "string" || canonical(subject.namespace_frontier) !== canonical(namespace))
+      || canonical(this.automatic.sources.namespaceThrough(actor.session_id, through, namespace)) !== canonical(namespace))
+      throw new Error("Incremental interpretation namespace checkpoint changed")
     if (row.boundary.kind === "no-eligible-change") return this.continuation(actor, row, config, await this.commit(actor, row, null, access, signal))
     if (!this.execution) return { state: "blocked", reason: "evaluator-execution-authority-unavailable", batch_id: row.id }
     const retry = Date.parse(row.updated_at) + integer(config.min_interval_ms, 0, 86400000)

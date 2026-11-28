@@ -6,7 +6,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { canonical, digest } from "../src/model.js"
 import { INCREMENTAL_SCOPE } from "../src/automatic-learning.js"
-import { IncrementalInterpretation } from "../src/incremental-interpretation.js"
+import { IncrementalInterpretation, incrementalInterpretationScope } from "../src/incremental-interpretation.js"
 import type { IncrementalInterpretationConfig } from "../src/config.js"
 import type { EvaluatorRetrievedContext, EvaluatorSourceReader } from "../src/evaluator-execution-contract.js"
 import { ACTOR, POLICY, openState, freshSignal, method } from "./helpers/evaluator-execution-fixture.js"
@@ -52,7 +52,7 @@ async function fixture(withSynthesis = false) {
       detail: "Supported original history lookup was unavailable; no native crawler was attempted." })
     state.learning.automatic.subjects.registerDescendant({ parent: origin, child_session_id: "retrieval-child", native_parent_session_id: ACTOR.session_id })
     state.learning.automatic.subjects.registerSessionDescendant({ child_session_id: "retrieval-grandchild", native_parent_session_id: "retrieval-child" })
-    state.store.observe(ACTOR, undefined, { phase: "finished", status: "error", message_id: origin.message_id, call_id: origin.call_id })
+    state.store.observe(ACTOR, undefined, { phase: "finished", status: "error", tool: "codemode", message_id: origin.message_id, call_id: origin.call_id })
     state.store.record({ session_id: "retrieval-child", agent: "researcher" }, undefined,
       { kind: "concern", statement: "This failed evaluation retrieval is outside the original engineering subject." })
     state.store.record(ACTOR, undefined, { kind: "result", statement: "Later continuation corrected the engineering approach." })
@@ -71,7 +71,9 @@ async function fixture(withSynthesis = false) {
           await state.learning.incrementalInterpretation.opportunity(ACTOR, settings(), access, freshSignal())
         }
         const progress = state.learning.incrementalInterpretation.progress(ACTOR.session_id, settings())
-        const frozen = state.learning.automatic.history.retrospectivePopulation(String(progress.pending!.population_id), ACTOR.session_id)
+        const intent = state.learning.automatic.history.incrementalHead(ACTOR.session_id, incrementalInterpretationScope(settings().method!))
+        if (!progress.pending || intent?.id !== progress.pending.batch_id) throw new Error("Fixture lacks exact pending interpretation")
+        const frozen = state.learning.automatic.history.retrospectivePopulation(String(intent.boundary.population_id), ACTOR.session_id)
         const producer = publicationFixture(state, ACTOR, { manifest: frozen.manifest, resolve: access.resolve,
           authorityPath: join(root, `authority-${iteration}.sqlite`), claims: 1 })
         controlled.push(producer)
@@ -152,11 +154,12 @@ function changeBoundary(db: Database, batchID: string, change: (value: any) => v
     boundary, method: JSON.parse(row.method_json), membership: row.membership_sha256 })
   db.query("UPDATE learning_evaluation_batches SET boundary_json=?,identity=? WHERE id=?").run(canonical(boundary), identity, batchID)
 }
-function rehashReports(db: Database, batchID: string) {
+function rehashReports(db: Database, batchID: string, change?: (body: any) => void) {
   let overall = ""
   const rows = db.query("SELECT * FROM learning_evaluation_reports WHERE batch_id=? ORDER BY member_key").all(batchID) as any[]
   for (const row of rows) {
     const body = JSON.parse(row.body_json)
+    change?.(body)
     if (row.member_key !== null && body.format === "loom-evaluator-member/v1") body.report_sha256 = overall
     const sources = (db.query("SELECT source_ref FROM learning_evaluation_dependencies WHERE report_id=? ORDER BY source_key").all(row.id) as any[]).map(item => JSON.parse(item.source_ref))
     const checksum = digest({ batch_id: batchID, member_key: row.member_key, body, qualifications: JSON.parse(row.qualifications_json), source_refs: sources })
@@ -202,7 +205,7 @@ for (const synthesis of [false, true]) test(`paired stopped backup restores ordi
   } finally { f.close() }
 })
 
-for (const damage of ["missing subject", "changed subject", "lost descendant origin", "owner cursor outside range", "skipped owner cursor", "skipped source checkpoint", "lost committed checkpoint", "omitted original dependency", "changed member slot"] as const)
+for (const damage of ["missing subject", "changed subject", "lost descendant origin", "owner cursor outside range", "skipped owner cursor", "missing namespace checkpoint", "widened namespace checkpoint", "changed report namespace", "skipped source checkpoint", "lost committed checkpoint", "omitted original dependency", "changed member slot"] as const)
   test("restore refuses rehashed Session learning " + damage, async () => {
     const f = await fixture()
     try {
@@ -223,6 +226,21 @@ for (const damage of ["missing subject", "changed subject", "lost descendant ori
           db.query("UPDATE learning_subject_descendants SET data_json=?,sha256=? WHERE session_id='retrieval-child'").run(text, sha(text))
         } else if (damage === "owner cursor outside range") changeBoundary(db, f.expected.second, boundary => { boundary.through_owner = 5 })
         else if (damage === "skipped owner cursor") changeBoundary(db, f.expected.second, boundary => { boundary.from_owner = (boundary.from_owner + 1) % 5 })
+        else if (damage === "missing namespace checkpoint") changeBoundary(db, f.expected.second, boundary => { delete boundary.namespace_through })
+        else if (damage === "widened namespace checkpoint") changeBoundary(db, f.expected.second, boundary => {
+          const namespace = JSON.parse(boundary.namespace_through); namespace.objective_links++
+          boundary.namespace_through = canonical(namespace)
+        })
+        else if (damage === "changed report namespace") {
+          rehashReports(db, f.expected.second, body => { if (body.namespace_through) body.namespace_through.objectives++ })
+          const row = db.query("SELECT report_id FROM learning_evaluation_batches WHERE id=?").get(f.expected.second) as any
+          const report = db.query("SELECT sha256 FROM learning_evaluation_reports WHERE id=?").get(row.report_id) as any
+          changeBoundary(db, f.expected.progress.pending.batch_id, boundary => {
+            const sources = JSON.parse(boundary.source_batches)
+            sources.find((source: any) => source.report_id === row.report_id).sha256 = report.sha256
+            boundary.source_batches = canonical(sources)
+          })
+        }
         else if (damage === "skipped source checkpoint") changeBoundary(db, f.expected.progress.pending.batch_id, boundary => {
           boundary.source_batches = canonical(JSON.parse(boundary.source_batches).slice(1))
         })

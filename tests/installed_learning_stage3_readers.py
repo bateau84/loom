@@ -3,6 +3,8 @@
 
 Only the external provider is scripted. SQLite is observed read-only until the
 explicit stopped-host original-source fault stimuli at the end.
+Complete-population mode is explicit: this suite qualifies legacy oversized
+member/observation paging, not the incremental public readers.
 """
 from __future__ import annotations
 import argparse
@@ -45,7 +47,7 @@ def main(args):
     sys.path.insert(0, str(REPO / 'tests'))
     from installed_host_smoke import PrivateHost, isolated_environment, installed_plugin_inventory, require
     from installed_questions import Scenario, audit_session, final_events, request, result_value
-    from installed_learning_stage3 import make_session, until, view
+    from installed_learning_stage3 import HOST, make_session, until, view
     OUT.mkdir(parents=True, exist_ok=False, mode=0o700)
     ROOT.mkdir(parents=True, exist_ok=False, mode=0o700)
     project = ROOT / 'project'
@@ -73,7 +75,7 @@ def main(args):
         'model': 'question-fixture/reader', 'update': 'disable', 'share': 'disabled'}
     (Path(env['OPENCODE_CONFIG_DIR']) / 'opencode.json').write_text(json.dumps(config))
     capture = project / '.loom.yaml'
-    capture.write_text('instructions: {enabled: false}\nledger: {capture: off}\n')
+    capture.write_text('instructions: {enabled: false}\nledger: {capture: off}\nlearning: {incremental: false}\n')
     (ROOT / 'jobs.json').write_text('{}')
     subprocess.run(['git', 'init', '-q', str(project)], check=True, env=env)
 
@@ -87,7 +89,7 @@ def main(args):
 
     def boot(label):
         h = PrivateHost(str(HOST.resolve()), project, env, OUT, label)
-        require(json.loads(h.get('/api/info', 'info'))['version'] == '2.2.6', 'Wrong actual host')
+        require(json.loads(h.get('/api/info', 'info'))['version'] == HOST, 'Wrong actual host')
         h.wait_roster('/api/plugin', 'plugins', lambda rows: all(any(
             item.get('id') == identity and item.get('state', {}).get('status') == 'active'
             for item in rows) for identity in ('loom', 'loom.question.fixture')))
@@ -97,7 +99,7 @@ def main(args):
         actual = subprocess.check_output(['git', '-C', str(REPO), 'rev-parse', 'HEAD'], text=True).strip()
         require(actual == SHA, 'Source head changed')
         require(not subprocess.check_output(['git', '-C', str(REPO), 'status', '--porcelain'], text=True).strip(), 'Source checkout is dirty')
-        result['candidate'] = installed_plugin_inventory(ARTIFACT, PLUGIN, args.expect_plugin_version, '2.2.6')
+        result['candidate'] = installed_plugin_inventory(ARTIFACT, PLUGIN, args.expect_plugin_version, HOST)
         runtime = [REPO / 'server.ts', *[p for p in (REPO / 'src').rglob('*') if p.is_file()]]
         require(all(digest(p) == digest(PLUGIN / p.relative_to(REPO)) for p in runtime), 'Packed production runtime differs')
         result['runtime_files_checked'] = len(runtime)
@@ -157,7 +159,7 @@ def main(args):
                 require(view(learning, owner).get('batch') is None, 'Capture-off unexpectedly evaluated source')
                 host.close(); host = None
                 final_events(ROOT)
-                capture.write_text('instructions: {enabled: false}\nledger: {capture: automatic}\n')
+                capture.write_text('instructions: {enabled: false}\nledger: {capture: automatic}\nlearning: {incremental: false}\n')
                 host = boot('automatic')
                 s = Scenario(host, ROOT)
                 state = until(learning, owner, lambda v: v.get('batch') and v['batch'][1] == 'complete'

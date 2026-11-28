@@ -172,7 +172,16 @@ try {
         assert.ok(body.includes("New evidence is waiting"))
         assert.ok(body.includes("Ethernet was not retested"))
         assert.ok(view.observed.ledger > view.committed.ledger)
-        return { observed: view.observed, committed: view.committed, original_concern_retained: true }
+        await page.getByRole("link", { name: "Later engineering work", exact: true }).click()
+        const details = page.locator("details").filter({ has: page.getByText("Read the new evidence range", { exact: true }) })
+        await details.locator("summary").click()
+        const request = JSON.parse(await details.locator("pre code").textContent())
+        assert.equal(request.arguments.after, view.committed.ledger)
+        assert.equal(request.arguments.through, view.observed.ledger)
+        const continuation = readOriginal(request.tool, request.arguments)
+        assert.ok(JSON.stringify(continuation).includes("Later continuation: a new Ethernet check was requested"))
+        return { observed: view.observed, committed: view.committed, original_concern_retained: true,
+          later_work_request: request, later_work_is_separate: true }
       })
       await check("accessibility and mobile reflow", async () => {
         const desktop = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze()

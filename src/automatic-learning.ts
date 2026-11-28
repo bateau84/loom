@@ -82,6 +82,7 @@ type IncrementObservation = Observation & { origin: IncrementOrigin; phase: stri
 export type IncrementReportBody = {
   format: "loom-incremental-learning-report/v1"; method: string; subject: { subject_id: string; sha256: string }; target: EvaluationTarget;
   previous: { batch_id: string; report_id: string; sha256: string } | null; from: LearningFrontier; through: LearningFrontier; observed: LearningFrontier;
+  namespace_through?: LearningFrontier;
   new_sources: number; excluded_sources: number; examined_sources: number; withdrawn_learning_sources: EvaluationSourceRef[];
   earlier_context_sources: number; observations: Record<string, number>; retained: IncrementRetained;
   processing_complete: true; objective_success: "not-assessed"; interpretation: string; qualifications: string[];
@@ -102,6 +103,7 @@ function parseIncrementBody(value: unknown): IncrementReportBody {
     || retained.concerns.length + retained.unfinished.length > INCREMENTAL_RETAINED_LIMIT)
     throw new Error("Incremental report body unavailable")
   evaluationFrontier(body.from); evaluationFrontier(body.through); evaluationFrontier(body.observed)
+  if (body.namespace_through !== undefined) evaluationFrontier(body.namespace_through)
   return value as IncrementReportBody
 }
 function incrementObservation(source: LearningSource, origin: IncrementOrigin): IncrementObservation {
@@ -149,6 +151,41 @@ export class AutomaticLearning {
       return project(source)
     })
     return { method: METHOD, scope: "provisional-session-fragment", observations }
+  }
+
+  /** Internal structural binding for a previously authorized overall report.
+   * A report hash cannot substitute for the subject/cursor that was frozen
+   * before processing. This performs no original-owner read. */
+  checkedIncrementReport(session: string, batchID: string, report: EvaluationReport): IncrementReportBody {
+    const frozen = this.history.frozenIncrement(batchID, session), body = parseIncrementBody(report.body)
+    if (frozen.scope_key !== INCREMENTAL_SCOPE || canonical(frozen.method) !== canonical(INCREMENTAL_METHOD)
+      || frozen.published_state !== "complete" || report.batch_id !== batchID || report.member_key !== null)
+      throw new Error("Incremental report checkpoint mismatch")
+    const subject = this.subjects.read(String(frozen.boundary.subject_id), session, String(frozen.boundary.subject_sha256))
+    const expectedNamespace = typeof frozen.boundary.namespace_through === "string"
+      ? evaluationFrontier(JSON.parse(frozen.boundary.namespace_through)) : undefined
+    if (canonical(body.subject) !== canonical({ subject_id: subject.subject_id, sha256: subject.sha256 })
+      || canonical(body.target) !== canonical(subject.target)
+      || !sameFrontier(body.from, frontierFromBoundary(frozen.boundary, "from"))
+      || !sameFrontier(body.through, frontierFromBoundary(frozen.boundary, "through"))
+      || !sameFrontier(body.observed, frontierFromBoundary(frozen.boundary, "observed"))
+      || !sameFrontier(body.observed, subject.through)
+      || canonical(body.namespace_through) !== canonical(expectedNamespace)
+      || (body.previous?.batch_id ?? "") !== frozen.boundary.previous_checkpoint
+      || body.new_sources !== frozen.boundary.new_sources || body.excluded_sources !== frozen.boundary.excluded_sources
+      || body.examined_sources !== frozen.boundary.examined_sources || digest(body.withdrawn_learning_sources) !== frozen.boundary.withdrawn_sha256
+      || subject.origin.kind !== "automatic-checkpoint" || !sameFrontier(subject.origin.after, body.from)
+      || canonical(subject.origin.method) !== canonical(INCREMENTAL_METHOD))
+      throw new Error("Incremental report does not match its frozen evidence boundary")
+    if (subject.namespace_frontier && !expectedNamespace) throw new Error("Incremental report namespace checkpoint unavailable")
+    if (expectedNamespace && (Object.keys(expectedNamespace).some(key => expectedNamespace[key as keyof LearningFrontier]
+      > (subject.namespace_frontier ?? subject.through)[key as keyof LearningFrontier])
+      || !sameFrontier(this.sources.namespaceThrough(session, body.through, expectedNamespace), expectedNamespace)))
+      throw new Error("Incremental report namespace checkpoint includes unprocessed evidence")
+    const dependencies = new Set(report.source_refs.map(ref => canonical(ref)))
+    if ([...body.retained.concerns, ...body.retained.unfinished].some(item => !dependencies.has(canonical(item.source))))
+      throw new Error("Incremental retained source is outside its report dependencies")
+    return body
   }
 
   /** One bounded quantum; repeated calls resume durable checkpoints without another idle event. */
@@ -269,7 +306,7 @@ export class AutomaticLearning {
       if (!previousReport) throw new Error("Committed incremental checkpoint is missing")
       if (previousReport.availability !== "available")
         previousReport = this.history.incrementalRecoveryReport(previous.id, session, ref => this.sources.isEvaluation(ref))
-      const body = parseIncrementBody(previousReport.body)
+      const body = this.checkedIncrementReport(session, previous.id, previousReport)
       withdrawn = previousReport.source_refs.filter(ref => this.sources.isEvaluation(ref))
       retained = {
         concerns: body.retained.concerns.filter(item => !this.sources.isEvaluation(item.source)),
@@ -296,12 +333,14 @@ export class AutomaticLearning {
       // originals. A late append can only be considered by the next increment.
       const subject = this.subjects.establishAutomatic(session, INCREMENTAL_METHOD, from)
       const selected = this.sources.selectIncrement(session, from, subject.through, limit, fromOwner)
+      const namespaceThrough = this.sources.namespaceThrough(session, selected.through, subject.namespace_frontier ?? subject.through)
       if (sameFrontier(from, selected.through) && !withdrawn.length)
         return previous ? { state: "complete", batch_id: previous.id, replayed: true } : { state: "empty" }
       const boundary: Record<string, number | string> = {
         subject_id: subject.subject_id, subject_sha256: subject.sha256, classification_sequence: classification,
         previous_checkpoint: previous?.id ?? "", new_sources: selected.eligible,
         from_owner: fromOwner, through_owner: selected.next_owner,
+        namespace_through: canonical(namespaceThrough),
         excluded_sources: selected.excluded, examined_sources: selected.examined,
         withdrawn_sha256: digest(withdrawn), ...encodeFrontier("from", from),
         ...encodeFrontier("through", selected.through), ...encodeFrontier("observed", subject.through),
@@ -323,6 +362,14 @@ export class AutomaticLearning {
     if (subject.origin.kind !== "automatic-checkpoint" || canonical(subject.origin.method) !== canonical(INCREMENTAL_METHOD)
       || !sameFrontier(subject.origin.after, frontierFromBoundary(batch.boundary, "from")))
       throw new Error("Incremental subject origin mismatch")
+    if (subject.namespace_frontier && typeof batch.boundary.namespace_through !== "string") throw new Error("Incremental namespace checkpoint unavailable")
+    if (typeof batch.boundary.namespace_through === "string") {
+      const namespace = evaluationFrontier(JSON.parse(batch.boundary.namespace_through)), through = frontierFromBoundary(batch.boundary, "through")
+      const ceiling = subject.namespace_frontier ?? subject.through
+      if (Object.keys(namespace).some(key => namespace[key as keyof LearningFrontier] > ceiling[key as keyof LearningFrontier])
+        || !sameFrontier(this.sources.namespaceThrough(session, through, namespace), namespace))
+        throw new Error("Incremental namespace checkpoint includes unprocessed evidence")
+    }
     if (String(batch.boundary.previous_checkpoint) !== (previous?.id ?? "")) throw new Error("Incremental successful checkpoint changed")
     const acquisition = this.history.claim(batch.id, this.worker)
     if (acquisition.status === "busy") return { state: "busy", batch_id: batch.id, retry_at: acquisition.lease_until_ms }
@@ -388,6 +435,7 @@ export class AutomaticLearning {
         subject: { subject_id: subject.subject_id, sha256: subject.sha256 }, target: subject.target,
         previous: previousReport ? { batch_id: previousReport.batch_id, report_id: previousReport.id, sha256: previousReport.sha256 } : null,
         from: frontierFromBoundary(batch.boundary, "from"), through: frontierFromBoundary(batch.boundary, "through"),
+        ...(typeof batch.boundary.namespace_through === "string" ? { namespace_through: evaluationFrontier(JSON.parse(batch.boundary.namespace_through)) } : {}),
         observed: frontierFromBoundary(batch.boundary, "observed"), new_sources: Number(batch.boundary.new_sources),
         excluded_sources: Number(batch.boundary.excluded_sources), examined_sources: Number(batch.boundary.examined_sources),
         withdrawn_learning_sources: withdrawn, earlier_context_sources: new Set(context.map(item => canonical(item.source))).size,
@@ -448,7 +496,7 @@ export class AutomaticLearning {
       subject_id: frozen.boundary.subject_id, section, report_id: report?.id ?? null, report_sha256: report?.sha256 ?? null,
       availability: report?.availability ?? "not-published", navigation: { progress: { operation: "learning-progress" } } }
     if (!report || report.availability !== "available") return { ...base, body: null, items: [], next_after: null }
-    const body = parseIncrementBody(report.body)
+    const body = this.checkedIncrementReport(session, batchID, report)
     if (section === "summary") return boundedIncrementRead({ ...base, body: incrementSummary(body, batchID), items: [], next_after: null })
     const all = body.retained[section]
     if (after > all.length) throw new Error("Incremental report cursor unavailable")
@@ -477,18 +525,28 @@ export class AutomaticLearning {
     const page = this.history.incrementPage(session, INCREMENTAL_SCOPE, { before, limit })
     if (disclosures && (page.items.length !== Object.keys(disclosures).length || page.items.some(batch => !Object.hasOwn(disclosures, batch.id))))
       throw new Error("Incremental learning page changed; authorize its current source union")
-    const items = page.items.map(row => ({ batch: this.history.get(row.id, session),
+    const show = (row: typeof page.items[number]) => ({ batch: this.history.get(row.id, session),
       inspect: { operation: "learning-report", batch_id: row.id },
-      report: this.incrementReport(session, row.id).body ?? null }))
-    const nextBefore = page.next_before
-    return boundedIncrementRead({ format: "loom-incremental-learning-progress/v1", session_id: session,
+      report: this.incrementReport(session, row.id).body ?? null })
+    const items: Array<ReturnType<typeof show>> = []
+    const view = (shown: typeof items, nextBefore: number | null) => ({ format: "loom-incremental-learning-progress/v1", session_id: session,
       target: { kind: "session", id: session }, method: INCREMENTAL_METHOD,
-      state: !latest ? "empty" : items.find(item => item.batch.id === latest.id)?.batch.state === "incomplete" || latest.published_state === "blocked" ? "blocked" : latest?.published_state === "processing" ? "processing"
+      state: !latest ? "empty" : shown.find(item => item.batch.id === latest.id)?.batch.state === "incomplete" || latest.published_state === "blocked" ? "blocked" : latest?.published_state === "processing" ? "processing"
         : latest?.published_state === "pending" ? "pending" : sameFrontier(observed, committed) ? "caught-up" : "pending",
       observed, committed, latest_successful_batch_id: successful?.id ?? null, latest_batch_id: latest?.id ?? null,
       inference: { state: "unavailable", reasons: EVALUATOR_BLOCK.reasons },
-      items, next_before: nextBefore, next: nextBefore === null ? null : { operation: "learning-progress", before: nextBefore, limit },
+      items: shown, next_before: nextBefore, next: nextBefore === null ? null : { operation: "learning-progress", before: nextBefore, limit },
+      navigation: { later_work: observed.ledger > committed.ledger ? { tool: "history", arguments: {
+        operation: "read", session_id: session, source_session_id: session, after: committed.ledger, through: observed.ledger, limit: 20 } } : null,
+        later_work_qualification: "This opens a separate current ledger range. Later records are outside the original frozen evaluation subject and require their own authorized inspection." },
       qualifications: INCREMENTAL_QUALIFICATIONS })
+    for (const row of page.items) {
+      const item = show(row), nextBefore = items.length + 1 < page.items.length ? row.sequence : page.next_before
+      try { boundedIncrementRead(view([...items, item], nextBefore)) }
+      catch (error) { if (!items.length || !(error instanceof ProcessingLimitError)) throw error; break }
+      items.push(item)
+    }
+    return boundedIncrementRead(view(items, items.length < page.items.length ? items.at(-1)!.batch.sequence : page.next_before))
   }
 
 }

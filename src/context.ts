@@ -309,11 +309,15 @@ export class Observer {
    * This is a bounded delivery hint for the normal append-only observation,
    * not a second evidence store or an invented native invocation identity. */
   noteLearningInvocation(call: { sessionID: string; messageID: string; id: string }) {
-    const key = digest([call.sessionID, call.messageID, call.id, "codemode"])
-    if (!this.store.hasUnfinishedObservationStart(key)) return
-    const groups = this.continuity.learningGroups ??= new Set<string>()
-    if (groups.size >= 1024 && !groups.has(key)) throw new Error("Learning wrapper continuity capacity reached")
-    groups.add(key)
+    // OpenCode 2.3.0 calls its outer Code Mode tool `execute`. Preserve the
+    // earlier `codemode` name for captured histories and supported fixtures.
+    for (const tool of ["execute", "codemode"]) {
+      const key = digest([call.sessionID, call.messageID, call.id, tool])
+      if (!this.store.hasUnfinishedObservationStart(key)) continue
+      const groups = this.continuity.learningGroups ??= new Set<string>()
+      if (groups.size >= 1024 && !groups.has(key)) throw new Error("Learning wrapper continuity capacity reached")
+      groups.add(key)
+    }
   }
   /** A lost before hook means even identical inputs cannot establish pairing. */
   captureGap() { this.continuity.pairingDegraded = true }
@@ -336,7 +340,7 @@ export class Observer {
     // Avoid hashing disabled calls merely because their key once appeared in history.
     if (!captureEnabled && !this.has(e)) return undefined
     // Compute first. A digest/insert failure leaves all saved starts intact.
-    const group = this.key(e), learningWrapper = e.tool === "codemode" && this.continuity.learningGroups?.has(group)
+    const group = this.key(e), learningWrapper = ["execute", "codemode"].includes(e.tool) && this.continuity.learningGroups?.has(group)
     const recorded = this.store.finishObservation({ session_id: e.sessionID, agent: e.agent }, {
       phase: "finished", tool: e.tool, message_id: e.messageID, call_id: e.id,
       correlation_key: this.key(e), observer_epoch: this.epoch,

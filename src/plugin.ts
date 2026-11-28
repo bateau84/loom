@@ -169,7 +169,7 @@ const subjectCutoffInput = preserveInput({ kind: choice("point-in-time", "record
 const frontierInput = preserveInput({ ledger: num, objectives: num, objective_links: num, review_requests: num, review_relationships: num },
   ["ledger", "objectives", "objective_links", "review_requests", "review_relationships"])
 const populationSelectionInput = preserveInput({ mode: choice("explicit-objective", "explicit-subject"), objective_id: str,
-  target: subjectTargetInput, subject_id: str, subject_sha256: str, frontier: frontierInput, cutoff: subjectCutoffInput,
+  target: subjectTargetInput, subject_id: str, subject_sha256: str, frontier: frontierInput, namespace_frontier: frontierInput, cutoff: subjectCutoffInput,
   question: { type: "string", minLength: 1, maxLength: 8000 }, through: num,
   owner_boundary: preserveInput({ objective_links: { anyOf: [num, { type: "null" }] }, review_requests: num, review_relationships: num },
     ["objective_links", "review_requests", "review_relationships"]), owner_version: { type: "string", pattern: "^[a-f0-9]{64}$" },
@@ -599,6 +599,16 @@ export default Plugin.define({
               }
               catch { throw new Error("Evidence source unavailable in the authorized scope") }
             }
+            const authorizeCompletionSource = async (source: { id: string; session_id?: string }) => {
+              const sourceSession = uid(source.session_id, "completion source Session")
+              await beginEvidence(`session:${evidenceID(sourceSession, "source Session")}:record:${evidenceID(source.id, "completion record")}`,
+                ["record-full"], ["record-full"])
+              await evidenceSession(sourceSession); evidenceSessions.add(sourceSession)
+            }
+            const authorizeRecordedCompletion = async (target: EvaluationSubjectInput["target"], recordID: unknown) => {
+              const source = requiredLearning().automatic.sources.recordedCompletionScope(target, uid(recordID, "completion record"))
+              await authorizeCompletionSource(source)
+            }
             const authorizeReview = async () => {
               // The native source-file read owner is the existing authority for
               // this private projection. Project membership or an intended
@@ -831,6 +841,8 @@ export default Plugin.define({
               const current = owner.retrospectiveSources(populationID, ownerOnly ? actor.session_id : undefined)
               if (digest(current) !== digest(sources)) throw new Error("Retrospective population unavailable")
               const population = owner.retrospectivePopulation(populationID, ownerOnly ? actor.session_id : undefined)
+              if (population.manifest.selection.mode === "explicit-subject" && population.manifest.selection.cutoff.kind === "recorded-completion")
+                await authorizeCompletionSource(population.manifest.selection.cutoff.record)
               if (population.owner_session === actor.session_id && population.manifest.selection.mode === "explicit-subject") activitySubject = population.manifest.selection.subject_id
               const scope = store.captureScope()
               evidenceSourceCheck = async () => {
@@ -872,13 +884,28 @@ export default Plugin.define({
                 if (subject) activitySubject = subject.subject_id
                 if (subject && (digest(subject.target) !== digest(selection.target) || subject.question !== selection.question))
                   throw new Error("Retrospective subject mismatch")
-                const frontier = subject?.through ?? selection.frontier ?? owner.sources.targetFrontier(selection.target)
+                if (subject?.cutoff.kind === "recorded-completion") await authorizeCompletionSource(subject.cutoff.record)
+                else if (!subject && selection.cutoff?.kind === "recorded-completion")
+                  await authorizeRecordedCompletion(selection.target, selection.cutoff.record?.id)
+                // Capture both work positions and their comparable namespace
+                // ceilings before history discovery. A replayed boundary is
+                // never widened by recapturing unrelated owner maxima.
+                const proposal = !subject && !selection.frontier && selection.through === undefined
+                  ? owner.subjects.propose(actor, { target: selection.target, question: selection.question,
+                    ...(selection.cutoff?.kind === "recorded-completion" ? { cutoff: { kind: "recorded-completion" as const,
+                      record_id: selection.cutoff.record?.id } } : {}) }) : null
+                const frontier = subject?.through ?? selection.frontier ?? proposal?.through ?? owner.sources.targetFrontier(selection.target)
                 if (selection.frontier && digest(selection.frontier) !== digest(frontier) || selection.through !== undefined && selection.through !== frontier.ledger)
                   throw new Error("Retrospective subject boundary mismatch")
+                const namespace = subject ? subject.namespace_frontier : selection.namespace_frontier ?? proposal?.namespace_frontier ?? frontier
+                if (subject && selection.namespace_frontier && digest(selection.namespace_frontier) !== digest(subject.namespace_frontier ?? frontier))
+                  throw new Error("Retrospective namespace frontier differs from the established subject")
                 const boundary = { objective_links: frontier.objective_links, review_requests: frontier.review_requests, review_relationships: frontier.review_relationships }
                 if (selection.owner_boundary && digest(selection.owner_boundary) !== digest(boundary)) throw new Error("Retrospective source owner boundary mismatch")
                 selection = { ...selection, frontier, through: frontier.ledger, owner_boundary: boundary,
-                  ...(subject ? { cutoff: subject.cutoff } : {}) }
+                  ...(namespace ? { namespace_frontier: namespace } : {}),
+                  ...(subject ? { cutoff: subject.cutoff } : proposal ? { cutoff: proposal.cutoff } : {}) }
+                if (!namespace) delete selection.namespace_frontier
                 query = { [selection.target.kind + "_id"]: selection.target.id, through: frontier.ledger, owner_boundary: boundary,
                   ...(selection.owner_version ? { owner_version: selection.owner_version } : {}) }
               } else {
@@ -908,9 +935,16 @@ export default Plugin.define({
               if (typeof sha !== "string") throw new Error("Subject fingerprint is required")
               const subject = requiredLearning().automatic.subjects.read(uid(id), actor.session_id, sha)
               activitySubject = subject.subject_id
-              await authorizedHistory({ [subject.target.kind + "_id"]: subject.target.id, through: subject.through.ledger,
-                owner_boundary: { objective_links: subject.through.objective_links, review_requests: subject.through.review_requests,
-                  review_relationships: subject.through.review_relationships }, limit: 1 }, true)
+              if (subject.cutoff.kind === "recorded-completion") await authorizeCompletionSource(subject.cutoff.record)
+              // The owner's immutable descriptor is not a live history page.
+              // Authorize its target identity without hydrating unrelated
+              // originals or requiring an original to survive merely to read
+              // the retained boundary. Preview/population reads independently
+              // authorize their complete contributors and selected originals.
+              await beginEvidence(subject.target.kind + ":" + evidenceID(subject.target.id, "target"), ["evaluation-subject"], ["evaluation-subject"])
+              if (subject.target.kind === "session") {
+                await evidenceSession(subject.target.id); evidenceSessions.add(subject.target.id)
+              }
               return subject
             }
             let result: unknown
@@ -982,8 +1016,10 @@ export default Plugin.define({
                   const target = evaluationTarget(input.target)
                   await beginEvidence(target.kind + ":" + evidenceID(target.id, "target"), ["evaluation-subject"], ["evaluation-subject"])
                   evidenceResources.add(filename); evidenceResources.add(learningFilename); await assertEvidence([...evidenceResources])
+                  const cutoff = input.cutoff as EvaluationSubjectInput["cutoff"]
+                  if (cutoff?.kind === "recorded-completion") await authorizeRecordedCompletion(target, cutoff.record_id)
                   const subject = requiredLearning().automatic.subjects.establish(actor, { target, question: input.question as string,
-                    cutoff: input.cutoff as EvaluationSubjectInput["cutoff"] }, { session_id: actor.session_id, message_id: toolContext.messageID, call_id: toolContext.id })
+                    cutoff }, { session_id: actor.session_id, message_id: toolContext.messageID, call_id: toolContext.id })
                   activitySubject = subject.subject_id
                   await readSubject(subject.subject_id, subject.sha256)
                   const { owner_version: _version, ...selection } = subjectSelection(subject)

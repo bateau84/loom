@@ -268,14 +268,18 @@ try {
           assert.equal(await anchor.evaluate(element => element === document.activeElement), true)
         }
         await page.keyboard.press("Tab")
-        const summary = page.locator(firstSummary).first()
+        // The foundation now explains gaps and boundaries before its source
+        // cards. Verify the first disclosure in actual document order here;
+        // source-card navigation has its own keyboard check below.
+        const summary = page.locator(population ? "#selection details > summary" : firstSummary).first()
         assert.equal(await summary.evaluate(element => element === document.activeElement), true)
         await keyboardToggle(summary, "Enter", true)
         await keyboardToggle(summary, "Space", false)
         const cdp = await context.newCDPSession(page)
         const { nodes } = await cdp.send("Accessibility.getFullAXTree")
         await cdp.detach()
-        assert.ok(nodes.some(node => !node.ignored && (population ? node.name?.value?.includes(view.items[0].historical_scope?.title ?? view.items[0].source.kind.replaceAll("-", " ")) : node.name?.value === "Source scope and boundary")
+        const summaryName = await summary.textContent()
+        assert.ok(nodes.some(node => !node.ignored && node.name?.value === summaryName
           && node.properties?.some(property => property.name === "expanded" && property.value.value === false)),
         "Chromium accessibility tree exposes collapsed disclosure state")
         await page.locator(".skip").press("Enter")
@@ -470,6 +474,7 @@ try {
       await context.close()
     }
     console.log(`${result.passed ? "PASS" : "FAIL"} ${fixture.name}: ${result.checks.filter(check => check.passed).length} checks`)
+    if (!result.passed && result.error) console.error(result.error.slice(0, 4000))
   }
   report.passed = report.fixtures.every(fixture => fixture.passed)
 } catch (error) {

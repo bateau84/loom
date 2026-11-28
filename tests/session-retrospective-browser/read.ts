@@ -14,8 +14,9 @@ const operations: Record<string, string[]> = {
 }
 assert.ok(operations[tool]?.includes(request.operation), "Only supported read-only history and insights operations are available")
 if (request.limit === undefined && !request.operation.includes("source") && request.operation !== "subject") request.limit = 5
-if (request.limit !== undefined) assert.ok(Number.isInteger(request.limit) && request.limit > 0 && request.limit <= 20, "Fresh-reader page limit is 20")
-if (request.source_limit !== undefined) assert.ok(Number.isInteger(request.source_limit) && request.source_limit >= 2 && request.source_limit <= 8192, "Fresh-reader source fragment limit is 8192")
+const pageLimit = tool === "history" ? 50 : request.operation === "learning-progress" ? 20 : 100
+if (request.limit !== undefined) assert.ok(Number.isInteger(request.limit) && request.limit > 0 && request.limit <= pageLimit, "Page exceeds this public operation's documented limit")
+if (request.source_limit !== undefined) assert.ok(Number.isInteger(request.source_limit) && request.source_limit >= 2 && request.source_limit <= 32768, "Source fragment limit is 32768")
 if (!["subject", "subject-activities"].includes(request.operation)) {
   request.response_format ??= "json"
   assert.ok(["json", "html", "markdown"].includes(request.response_format))

@@ -75,6 +75,7 @@ test("established subject excludes concurrent appends and distinguishes recorded
     const completed = f.subjects.establish(f.actor, { target, question: "Assess the reported completion", cutoff: { kind: "recorded-completion", record_id: completion.id } })
     const point = f.subjects.establish(f.actor, { target, question: "Assess ongoing work" })
     expect(completed.cutoff.kind).toBe("recorded-completion")
+    expect(completed.namespace_frontier!.ledger).toBe(completed.through.ledger)
     expect(point.cutoff.kind).toBe("point-in-time")
     expect(point.through.ledger).toBeGreaterThan(completed.through.ledger)
     const frozenBody = canonical(completed)
@@ -199,11 +200,105 @@ test("automatic subject establishment is idempotent across competing workers and
     if (future.selection.mode !== "explicit-subject") throw new Error("Expected subject fixture")
     future.selection.frontier.review_relationships++
     future.selection.owner_boundary.review_relationships++
+    future.selection.namespace_frontier!.review_relationships++
     expect(compatibleRetrospectiveContext(manifest, parseRetrospectiveManifest(future))).toBe(false)
     const unrelated = structuredClone(manifest)
     if (unrelated.selection.mode !== "explicit-subject") throw new Error("Expected subject fixture")
     unrelated.selection.target.kind = "action"
     expect(compatibleRetrospectiveContext(manifest, unrelated)).toBe(false)
     expect(retrospectiveDigest(manifest)).toBe(retrospectiveDigest(parseRetrospectiveManifest(manifest)))
+  } finally { f.close() }
+})
+
+test("manual and automatic Session subjects compare namespace ceilings without importing foreign membership", async () => {
+  const f = fixture()
+  try {
+    const original = f.record("Ordinary engineering evidence")
+    const unrelated = f.record("Unrelated conversation", "other")
+    const other = { session_id: "other", agent: "engineer" }
+    f.learning.objectives.create(other, f.learning.objectives.ledgerSource(unrelated.id), "Unrelated authored goal")
+    const shared = f.learning.objectives.create(other, f.learning.objectives.ledgerSource(original.id), "A separately authored interpretation of this evidence")
+    const method = { id: "namespace-checkpoint", instruction_sha256: digest("bounded namespace comparison") }
+    const target: EvaluationTarget = { kind: "session", id: "work" }
+    const manual = f.subjects.establish(f.engineer, { target, question: "Assess this ordinary Session" })
+    const automatic = f.subjects.establishAutomatic("work", method, EMPTY_LEARNING_FRONTIER)
+    expect(manual.through).toMatchObject({ ledger: 1, objectives: 2, objective_links: 2 })
+    expect(automatic.through).toMatchObject({ ledger: 1, objectives: 0, objective_links: 0 })
+    expect(manual.namespace_frontier).toEqual(automatic.namespace_frontier)
+    expect(manual.namespace_frontier!.ledger).toBe(2)
+    const ref = f.source.retrospectiveOriginal("ledger-record", original.id, "work", "work")!.ref
+    const manualManifest = f.learning.populations.fromSources(manual, [ref]), automaticManifest = f.learning.populations.fromSources(automatic, [ref])
+    expect(compatibleRetrospectiveContext(automaticManifest, manualManifest)).toBe(true)
+    expect(compatibleRetrospectiveContext(manualManifest, automaticManifest)).toBe(true)
+    expect(automaticManifest.members.map(member => member.source.id)).toEqual([original.id])
+    expect(automaticManifest.selection).not.toHaveProperty("objective_id")
+    const owners = f.history(target, manual)
+    expect(owners.owners.objectives!.objectives.some(objective => objective.id === shared.id)).toBe(true)
+    const preview = await f.learning.populations.preview(f.engineer, subjectSelection(manual, owners.owners.version), owners, f.resolver)
+    expect(JSON.stringify(preview.members[0]!.basis)).toContain(shared.id)
+    expect(preview.members.every(member => member.source.session_id === "work")).toBe(true)
+
+    const continuation = f.record("Later continuation")
+    f.record("Unrelated append after the continuation", "other")
+    const laterAutomatic = f.subjects.establishAutomatic("work", method, automatic.through)
+    const nextRef = f.source.retrospectiveOriginal("ledger-record", continuation.id, "work", "work")!.ref
+    const next = f.learning.populations.fromSources(laterAutomatic, [nextRef])
+    expect(compatibleRetrospectiveContext(next, manualManifest)).toBe(true)
+    expect(compatibleRetrospectiveContext(manualManifest, next)).toBe(false)
+    const extra = f.record("Another unrelated append", "other")
+    f.learning.objectives.create(other, f.learning.objectives.ledgerSource(extra.id), "Another unrelated goal")
+    const laterManual = f.subjects.establish(f.engineer, { target, question: "Read accumulated engineering work" })
+    expect(compatibleRetrospectiveContext(f.learning.populations.fromSources(laterManual, [ref, nextRef]), next)).toBe(true)
+    expect(f.source.captureFrontier("work")).toEqual(laterAutomatic.through)
+
+    const legacy = structuredClone(manualManifest)
+    if (legacy.selection.mode !== "explicit-subject") throw new Error("Expected Session fixture")
+    delete legacy.selection.namespace_frontier
+    expect(compatibleRetrospectiveContext(automaticManifest, parseRetrospectiveManifest(legacy))).toBe(false)
+    expect(parseRetrospectiveManifest(legacy).selection).not.toHaveProperty("namespace_frontier")
+  } finally { f.close() }
+})
+
+test("partial namespace ceilings reject unprocessed own evidence and foreign evidence beyond the captured checkpoint", () => {
+  const f = fixture()
+  try {
+    const other = { session_id: "other", agent: "engineer" }
+    const first = f.record("Processed first source")
+    const foreign = f.record("Earlier foreign source", "other")
+    f.learning.objectives.create(other, f.learning.objectives.ledgerSource(foreign.id), "Earlier foreign goal")
+    const pending = f.record("Still unprocessed own source")
+    f.learning.objectives.create(f.engineer, f.learning.objectives.ledgerSource(pending.id), "Still unprocessed authored goal")
+    const method = { id: "partial-namespace", instruction_sha256: digest("bounded partial checkpoint") }
+    const subject = f.subjects.establishAutomatic("work", method, EMPTY_LEARNING_FRONTIER)
+    const chunk = f.source.selectIncrement("work", EMPTY_LEARNING_FRONTIER, subject.through, 1)
+    const ceiling = f.source.namespaceThrough("work", chunk.through, subject.namespace_frontier!)
+    expect(chunk.through.ledger).toBe(1)
+    expect(ceiling.ledger).toBe(2)
+    expect(ceiling).toMatchObject({ objectives: 1, objective_links: 1 })
+    expect(chunk.through).toMatchObject({ objectives: 0, objective_links: 0 })
+    const checkpoint = f.subjects.establishAutomatic("work", method, EMPTY_LEARNING_FRONTIER, chunk.through, ceiling)
+    const manifest = f.learning.populations.fromSources(checkpoint, chunk.members.flatMap(member => member.source_refs))
+    const pendingRef = f.source.retrospectiveOriginal("ledger-record", pending.id, "work", "work")!.ref
+    expect(() => f.learning.populations.fromSources(checkpoint, [pendingRef])).toThrow("exceeds established subject")
+    expect(() => f.subjects.establishAutomatic("work", method, EMPTY_LEARNING_FRONTIER, chunk.through, subject.namespace_frontier))
+      .toThrow("includes unprocessed Session evidence")
+    const futureManual = f.subjects.establish(f.engineer, { target: { kind: "session", id: "work" }, question: "Include the unprocessed source" })
+    expect(compatibleRetrospectiveContext(manifest, f.learning.populations.fromSources(futureManual, [pendingRef]))).toBe(false)
+    const fullCheckpoint = f.subjects.establishAutomatic("work", method, chunk.through)
+    const full = f.learning.populations.fromSources(fullCheckpoint, [pendingRef])
+    f.learning.objectives.create(other, f.learning.objectives.ledgerSource(foreign.id), "A later separate goal over existing evidence", "later-goal")
+    const laterMetadata = f.subjects.establish(f.engineer, { target: { kind: "session", id: "work" }, question: "Include only later metadata" })
+    expect(laterMetadata.through.ledger).toBe(fullCheckpoint.through.ledger)
+    expect(compatibleRetrospectiveContext(full, f.learning.populations.fromSources(laterMetadata, [pendingRef]))).toBe(false)
+
+    const laterForeign = f.record("Foreign evidence after the checkpoint", "other")
+    f.learning.objectives.create(other, f.learning.objectives.ledgerSource(laterForeign.id), "Foreign objective added later")
+    const same = f.subjects.establishAutomatic("work", method, EMPTY_LEARNING_FRONTIER, chunk.through, ceiling)
+    expect(same).toEqual(checkpoint)
+    const postCheckpoint = f.subjects.establish(f.engineer, { target: { kind: "session", id: "work" }, question: "Metadata added after checkpoint" })
+    const firstRef = f.source.retrospectiveOriginal("ledger-record", first.id, "work", "work")!.ref
+    expect(compatibleRetrospectiveContext(manifest, f.learning.populations.fromSources(postCheckpoint, [firstRef]))).toBe(false)
+    const foreignRef = f.source.retrospectiveOriginal("ledger-record", laterForeign.id, "other", "work")!.ref
+    expect(() => f.learning.populations.fromSources(checkpoint, [foreignRef])).toThrow("exceeds established subject")
   } finally { f.close() }
 })

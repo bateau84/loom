@@ -8,6 +8,7 @@ import type { EvaluationSourceRef } from "../src/evaluation-store.js"
 import type { EvaluatorRetrievedContext, EvaluatorSourceReader } from "../src/evaluator-execution-contract.js"
 import { parseEvaluatorInterpretation } from "../src/evaluator-interpretation.js"
 import type { RetrospectiveSourceRequest } from "../src/retrospective-populations.js"
+import { EMPTY_LEARNING_FRONTIER } from "../src/learning-sources.js"
 import { ACTOR, NOW, openState, pins, freshSignal } from "./helpers/evaluator-execution-fixture.js"
 import { publicationFixture } from "./helpers/evaluator-publication-fixture.js"
 
@@ -15,14 +16,16 @@ function setup() {
   const root = mkdtempSync(join(tmpdir(), "loom-context-")), state = openState(join(root, "state"))
   const fixtures: ReturnType<typeof publicationFixture>[] = [], calls: RetrospectiveSourceRequest[] = []
   let selectedRead: (() => void) | undefined
-  const create = (name: string, count = 1, session = ACTOR.session_id, existing?: EvaluationSourceRef[]) => {
+  const create = (name: string, count = 1, session = ACTOR.session_id, existing?: EvaluationSourceRef[], mode: "manual" | "automatic" = "manual") => {
     const refs = existing ?? Array.from({ length: count }, (_, index) => {
       const original = state.store.record({ session_id: session, agent: "engineer" }, undefined,
         { kind: "result", statement: `${name}: engineering evidence ${index}; distinguish observation from causal interpretation.` })
       return state.learning.automatic.sources.retrospectiveOriginal("ledger-record", original.id, session, ACTOR.session_id)!.ref
     })
-    const subject = state.learning.automatic.subjects.establish(ACTOR, { target: { kind: "session", id: session },
-      question: "What changed, which earlier findings remain useful, and what remains unresolved?" })
+    const subject = mode === "automatic" ? state.learning.automatic.subjects.establishAutomatic(session,
+      { id: "context-increment", instruction_sha256: digest("Controlled automatic context") }, EMPTY_LEARNING_FRONTIER)
+      : state.learning.automatic.subjects.establish(ACTOR, { target: { kind: "session", id: session },
+        question: "What changed, which earlier findings remain useful, and what remains unresolved?" })
     const manifest = state.learning.populations.fromSources(subject, refs)
     const f = publicationFixture(state, ACTOR, { manifest, claims: 1, authorityPath: join(root, `authority-${fixtures.length}.sqlite`),
       resolve: async request => {
@@ -119,6 +122,54 @@ test("admitted fresh Evaluator synthesizes reports and selectively retrieves ear
     expect(exact.value.data.statement).toContain("Earlier investigation")
     expect(await next.publish()).toEqual(published)
     expect(next.base.counts().effects).toBe(1)
+  } finally { f.close() }
+})
+
+test("manual and automatic publications discover and inspect earlier context across unrelated owner appends in both directions", async () => {
+  const f = setup()
+  try {
+    const foreign = () => {
+      const actor = { session_id: "unrelated-author", agent: "engineer" }
+      const source = f.state.store.record(actor, undefined, { kind: "result", statement: "Unrelated Session and separately authored goal" })
+      f.state.learning.objectives.create(actor, f.state.learning.objectives.ledgerSource(source.id), "Unrelated authored goal")
+    }
+    foreign()
+    const manual = f.create("Manual earlier analysis")
+    await manual.execute(); const first = await manual.publish()
+    const continuation = f.state.store.record(ACTOR, undefined, { kind: "result", statement: "A later engineering correction" })
+    const ref = f.state.learning.automatic.sources.retrospectiveOriginal("ledger-record", continuation.id, ACTOR.session_id, ACTOR.session_id)!.ref
+    foreign()
+    const automatic = f.create("Automatic accumulated analysis", 1, ACTOR.session_id, [ref], "automatic")
+    const receive = (next: Fixture, prior: Fixture, published: Published) => {
+      link(next, published)
+      observeContext(next, async (read, record) => {
+        const list = await read.interpretations.list({ limit: 1 }) as any
+        expect(list.items.map((item: any) => item.report_id)).toEqual([published.report_id])
+        record({ kind: "prior-interpretation", report_id: published.report_id, report_sha256: published.report_sha256 })
+        const member = prior.population.manifest.members[0]!
+        const selected = { report_id: published.report_id, report_sha256: published.report_sha256, member_key: member.key, source_index: 0 as const }
+        const original = await read.interpretations.source(selected) as any
+        expect(original.source).toEqual(member.source)
+        record({ kind: "prior-original", ...selected, source_sha256: original.source.sha256 })
+      })
+    }
+    expect(manual.population.manifest.selection).toMatchObject({ frontier: { objectives: 1, objective_links: 1 } })
+    expect(automatic.population.manifest.selection).toMatchObject({ frontier: { objectives: 0, objective_links: 0 },
+      namespace_frontier: { objectives: 2, objective_links: 2 } })
+    receive(automatic, manual, first)
+    await automatic.execute(); const second = await automatic.publish()
+    foreign()
+    const laterManual = f.create("Manual synthesis after automatic learning", 1, ACTOR.session_id, [ref])
+    const priorSelection = automatic.population.manifest.selection, currentSelection = laterManual.population.manifest.selection
+    if (priorSelection.mode !== "explicit-subject" || currentSelection.mode !== "explicit-subject") throw new Error("Expected Session population")
+    expect(priorSelection.namespace_frontier!.ledger).toBeGreaterThan(currentSelection.frontier.ledger)
+    expect(currentSelection.namespace_frontier!.ledger).toBeGreaterThan(priorSelection.namespace_frontier!.ledger)
+    receive(laterManual, automatic, second)
+    await laterManual.execute(); const third = await laterManual.publish()
+    const saved = f.state.learning.automatic.history.readEvaluatorInterpretation(third.batch_id, ACTOR.session_id)!
+    expect(saved.populations).toHaveLength(3)
+    expect(saved.population.manifest.members.every(member => member.source.session_id === ACTOR.session_id)).toBe(true)
+    expect(saved.report.body.context_retrieved).toHaveLength(2)
   } finally { f.close() }
 })
 

@@ -15,6 +15,9 @@ export type EvaluationSubjectOrigin = { kind: "native-invocation"; invocation: E
 export type EvaluationSubjectProposal = {
   format: "loom-evaluation-subject/v1"; source_store_id: string; owner_session: string; established_by: Actor;
   target: EvaluationTarget; question: string; cutoff: EvaluationCutoff; through: LearningFrontier;
+  /** Comparable source-namespace ceilings, distinct from Session work cursors.
+   * Omitted only on older immutable subjects; their domain remains conservative. */
+  namespace_frontier?: LearningFrontier;
   origin: EvaluationSubjectOrigin;
 }
 export type EvaluationSubject = EvaluationSubjectProposal & { subject_id: string; sha256: string; created_at: string }
@@ -60,11 +63,15 @@ function invocation(value: EvaluationInvocation): EvaluationInvocation {
   return { session_id: uid(value.session_id), message_id: uid(value.message_id), call_id: uid(value.call_id) }
 }
 export function parseEvaluationSubject(input: unknown): EvaluationSubject {
-  if (!object(input) || Object.keys(input).sort().join() !== "created_at,cutoff,established_by,format,origin,owner_session,question,sha256,source_store_id,subject_id,target,through"
+  if (!object(input) || Object.keys(input).filter(key => key !== "namespace_frontier").sort().join() !== "created_at,cutoff,established_by,format,origin,owner_session,question,sha256,source_store_id,subject_id,target,through"
     || input.format !== "loom-evaluation-subject/v1" || !object(input.established_by)
     || Object.keys(input.established_by).sort().join() !== "agent,session_id" || !object(input.origin) || !object(input.cutoff))
     throw new Error("Invalid evaluation subject")
   const owner = uid(input.owner_session), target = evaluationTarget(input.target), through = evaluationFrontier(input.through)
+  const namespace = input.namespace_frontier === undefined ? undefined : evaluationFrontier(input.namespace_frontier)
+  if (namespace && (Object.keys(through) as Array<keyof LearningFrontier>).some(key => through[key] > namespace[key]))
+    throw new Error("Evaluation subject exceeds namespace frontier")
+  if (namespace && target.kind !== "session" && canonical(namespace) !== canonical(through)) throw new Error("Evaluation subject namespace domain mismatch")
   const author = { session_id: uid(input.established_by.session_id), agent: bounded(input.established_by.agent, "author", 200) }
   if (author.session_id !== owner) throw new Error("Evaluation subject author mismatch")
   let origin: EvaluationSubjectOrigin, cutoff: EvaluationCutoff
@@ -90,8 +97,11 @@ export function parseEvaluationSubject(input: unknown): EvaluationSubject {
       revision: ref.revision, sha256: hash(ref.sha256) } }
     if (target.kind === "session" && target.id !== cutoff.record.session_id) throw new Error("Evaluation completion Session mismatch")
   } else throw new Error("Invalid evaluation subject cutoff")
+  if (namespace && cutoff.kind === "recorded-completion" && namespace.ledger !== through.ledger)
+    throw new Error("Evaluation namespace exceeds recorded completion")
   const proposal: EvaluationSubjectProposal = { format: "loom-evaluation-subject/v1", source_store_id: uid(input.source_store_id), owner_session: owner,
-    established_by: author, target, question: bounded(input.question, "question"), cutoff, through, origin }
+    established_by: author, target, question: bounded(input.question, "question"), cutoff, through, origin,
+    ...(namespace ? { namespace_frontier: namespace } : {}) }
   const subject_id = uid(input.subject_id), created_at = bounded(input.created_at, "creation time", 64)
   if (!Number.isFinite(Date.parse(created_at)) || subject_id !== "subject-" + digest(proposal)) throw new Error("Evaluation subject identity mismatch")
   const value = { ...proposal, subject_id, created_at }, sha256 = hash(input.sha256)
@@ -192,7 +202,7 @@ export class EvaluationSubjects {
   }
 
   propose(actor: Actor, input: EvaluationSubjectInput, origin?: EvaluationInvocation): EvaluationSubjectProposal {
-    const target = evaluationTarget(input.target), through = this.sources.targetFrontier(target)
+    const target = evaluationTarget(input.target), captured = this.sources.captureNamespaceFrontier(), through = this.sources.targetFrontier(target, captured)
     let cutoff: EvaluationCutoff = { kind: "point-in-time" }
     if (input.cutoff?.kind === "recorded-completion") {
       const source = this.sources.recordedCompletion(target, uid(input.cutoff.record_id))
@@ -201,8 +211,10 @@ export class EvaluationSubjects {
     } else if (input.cutoff !== undefined && input.cutoff.kind !== "point-in-time") throw new Error("Invalid evaluation cutoff")
     const author = { session_id: uid(actor.session_id), agent: bounded(actor.agent, "author", 200) }
     if (origin && origin.session_id !== author.session_id) throw new Error("Evaluation invocation actor mismatch")
+    const namespace = target.kind === "session" ? this.sources.namespaceThrough(target.id, through,
+      { ...captured, ...(cutoff.kind === "recorded-completion" ? { ledger: through.ledger } : {}) }) : { ...through }
     return { format: "loom-evaluation-subject/v1", source_store_id: this.sources.namespace, owner_session: author.session_id,
-      established_by: author, target, question: bounded(input.question, "question"), cutoff, through,
+      established_by: author, target, question: bounded(input.question, "question"), cutoff, through, namespace_frontier: namespace,
       origin: origin ? { kind: "native-invocation", invocation: invocation(origin) } : { kind: "explicit-selection" } }
   }
 
@@ -228,14 +240,24 @@ export class EvaluationSubjects {
     return this.save(this.propose(actor, input, origin))
   }
 
-  establishAutomatic(session: string, method: { id: string; instruction_sha256: string }, after: LearningFrontier, through?: LearningFrontier): EvaluationSubject {
-    const proposal = this.propose({ session_id: session, agent: "automatic-learning" }, {
-      target: { kind: "session", id: session }, question: "Describe new eligible engineering evidence while retaining unresolved earlier work.",
-    })
+  establishAutomatic(session: string, method: { id: string; instruction_sha256: string }, after: LearningFrontier, through?: LearningFrontier,
+    namespaceFrontier?: LearningFrontier): EvaluationSubject {
+    uid(session, "learning Session")
     const current = this.sources.captureFrontier(session)
-    proposal.through = through === undefined ? current : evaluationFrontier(through)
-    proposal.origin = { kind: "automatic-checkpoint", method: { id: bounded(method.id, "method", 200), instruction_sha256: hash(method.instruction_sha256) },
-      after: evaluationFrontier(after) }
+    const processed = through === undefined ? current : evaluationFrontier(through)
+    const currentNamespace = this.sources.captureNamespaceFrontier()
+    const captured = namespaceFrontier === undefined ? currentNamespace : evaluationFrontier(namespaceFrontier)
+    for (const key of Object.keys(captured) as Array<keyof LearningFrontier>)
+      if (captured[key] > currentNamespace[key]) throw new Error("Pinned namespace exceeds current source frontier")
+    const namespace = this.sources.namespaceThrough(session, processed, captured)
+    if (namespaceFrontier !== undefined && canonical(namespace) !== canonical(captured))
+      throw new Error("Pinned namespace frontier includes unprocessed Session evidence")
+    const proposal: EvaluationSubjectProposal = { format: "loom-evaluation-subject/v1", source_store_id: this.sources.namespace, owner_session: session,
+      established_by: { session_id: session, agent: "automatic-learning" }, target: { kind: "session", id: session },
+      question: "Describe new eligible engineering evidence while retaining unresolved earlier work.", cutoff: { kind: "point-in-time" },
+      through: processed, namespace_frontier: namespace,
+      origin: { kind: "automatic-checkpoint", method: { id: bounded(method.id, "method", 200), instruction_sha256: hash(method.instruction_sha256) },
+        after: evaluationFrontier(after) } }
     for (const key of Object.keys(after) as Array<keyof LearningFrontier>)
       if (after[key] > proposal.through[key] || proposal.through[key] > current[key]) throw new Error("Evaluation checkpoint exceeds source frontier")
     return this.save(proposal)
@@ -309,7 +331,10 @@ export class EvaluationSubjects {
     const budget = new ProcessingBudget(180000), items = rows.slice(0, limit).map(row => {
       budget.take(row.data_json.length); return { sequence: row.sequence, ...stored(row.data_json, row.sha256) }
     })
-    return { subject_id: id, subject_sha256: subject.sha256, items, next_after: rows.length > limit ? items.at(-1)!.sequence : null,
+    const next = rows.length > limit ? items.at(-1)!.sequence : null
+    const request = { operation: "subject-activities", subject_id: id, subject_sha256: subject.sha256, limit }
+    return { subject_id: id, subject_sha256: subject.sha256, items, next_after: next,
+      navigation: { repeat: { ...request, after }, next: next === null ? null : { ...request, after: next } },
       qualification: "Learning activity is audit material outside the original engineering subject. Missing native provenance remains unknown." }
   }
 }

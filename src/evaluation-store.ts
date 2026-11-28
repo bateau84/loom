@@ -641,16 +641,24 @@ export class EvaluationStore {
     if (input.context) {
       if (!this.retrospectiveSchema(false)) return { items: [], next_before: null }
       const target = retrospectiveTarget(input.context), frontier = retrospectiveFrontier(input.context)
+      const namespace = input.context.selection.mode === "explicit-subject" ? input.context.selection.namespace_frontier : undefined
       join = " JOIN learning_retrospective_populations p ON p.id=json_extract(b.boundary_json,'$.retrospective_population')"
       filter = " AND p.source_store_id=? AND COALESCE(json_extract(p.header_json,'$.selection.target.kind'),'objective')=?"
         + " AND COALESCE(json_extract(p.header_json,'$.selection.target.id'),json_extract(p.header_json,'$.selection.objective_id'))=?"
-        + " AND json_extract(p.header_json,'$.selection.through')<=?"
+      args.push(input.context.source_store_id, target.kind, target.id)
+      const scoped = "json_extract(p.header_json,'$.selection.through')<=?"
         + " AND COALESCE(json_extract(p.header_json,'$.selection.frontier.objectives'),0)<=?"
         + " AND COALESCE(json_extract(p.header_json,'$.selection.owner_boundary.objective_links'),0)<=?"
         + " AND json_extract(p.header_json,'$.selection.owner_boundary.review_requests')<=?"
         + " AND json_extract(p.header_json,'$.selection.owner_boundary.review_relationships')<=?"
-      args.push(input.context.source_store_id, target.kind, target.id, frontier.ledger, frontier.objectives,
-        frontier.objective_links, frontier.review_requests, frontier.review_relationships)
+      if (namespace) {
+        const axes = ["ledger", "objectives", "objective_links", "review_requests", "review_relationships"] as const
+        filter += " AND ((json_type(p.header_json,'$.selection.namespace_frontier')='object' AND "
+          + axes.map(key => `json_extract(p.header_json,'$.selection.namespace_frontier.${key}')<=?`).join(" AND ")
+          + ") OR (json_type(p.header_json,'$.selection.namespace_frontier') IS NULL AND " + scoped + "))"
+        args.push(...axes.map(key => namespace[key]))
+      } else filter += " AND " + scoped
+      args.push(frontier.ledger, frontier.objectives, frontier.objective_links, frontier.review_requests, frontier.review_relationships)
     }
     args.push(take)
     const rows = this.db.prepare("SELECT b.id,b.sequence FROM learning_evaluation_batches b" + join

@@ -22,7 +22,7 @@ type SelectionBoundary = {
 export type RetrospectiveSelection = SelectionBoundary & (
   { mode: "explicit-objective"; objective_id: string }
   | { mode: "explicit-subject"; target: EvaluationTarget; subject_id?: string; subject_sha256?: string;
-      frontier: LearningFrontier; cutoff: EvaluationCutoff })
+      frontier: LearningFrontier; namespace_frontier?: LearningFrontier; cutoff: EvaluationCutoff })
 export type RetrospectiveMember = {
   key: string; source_store_id: string; source: EvaluationSourceRef; permitted_view: string;
   availability: "available" | "missing" | "unresolved" | "unsupported";
@@ -108,7 +108,7 @@ export function parseRetrospectiveManifest(input: unknown): RetrospectiveManifes
   const selected = mapping(value.selection, "selection")
   const subjectMode = value.format === "loom-retrospective-population/v2"
   keys(selected, ["mode", "question", "through", "owner_boundary", "owner_version", "exclusions",
-    ...(subjectMode ? ["target", "frontier", "cutoff"] : ["objective_id"])], subjectMode ? ["subject_id", "subject_sha256"] : [])
+    ...(subjectMode ? ["target", "frontier", "cutoff"] : ["objective_id"])], subjectMode ? ["subject_id", "subject_sha256", "namespace_frontier"] : [])
   if (selected.mode !== (subjectMode ? "explicit-subject" : "explicit-objective")) throw new Error("Unsupported retrospective selection mode")
   const boundary = mapping(selected.owner_boundary, "owner boundary")
   keys(boundary, ["objective_links", "review_requests", "review_relationships"])
@@ -127,7 +127,11 @@ export function parseRetrospectiveManifest(input: unknown): RetrospectiveManifes
   }
   let selection: RetrospectiveSelection
   if (subjectMode) {
-    const frontier = evaluationFrontier(selected.frontier), cutoffInput = mapping(selected.cutoff, "cutoff")
+    const target = evaluationTarget(selected.target), frontier = evaluationFrontier(selected.frontier), cutoffInput = mapping(selected.cutoff, "cutoff")
+    const namespace = selected.namespace_frontier === undefined ? undefined : evaluationFrontier(selected.namespace_frontier)
+    if (namespace && (Object.keys(frontier) as Array<keyof LearningFrontier>).some(key => frontier[key] > namespace[key]))
+      throw new Error("Retrospective selection exceeds namespace frontier")
+    if (namespace && target.kind !== "session" && canonical(namespace) !== canonical(frontier)) throw new Error("Retrospective namespace domain mismatch")
     let cutoff: EvaluationCutoff
     if (cutoffInput.kind === "point-in-time") { keys(cutoffInput, ["kind"]); cutoff = { kind: "point-in-time" } }
     else if (cutoffInput.kind === "recorded-completion") {
@@ -136,11 +140,14 @@ export function parseRetrospectiveManifest(input: unknown): RetrospectiveManifes
       if (ref.kind !== "ledger-record" || Number(ref.revision) !== frontier.ledger) throw new Error("Invalid recorded completion boundary")
       cutoff = { kind: "recorded-completion", record: ref }
     } else throw new Error("Invalid retrospective cutoff")
+    if (namespace && cutoff.kind === "recorded-completion" && namespace.ledger !== frontier.ledger)
+      throw new Error("Retrospective namespace exceeds recorded completion")
     if (frontier.ledger !== common.through || frontier.objective_links !== common.owner_boundary.objective_links
       || frontier.review_requests !== common.owner_boundary.review_requests || frontier.review_relationships !== common.owner_boundary.review_relationships)
       throw new Error("Retrospective subject frontier mismatch")
     if ((selected.subject_id === undefined) !== (selected.subject_sha256 === undefined)) throw new Error("Incomplete retrospective subject reference")
-    selection = { ...common, mode: "explicit-subject", target: evaluationTarget(selected.target), frontier, cutoff,
+    selection = { ...common, mode: "explicit-subject", target, frontier, cutoff,
+      ...(namespace ? { namespace_frontier: namespace } : {}),
       ...(selected.subject_id === undefined ? {} : { subject_id: uid(selected.subject_id, "subject_id"), subject_sha256: hash(selected.subject_sha256) }) }
   } else selection = { ...common, mode: "explicit-objective", objective_id: uid(selected.objective_id, "objective_id") }
   if (!Array.isArray(value.contributors) || value.contributors.length > RETROSPECTIVE_LIMITS.contributors) throw new Error("Invalid retrospective contributors")
@@ -187,6 +194,11 @@ export function retrospectiveFrontier(manifest: RetrospectiveManifest): Learning
  * later independent owner frontier, even when its ledger cutoff is unchanged. */
 export function compatibleRetrospectiveContext(current: RetrospectiveManifest, prior: RetrospectiveManifest): boolean {
   if (current.source_store_id !== prior.source_store_id || canonical(retrospectiveTarget(current)) !== canonical(retrospectiveTarget(prior))) return false
-  const older = retrospectiveFrontier(prior), newer = retrospectiveFrontier(current)
+  // New Session selections distinguish owned progress from the comparable
+  // namespace prefix. Never infer that wider prefix for an older saved report.
+  const currentNamespace = current.selection.mode === "explicit-subject" ? current.selection.namespace_frontier : undefined
+  const priorNamespace = prior.selection.mode === "explicit-subject" ? prior.selection.namespace_frontier : undefined
+  const older = currentNamespace && priorNamespace ? priorNamespace : retrospectiveFrontier(prior)
+  const newer = currentNamespace && priorNamespace ? currentNamespace : retrospectiveFrontier(current)
   return (Object.keys(older) as Array<keyof LearningFrontier>).every(key => older[key] <= newer[key])
 }

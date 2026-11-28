@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { IncrementalInterpretation, incrementalInterpretationScope } from "../src/incremental-interpretation.js"
+import type { IncrementReportBody } from "../src/automatic-learning.js"
+import { canonical, digest } from "../src/model.js"
 import type { IncrementalInterpretationConfig } from "../src/config.js"
 import type { RetrospectiveSourceResolver } from "../src/retrospective-populations.js"
 import { ACTOR, POLICY, openState, freshSignal, method } from "./helpers/evaluator-execution-fixture.js"
@@ -31,10 +33,14 @@ function setup() {
     restart() { state.close(); state = openState(path) },
     close() { state.close(); rmSync(root, { recursive: true, force: true }) } }
 }
-function native(f: ReturnType<typeof setup>, settings = config()) {
+function pendingPopulation(f: ReturnType<typeof setup>, settings = config()) {
   const progress = f.state.learning.incrementalInterpretation.progress(ACTOR.session_id, settings)
-  if (!progress.pending?.population_id) throw new Error("Fixture lacks an exact pending population")
-  const population = f.state.learning.automatic.history.retrospectivePopulation(String(progress.pending.population_id), ACTOR.session_id)
+  const intent = f.state.learning.automatic.history.incrementalHead(ACTOR.session_id, incrementalInterpretationScope(settings.method!))
+  if (!progress.pending || intent?.id !== progress.pending.batch_id) throw new Error("Fixture lacks an exact pending population")
+  return f.state.learning.automatic.history.retrospectivePopulation(String(intent.boundary.population_id), ACTOR.session_id)
+}
+function native(f: ReturnType<typeof setup>, settings = config()) {
+  const population = pendingPopulation(f, settings)
   const fixture = publicationFixture(f.state, ACTOR, { manifest: population.manifest, authorityPath: join(f.root, "authority.sqlite"), resolve: f.access.resolve })
   const engine = new IncrementalInterpretation(f.state.learning.automatic, f.state.learning.populations, f.state.learning.evaluator, fixture.runtime)
   return { fixture, engine, run: (signal = freshSignal()) => engine.opportunity(ACTOR, settings, f.access, signal) }
@@ -53,7 +59,7 @@ test("cheap interpretation coalesces metadata without original retrieval, prepar
     expect(plan).toMatchObject({ state: "blocked", reason: "evaluator-execution-authority-unavailable" })
     const progress = f.state.learning.incrementalInterpretation.progress(ACTOR.session_id, settings)
     expect(progress.processed).toBeNull(); expect(progress.interpreted).toBeNull()
-    const population = f.state.learning.automatic.history.retrospectivePopulation(String(progress.pending!.population_id), ACTOR.session_id)
+    const population = pendingPopulation(f, settings)
     expect(population.manifest.members).toHaveLength(3)
     expect(population.manifest.selection.mode).toBe("explicit-subject")
     if (population.manifest.selection.mode !== "explicit-subject") throw new Error("Expected ordinary Session selection")
@@ -62,6 +68,9 @@ test("cheap interpretation coalesces metadata without original retrieval, prepar
     const repeated = spyOn(f.state.learning.automatic.sources, "resolve")
     for (let i = 0; i < 20; i++) expect((await f.state.learning.incrementalInterpretation.opportunity(ACTOR, settings, f.access, freshSignal())).batch_id).toBe(plan.batch_id)
     expect(repeated).not.toHaveBeenCalled(); repeated.mockRestore()
+    expect(progress.pending!.preparation).not.toHaveProperty("request_id")
+    expect(progress.pending!.preparation).not.toHaveProperty("manifest_sha256")
+    expect(progress.pending!.preparation).not.toHaveProperty("attempt_id")
     expect(f.state.learning.automatic.history.listScope(ACTOR.session_id, incrementalInterpretationScope(method())).items).toHaveLength(1)
     expect(f.state.ledger.query("SELECT COUNT(*) AS n FROM ledger").get()).toEqual({ n: 4 })
   } finally { f.close() }
@@ -109,7 +118,7 @@ test("failed cursor publication recovers the same completed S5 result after rest
     const original = await f.record("Original exact checkpoint"); await f.collect()
     await f.state.learning.incrementalInterpretation.opportunity(ACTOR, config(), f.access, freshSignal())
     n = native(f)
-    const initial = n.engine.progress(ACTOR.session_id, config()).pending!
+    const initial = n.engine.progress(ACTOR.session_id, config()).pending!, selectedPopulation = pendingPopulation(f)
     f.state.derived.exec("CREATE TRIGGER fail_increment_commit BEFORE INSERT ON learning_evaluation_reports WHEN json_extract(NEW.body_json,'$.format')='loom-incremental-interpretation-checkpoint/v1' BEGIN SELECT RAISE(ABORT,'checkpoint interrupted'); END")
     expect(await n.run()).toMatchObject({ state: "blocked", reason: "checkpoint interrupted", batch_id: initial.batch_id })
     expect(n.engine.progress(ACTOR.session_id, config()).processed).toBeNull()
@@ -122,7 +131,7 @@ test("failed cursor publication recovers the same completed S5 result after rest
     expect(n.fixture.base.counts().effects).toBe(1)
     const progress = n.engine.progress(ACTOR.session_id, config())
     expect(progress.processed!.sequence).toBe(initial.through_sequence)
-    const population = f.state.learning.automatic.history.retrospectivePopulation(String(initial.population_id), ACTOR.session_id)
+    const population = f.state.learning.automatic.history.retrospectivePopulation(selectedPopulation.population_id, ACTOR.session_id)
     expect(population.manifest.members.map(member => member.source.id)).toEqual([original.id])
     expect(progress.state).toBe("waiting")
     await f.state.learning.incrementalInterpretation.opportunity(ACTOR, config(), f.access, freshSignal())
@@ -164,7 +173,7 @@ test("oldest bounded prefixes and durable method interval prevent loss or one mo
     for (let i = 0; i < 67; i++) { await f.record("Checkpoint " + i); await f.collect(1) }
     await f.state.learning.incrementalInterpretation.opportunity(ACTOR, config(), f.access, freshSignal())
     const pending = f.state.learning.incrementalInterpretation.progress(ACTOR.session_id, config()).pending!
-    const population = f.state.learning.automatic.history.retrospectivePopulation(String(pending.population_id), ACTOR.session_id)
+    const population = pendingPopulation(f)
     expect(population.manifest.members).toHaveLength(64)
     expect(Math.max(...population.manifest.members.map(member => Number(member.source.revision)))).toBe(64)
     n = native(f)
@@ -176,7 +185,7 @@ test("oldest bounded prefixes and durable method interval prevent loss or one mo
     expect(n.fixture.base.counts().effects).toBe(1)
     await f.state.learning.incrementalInterpretation.opportunity(ACTOR, config(), f.access, freshSignal())
     const remaining = f.state.learning.incrementalInterpretation.progress(ACTOR.session_id, config()).pending!
-    const next = f.state.learning.automatic.history.retrospectivePopulation(String(remaining.population_id), ACTOR.session_id)
+    const next = pendingPopulation(f)
     expect(next.manifest.members.map(member => Number(member.source.revision)).sort((a, b) => a - b)).toEqual([65, 66, 67])
     const context = (next.manifest.coverage.incremental as Record<string, unknown>).previous_interpretation
     expect(context).toMatchObject({ batch_id: pending.preparation!.batch_id, relation: "context" })
@@ -202,8 +211,55 @@ test("long excluded-only prefixes checkpoint coverage without creating an S5 pop
     const record = await f.record("Engineering continues after many failed learning reads"); await f.collect(1)
     expect(await engine.opportunity(ACTOR, config(), f.access, freshSignal())).toMatchObject({ state: "blocked", reason: "evaluator-execution-authority-unavailable" })
     const pending = engine.progress(ACTOR.session_id, config()).pending!
-    const population = f.state.learning.automatic.history.retrospectivePopulation(String(pending.population_id), ACTOR.session_id)
+    const population = pendingPopulation(f)
     expect(population.manifest.members.map(member => member.source.id)).toEqual([record.id])
     expect(f.state.derived.query("SELECT COUNT(*) AS n FROM learning_subject_activities WHERE json_extract(data_json,'$.phase')='evidence-retrieval'").get()).toEqual({ n: 66 })
+  } finally { f.close() }
+})
+
+test("partial model populations inherit the checkpoint's namespace ceiling without advancing the Session cursor for unrelated work", async () => {
+  const f = setup()
+  try {
+    for (let i = 0; i < 5; i++) await f.record("Owner work " + i)
+    const other = { session_id: "other-session", agent: "engineer" }
+    const foreign = () => {
+      const record = f.state.store.record(other, undefined, { kind: "result", statement: "Unrelated namespace work" })
+      f.state.learning.objectives.create(other, f.state.learning.objectives.ledgerSource(record.id), "Separately authored foreign goal")
+    }
+    foreign()
+    const selected = await f.collect(1)
+    const body = f.state.learning.automatic.history.report(selected.batch_id!, ACTOR.session_id)!.body as IncrementReportBody
+    expect(body.through.ledger).toBe(1); expect(body.namespace_through!.ledger).toBe(1)
+    expect(body.through.objectives).toBe(0); expect(body.namespace_through!.objectives).toBe(1)
+    foreign()
+    await f.state.learning.incrementalInterpretation.opportunity(ACTOR, config(), f.access, freshSignal())
+    const population = pendingPopulation(f)
+    expect(population.manifest.selection.mode).toBe("explicit-subject")
+    if (population.manifest.selection.mode !== "explicit-subject") throw new Error("Expected ordinary Session")
+    expect(population.manifest.selection.namespace_frontier).toEqual(body.namespace_through)
+    const intent = f.state.learning.automatic.history.incrementalHead(ACTOR.session_id, incrementalInterpretationScope(method()))!
+    expect(JSON.parse(String(intent.boundary.namespace_through))).toEqual(body.namespace_through)
+    expect(population.manifest.members).toHaveLength(1)
+    await f.collect()
+    foreign()
+    expect(await f.collect()).toMatchObject({ state: "complete", replayed: true })
+  } finally { f.close() }
+})
+
+test("a rehashed report cannot replace the exact namespace frozen before deterministic processing", async () => {
+  const f = setup()
+  try {
+    await f.record("Established source"); const completed = await f.collect()
+    await f.record("Later unprocessed engineering evidence")
+    const report = f.state.learning.automatic.history.report(completed.batch_id!, ACTOR.session_id)!
+    const body = structuredClone(report.body) as IncrementReportBody
+    body.namespace_through!.ledger++
+    const sha256 = digest({ batch_id: completed.batch_id!, member_key: null, body, qualifications: report.qualifications, source_refs: report.source_refs })
+    f.state.derived.query("UPDATE learning_evaluation_reports SET body_json=?,sha256=? WHERE id=?").run(canonical(body), sha256, report.id)
+    expect(f.state.learning.automatic.history.report(completed.batch_id!, ACTOR.session_id)!.availability).toBe("available")
+    expect(() => f.state.learning.automatic.incrementReport(ACTOR.session_id, completed.batch_id!)).toThrow("frozen evidence boundary")
+    await expect(f.state.learning.incrementalInterpretation.opportunity(ACTOR, config(), f.access, freshSignal())).rejects.toThrow("frozen evidence boundary")
+    expect(f.state.learning.automatic.history.incrementalHead(ACTOR.session_id, incrementalInterpretationScope(method()))).toBeNull()
+    await expect(f.collect()).rejects.toThrow("frozen evidence boundary")
   } finally { f.close() }
 })

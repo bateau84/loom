@@ -178,9 +178,9 @@ test("an established empty Session subject offers a readable preview without an 
   } finally { await t.close() }
 })
 
-async function mixedCalls(t: Awaited<ReturnType<typeof fixture>>) {
+async function mixedCalls(t: Awaited<ReturnType<typeof fixture>>, wrapperTool: string) {
   await t.automaticCapture()
-  const outer = { sessionID: "s", agent: "author", messageID: "message", id: "tool-call", tool: "codemode",
+  const outer = { sessionID: "s", agent: "author", messageID: "message", id: "tool-call", tool: wrapperTool,
     input: { code: "await shell(); await loom.history();" } }
   const inner = { ...outer, tool: "shell", input: { command: "inspect-waybar" } }
   await t.f.hooks.get("execute.before")(outer)
@@ -192,10 +192,10 @@ async function mixedCalls(t: Awaited<ReturnType<typeof fixture>>) {
   return { outer, wrapper: recorded[0]!, engineering: recorded.slice(1) }
 }
 
-test("a retrospective read excludes the Code Mode wrapper but retains engineering siblings with the same native IDs", async () => {
+test.each(["execute", "codemode"])("a retrospective read excludes the %s wrapper but retains engineering siblings with the same native IDs", async wrapperTool => {
   const t = await fixture()
   try {
-    const calls = await mixedCalls(t), batch = await t.run()
+    const calls = await mixedCalls(t, wrapperTool), batch = await t.run()
     const persisted = t.state.derived.query("SELECT source_refs FROM learning_evaluation_members ORDER BY ordinal").all()
     expect(t.state.learning.automatic.history.report(batch, "s")!.availability).toBe("available")
     const preview = (await t.preview()).result
@@ -207,10 +207,10 @@ test("a retrospective read excludes the Code Mode wrapper but retains engineerin
   } finally { await t.close() }
 })
 
-test("late wrapper completion preserves history and withdraws its earlier interpretation after a failed preview audit", async () => {
+test.each(["execute", "codemode"])("late %s completion preserves history and withdraws its earlier interpretation after a failed preview audit", async wrapperTool => {
   const t = await fixture()
   try {
-    const calls = await mixedCalls(t), batch = await t.run()
+    const calls = await mixedCalls(t, wrapperTool), batch = await t.run()
     const reports = t.state.derived.query("SELECT id,body_json FROM learning_evaluation_reports ORDER BY id").all()
     const membership = t.state.derived.query("SELECT source_refs FROM learning_evaluation_members ORDER BY ordinal").all()
     const activity = spyOn(EvaluationSubjects.prototype, "recordActivity").mockImplementation(() => { throw new Error("Preview audit unavailable") })
@@ -219,7 +219,7 @@ test("late wrapper completion preserves history and withdraws its earlier interp
     await t.f.hooks.get("execute.after")({ ...calls.outer, status: "completed", result: { content: "Preview rendered" } })
     const rows = t.rows()
     expect(rows.slice(0, 3)).toEqual([calls.wrapper, ...calls.engineering])
-    expect(rows.at(-1)!.data).toMatchObject({ tool: "codemode", start_id: calls.wrapper.id,
+    expect(rows.at(-1)!.data).toMatchObject({ tool: wrapperTool, start_id: calls.wrapper.id,
       attribution: "captured-at-start", learning_purpose: "contains-evaluation" })
     expect(t.state.learning.automatic.history.report(batch, "s")).toMatchObject({ availability: "source-unavailable", body: null })
     expect(t.state.derived.query("SELECT id,body_json FROM learning_evaluation_reports ORDER BY id").all()).toEqual(reports)
@@ -245,5 +245,64 @@ test("authorized population reads keep another owner's subject separate from the
     expect(rows.length).toBeGreaterThan(0)
     for (const row of rows) expect(JSON.parse(row.data_json).subject_id).toBeNull()
     expect(JSON.parse(rows.at(-1)!.data_json)).toMatchObject({ outcome: "succeeded", actor: { session_id: "reader" } })
+  } finally { await t.close() }
+})
+
+test.each(["establish", "preview", "preview-replay", "subject", "population"] as const)(
+  "recorded-completion %s authorizes the exact original before hydration or disclosure", async route => {
+    const t = await fixture()
+    try {
+      t.record("Earlier engineering work remains independently inspectable")
+      const completion = t.state.store.append({ ...t.actor, kind: "completion", data: { statement: "Private authored completion" } })
+      const target = { kind: "session" as const, id: "s" }, question = "Inspect work through this recorded completion."
+      const subject = t.state.learning.automatic.subjects.establish(t.actor, { target, question,
+        cutoff: { kind: "recorded-completion", record_id: completion.id } })
+      let tool = "history", request: Record<string, unknown>
+      const preview = { operation: "preview-population", selection: { target, question, cutoff: subject.cutoff } }
+      if (route === "establish") {
+        tool = "review"
+        request = { operation: "establish-subject", target, question, cutoff: { kind: "recorded-completion", record_id: completion.id } }
+      } else if (route === "preview") request = preview
+      else if (route === "preview-replay") request = (await t.f.invoke("history", preview)).result.navigation.repeat
+      else if (route === "subject") request = { operation: "subject", subject_id: subject.subject_id, subject_sha256: subject.sha256 }
+      else {
+        const established = (await t.f.invoke("review", { operation: "establish-subject", target, question,
+          cutoff: { kind: "recorded-completion", record_id: completion.id } })).result
+        const selected = (await t.f.invoke("history", { ...established.preview, selection: { ...established.preview.selection,
+          exclusions: [{ record_id: completion.id, reason: "Inspect the preceding work; keep the completion only as a boundary reference." }] } })).result
+        expect(selected.items.some((item: { source: { id: string } }) => item.source.id === completion.id)).toBe(false)
+        const frozen = (await t.f.invoke("review", selected.freeze)).result
+        request = { operation: "population", population_id: frozen.population_id, manifest_sha256: frozen.manifest_sha256 }
+      }
+      const before = t.state.derived.query("SELECT COUNT(*) AS n FROM learning_subject_subjects").get()
+      const hydrate = spyOn(LearningSources.prototype, "recordedCompletion")
+      let denied = false
+      t.f.permission.beforeReturn = async () => {
+        if (t.f.permissionRequests.at(-1).resources.some((resource: string) =>
+          resource.includes(":record:" + completion.id) && resource.endsWith(":view:record-full"))) {
+          denied = true
+          throw new Error("Completion original denied")
+        }
+      }
+      try {
+        await expect(t.f.invoke(tool, request)).rejects.toThrow("Completion original denied")
+        expect(denied).toBe(true)
+        expect(hydrate).not.toHaveBeenCalled()
+        expect(t.state.derived.query("SELECT COUNT(*) AS n FROM learning_subject_subjects").get()).toEqual(before)
+      } finally { t.f.permission.beforeReturn = undefined; hydrate.mockRestore() }
+    } finally { await t.close() }
+  })
+
+test("authorized recorded-completion subject metadata survives loss of its original", async () => {
+  const t = await fixture()
+  try {
+    const completion = t.state.store.append({ ...t.actor, kind: "completion", data: { statement: "Original no longer retained" } })
+    const subject = t.state.learning.automatic.subjects.establish(t.actor, { target: { kind: "session", id: "s" },
+      question: "Read the immutable completed boundary.", cutoff: { kind: "recorded-completion", record_id: completion.id } })
+    t.state.ledger.query("DELETE FROM ledger WHERE id=?").run(completion.id)
+    const view = (await t.f.invoke("history", { operation: "subject", subject_id: subject.subject_id, subject_sha256: subject.sha256 })).result
+    expect(view.subject).toEqual(subject)
+    expect(t.f.permissionRequests.some(request => request.resources.some((resource: string) =>
+      resource.includes(":record:" + completion.id) && resource.endsWith(":view:record-full")))).toBe(true)
   } finally { await t.close() }
 })

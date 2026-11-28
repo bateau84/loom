@@ -240,14 +240,20 @@ def subject_integrity(db, ledger_store_id, has_execution):
         require(isinstance(text, str) and len(text) <= 32768 and sha_text(text) == fingerprint_value,
                 "Evaluation subject integrity mismatch")
         fields, value = raw_object(text), json.loads(text)
-        shape(value, ("format", "source_store_id", "owner_session", "established_by", "target", "question", "cutoff", "through", "origin", "subject_id", "created_at"))
+        shape(value, ("format", "source_store_id", "owner_session", "established_by", "target", "question", "cutoff", "through", "origin", "subject_id", "created_at"), ("namespace_frontier",))
         require(value["format"] == "loom-evaluation-subject/v1" and value["subject_id"] == identity
                 and value["owner_session"] == owner and value["source_store_id"] == namespace == ledger_store_id
                 and identifier(owner) and identifier(namespace) and plain(value["question"]), "Invalid evaluation subject owner")
         shape(value["established_by"], ("session_id", "agent"))
         require(value["established_by"]["session_id"] == owner and plain(value["established_by"]["agent"], 200), "Invalid subject author")
         frontier, target = subject_frontier(value["through"]), subject_target(value["target"])
+        if "namespace_frontier" in value:
+            namespace_frontier = subject_frontier(value["namespace_frontier"])
+            require(all(frontier[key] <= namespace_frontier[key] for key in frontier), "Evaluation subject exceeds namespace frontier")
+            require(target["kind"] == "session" or namespace_frontier == frontier, "Evaluation subject namespace domain mismatch")
         subject_cutoff(value["cutoff"], frontier, target)
+        require("namespace_frontier" not in value or value["cutoff"]["kind"] != "recorded-completion"
+                or value["namespace_frontier"]["ledger"] == frontier["ledger"], "Evaluation namespace exceeds recorded completion")
         require(plain(value["created_at"], 64), "Invalid subject timestamp")
         datetime.fromisoformat(value["created_at"].replace("Z", "+00:00"))
         origin = value["origin"]
@@ -372,12 +378,19 @@ def incremental_integrity(db, ledger_store_id, subjects, preparations=None, issu
         require(subject is not None and subject["sha256"] == boundary.get("subject_sha256")
                 and subject["owner_session"] == batch["owner_session"] and subject["origin"]["kind"] == "automatic-checkpoint"
                 and subject["origin"]["method"] == method, "Incremental subject origin mismatch")
+        require("namespace_frontier" not in subject or isinstance(boundary.get("namespace_through"), str),
+                "Incremental namespace checkpoint unavailable")
+        namespace_through = subject_frontier(json.loads(boundary["namespace_through"])) if "namespace_through" in boundary else None
         if deterministic:
             ranges = {prefix: subject_frontier({key: boundary.get(prefix + "_" + key) for key in subject["through"]})
                       for prefix in ("from", "through", "observed")}
             require(ranges["observed"] == subject["through"] and ranges["from"] == subject["origin"]["after"]
                     and all(ranges["from"][key] <= ranges["through"][key] <= ranges["observed"][key] for key in ranges["from"]),
                     "Incremental evidence boundary mismatch")
+            if namespace_through is not None:
+                ceiling = subject.get("namespace_frontier", subject["through"])
+                require(all(ranges["through"][key] <= namespace_through[key] <= ceiling[key] for key in ceiling),
+                        "Incremental namespace exceeds captured subject frontier")
             require(("from_owner" in boundary) == ("through_owner" in boundary)
                     and integer(boundary.get("from_owner", 0), 4) and integer(boundary.get("through_owner", 0), 4),
                     "Invalid incremental source owner cursor")
@@ -393,6 +406,9 @@ def incremental_integrity(db, ledger_store_id, subjects, preparations=None, issu
             ranges = {prefix: subject_frontier(json.loads(boundary[prefix + "_frontier"])) for prefix in ("from", "through")}
             require(ranges["from"] == subject["origin"]["after"] and ranges["through"] == subject["through"]
                     and all(ranges["from"][key] <= ranges["through"][key] for key in ranges["from"]), "Interpretation cursor boundary mismatch")
+            if namespace_through is not None:
+                require(namespace_through == subject.get("namespace_frontier", subject["through"]),
+                        "Interpretation namespace checkpoint mismatch")
             require(boundary["kind"] in ("interpreted", "no-eligible-change") and type(boundary["from_sequence"]) is int
                     and type(boundary["through_sequence"]) is int and 0 <= boundary["from_sequence"] < boundary["through_sequence"],
                     "Invalid interpretation checkpoint sequence")
@@ -434,6 +450,10 @@ def incremental_integrity(db, ledger_store_id, subjects, preparations=None, issu
             require([source["batch_id"] for source in sources] == [row["id"] for row in prefix]
                     and ranges["through"] == vector(json.loads(prefix[-1]["boundary_json"]), "through"),
                     "Interpretation cursor skips or substitutes a committed source checkpoint")
+            if namespace_through is not None:
+                last_boundary = json.loads(prefix[-1]["boundary_json"])
+                expected_namespace = subject_frontier(json.loads(last_boundary["namespace_through"])) if "namespace_through" in last_boundary else vector(last_boundary, "through")
+                require(namespace_through == expected_namespace, "Interpretation widened its source namespace checkpoint")
             manifest_text = boundary.get("method_manifest")
             method_manifest = json.loads(manifest_text) if isinstance(manifest_text, str) else None
             require(isinstance(method_manifest, dict) and method["id"] == "evaluator/v1/" + sha_text(manifest_text)
@@ -514,6 +534,7 @@ def incremental_integrity(db, ledger_store_id, subjects, preparations=None, issu
             require(batch["report_id"] == report_id and body.get("subject") == {"subject_id": subject["subject_id"], "sha256": subject["sha256"]}
                     and body.get("through") == ranges["through"] and body.get("processing_complete") is True
                     and body.get("objective_success") == "not-assessed", "Incremental successful cursor binding mismatch")
+            require(body.get("namespace_through") == namespace_through, "Incremental report namespace checkpoint mismatch")
             if deterministic:
                 require(body.get("format") == "loom-incremental-learning-report/v1" and body.get("from") == ranges["from"]
                         and body.get("observed") == ranges["observed"] and body.get("method") == method["id"]
@@ -609,15 +630,23 @@ def retrospective_integrity(db, ledger_store_id, subjects):
                 and all(plain(item) for item in header["qualifications"]), "Invalid retrospective qualifications")
         selected = header["selection"]
         shape(selected, ("mode", "question", "through", "owner_boundary", "owner_version", "exclusions")
-              + (("target", "frontier", "cutoff", "subject_id", "subject_sha256") if subject_mode else ("objective_id",)))
+              + (("target", "frontier", "cutoff", "subject_id", "subject_sha256") if subject_mode else ("objective_id",)),
+              ("namespace_frontier",) if subject_mode else ())
         require(selected["mode"] == ("explicit-subject" if subject_mode else "explicit-objective") and plain(selected["question"])
                 and integer(selected["through"]) and fingerprint(selected["owner_version"]), "Invalid retrospective selection")
         if subject_mode:
             target, frontier = subject_target(selected["target"]), subject_frontier(selected["frontier"])
+            if "namespace_frontier" in selected:
+                namespace_frontier = subject_frontier(selected["namespace_frontier"])
+                require(all(frontier[key] <= namespace_frontier[key] for key in frontier), "Retrospective selection exceeds namespace frontier")
+                require(target["kind"] == "session" or namespace_frontier == frontier, "Retrospective namespace domain mismatch")
             subject_cutoff(selected["cutoff"], frontier, target)
+            require("namespace_frontier" not in selected or selected["cutoff"]["kind"] != "recorded-completion"
+                    or selected["namespace_frontier"]["ledger"] == frontier["ledger"], "Retrospective namespace exceeds recorded completion")
             subject = subjects.get(selected["subject_id"])
             require(subject is not None and subject["sha256"] == selected["subject_sha256"] and subject["owner_session"] == owner
                     and subject["target"] == target and subject["through"] == frontier and subject["cutoff"] == selected["cutoff"]
+                    and subject.get("namespace_frontier") == selected.get("namespace_frontier")
                     and subject["question"] == selected["question"], "Retrospective subject boundary mismatch")
         else:
             require(identifier(selected["objective_id"]), "Invalid retrospective objective")
@@ -1266,12 +1295,16 @@ def retrospective_interpretation_integrity(db, prepared, has_execution):
                     and old["namespace"] == population["namespace"] and old["target"] == population["target"],
                     "Prior interpretation provenance mismatch")
             old_selection, selection = old["selection"], population["selection"]
-            require(old_selection["through"] <= selection["through"] and all(
-                (old_selection["owner_boundary"][key] or 0) <= (selection["owner_boundary"][key] or 0)
-                for key in selection["owner_boundary"]), "Prior interpretation exceeds current owner frontier")
-            if "frontier" in old_selection and "frontier" in selection:
-                require(all(old_selection["frontier"][key] <= selection["frontier"][key] for key in selection["frontier"]),
-                        "Prior interpretation exceeds current subject frontier")
+            if "namespace_frontier" in old_selection and "namespace_frontier" in selection:
+                require(all(old_selection["namespace_frontier"][key] <= selection["namespace_frontier"][key]
+                            for key in selection["namespace_frontier"]), "Prior interpretation exceeds current namespace frontier")
+            else:
+                require(old_selection["through"] <= selection["through"] and all(
+                    (old_selection["owner_boundary"][key] or 0) <= (selection["owner_boundary"][key] or 0)
+                    for key in selection["owner_boundary"]), "Prior interpretation exceeds current owner frontier")
+                if "frontier" in old_selection and "frontier" in selection:
+                    require(all(old_selection["frontier"][key] <= selection["frontier"][key] for key in selection["frontier"]),
+                            "Prior interpretation exceeds current subject frontier")
             refs.extend(dependencies(prior_id).values())
             selected.update(member_unions[prior_id])
             originals.update(original_unions[prior_id])

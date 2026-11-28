@@ -109,10 +109,13 @@ export function renderIncrementalLearningHTML(value: unknown): string {
     + (body.retained ? retainedCoverage(retained) : '')
     + (map(body.previous).batch_id ? retrospectiveDetails("Read the immutable previous increment", { operation: "learning-report", batch_id: map(body.previous).batch_id }) : '')
   content += '<section id="learning-navigation" class="panel" tabindex="-1"><h2>Continue inspection</h2><p>Use these requests through the authorized Loom interface. Rendering this page performs no mutation.</p>'
+    + (navigation.later_work ? '<h3 id="later-work" tabindex="-1">Inspect later engineering work</h3><p>'
+      + html(navigation.later_work_qualification) + '</p>' + retrospectiveDetails("Read the new evidence range", navigation.later_work) : '')
     + retrospectiveDetails("Supported read requests and page coverage", { navigation, next: view.next, next_before: view.next_before, next_after: view.next_after, count: view.count, coverage: view.coverage }) + '</section>'
     + retrospectiveDetails("Exact learning report and technical metadata", value, "learning-technical")
   const nav = '<nav aria-label="Learning sections"><a href="#progress">Evidence coverage</a>'
     + (progress ? '<a href="#increments">Accumulated learning</a>' : '<a href="#concerns">Retained findings</a><a href="#unfinished">Unfinished work</a>')
+    + (navigation.later_work ? '<a href="#later-work">Later engineering work</a>' : '')
     + '<a href="#learning-navigation">Continue inspection</a><a href="#learning-technical">Technical details</a></nav>'
   return bounded(retrospectiveHTMLDocument(progress ? "Session learning progress" : "Saved learning increment", content, nav, "learning"))
 }

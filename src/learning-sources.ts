@@ -40,37 +40,73 @@ export class LearningSources {
       review_relationships: max(this.actionDB, "SELECT COALESCE(MAX(r.sequence),0) AS n FROM review_relationships r JOIN review_requests q ON q.request_id=r.request_id WHERE q.requester_session=?") }
   }
 
-  targetFrontier(input: EvaluationTarget): LearningFrontier {
-    const target = evaluationTarget(input)
-    const max = (db: SQL, sql: string, ...args: unknown[]) => (db.prepare(sql).get(...args) as { n: number }).n
-    let ledger: number
-    if (target.kind === "session" || target.kind === "action") {
-      if (target.kind === "action") this.store.action(target.id)
-      ledger = max(this.actionDB, `SELECT COALESCE(MAX(seq),0) AS n FROM ledger WHERE ${target.kind}_id=?`, target.id)
-    } else {
-      if (!this.learningDB.prepare("SELECT 1 FROM learning_objectives WHERE id=?").get(target.id)) throw new Error("Evaluation objective unavailable")
-      const rows = this.learningDB.prepare("SELECT source_id FROM learning_objective_links WHERE objective_id=? AND source_type='ledger-record' ORDER BY sequence LIMIT ?")
-        .all(target.id, SOURCE_LIMIT + 1) as Array<{ source_id: string }>
-      if (rows.length > SOURCE_LIMIT) throw new Error("Evaluation subject exceeds source limit")
-      const ids = rows.map(row => row.source_id)
-      const global = max(this.actionDB, "SELECT COALESCE(MAX(seq),0) AS n FROM ledger")
-      const selected = this.store.engineeringHistory.objectiveEvidenceSources(ids, global)
-      ledger = max(this.actionDB, "SELECT COALESCE(MAX(seq),0) AS n FROM ledger WHERE id IN (SELECT value FROM json_each(?))", JSON.stringify(selected))
-    }
-    return { ledger, objectives: max(this.learningDB, "SELECT COALESCE(MAX(rowid),0) AS n FROM learning_objectives"),
+  /** Comparable insertion ceilings for the source namespace. Session progress
+   * remains scoped to its own rows, so unrelated appends do not create work. */
+  captureNamespaceFrontier(): LearningFrontier {
+    const max = (db: SQL, sql: string) => (db.prepare(sql).get() as { n: number }).n
+    return { ledger: max(this.actionDB, "SELECT COALESCE(MAX(seq),0) AS n FROM ledger"),
+      objectives: max(this.learningDB, "SELECT COALESCE(MAX(rowid),0) AS n FROM learning_objectives"),
       objective_links: max(this.learningDB, "SELECT COALESCE(MAX(sequence),0) AS n FROM learning_objective_links"),
       review_requests: max(this.actionDB, "SELECT COALESCE(MAX(rowid),0) AS n FROM review_requests"),
       review_relationships: max(this.actionDB, "SELECT COALESCE(MAX(sequence),0) AS n FROM review_relationships") }
   }
 
-  recordedCompletion(input: EvaluationTarget, id: string): LearningSource {
+  /** Normalize a processed Session cursor into a comparable namespace prefix.
+   * A partial chunk stops before the first still-unprocessed owned row. Every
+   * axis remains capped by the snapshot taken before evidence processing. This
+   * metadata read does not admit foreign rows into current membership. */
+  namespaceThrough(session: string, processedInput: LearningFrontier, capturedInput: LearningFrontier): LearningFrontier {
+    uid(session, "learning Session")
+    const processed = evaluationFrontier(processedInput), captured = evaluationFrontier(capturedInput)
+    for (const key of Object.keys(processed) as Array<keyof LearningFrontier>)
+      if (processed[key] > captured[key]) throw new Error("Session cursor exceeds captured namespace frontier")
+    const next = (db: SQL, sql: string, key: keyof LearningFrontier) => {
+      const row = db.prepare(sql).get(session, processed[key], captured[key]) as { n: number | null }
+      return row.n === null ? captured[key] : row.n - 1
+    }
+    return {
+      ledger: next(this.actionDB, "SELECT MIN(seq) AS n FROM ledger WHERE session_id=? AND seq>? AND seq<=?", "ledger"),
+      objectives: next(this.learningDB, "SELECT MIN(rowid) AS n FROM learning_objectives WHERE author_session=? AND rowid>? AND rowid<=?", "objectives"),
+      objective_links: next(this.learningDB, "SELECT MIN(l.sequence) AS n FROM learning_objective_links l JOIN learning_objectives o ON o.id=l.objective_id WHERE l.author_session=? AND l.author_session=o.author_session AND l.sequence>? AND l.sequence<=?", "objective_links"),
+      review_requests: next(this.actionDB, "SELECT MIN(rowid) AS n FROM review_requests WHERE requester_session=? AND rowid>? AND rowid<=?", "review_requests"),
+      review_relationships: next(this.actionDB, "SELECT MIN(r.sequence) AS n FROM review_relationships r JOIN review_requests q ON q.request_id=r.request_id WHERE q.requester_session=? AND r.sequence>? AND r.sequence<=?", "review_relationships"),
+    }
+  }
+
+  targetFrontier(input: EvaluationTarget, namespaceInput?: LearningFrontier): LearningFrontier {
+    const target = evaluationTarget(input)
+    const namespace = namespaceInput === undefined ? this.captureNamespaceFrontier() : evaluationFrontier(namespaceInput)
+    const max = (db: SQL, sql: string, ...args: unknown[]) => (db.prepare(sql).get(...args) as { n: number }).n
+    let ledger: number
+    if (target.kind === "session" || target.kind === "action") {
+      if (target.kind === "action") this.store.action(target.id)
+      ledger = max(this.actionDB, `SELECT COALESCE(MAX(seq),0) AS n FROM ledger WHERE ${target.kind}_id=? AND seq<=?`, target.id, namespace.ledger)
+    } else {
+      if (!this.learningDB.prepare("SELECT 1 FROM learning_objectives WHERE id=?").get(target.id)) throw new Error("Evaluation objective unavailable")
+      const rows = this.learningDB.prepare("SELECT source_id FROM learning_objective_links WHERE objective_id=? AND source_type='ledger-record' AND sequence<=? ORDER BY sequence LIMIT ?")
+        .all(target.id, namespace.objective_links, SOURCE_LIMIT + 1) as Array<{ source_id: string }>
+      if (rows.length > SOURCE_LIMIT) throw new Error("Evaluation subject exceeds source limit")
+      const ids = rows.map(row => row.source_id)
+      const selected = this.store.engineeringHistory.objectiveEvidenceSources(ids, namespace.ledger)
+      ledger = max(this.actionDB, "SELECT COALESCE(MAX(seq),0) AS n FROM ledger WHERE id IN (SELECT value FROM json_each(?))", JSON.stringify(selected))
+    }
+    return { ...namespace, ledger }
+  }
+
+  /** Source-owner routing metadata only. Callers authorize this exact record
+   * before recordedCompletion parses or hashes the original content. */
+  recordedCompletionScope(input: EvaluationTarget, id: string): { id: string; session_id: string } {
     const target = evaluationTarget(input), row = this.actionDB.prepare("SELECT session_id,action_id,kind FROM ledger WHERE id=?")
       .get(uid(id)) as { session_id: string; action_id: string | null; kind: string } | undefined
     if (!row || row.kind !== "completion" || target.kind === "session" && row.session_id !== target.id
       || target.kind === "action" && row.action_id !== target.id
       || target.kind === "objective" && !this.learningDB.prepare("SELECT 1 FROM learning_objective_links WHERE objective_id=? AND source_type='ledger-record' AND source_id=? LIMIT 1").get(target.id, id))
       throw new Error("Recorded completion is unavailable in the selected subject")
-    const source = this.ledger(row.session_id, id)
+    return { id, session_id: row.session_id }
+  }
+  recordedCompletion(input: EvaluationTarget, id: string): LearningSource {
+    const owner = this.recordedCompletionScope(input, id)
+    const source = this.ledger(owner.session_id, owner.id)
     if (!source || this.isEvaluation(source.ref)) throw new Error("Engineering completion original unavailable")
     return source
   }
@@ -90,12 +126,12 @@ export class LearningSources {
     const fields = data as Record<string, unknown>
     // Code Mode gives inner tools its outer context. A learning read therefore
     // classifies the observed wrapper, not an engineering shell/read sibling.
-    if (fields.tool !== "codemode") return false
+    if (fields.tool !== "codemode" && fields.tool !== "execute") return false
     if (fields.learning_purpose === "contains-evaluation") return true
     if (fields.phase === "started") {
       const finish = this.actionDB.prepare(`SELECT id FROM ledger WHERE session_id=? AND kind='observation'
-        AND json_extract(data,'$.data.start_id')=? AND json_extract(data,'$.data.tool')='codemode'
-        AND json_extract(data,'$.data.learning_purpose')='contains-evaluation' LIMIT 1`).get(ref.session_id, ref.id) as { id: string } | undefined
+        AND json_extract(data,'$.data.start_id')=? AND json_extract(data,'$.data.tool')=?
+        AND json_extract(data,'$.data.learning_purpose')='contains-evaluation' LIMIT 1`).get(ref.session_id, ref.id, fields.tool) as { id: string } | undefined
       if (finish) {
         const recorded = this.ledger(ref.session_id, finish.id), detail = recorded?.value.data as Record<string, unknown> | undefined
         if (detail?.attribution === "captured-at-start" && detail.message_id === fields.message_id && detail.call_id === fields.call_id) return true

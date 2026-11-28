@@ -37,6 +37,8 @@ History population/source/read, incremental progress/report/source and S5 interp
 
 Subjects use `loom-evaluation-subject/v1`. Their content-addressed identity binds target, question, namespace, author, cutoff, origin and five frontiers: `ledger`, `objectives`, `objective_links`, `review_requests`, `review_relationships`. The stored checksum additionally binds identity and creation time.
 
+New subjects and V2 selections also carry `namespace_frontier`, distinct from Session-local processing cursors. It records comparable namespace ceilings captured before discovery, capped before the first unprocessed owned row on each source axis. `namespace_through` pins the exact ceiling in deterministic/model checkpoints. Manual and automatic S5 context admission compares these explicit ceilings; later own rows and later foreign metadata remain excluded. Older subjects omit the optional field without rewriting their bytes and retain conservative all-axis comparison.
+
 Legacy objective selection emits the original `loom-retrospective-population/v1` bytes. New typed subject selection emits `loom-retrospective-population/v2`, with `subject_id`, `subject_sha256`, `target`, `frontier`, `cutoff` and existing owner/version/exclusion fields. Session/Action preparation has `objective_count:null`, typed `target` and `target_count:1`; it does not invent an objective. Existing V1 readers/recovery remain supported. Older runtimes must not be used to mutate state requiring these new semantics.
 
 The deterministic method's successful EvaluationStore batch owns its cursor, including owner rotation. Publication is the commit boundary. Physical failed/pending heads do not become successful cursors. A changed expected predecessor produces retryable pending work, not a competing successful interpretation. Resume reuses exact frozen membership and already committed member reports.
@@ -45,9 +47,9 @@ Optional model intents use `incremental-interpretation/<method-digest>` in the s
 
 ## Configuration and bounds
 
-Under `learning`: `incremental` defaults true, `max-sources` defaults128 (1–1000), `coalesce-ms` defaults250 (0–60000). `interpretation.enabled` defaults false. Its `method` is a complete `loom-evaluator-method/v1`; `budget-policy` is a pinned policy reference. Coalescing defaults are `min-sources:16`, `max-age-ms:60000`, `min-interval-ms:60000`; numeric limits are validated before use. Missing execution authority returns a blocked interpretation while deterministic work continues.
+Under `learning`: `incremental` defaults true, `max-sources` defaults 128 (1–1000), `coalesce-ms` defaults 250 (0–60000). `interpretation.enabled` defaults false. Its `method` is a complete `loom-evaluator-method/v1`; `budget-policy` is a pinned policy reference. Coalescing defaults are `min-sources:16`, `max-age-ms:60000`, `min-interval-ms:60000`; numeric limits are validated before use. Missing execution authority returns a blocked interpretation while deterministic work continues.
 
-Interpretation planning admits at most64 deterministic checkpoints and5000 exact original/context refs. Retained deterministic concerns plus unfinished starts are capped at4000; overflow preserves the prior checkpoint and reports a block. Source fragments and output byte limits remain enforced through existing models. S5 context admission shares its structural/read budgets across calls and reserves one of the32 report slots for the current interpretation.
+Interpretation planning admits at most 64 deterministic checkpoints and 5000 exact original/context refs. Retained deterministic concerns plus unfinished starts are capped at 4000; overflow preserves the prior checkpoint and reports a block. Source fragments and output byte limits remain enforced through existing models. Progress pages shorten at their byte bound and preserve a continuation from the last included increment. S5 context admission shares its structural/read budgets across calls and reserves one of the 32 report slots for the current interpretation.
 
 ## Source authorization and receipt meaning
 

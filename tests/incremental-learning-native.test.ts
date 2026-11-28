@@ -305,3 +305,55 @@ test("a concurrent append or publication cannot expand an already authorized inc
     expect(f.learning.automatic.incrementReport(f.actor.session_id, pending.id, {}, current.disclosure_sha256).body).not.toBeNull()
   } finally { f.close() }
 })
+
+test("large retained-work dashboards shorten pages at the public budget without dropping report navigation", async () => {
+  const f = fixture()
+  try {
+    for (let batch = 0; batch < 5; batch++) {
+      for (let item = 0; item < 8; item++) {
+        f.store.record(f.actor, undefined, { kind: "concern", statement: "Concrete unresolved engineering finding: " + "a".repeat(1000) })
+        f.store.observe(f.actor, undefined, { phase: "started", tool: "shell", message_id: "message-" + batch, call_id: "call-" + item })
+      }
+      await f.run()
+    }
+    let page = f.learning.automatic.incrementProgress(f.actor.session_id)
+    expect(page.items.length).toBeLessThan(5)
+    expect(page.next_before).not.toBeNull()
+    const seen = new Set<string>()
+    for (;;) {
+      expect(JSON.stringify(page).length).toBeLessThanOrEqual(60000)
+      for (const item of page.items) { expect(seen.has(item.batch.id)).toBe(false); seen.add(item.batch.id) }
+      if (page.next_before === null) break
+      page = f.learning.automatic.incrementProgress(f.actor.session_id, { before: page.next_before })
+    }
+    expect(seen.size).toBe(5)
+  } finally { f.close() }
+})
+
+test("progress offers an executable exact later-work history range without retrieving the new original", async () => {
+  const f = fixture()
+  try {
+    const original = f.store.record(f.actor, undefined, { kind: "result", statement: "Initially pending engineering evidence" })
+    const initialRead = spyOn(f.learning.automatic.sources, "resolve")
+    const initial = f.learning.automatic.incrementProgress(f.actor.session_id).navigation.later_work!
+    expect(initialRead).not.toHaveBeenCalled(); initialRead.mockRestore()
+    const { operation: initialOperation, ...initialQuery } = initial.arguments
+    expect(initialOperation).toBe("read")
+    expect(f.store.engineeringHistory.read(initialQuery).records.map(record => record.source.record_id)).toEqual([original.id])
+    expect(initial).toEqual({ tool: "history",
+      arguments: { operation: "read", session_id: f.actor.session_id, source_session_id: f.actor.session_id, after: 0, through: 1, limit: 20 } })
+    await f.run()
+    const later = f.store.record(f.actor, undefined, { kind: "result", statement: "Resumed engineering work after the checkpoint" })
+    const reads = spyOn(f.learning.automatic.sources, "resolve")
+    const progress = f.learning.automatic.incrementProgress(f.actor.session_id)
+    expect(progress.navigation.later_work).toEqual({ tool: "history",
+      arguments: { operation: "read", session_id: f.actor.session_id, source_session_id: f.actor.session_id, after: 1, through: 2, limit: 20 } })
+    expect(reads.mock.calls.some(([ref]) => ref.id === later.id)).toBe(false)
+    expect(progress.navigation.later_work_qualification).toContain("outside the original frozen")
+    reads.mockRestore()
+    f.store.record(f.actor, undefined, { kind: "result", statement: "Concurrent append after the navigation boundary" })
+    const { operation, ...query } = progress.navigation.later_work!.arguments
+    expect(operation).toBe("read")
+    expect(f.store.engineeringHistory.read(query).records.map(record => record.source.record_id)).toEqual([later.id])
+  } finally { f.close() }
+})

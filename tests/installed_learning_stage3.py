@@ -6,8 +6,11 @@ SQLite files, and later public Loom report readers. Only the external provider
 is scripted, with a private isolated project. Never calls AutomaticLearning.run,
 injects a checkpoint or constructs a report on behalf of production.
 
-This proves only the named mechanics, not Q4/Q5, whole-objective/E11 acceptance,
-a real Evaluator, live-provider eligibility or human provenance.
+This explicitly selects complete-population compatibility mode, preserving its
+legacy cursor, paging and crash proof. The ordinary-Session incremental default
+has a separate installed_incremental_learning.py qualification. Neither suite
+proves Q4/Q5, whole-objective/E11 acceptance, a real Evaluator, live-provider
+eligibility or human provenance.
 """
 from __future__ import annotations
 
@@ -351,7 +354,7 @@ def run(args):
             }
             (Path(env["OPENCODE_CONFIG_DIR"]) / "opencode.json").write_text(json.dumps(config))
             capture = project / ".loom.yaml"
-            capture.write_text("instructions: {enabled: false}\nledger: {capture: automatic}\n")
+            capture.write_text("instructions: {enabled: false}\nledger: {capture: automatic}\nlearning: {incremental: false}\n")
             (root / "jobs.json").write_text("{}")
             subprocess.run(["git", "init", "-q", str(project)], check=True, env=env, timeout=10)
             learning = None
@@ -632,7 +635,7 @@ def run(args):
                     check("S3-foreign-and-revoked-readers-denied",
                           foreign_denied=True, same_session_revoked=True)
 
-                    capture.write_text("instructions: {enabled: false}\nledger: {capture: off}\n")
+                    capture.write_text("instructions: {enabled: false}\nledger: {capture: off}\nlearning: {incremental: false}\n")
                     optout = make_session(host, project, "general")
                     ignored = append_original(scenario, optout, "Synthetic capture-disabled source")
                     time.sleep(0.5)
@@ -850,7 +853,7 @@ def run(args):
                     host = None
                     final_events(root)
                     capture.write_text(
-                        "instructions: {enabled: false}\nledger: {capture: automatic}\n")
+                        "instructions: {enabled: false}\nledger: {capture: automatic}\nlearning: {incremental: false}\n")
                     crashed = force_crash_mid_checkpoint(
                         args.opencode.resolve(), project, env, output,
                         large_path, population)

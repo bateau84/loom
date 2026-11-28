@@ -32,7 +32,7 @@ export type RetrospectiveProposal = {
   question: string; exclusions: Array<{ record_id: string; reason: string }>;
   through?: number; owner_boundary?: RetrospectiveSelection["owner_boundary"]; owner_version?: string;
 } & ({ mode: "explicit-objective"; objective_id: string } | { mode: "explicit-subject"; target: EvaluationTarget;
-  subject_id?: string; subject_sha256?: string; frontier?: LearningFrontier; cutoff?: EvaluationCutoff })
+  subject_id?: string; subject_sha256?: string; frontier?: LearningFrontier; namespace_frontier?: LearningFrontier; cutoff?: EvaluationCutoff })
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value)
 const fingerprint = (value: unknown) => digest(value, retrospectiveBudget())
 const copy = (value: unknown): Record<string, unknown> => {
@@ -47,7 +47,7 @@ const pageInteger = (value: unknown, fallback: number, min: number, max: number)
   return result
 }
 export function retrospectiveProposal(raw: unknown): RetrospectiveProposal {
-  if (!object(raw) || Object.keys(raw).some(key => !["mode", "objective_id", "target", "subject_id", "subject_sha256", "frontier", "cutoff", "question", "exclusions", "through", "owner_boundary", "owner_version"].includes(key)))
+  if (!object(raw) || Object.keys(raw).some(key => !["mode", "objective_id", "target", "subject_id", "subject_sha256", "frontier", "namespace_frontier", "cutoff", "question", "exclusions", "through", "owner_boundary", "owner_version"].includes(key)))
     throw new Error("Invalid retrospective selection")
   const subjectMode = raw.mode === "explicit-subject" || raw.target !== undefined
   if (raw.mode !== undefined && raw.mode !== (subjectMode ? "explicit-subject" : "explicit-objective")) throw new Error("Unsupported retrospective selection policy")
@@ -71,12 +71,13 @@ export function retrospectiveProposal(raw: unknown): RetrospectiveProposal {
       proposal.subject_sha256 = raw.subject_sha256
     }
     if (raw.frontier !== undefined) proposal.frontier = evaluationFrontier(raw.frontier)
+    if (raw.namespace_frontier !== undefined) proposal.namespace_frontier = evaluationFrontier(raw.namespace_frontier)
     if (raw.cutoff !== undefined) {
       if (!object(raw.cutoff) || !["point-in-time", "recorded-completion"].includes(String(raw.cutoff.kind))) throw new Error("Invalid retrospective cutoff")
       proposal.cutoff = JSON.parse(canonical(raw.cutoff)) as EvaluationCutoff
     }
   } else {
-    if (["subject_id", "subject_sha256", "frontier", "cutoff"].some(key => raw[key] !== undefined)) throw new Error("Invalid legacy retrospective selection")
+    if (["subject_id", "subject_sha256", "frontier", "namespace_frontier", "cutoff"].some(key => raw[key] !== undefined)) throw new Error("Invalid legacy retrospective selection")
     proposal = { mode: "explicit-objective", objective_id: uid(raw.objective_id, "objective_id"), question: raw.question, exclusions: selected }
   }
   if (raw.through !== undefined) proposal.through = pageInteger(raw.through, 0, 0, Number.MAX_SAFE_INTEGER)
@@ -96,6 +97,7 @@ export function retrospectiveProposal(raw: unknown): RetrospectiveProposal {
 export function subjectSelection(subject: EvaluationSubject, ownerVersion = digest({ frontier: subject.through })): Extract<RetrospectiveSelection, { mode: "explicit-subject" }> {
   return { mode: "explicit-subject", target: subject.target, subject_id: subject.subject_id, subject_sha256: subject.sha256,
     question: subject.question, through: subject.through.ledger, frontier: subject.through, cutoff: subject.cutoff,
+    ...(subject.namespace_frontier ? { namespace_frontier: subject.namespace_frontier } : {}),
     owner_boundary: { objective_links: subject.through.objective_links, review_requests: subject.through.review_requests,
       review_relationships: subject.through.review_relationships }, owner_version: ownerVersion, exclusions: [] }
 }
@@ -149,8 +151,14 @@ export class RetrospectivePopulations {
       if (frontier.ledger !== history.query.through || owners.boundary.objective_links !== frontier.objective_links
         || owners.boundary.review_requests !== frontier.review_requests || owners.boundary.review_relationships !== frontier.review_relationships)
         throw new Error("Retrospective source owners exceed the established subject")
+      if (subject && proposal.namespace_frontier && canonical(proposal.namespace_frontier) !== canonical(subject.namespace_frontier ?? frontier))
+        throw new Error("Retrospective namespace frontier differs from the established subject")
+      // Preview uses the ceiling captured before shared-history discovery. A
+      // legacy or caller-supplied boundary without one is kept conservative.
+      const namespace = subject ? subject.namespace_frontier : proposal.namespace_frontier ?? frontier
       selection = { mode: "explicit-subject", target: proposal.target, question: proposal.question, through: history.query.through,
         owner_boundary: owners.boundary, owner_version: owners.version, exclusions: proposal.exclusions, frontier,
+        ...(namespace ? { namespace_frontier: namespace } : {}),
         cutoff: subject?.cutoff ?? proposal.cutoff ?? { kind: "point-in-time" },
         ...(subject ? { subject_id: subject.subject_id, subject_sha256: subject.sha256 } : {}) }
     }
