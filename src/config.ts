@@ -5,6 +5,7 @@ import { constants, type BigIntStats } from "node:fs"
 import { TextDecoder } from "node:util"
 import { homedir } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
+import { parseEvaluatorMethod, parseEvaluatorPolicy, type EvaluatorMethodManifest, type EvaluatorPolicyRef } from "./evaluator-method.js"
 
 export type Reasoning = "low" | "medium" | "high"
 export type WorkloadTier = "standard" | "advanced" | "frontier"
@@ -16,6 +17,9 @@ export type RoleConfig = { description?: string; instructions?: string; modelCla
   minimumTier?: WorkloadTier; workloadTiers?: WorkloadTierOverrides }
 export type ModelClassConfig = { models: string[] }
 export type ModelRoutingConfig = { enabled: boolean; defaultClass?: string; defaultReasoning: Reasoning; paidFallback: boolean; providerOrder: string[] }
+export type IncrementalInterpretationConfig = { enabled: boolean; method: EvaluatorMethodManifest | null; budget_policy: EvaluatorPolicyRef | null;
+  min_sources: number; max_age_ms: number; min_interval_ms: number }
+export type LearningConfig = { incremental_enabled: boolean; max_sources: number; coalesce_ms: number; interpretation: IncrementalInterpretationConfig }
 export type Config = {
   version: 1
   agents: Record<string, AgentConfig>
@@ -23,6 +27,7 @@ export type Config = {
   instructions: { enabled: boolean; max_chars: number }
   context: { max_chars: number }
   ledger: { capture: "automatic" | "off" }
+  learning: LearningConfig
   modelRouting: ModelRoutingConfig
   modelClasses: Record<string, ModelClassConfig>
   modelAliases: Record<string, Record<string, string>>
@@ -35,6 +40,8 @@ export const defaults = (): Config => ({
   version: 1, agents: {}, roles: {},
   instructions: { enabled: true, max_chars: 6000 },
   context: { max_chars: 16000 }, ledger: { capture: "automatic" },
+  learning: { incremental_enabled: true, max_sources: 128, coalesce_ms: 250,
+    interpretation: { enabled: false, method: null, budget_policy: null, min_sources: 16, max_age_ms: 60000, min_interval_ms: 60000 } },
   modelRouting: { enabled: false, defaultReasoning: "medium", paidFallback: false, providerOrder: [] },
   modelClasses: {}, modelAliases: {},
 })
@@ -106,7 +113,7 @@ export function mergeConfig(base: Config, input: unknown): Config {
   const out = structuredClone(base)
   if (input === null || input === undefined) return out
   const v = object(input, "loom")
-  keys(v, ["version", "agents", "roles", "instructions", "context", "ledger", "model-routing", "model-classes", "model-aliases"], "loom")
+  keys(v, ["version", "agents", "roles", "instructions", "context", "ledger", "learning", "model-routing", "model-classes", "model-aliases"], "loom")
   if (v.version !== undefined && v.version !== 1) throw new Error("Unsupported .loom.yaml version (expected 1)")
   if (v.agents !== undefined) {
     const agents = object(v.agents, "agents")
@@ -217,6 +224,24 @@ export function mergeConfig(base: Config, input: unknown): Config {
     const l = object(v.ledger, "ledger"); keys(l, ["capture"], "ledger")
     if (l.capture !== undefined && l.capture !== "automatic" && l.capture !== "off") throw new Error("ledger.capture must be automatic or off")
     if (l.capture !== undefined) out.ledger.capture = l.capture
+  }
+  if (v.learning !== undefined) {
+    const l = object(v.learning, "learning")
+    keys(l, ["incremental", "max-sources", "coalesce-ms", "interpretation"], "learning")
+    if (l.incremental !== undefined) out.learning.incremental_enabled = bool(l.incremental, "learning.incremental")
+    if (l["max-sources"] !== undefined) out.learning.max_sources = integer(l["max-sources"], "learning.max-sources", 1, 1000)
+    if (l["coalesce-ms"] !== undefined) out.learning.coalesce_ms = integer(l["coalesce-ms"], "learning.coalesce-ms", 0, 60000)
+    if (l.interpretation !== undefined) {
+      const i = object(l.interpretation, "learning.interpretation"), next = out.learning.interpretation
+      keys(i, ["enabled", "method", "budget-policy", "min-sources", "max-age-ms", "min-interval-ms"], "learning.interpretation")
+      if (i.enabled !== undefined) next.enabled = bool(i.enabled, "learning.interpretation.enabled")
+      if (i.method !== undefined) next.method = i.method === null ? null : parseEvaluatorMethod(i.method)
+      if (i["budget-policy"] !== undefined) next.budget_policy = i["budget-policy"] === null ? null : parseEvaluatorPolicy(i["budget-policy"])
+      if (i["min-sources"] !== undefined) next.min_sources = integer(i["min-sources"], "learning.interpretation.min-sources", 1, 1000)
+      if (i["max-age-ms"] !== undefined) next.max_age_ms = integer(i["max-age-ms"], "learning.interpretation.max-age-ms", 0, 86400000)
+      if (i["min-interval-ms"] !== undefined) next.min_interval_ms = integer(i["min-interval-ms"], "learning.interpretation.min-interval-ms", 0, 86400000)
+      if (next.enabled && !next.method) throw new Error("Enabled incremental interpretation requires a pinned method; configuration is not execution authority")
+    }
   }
   return out
 }
