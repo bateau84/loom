@@ -56,11 +56,12 @@ def sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def view(dbfile: Path, session: str) -> dict:
+def view(dbfile: Path, session: str, source_record_id: str | None = None) -> dict:
     if not dbfile.is_file():
         return {}
     with closing(sqlite3.connect(dbfile.as_uri() + "?mode=ro", uri=True, timeout=2)) as db:
         db.execute("PRAGMA query_only=ON")
+        db.execute("BEGIN")
         try:
             opportunity = db.execute(
                 "SELECT state,reason FROM learning_evaluation_opportunities WHERE session_id=?",
@@ -71,6 +72,13 @@ def view(dbfile: Path, session: str) -> dict:
             overall = db.execute(
                 "SELECT body_json FROM learning_evaluation_reports WHERE id=?",
                 (batch[2],)).fetchone() if batch and batch[2] else None
+            source_in_membership = bool(db.execute(
+                "SELECT 1 FROM learning_evaluation_members m, json_each(m.source_refs) source "
+                "WHERE m.batch_id=? AND json_extract(source.value,'$.kind')='ledger-record' "
+                "AND json_extract(source.value,'$.id')=? "
+                "AND json_extract(source.value,'$.session_id')=? LIMIT 1",
+                (batch[0], source_record_id, session),
+            ).fetchone()) if batch and source_record_id is not None else False
         except sqlite3.OperationalError as error:
             if "no such table" in str(error):
                 return {}
@@ -79,15 +87,16 @@ def view(dbfile: Path, session: str) -> dict:
         "opportunity": list(opportunity) if opportunity else None,
         "batch": list(batch) if batch else None,
         "observations": json.loads(overall[0]).get("observations", {}) if overall else {},
+        "source_in_membership": source_in_membership,
     }
 
 
-def until(dbfile: Path, session: str, predicate, label: str, timeout=30):
+def until(dbfile: Path, session: str, predicate, label: str, timeout=30, *, source_record_id: str | None = None):
     end = time.monotonic() + timeout
     observed = None
     while time.monotonic() < end:
-        observed = view(dbfile, session)
-        if predicate(observed):
+        observed = view(dbfile, session, source_record_id)
+        if predicate(observed) and (source_record_id is None or observed.get("source_in_membership")):
             return observed
         time.sleep(0.05)
     raise RuntimeError(f"{label} not observed for native Session; last states: {observed}")
@@ -398,7 +407,7 @@ def run(args):
                             "Native Loom record did not return the actual original identity")
                     initial = until(learning, owner,
                                     lambda v: bool(v.get("batch") and v["batch"][1] == "complete" and v["batch"][2]),
-                                    "Automatic no-command evaluation")
+                                    "Automatic no-command evaluation", source_record_id=first["id"])
                     batch_a = initial["batch"][0]
                     check("S3-installed-native-source-to-automatic-report",
                           source_record_id=first["id"], batch=batch_a,
@@ -461,7 +470,7 @@ def run(args):
                     scenario = Scenario(host, root)
                     caught = until(learning, denied_worker,
                                    lambda v: bool(v.get("batch") and v["batch"][1] == "complete" and v["batch"][2]),
-                                   "Startup catch-up after denied first run")
+                                   "Startup catch-up after denied first run", source_record_id=restricted_original["id"])
                     recovered_batch = caught["batch"][0]
                     recovered = report_result(scenario, denied_worker, recovered_batch)
                     require(any(restricted_original["id"] in ids
@@ -475,13 +484,14 @@ def run(args):
                           recovered_batch=recovered_batch, original_id=restricted_original["id"],
                           processes=[first_pid, host.proc.pid])
 
-                    # Produce later source through the real Loom tool and
-                    # require a newly versioned report instead of rewriting A.
+                    # Native context/read activity may have produced revisions
+                    # after A already. Wait for this exact later original's
+                    # frozen membership, then independently check public output.
                     next_record = append_original(scenario, owner, "Synthetic late Stage 3 correction B")
                     revised = until(learning, owner,
                                     lambda v: bool(v.get("batch") and v["batch"][0] != batch_a
                                                    and v["batch"][1] == "complete" and v["batch"][2]),
-                                    "Later-source revision")
+                                    "Later-source revision", source_record_id=next_record["id"])
                     batch_b = revised["batch"][0]
                     latest = report_result(scenario, owner, batch_b)
                     require(latest["report"]["body"]["population"]["source_count"] >

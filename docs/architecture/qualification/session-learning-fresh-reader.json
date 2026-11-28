@@ -1,0 +1,449 @@
+{
+  "schema": "loom.session-learning-fresh-reader.v1",
+  "date": "2026-11-28",
+  "reader": "independent agent /root/fresh_session_reader",
+  "allowed_inputs": [
+    "Four public HTML documents",
+    "Public registered tool help and START-HERE",
+    "Bounded registered read-only reader"
+  ],
+  "comprehension": [
+    "Authored scope does not recover the missing original native user request.",
+    "Wi-Fi success is reported; Ethernet remains unverified.",
+    "Recorded order is not execution causality.",
+    "Caught-up processing is not engineering completion.",
+    "Failed evidence retrieval is separate audit material outside the six-record frozen subject.",
+    "Sequence 7 requests an Ethernet check but explicitly records no result; it is outside the frozen population."
+  ],
+  "finding_resolutions": [
+    "Copied audit navigation exhausted 17 entries.",
+    "Copied S5 overview limit 25 succeeded.",
+    "Copied pending request initially failed; existing Session discovery filter fixed it and final unchanged request succeeded."
+  ],
+  "reader_overhead": "Initial full HTML plus JSON dump produced about 34000 tokens and was truncated; compact public prose was reread. This is unnecessary reader overhead, not native history enumeration.",
+  "limits": [
+    "HTML as text, not browser or human-user acceptance.",
+    "Controlled records and scripted S5 report, not private historical Session or model reasoning quality.",
+    "Owner-read instrumentation covers named retrospective/deterministic resolvers; general engineering history may read source owners through other paths.",
+    "Follow-up intentionally reuses learned context and is not a new cold-reader trial."
+  ],
+  "runs": [
+    {
+      "run": 7,
+      "scope": "Full public-interface comprehension",
+      "calls": 4,
+      "successes": 4,
+      "failures": 0,
+      "returned_bytes": 7447,
+      "summed_reader_elapsed_ms": 150.749122,
+      "peak_reader_rss_kib": 84156,
+      "reader_log_sha256": "6c8747881f465ce9f41e92894c179b2dc84b261b46549a33ea8bc8800ab6d92e",
+      "calls_detail": [
+        {
+          "at": "2026-11-28T11:10:43.475Z",
+          "tool": "insights",
+          "request": {
+            "operation": "learning-source",
+            "batch_id": "d124f2c1-c9d0-49c3-b210-e5e75565a6a1",
+            "member_key": "increment:ordinary-waybar-session:0",
+            "source_index": 1,
+            "response_format": "json"
+          },
+          "elapsed_ms": 30.15157800000003,
+          "returned_bytes": 1391,
+          "max_rss_kib": 79164,
+          "ok": true,
+          "native_history_enumerations": 0,
+          "native_model_prompts": 0,
+          "native_context_injections": 0,
+          "original_owner_reads": {
+            "retrospective": {
+              "calls": 0,
+              "available": 0,
+              "serialized_original_bytes": 0,
+              "elapsed_ms": 0,
+              "unique_source_versions": 0
+            },
+            "deterministic": {
+              "calls": 2,
+              "available": 2,
+              "serialized_original_bytes": 760,
+              "elapsed_ms": 1.0923159999999257,
+              "unique_source_versions": 1
+            }
+          }
+        },
+        {
+          "at": "2026-11-28T11:10:43.505Z",
+          "tool": "history",
+          "request": {
+            "operation": "subject-activities",
+            "subject_id": "subject-d4713c141042e834b3a259e678a5ec114f216f7121809c1ca7380017c729239e",
+            "subject_sha256": "ac6d30402573c083cb178447b09d7eee43f7780de3c24ce66740341e7da20415",
+            "limit": 5
+          },
+          "elapsed_ms": 57.922781999999984,
+          "returned_bytes": 2587,
+          "max_rss_kib": 81408,
+          "ok": true,
+          "native_history_enumerations": 0,
+          "native_model_prompts": 0,
+          "native_context_injections": 0,
+          "original_owner_reads": {
+            "retrospective": {
+              "calls": 0,
+              "available": 0,
+              "serialized_original_bytes": 0,
+              "elapsed_ms": 0,
+              "unique_source_versions": 0
+            },
+            "deterministic": {
+              "calls": 0,
+              "available": 0,
+              "serialized_original_bytes": 0,
+              "elapsed_ms": 0,
+              "unique_source_versions": 0
+            }
+          }
+        },
+        {
+          "at": "2026-11-28T11:11:09.950Z",
+          "tool": "history",
+          "request": {
+            "operation": "population-source",
+            "population_id": "retrospective-5e61affd395feebd24e6fc7ffc4bbed8c1f13abfb7603bd31feb8ff2d881f04a",
+            "manifest_sha256": "fff611dfe8a380ac155c55cc48141f62de56cd69bb7c515fc7bcd234cd4b8112",
+            "member_key": "source-be3a78b1883cc83e2a9e6f58c0f11b80ff4b2451679c0c20fcfe76d8c4397275",
+            "response_format": "json"
+          },
+          "elapsed_ms": 27.94321899999997,
+          "returned_bytes": 1731,
+          "max_rss_kib": 84124,
+          "ok": true,
+          "native_history_enumerations": 0,
+          "native_model_prompts": 0,
+          "native_context_injections": 0,
+          "original_owner_reads": {
+            "retrospective": {
+              "calls": 1,
+              "available": 1,
+              "serialized_original_bytes": 406,
+              "elapsed_ms": 0.12236400000000458,
+              "unique_source_versions": 1
+            },
+            "deterministic": {
+              "calls": 0,
+              "available": 0,
+              "serialized_original_bytes": 0,
+              "elapsed_ms": 0,
+              "unique_source_versions": 0
+            }
+          }
+        },
+        {
+          "at": "2026-11-28T11:11:09.954Z",
+          "tool": "history",
+          "request": {
+            "operation": "population-source",
+            "population_id": "retrospective-5e61affd395feebd24e6fc7ffc4bbed8c1f13abfb7603bd31feb8ff2d881f04a",
+            "manifest_sha256": "fff611dfe8a380ac155c55cc48141f62de56cd69bb7c515fc7bcd234cd4b8112",
+            "member_key": "source-2ff1264a92e8d376db71e3a3a1db7389fe6959c0d2f52274861931ed1b6a0597",
+            "response_format": "json"
+          },
+          "elapsed_ms": 34.731543000000016,
+          "returned_bytes": 1738,
+          "max_rss_kib": 84156,
+          "ok": true,
+          "native_history_enumerations": 0,
+          "native_model_prompts": 0,
+          "native_context_injections": 0,
+          "original_owner_reads": {
+            "retrospective": {
+              "calls": 1,
+              "available": 1,
+              "serialized_original_bytes": 413,
+              "elapsed_ms": 0.17452299999999354,
+              "unique_source_versions": 1
+            },
+            "deterministic": {
+              "calls": 0,
+              "available": 0,
+              "serialized_original_bytes": 0,
+              "elapsed_ms": 0,
+              "unique_source_versions": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "run": 8,
+      "scope": "Narrow audit, S5 limit and pending navigation follow-up",
+      "calls": 6,
+      "successes": 5,
+      "failures": 1,
+      "returned_bytes": 29272,
+      "summed_reader_elapsed_ms": 205.76879700000012,
+      "peak_reader_rss_kib": 92768,
+      "reader_log_sha256": "00007fa088fa409629454372e4a718f9cf1b9d6b2afc6dffb65d7e96619659dc",
+      "calls_detail": [
+        {
+          "at": "2026-11-28T11:23:55.033Z",
+          "tool": "history",
+          "request": {
+            "operation": "read",
+            "session_id": "ordinary-waybar-session",
+            "after": 6,
+            "through": 7,
+            "limit": 20,
+            "response_format": "json"
+          },
+          "elapsed_ms": 28.38275200000004,
+          "returned_bytes": 0,
+          "max_rss_kib": 78348,
+          "ok": false,
+          "error": "Error: History after requires a selected branch, objective, related trajectory or discovery filters",
+          "native_history_enumerations": 0,
+          "native_model_prompts": 0,
+          "native_context_injections": 0,
+          "original_owner_reads": {
+            "retrospective": {
+              "calls": 0,
+              "available": 0,
+              "serialized_original_bytes": 0,
+              "elapsed_ms": 0,
+              "unique_source_versions": 0
+            },
+            "deterministic": {
+              "calls": 0,
+              "available": 0,
+              "serialized_original_bytes": 0,
+              "elapsed_ms": 0,
+              "unique_source_versions": 0
+            }
+          }
+        },
+        {
+          "at": "2026-11-28T11:23:55.067Z",
+          "tool": "history",
+          "request": {
+            "operation": "subject-activities",
+            "subject_id": "subject-7db8746ac218d85e109ca7e009b76869a12eefd230481322db37db90882f45aa",
+            "subject_sha256": "afa9f2f107ad4dc3994fc83293cb28a41e1bb86a7b34838d8d9b7e666a81b489",
+            "limit": 5
+          },
+          "elapsed_ms": 27.65670700000004,
+          "returned_bytes": 3072,
+          "max_rss_kib": 78976,
+          "ok": true,
+          "native_history_enumerations": 0,
+          "native_model_prompts": 0,
+          "native_context_injections": 0,
+          "original_owner_reads": {
+            "retrospective": {
+              "calls": 0,
+              "available": 0,
+              "serialized_original_bytes": 0,
+              "elapsed_ms": 0,
+              "unique_source_versions": 0
+            },
+            "deterministic": {
+              "calls": 0,
+              "available": 0,
+              "serialized_original_bytes": 0,
+              "elapsed_ms": 0,
+              "unique_source_versions": 0
+            }
+          }
+        },
+        {
+          "at": "2026-11-28T11:23:55.112Z",
+          "tool": "insights",
+          "request": {
+            "operation": "evaluation-interpretation",
+            "batch_id": "eval-preparation-2db2a1540b472a791694e7ee1edc84d0b57039fc2ef3ec16a7dc45822060a94c",
+            "report_id": "interpretation-0048a1f2a3a5ec31680b319158ddf536c465ef51c5ac2407cc6807c39ce00a5b",
+            "report_sha256": "13ef8e0e2862442b545277629a931b53c4a60029a671b19019881fccd5607fbc",
+            "section": "overview",
+            "limit": 25,
+            "response_format": "json"
+          },
+          "elapsed_ms": 78.86855300000002,
+          "returned_bytes": 18487,
+          "max_rss_kib": 92768,
+          "ok": true,
+          "native_history_enumerations": 0,
+          "native_model_prompts": 0,
+          "native_context_injections": 0,
+          "original_owner_reads": {
+            "retrospective": {
+              "calls": 6,
+              "available": 6,
+              "serialized_original_bytes": 2360,
+              "elapsed_ms": 0.31409400000006826,
+              "unique_source_versions": 6
+            },
+            "deterministic": {
+              "calls": 0,
+              "available": 0,
+              "serialized_original_bytes": 0,
+              "elapsed_ms": 0,
+              "unique_source_versions": 0
+            }
+          }
+        },
+        {
+          "at": "2026-11-28T11:24:08.300Z",
+          "tool": "history",
+          "request": {
+            "operation": "subject-activities",
+            "subject_id": "subject-7db8746ac218d85e109ca7e009b76869a12eefd230481322db37db90882f45aa",
+            "subject_sha256": "afa9f2f107ad4dc3994fc83293cb28a41e1bb86a7b34838d8d9b7e666a81b489",
+            "limit": 5,
+            "after": 20
+          },
+          "elapsed_ms": 25.67374699999999,
+          "returned_bytes": 3069,
+          "max_rss_kib": 79400,
+          "ok": true,
+          "native_history_enumerations": 0,
+          "native_model_prompts": 0,
+          "native_context_injections": 0,
+          "original_owner_reads": {
+            "retrospective": {
+              "calls": 0,
+              "available": 0,
+              "serialized_original_bytes": 0,
+              "elapsed_ms": 0,
+              "unique_source_versions": 0
+            },
+            "deterministic": {
+              "calls": 0,
+              "available": 0,
+              "serialized_original_bytes": 0,
+              "elapsed_ms": 0,
+              "unique_source_versions": 0
+            }
+          }
+        },
+        {
+          "at": "2026-11-28T11:24:12.106Z",
+          "tool": "history",
+          "request": {
+            "operation": "subject-activities",
+            "subject_id": "subject-7db8746ac218d85e109ca7e009b76869a12eefd230481322db37db90882f45aa",
+            "subject_sha256": "afa9f2f107ad4dc3994fc83293cb28a41e1bb86a7b34838d8d9b7e666a81b489",
+            "limit": 5,
+            "after": 30
+          },
+          "elapsed_ms": 21.407276000000024,
+          "returned_bytes": 3136,
+          "max_rss_kib": 79516,
+          "ok": true,
+          "native_history_enumerations": 0,
+          "native_model_prompts": 0,
+          "native_context_injections": 0,
+          "original_owner_reads": {
+            "retrospective": {
+              "calls": 0,
+              "available": 0,
+              "serialized_original_bytes": 0,
+              "elapsed_ms": 0,
+              "unique_source_versions": 0
+            },
+            "deterministic": {
+              "calls": 0,
+              "available": 0,
+              "serialized_original_bytes": 0,
+              "elapsed_ms": 0,
+              "unique_source_versions": 0
+            }
+          }
+        },
+        {
+          "at": "2026-11-28T11:24:16.248Z",
+          "tool": "history",
+          "request": {
+            "operation": "subject-activities",
+            "subject_id": "subject-7db8746ac218d85e109ca7e009b76869a12eefd230481322db37db90882f45aa",
+            "subject_sha256": "afa9f2f107ad4dc3994fc83293cb28a41e1bb86a7b34838d8d9b7e666a81b489",
+            "limit": 5,
+            "after": 40
+          },
+          "elapsed_ms": 23.779762000000005,
+          "returned_bytes": 1508,
+          "max_rss_kib": 79308,
+          "ok": true,
+          "native_history_enumerations": 0,
+          "native_model_prompts": 0,
+          "native_context_injections": 0,
+          "original_owner_reads": {
+            "retrospective": {
+              "calls": 0,
+              "available": 0,
+              "serialized_original_bytes": 0,
+              "elapsed_ms": 0,
+              "unique_source_versions": 0
+            },
+            "deterministic": {
+              "calls": 0,
+              "available": 0,
+              "serialized_original_bytes": 0,
+              "elapsed_ms": 0,
+              "unique_source_versions": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "run": 9,
+      "scope": "Final copied later-work request",
+      "calls": 1,
+      "successes": 1,
+      "failures": 0,
+      "returned_bytes": 34345,
+      "summed_reader_elapsed_ms": 43.084957,
+      "peak_reader_rss_kib": 81564,
+      "reader_log_sha256": "0612bdbb984e81f7a7545af638a760d222a1d76a661e6469670691e35d47764c",
+      "calls_detail": [
+        {
+          "at": "2026-11-28T11:27:20.465Z",
+          "tool": "history",
+          "request": {
+            "operation": "read",
+            "session_id": "ordinary-waybar-session",
+            "source_session_id": "ordinary-waybar-session",
+            "after": 6,
+            "through": 7,
+            "limit": 20,
+            "response_format": "json"
+          },
+          "elapsed_ms": 43.084957,
+          "returned_bytes": 34345,
+          "max_rss_kib": 81564,
+          "ok": true,
+          "native_history_enumerations": 0,
+          "native_model_prompts": 0,
+          "native_context_injections": 0,
+          "original_owner_reads": {
+            "retrospective": {
+              "calls": 0,
+              "available": 0,
+              "serialized_original_bytes": 0,
+              "elapsed_ms": 0,
+              "unique_source_versions": 0
+            },
+            "deterministic": {
+              "calls": 0,
+              "available": 0,
+              "serialized_original_bytes": 0,
+              "elapsed_ms": 0,
+              "unique_source_versions": 0
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

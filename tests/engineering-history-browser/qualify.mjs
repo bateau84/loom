@@ -414,7 +414,7 @@ try {
           await keyboardToggle(summary, "Enter", true)
         }
         assert.equal(await page.locator("details:not([open])").count(), 0)
-        if (population) assert.equal(await page.locator("#members details[open]").count(), view.items.length)
+        if (population) assert.equal(await page.locator("#members details.card[open]").count(), view.items.length)
         else assert.equal(await page.locator(".relationships > li").count(), view.relationships.length)
         if (fixture.dense) assert.ok(view.relationships.length >= 100, "Dense qualification retains at least 100 typed edges")
         const sizes = await noOverflow()

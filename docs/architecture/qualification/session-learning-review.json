@@ -29,6 +29,13 @@
       "passed": 3,
       "failed": 0,
       "assertions": 21
+    },
+    {
+      "suite": "native summary fragment focus source review and dashboard regressions",
+      "passed": 11,
+      "failed": 0,
+      "assertions": 2393,
+      "limitation": "Actual Chromium rerun remains separate."
     }
   ],
   "limits": [
@@ -51,6 +58,9 @@
     "tests/evaluation-subject-native.test.ts": "d726eb0e6cdd6f093278527fd29c1539818fc7014b59b7290d6089b8f9814b09",
     "tests/evaluator-context-native.test.ts": "4bed2f556eb92ed36cbef245fc6654910eb00df0079f7c19984f0b2730c6bd26",
     "tests/session-learning-backup-native.test.ts": "ee3c650b885159a88428d968f57a3fa308106a6f22b8d36cf035be2f5b59c172",
-    "tests/incremental-learning-native.test.ts": "bd2af893c960443f27df376d9d45147a6e1f5f994baf62b7a2611fbc91e43e12"
+    "tests/incremental-learning-native.test.ts": "bd2af893c960443f27df376d9d45147a6e1f5f994baf62b7a2611fbc91e43e12",
+    "src/engineering-history-dashboard.ts": "8a278df1400267accc8067561b0720dfbcc73db21d150aba8bbdd4c2dfaaa1a3",
+    "tests/session-retrospective-browser/qualify.mjs": "e68721aa971f9b42e53edfe5004131daf176d3d6e4fd43bc7622823fcae10598",
+    "tests/engineering-history-browser/qualify.mjs": "9598dd8d128ef593062e7165563ce3e9c80366e16862285d4c22b96a1308d288"
   }
 }

@@ -59,7 +59,19 @@ The reader initially dumped all four HTML documents with embedded JSON, producin
 
 The latest generator run produced ten scenes through 42 public calls, including one intentional failed retrieval: 651,690 returned bytes, 0.88 seconds elapsed and 138,072 KiB maximum RSS. Across the complete fixture, retrospective validation made 219 original-owner reads (86,100 serialized bytes), and deterministic processing made 404 (158,580 bytes), each touching six unique original versions. These include repeated validation across fixture operations; they are not six evidence reads in total. The generator recorded zero native history enumerations, model creates, model prompts or conversation injections.
 
+The [fresh-reader receipt](session-learning-fresh-reader.json) retains all eleven bounded calls across the assessment and follow-ups, including the failed selector. The initial four-call assessment returned 7,447 bytes in 151 ms of summed reader execution with 84,156 KiB peak reader RSS. These process measurements exclude the reader model and its initial HTML-output overhead.
+
 This was an HTML-as-text comprehension exercise, not browser or human-user qualification. The Chromium journey separately exercises actual anchors, source disclosures, conclusion/counterevidence/backlinks, supported original retrieval, keyboard focus, narrow reflow, inertness and axe. A local standard Chromium download returned HTTP 403, so no local browser pass is claimed. The existing read-only GitHub Actions browser workflow now includes the Session journey and retains its reports and screenshots.
+
+## Installed native incremental result
+
+The exact package from `2a117201e4cd0f87e75d4244187cce3a67b4bd5f` passed all five ordinary-Session checks on unmodified OpenCode 2.3.0 in [CI job 140963789699](https://github.com/bateau84/loom/actions/runs/46140054231/job/140963789699). The [retained report](session-learning-installed-increment.json) binds the source, package, host and harness hashes.
+
+The default incremental mode processed two authored phases through the production scheduler without an Action, Plan or objective. Two real no-tool idle turns advanced opportunity generations while preserving checkpoint/report identities. The second increment processed new originals once and retained the earlier Ethernet concern. Supported subject, preview, freeze, report and selective original reads succeeded. Fourteen native learning wrappers, including the failed original read, stayed outside the nine-member frozen engineering foundation and current findings.
+
+The complete native effect census reconciled twelve planned driver jobs and twenty-two planned model requests, with zero automatic model requests, new learning Sessions or automatic conversation injections. The external provider was scripted; it drove tool use and did not fabricate learning reports. This establishes mechanics, not genuine interpretation quality.
+
+The fixture took 12.70 seconds; peak child RSS was 599,596 KiB, including the installed native host. Its audit retained 345 receipts in 3,796,272 bytes. Seven successful public readbacks returned 105,061 bytes; one deliberately failed original read was separately audited. These are whole-fixture process measurements, not isolated learning memory, provider billing or a controlled comparison with the earlier crawler report.
 
 ## Reproduction and final gates
 
@@ -79,7 +91,7 @@ The browser command requires the pinned test-only Playwright/axe prefix and Chro
 
 The earlier published checkpoint `d9a378c4a5075240d37b5f481c7226c4fa5735eb` passed the complete main CI: 438 core tests, 1,205 native tests with 27,232 assertions, 372 Python tests, typecheck and actual Code Mode validation. Its browser gate exposed an obsolete keyboard-order assumption in the legacy harness, and its installed learning gate exposed a legacy fixture relying on the former default complete-population mode. Both harnesses were corrected; a separate installed ordinary-Session incremental job now exercises the new default through the actual native scheduler. These earlier results do not qualify subsequent changes.
 
-The final working candidate passes typecheck, 375 Python tests and the focused public, incremental, backup and review suites. Final integrated CI, actual Chromium navigation and the installed incremental journey remain required on the next published revision. A successful controlled fixture is not approval for production execution.
+The final working candidate passes typecheck, 375 Python tests and the focused public, incremental, backup and review suites. The next published checkpoint also passed installed incremental learning, while Chromium identified a real source-card keyboard regression: placing a negative tab index on the disclosure container removed the expected summary from the tab sequence. The fragment target now uses the native summary, matching the existing history model, and the strict keyboard assertion remains. The legacy installed catch-up check also selected an intervening pre-append batch; its wait must cover the known late record before asserting membership. Final integrated CI, corrected Chromium navigation and all legacy installed gates remain required. A successful controlled fixture is not approval for production execution.
 
 ## Remaining acceptance dependencies
 

@@ -118,7 +118,9 @@ try {
         assert.ok(!visible.includes("Later continuation:"))
         const link = trajectory.getByRole("link").nth(2), target = (await link.getAttribute("href")).slice(1)
         await link.click()
-        const card = page.locator("#" + target), summary = card.locator("summary")
+        const summary = page.locator("#" + target), card = summary.locator("xpath=parent::details")
+        assert.equal(await summary.evaluate(element => element.tagName), "SUMMARY")
+        assert.equal(await summary.evaluate(element => element === document.activeElement), true)
         if (!await card.evaluate(element => element.open)) { await summary.focus(); await page.keyboard.press("Enter") }
         assert.equal(await card.getAttribute("open"), "")
         await card.getByText("Exact original request and source metadata", { exact: true }).click()
