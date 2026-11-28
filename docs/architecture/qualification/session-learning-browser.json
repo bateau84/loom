@@ -1,0 +1,1316 @@
+{
+  "format": "loom-session-retrospective-browser-qualification/v1",
+  "head": "ad3dcf31db9eb45302db63467e60ecf1e5baf6da",
+  "generated_at": "2026-11-28T11:36:46.655Z",
+  "execution_environment": "isolated-github-actions",
+  "versions": {
+    "playwright": "1.65.1",
+    "axePlaywright": "4.14.1"
+  },
+  "node": "v22.23.5",
+  "browser": "159.0.8154.6",
+  "fixture_manifest_sha256": "738f0afa0b05fd449353aaefde3c24a87699ed291c2be4fb50e68ea0e3e819ba",
+  "source_sha256": {
+    "src/plugin.ts": "eeaf4f7c0cd2b0632ec2d4ef3cc34f51e6cc767a6120e306bdb1925284622978",
+    "src/learning.ts": "d94547de6016dcd7d1fff8e79de7b2c3d85b4f1c742496bd9243fe30fdc97e32",
+    "src/evaluation-subject.ts": "f4ce36c3b8ead1b365cbaf77290822bdb7bae2cbe6a5fba1c12a2da64cb148cf",
+    "src/automatic-learning.ts": "e2293dac7d33346b2cbfed87142932de5c50ab7c1751eb87e140fbf8a798ddc4",
+    "src/learning-sources.ts": "2c8ef6ee96f11e829516c51fabca589bf825eb053f7c49ac824a0d2a787e759e",
+    "src/retrospective-populations.ts": "d72b2a094b4c024013358dedcee4360eaec29d4fe6ca836548d5f6763b631c06",
+    "src/retrospective-contract.ts": "583cf62d4e8792a814fc88f2a135141986e704a3ac725c00957626e4ba66fd72",
+    "src/evaluation-store.ts": "ee8535d0f3b6be19f1bf5efb2c9755db997cc5b9b7560eff5fcd24a01398d6e8",
+    "src/evaluator-interpretation-view.ts": "642b2813a588c1e007ff65119db6d3a1beb9f6f9c329fe814392ee4066b7f82b",
+    "src/engineering-history-dashboard.ts": "8a278df1400267accc8067561b0720dfbcc73db21d150aba8bbdd4c2dfaaa1a3",
+    "src/retrospective-source-view.ts": "295f19c71f7c0dcb0b6cea936171320d0e2717a872661ab42dbd7faf606ebed9",
+    "src/incremental-learning-view.ts": "9c27c1657f8332dd87c3ebebc1f89cadb4482eaca06ba7eba7e15a329a6094f2",
+    "tests/helpers/registered-loom.ts": "607d2bf514beaa959a9a8c38b510342ec70abbbd8e80d934540da01d60b222f8",
+    "tests/helpers/evaluator-publication-fixture.ts": "72a76a8c3470b77e626e4b50952fce6ab31c9305d2ffa321f9584a9844c5d39a",
+    "tests/session-retrospective-browser/generate.ts": "1a89cd580d1cb0b494a2643560684266776197457756cfc1ec84acb9fce662da",
+    "tests/session-retrospective-browser/read.ts": "e60301811718fb594ac98af3f132a261361e7c5ce17f74603666da35e75e5a7c",
+    "tests/session-retrospective-browser/source-read-metrics.ts": "00e1ffbc3d310cb07b210bab73ce14c4b7eb361d22c5fb71a68182c1be68338b",
+    "tests/session-retrospective-browser/qualify.mjs": "e68721aa971f9b42e53edfe5004131daf176d3d6e4fd43bc7622823fcae10598"
+  },
+  "fixtures": [
+    {
+      "name": "learning-progress",
+      "checks": [
+        {
+          "name": "exact protected representations",
+          "elapsed_ms": 0.16227500000002237,
+          "evidence": {
+            "bytes": 38865,
+            "digests": {
+              "html": "c92e21593349d40cee9d5c651bbb4a0b3fea76fa90a89ea2491ac06fb1041fc2",
+              "json": "b03717f5f55256b658dde67d37e24cb3a8ee00212140a20cdf895b5d12a9a1a9",
+              "markdown": "9c9bc4a32a0e27b35aa145650bd1229ca5ec1ae2dbf9e5bc5ddbb1832c4b36a4"
+            }
+          },
+          "passed": true
+        },
+        {
+          "name": "semantic document, inert content and working local anchors",
+          "elapsed_ms": 48.20976300000001,
+          "evidence": {
+            "headings": [
+              "Session learning progress",
+              "Processed through the observed boundary",
+              "Last successfully committed evidence",
+              "Latest observed evidence",
+              "Model interpretation",
+              "Accumulated learning",
+              "Saved increment 2",
+              "Findings retained across increments",
+              "Saved increment 1",
+              "Findings retained across increments",
+              "Continue inspection"
+            ],
+            "anchors": 5
+          },
+          "passed": true
+        },
+        {
+          "name": "keyboard skip link and native disclosure",
+          "elapsed_ms": 61.89821899999998,
+          "evidence": {
+            "target": "learning"
+          },
+          "passed": true
+        },
+        {
+          "name": "distinguish catch-up from completion and retrieve an earlier finding",
+          "elapsed_ms": 192.25976400000008,
+          "evidence": {
+            "repeated_idle_reused_batch": true,
+            "new_sources_only": 3,
+            "original_request": {
+              "operation": "learning-source",
+              "batch_id": "1fca3e4b-2f39-4caf-a651-29ec26a04131",
+              "member_key": "increment:ordinary-waybar-session:0",
+              "source_index": 0
+            },
+            "caught_up_is_completion": false
+          },
+          "passed": true
+        },
+        {
+          "name": "accessibility and mobile reflow",
+          "elapsed_ms": 659.4881260000001,
+          "evidence": {
+            "widths": {
+              "document": 390,
+              "body": 390,
+              "viewport": 390
+            },
+            "desktop_passes": 19,
+            "mobile_passes": 19
+          },
+          "passed": true
+        }
+      ],
+      "network_requests": [],
+      "errors": [],
+      "artifacts": [
+        "learning-progress-desktop.png",
+        "learning-progress-mobile.png"
+      ],
+      "passed": true
+    },
+    {
+      "name": "learning-latest",
+      "checks": [
+        {
+          "name": "exact protected representations",
+          "elapsed_ms": 0.14055200000007062,
+          "evidence": {
+            "bytes": 12683,
+            "digests": {
+              "html": "ba4dc4f35c7e2c242739560e504289953caa81f4f2b58e675afe1cd16d435a50",
+              "json": "30e2ace05b395590167aae935201de321390a6413c7545dd27fecf529261e324",
+              "markdown": "194c93793247b457731378f6f96178c0ee1dd28c5b7238e8cb6d35e2b5e3a93e"
+            }
+          },
+          "passed": true
+        },
+        {
+          "name": "semantic document, inert content and working local anchors",
+          "elapsed_ms": 36.83932299999992,
+          "evidence": {
+            "headings": [
+              "Saved learning increment",
+              "Saved increment",
+              "Evidence processed through",
+              "Retained findings and concerns",
+              "Recorded work without a paired finish",
+              "Continue inspection"
+            ],
+            "anchors": 6
+          },
+          "passed": true
+        },
+        {
+          "name": "keyboard skip link and native disclosure",
+          "elapsed_ms": 23.22753499999999,
+          "evidence": {
+            "target": "learning"
+          },
+          "passed": true
+        },
+        {
+          "name": "accessibility and mobile reflow",
+          "elapsed_ms": 570.384344,
+          "evidence": {
+            "widths": {
+              "document": 390,
+              "body": 390,
+              "viewport": 390
+            },
+            "desktop_passes": 19,
+            "mobile_passes": 19
+          },
+          "passed": true
+        }
+      ],
+      "network_requests": [],
+      "errors": [],
+      "artifacts": [
+        "learning-latest-desktop.png",
+        "learning-latest-mobile.png"
+      ],
+      "passed": true
+    },
+    {
+      "name": "learning-earlier-original",
+      "checks": [
+        {
+          "name": "exact protected representations",
+          "elapsed_ms": 0.1902469999999994,
+          "evidence": {
+            "bytes": 6067,
+            "digests": {
+              "html": "f3408fe49dcbb996c7e803ac809accfd933e52c1489a5b343c1208580a42c303",
+              "json": "b075ad649f5864d45bd7dc81cae7cd8bdfa742357fde93695879ceff0d65198b",
+              "markdown": "c65ff0a383ae67a59fbe904ee0a3edaf0762fc507def9359f2c020a87a2b1816"
+            }
+          },
+          "passed": true
+        },
+        {
+          "name": "semantic document, inert content and working local anchors",
+          "elapsed_ms": 32.19039899999984,
+          "evidence": {
+            "headings": [
+              "Exact permitted original",
+              "Recorded concern"
+            ],
+            "anchors": 3
+          },
+          "passed": true
+        },
+        {
+          "name": "keyboard skip link and native disclosure",
+          "elapsed_ms": 20.850822000000107,
+          "evidence": {
+            "target": "original"
+          },
+          "passed": true
+        },
+        {
+          "name": "accessibility and mobile reflow",
+          "elapsed_ms": 512.6804910000001,
+          "evidence": {
+            "widths": {
+              "document": 390,
+              "body": 390,
+              "viewport": 390
+            },
+            "desktop_passes": 15,
+            "mobile_passes": 15
+          },
+          "passed": true
+        }
+      ],
+      "network_requests": [],
+      "errors": [],
+      "artifacts": [
+        "learning-earlier-original-desktop.png",
+        "learning-earlier-original-mobile.png"
+      ],
+      "passed": true
+    },
+    {
+      "name": "session-preview",
+      "checks": [
+        {
+          "name": "exact protected representations",
+          "elapsed_ms": 0.1530310000002828,
+          "evidence": {
+            "bytes": 35460,
+            "digests": {
+              "html": "25843bccc2f7d92198b6b35bbecad028977a2f064f356d75a403fe3014b67a94",
+              "json": "9a6dec9938a00578a6793c19b0d74e5f3a2ead8b69707b914650d384233077b0",
+              "markdown": "8072c9ced3a34a41cbb0dc5eb81ffddbabdedfae2a15174e7430b8f7c68cfca2"
+            }
+          },
+          "passed": true
+        },
+        {
+          "name": "semantic document, inert content and working local anchors",
+          "elapsed_ms": 36.153433999999834,
+          "evidence": {
+            "headings": [
+              "Session evidence foundation",
+              "Intent and question",
+              "Evaluation question",
+              "Engineering trajectory on this page",
+              "claim",
+              "result",
+              "concern",
+              "result",
+              "qa",
+              "result",
+              "Selected sources",
+              "Continue or freeze"
+            ],
+            "anchors": 11
+          },
+          "passed": true
+        },
+        {
+          "name": "keyboard skip link and native disclosure",
+          "elapsed_ms": 21.691450999999688,
+          "evidence": {
+            "target": "population"
+          },
+          "passed": true
+        },
+        {
+          "name": "understand the chronological foundation and inspect before freezing",
+          "elapsed_ms": 245.62734499999988,
+          "evidence": {
+            "ordered_steps": [
+              "claimIntent: investigate why the Waybar network widget remains disconnected while Wi-Fi works. Preserve unrelated bar configuration.authored claim; not independently verified",
+              "resultRestarting Waybar did not restore the network label. The disconnected icon persisted.authored claim; not independently verified",
+              "concernEthernet was not retested. A Wi-Fi-only result cannot establish all network interfaces work.authored claim; not independently verified",
+              "resultCorrection: the widget was bound to the wrong interface. Updating that binding restored the Wi-Fi label.authored claim; not independently verified",
+              "qaReported verification: reconnecting Wi-Fi restored the expected label. Ethernet remains outside the check.authored claim; not independently verified",
+              "resultAborted alternative: polling the network command was abandoned after a timeout; no polling change was retained.authored claim; not independently verified"
+            ],
+            "inspect_operation": "preview-source",
+            "later_continuation_included": false
+          },
+          "passed": true
+        },
+        {
+          "name": "accessibility and mobile reflow",
+          "elapsed_ms": 647.1090320000003,
+          "evidence": {
+            "widths": {
+              "document": 390,
+              "body": 390,
+              "viewport": 390
+            },
+            "desktop_passes": 18,
+            "mobile_passes": 18
+          },
+          "passed": true
+        }
+      ],
+      "network_requests": [],
+      "errors": [],
+      "artifacts": [
+        "session-preview-desktop.png",
+        "session-preview-mobile.png"
+      ],
+      "passed": true
+    },
+    {
+      "name": "preview-original",
+      "checks": [
+        {
+          "name": "exact protected representations",
+          "elapsed_ms": 0.08733100000017657,
+          "evidence": {
+            "bytes": 7861,
+            "digests": {
+              "html": "cec29af9e693763fbd1a44f1262e8e99b21801c31449f037068a10809b69511e",
+              "json": "dbb3156958223ac1879694cfe15c690a11e49d533bdc971f5cda7b0d202974a8",
+              "markdown": "28609213172bc45f6ddd5f1e76a933174b604e1a69605c96672e768f8ff3c6e4"
+            }
+          },
+          "passed": true
+        },
+        {
+          "name": "semantic document, inert content and working local anchors",
+          "elapsed_ms": 33.1058979999998,
+          "evidence": {
+            "headings": [
+              "Exact permitted original",
+              "Recorded concern"
+            ],
+            "anchors": 3
+          },
+          "passed": true
+        },
+        {
+          "name": "keyboard skip link and native disclosure",
+          "elapsed_ms": 21.480806999999913,
+          "evidence": {
+            "target": "original"
+          },
+          "passed": true
+        },
+        {
+          "name": "accessibility and mobile reflow",
+          "elapsed_ms": 513.7753449999996,
+          "evidence": {
+            "widths": {
+              "document": 390,
+              "body": 390,
+              "viewport": 390
+            },
+            "desktop_passes": 15,
+            "mobile_passes": 15
+          },
+          "passed": true
+        }
+      ],
+      "network_requests": [],
+      "errors": [],
+      "artifacts": [
+        "preview-original-desktop.png",
+        "preview-original-mobile.png"
+      ],
+      "passed": true
+    },
+    {
+      "name": "learning-resumed",
+      "checks": [
+        {
+          "name": "exact protected representations",
+          "elapsed_ms": 0.12178300000050513,
+          "evidence": {
+            "bytes": 40296,
+            "digests": {
+              "html": "7f3db763f523f3e2d602ca61cdc70df86cf68e8cbb7902afb54e436aff488743",
+              "json": "9618fa77dc0a729a9803d08687a286f29bc9841c56e34f34f2df51e6a1ac93f5",
+              "markdown": "671b8c5941d4868ef913dba8c49f2470517353bc37a0d7ad106bb5c2ebcc1612"
+            }
+          },
+          "passed": true
+        },
+        {
+          "name": "semantic document, inert content and working local anchors",
+          "elapsed_ms": 31.268896999999924,
+          "evidence": {
+            "headings": [
+              "Session learning progress",
+              "New evidence is waiting",
+              "Last successfully committed evidence",
+              "Latest observed evidence",
+              "Model interpretation",
+              "Accumulated learning",
+              "Saved increment 2",
+              "Findings retained across increments",
+              "Saved increment 1",
+              "Findings retained across increments",
+              "Continue inspection",
+              "Inspect later engineering work"
+            ],
+            "anchors": 6
+          },
+          "passed": true
+        },
+        {
+          "name": "keyboard skip link and native disclosure",
+          "elapsed_ms": 21.597023000000263,
+          "evidence": {
+            "target": "learning"
+          },
+          "passed": true
+        },
+        {
+          "name": "show resumed work pending after an earlier caught-up boundary",
+          "elapsed_ms": 226.68660999999975,
+          "evidence": {
+            "observed": {
+              "ledger": 7,
+              "objectives": 0,
+              "objective_links": 0,
+              "review_requests": 0,
+              "review_relationships": 0
+            },
+            "committed": {
+              "ledger": 6,
+              "objectives": 0,
+              "objective_links": 0,
+              "review_requests": 0,
+              "review_relationships": 0
+            },
+            "original_concern_retained": true,
+            "later_work_request": {
+              "tool": "history",
+              "arguments": {
+                "operation": "read",
+                "session_id": "ordinary-waybar-session",
+                "source_session_id": "ordinary-waybar-session",
+                "after": 6,
+                "through": 7,
+                "limit": 20
+              }
+            },
+            "later_work_is_separate": true
+          },
+          "passed": true
+        },
+        {
+          "name": "accessibility and mobile reflow",
+          "elapsed_ms": 629.2967440000002,
+          "evidence": {
+            "widths": {
+              "document": 390,
+              "body": 390,
+              "viewport": 390
+            },
+            "desktop_passes": 19,
+            "mobile_passes": 19
+          },
+          "passed": true
+        }
+      ],
+      "network_requests": [],
+      "errors": [],
+      "artifacts": [
+        "learning-resumed-desktop.png",
+        "learning-resumed-mobile.png"
+      ],
+      "passed": true
+    },
+    {
+      "name": "established-preview",
+      "checks": [
+        {
+          "name": "exact protected representations",
+          "elapsed_ms": 0.14468899999974383,
+          "evidence": {
+            "bytes": 38347,
+            "digests": {
+              "html": "384205ff28bf48abc50d89ab62fc6637ad3e86b7c3cc81da14991d76770fcbb4",
+              "json": "ed4a44a6160234f35b4c4b8fa9dabe731e65be7574d1145a22a626eb8757285d",
+              "markdown": "c26f727c1f984da6805042439b56e1a4b4ef910a19fc981dc3828230ed2a8f09"
+            }
+          },
+          "passed": true
+        },
+        {
+          "name": "semantic document, inert content and working local anchors",
+          "elapsed_ms": 34.798908000000665,
+          "evidence": {
+            "headings": [
+              "Session evidence foundation",
+              "Intent and question",
+              "Evaluation question",
+              "Engineering trajectory on this page",
+              "claim",
+              "result",
+              "concern",
+              "result",
+              "qa",
+              "result",
+              "Selected sources",
+              "Evaluation activity",
+              "Continue or freeze"
+            ],
+            "anchors": 12
+          },
+          "passed": true
+        },
+        {
+          "name": "keyboard skip link and native disclosure",
+          "elapsed_ms": 20.39721499999996,
+          "evidence": {
+            "target": "population"
+          },
+          "passed": true
+        },
+        {
+          "name": "understand the chronological foundation and inspect before freezing",
+          "elapsed_ms": 91.97260300000016,
+          "evidence": {
+            "ordered_steps": [
+              "claimIntent: investigate why the Waybar network widget remains disconnected while Wi-Fi works. Preserve unrelated bar configuration.authored claim; not independently verified",
+              "resultRestarting Waybar did not restore the network label. The disconnected icon persisted.authored claim; not independently verified",
+              "concernEthernet was not retested. A Wi-Fi-only result cannot establish all network interfaces work.authored claim; not independently verified",
+              "resultCorrection: the widget was bound to the wrong interface. Updating that binding restored the Wi-Fi label.authored claim; not independently verified",
+              "qaReported verification: reconnecting Wi-Fi restored the expected label. Ethernet remains outside the check.authored claim; not independently verified",
+              "resultAborted alternative: polling the network command was abandoned after a timeout; no polling change was retained.authored claim; not independently verified"
+            ],
+            "inspect_operation": "preview-source",
+            "later_continuation_included": false
+          },
+          "passed": true
+        },
+        {
+          "name": "accessibility and mobile reflow",
+          "elapsed_ms": 654.4714260000001,
+          "evidence": {
+            "widths": {
+              "document": 390,
+              "body": 390,
+              "viewport": 390
+            },
+            "desktop_passes": 18,
+            "mobile_passes": 18
+          },
+          "passed": true
+        }
+      ],
+      "network_requests": [],
+      "errors": [],
+      "artifacts": [
+        "established-preview-desktop.png",
+        "established-preview-mobile.png"
+      ],
+      "passed": true
+    },
+    {
+      "name": "session-frozen",
+      "checks": [
+        {
+          "name": "exact protected representations",
+          "elapsed_ms": 0.1373570000005202,
+          "evidence": {
+            "bytes": 32061,
+            "digests": {
+              "html": "a8a6c4736c78d12b89a148615971e1dafabebf71920710d606b05b50515a42c7",
+              "json": "4e970c2d9adfe84cb589a6ca8e2508f6ec55e91c6b3c623f2c984e1284f33e9c",
+              "markdown": "262c06c89032fe47d58add695bb676a8b64f6d3949d092d19b183efad62d8307"
+            }
+          },
+          "passed": true
+        },
+        {
+          "name": "semantic document, inert content and working local anchors",
+          "elapsed_ms": 35.386013999999705,
+          "evidence": {
+            "headings": [
+              "Session evidence foundation",
+              "Intent and question",
+              "Evaluation question",
+              "Engineering trajectory on this page",
+              "claim",
+              "result",
+              "concern",
+              "result",
+              "qa",
+              "result",
+              "Selected sources",
+              "Evaluation activity",
+              "Continue or freeze"
+            ],
+            "anchors": 12
+          },
+          "passed": true
+        },
+        {
+          "name": "keyboard skip link and native disclosure",
+          "elapsed_ms": 25.661581000000297,
+          "evidence": {
+            "target": "population"
+          },
+          "passed": true
+        },
+        {
+          "name": "understand the chronological foundation and inspect before freezing",
+          "elapsed_ms": 82.08986099999947,
+          "evidence": {
+            "ordered_steps": [
+              "claimIntent: investigate why the Waybar network widget remains disconnected while Wi-Fi works. Preserve unrelated bar configuration.authored claim; not independently verified",
+              "resultRestarting Waybar did not restore the network label. The disconnected icon persisted.authored claim; not independently verified",
+              "concernEthernet was not retested. A Wi-Fi-only result cannot establish all network interfaces work.authored claim; not independently verified",
+              "resultCorrection: the widget was bound to the wrong interface. Updating that binding restored the Wi-Fi label.authored claim; not independently verified",
+              "qaReported verification: reconnecting Wi-Fi restored the expected label. Ethernet remains outside the check.authored claim; not independently verified",
+              "resultAborted alternative: polling the network command was abandoned after a timeout; no polling change was retained.authored claim; not independently verified"
+            ],
+            "inspect_operation": "population-source",
+            "later_continuation_included": false
+          },
+          "passed": true
+        },
+        {
+          "name": "accessibility and mobile reflow",
+          "elapsed_ms": 638.8964209999995,
+          "evidence": {
+            "widths": {
+              "document": 390,
+              "body": 390,
+              "viewport": 390
+            },
+            "desktop_passes": 18,
+            "mobile_passes": 18
+          },
+          "passed": true
+        }
+      ],
+      "network_requests": [],
+      "errors": [],
+      "artifacts": [
+        "session-frozen-desktop.png",
+        "session-frozen-mobile.png"
+      ],
+      "passed": true
+    },
+    {
+      "name": "evaluation-report",
+      "checks": [
+        {
+          "name": "exact protected representations",
+          "elapsed_ms": 0.31564700000035373,
+          "evidence": {
+            "bytes": 65409,
+            "digests": {
+              "html": "702abfb6d39700e2b5e9c1dfc9e00cae602b67e3d8f5b9dbc4a299bcd7ec31d7",
+              "json": "53f8ada6a187c117140d059a8f3b06ce48801703e00f3e3ed96d55bc2ef1479d",
+              "markdown": "75110d6e5d13abfb6432b7859c46b8a5c5a61432ad454f7e34e25b3aa0356c19"
+            }
+          },
+          "passed": true
+        },
+        {
+          "name": "semantic document, inert content and working local anchors",
+          "elapsed_ms": 39.43059799999992,
+          "evidence": {
+            "headings": [
+              "Evaluator retrospective",
+              "Intent and scope",
+              "Evaluation question",
+              "Conclusion and scope",
+              "Conclusion · no new recommendation",
+              "Limitations",
+              "Frozen population coverage",
+              "Covered frozen members",
+              "Interpretation limits",
+              "Chronology qualifications",
+              "Originating intent independence",
+              "Engineering trajectory",
+              "Step 1",
+              "Limitations",
+              "Supporting evidence",
+              "Step 2",
+              "Limitations",
+              "Supporting evidence",
+              "Step 3",
+              "Limitations",
+              "Supporting evidence",
+              "Step 4",
+              "Limitations",
+              "Supporting evidence",
+              "Step 5",
+              "Limitations",
+              "Supporting evidence",
+              "Step 6",
+              "Limitations",
+              "Supporting evidence",
+              "Findings and recommendations",
+              "recovery · attributed finding",
+              "Limitations",
+              "Applicability",
+              "Supporting evidence",
+              "Counterevidence and scope limits",
+              "Review coverage",
+              "Review scope and coverage",
+              "Limitations",
+              "Requested review coverage",
+              "Actual review coverage",
+              "Supporting evidence",
+              "Missing evidence",
+              "Evidence gap",
+              "Evidence foundation",
+              "Authored statement · Intent: investigate why the Waybar network widget remains disconnected while Wi-Fi works. Preserve u…",
+              "Reported verification · Reported verification: reconnecting Wi-Fi restored the expected label. Ethernet remains outside the …",
+              "Authored result · Restarting Waybar did not restore the network label. The disconnected icon persisted.",
+              "Recorded concern · Ethernet was not retested. A Wi-Fi-only result cannot establish all network interfaces work.",
+              "Authored result · Aborted alternative: polling the network command was abandoned after a timeout; no polling change wa…",
+              "Authored result · Correction: the widget was bound to the wrong interface. Updating that binding restored the Wi-Fi la…",
+              "Continue reading"
+            ],
+            "anchors": 30
+          },
+          "passed": true
+        },
+        {
+          "name": "keyboard skip link and native disclosure",
+          "elapsed_ms": 21.921226000000388,
+          "evidence": {
+            "target": "retrospective"
+          },
+          "passed": true
+        },
+        {
+          "name": "follow a conclusion through counterevidence and return to the finding",
+          "elapsed_ms": 227.36502399999972,
+          "evidence": {
+            "source_request": {
+              "operation": "population-source",
+              "population_id": "retrospective-3c6e66a4feb3828cbe3857f9e7123a12bec39b38173b3914b225682d30ebc7ba",
+              "manifest_sha256": "d394200eface757dabb5a561a3c210ed44ffa1f64b8d4a28b8a90634ace8c40c",
+              "member_key": "source-9f00267356254f8d20ff42cf5f4461f6fa3a5d37c7d4bbfbeae0c1e1147eb742"
+            },
+            "support_and_scope_limit_distinguished": true,
+            "backlink_target": "claims-item-0"
+          },
+          "passed": true
+        },
+        {
+          "name": "accessibility and mobile reflow",
+          "elapsed_ms": 766.9200840000003,
+          "evidence": {
+            "widths": {
+              "document": 390,
+              "body": 390,
+              "viewport": 390
+            },
+            "desktop_passes": 18,
+            "mobile_passes": 18
+          },
+          "passed": true
+        }
+      ],
+      "network_requests": [],
+      "errors": [],
+      "artifacts": [
+        "evaluation-report-desktop.png",
+        "evaluation-report-mobile.png"
+      ],
+      "passed": true
+    },
+    {
+      "name": "evaluation-sources",
+      "checks": [
+        {
+          "name": "exact protected representations",
+          "elapsed_ms": 0.14706200000000536,
+          "evidence": {
+            "bytes": 49139,
+            "digests": {
+              "html": "7f9a3ad7abebf55d5ac124990ade2f7c76d49fb226811e292b7f56ee33be2548",
+              "json": "948cc965d3d0b3c2765fadc3ca3a4a1bae414b09c5cd739eec96313e06c13519",
+              "markdown": "af631fae1ea994dcd722fc8dd66f4b0e2577ce82fa753424b874e524438a0627"
+            }
+          },
+          "passed": true
+        },
+        {
+          "name": "semantic document, inert content and working local anchors",
+          "elapsed_ms": 34.115146000000095,
+          "evidence": {
+            "headings": [
+              "Evaluator retrospective",
+              "Intent and scope",
+              "Evaluation question",
+              "Evidence foundation",
+              "Authored statement · Intent: investigate why the Waybar network widget remains disconnected while Wi-Fi works. Preserve u…",
+              "Reported verification · Reported verification: reconnecting Wi-Fi restored the expected label. Ethernet remains outside the …",
+              "Authored result · Restarting Waybar did not restore the network label. The disconnected icon persisted.",
+              "Recorded concern · Ethernet was not retested. A Wi-Fi-only result cannot establish all network interfaces work.",
+              "Authored result · Aborted alternative: polling the network command was abandoned after a timeout; no polling change wa…",
+              "Authored result · Correction: the widget was bound to the wrong interface. Updating that binding restored the Wi-Fi la…",
+              "Continue reading"
+            ],
+            "anchors": 5
+          },
+          "passed": true
+        },
+        {
+          "name": "keyboard skip link and native disclosure",
+          "elapsed_ms": 20.145274000000427,
+          "evidence": {
+            "target": "retrospective"
+          },
+          "passed": true
+        },
+        {
+          "name": "accessibility and mobile reflow",
+          "elapsed_ms": 609.7052699999995,
+          "evidence": {
+            "widths": {
+              "document": 390,
+              "body": 390,
+              "viewport": 390
+            },
+            "desktop_passes": 15,
+            "mobile_passes": 15
+          },
+          "passed": true
+        }
+      ],
+      "network_requests": [],
+      "errors": [],
+      "artifacts": [
+        "evaluation-sources-desktop.png",
+        "evaluation-sources-mobile.png"
+      ],
+      "passed": true
+    }
+  ],
+  "selected_reads": [
+    {
+      "tool": "insights",
+      "request": {
+        "operation": "learning-source",
+        "batch_id": "1fca3e4b-2f39-4caf-a651-29ec26a04131",
+        "member_key": "increment:ordinary-waybar-session:0",
+        "source_index": 0
+      },
+      "elapsed_ms": 155.12081100000006,
+      "returned_bytes": 1392,
+      "sha256": "fbe667a73aa8d010f35a6a5a64e34b19b3333a216fc8cc5b3240676badc4bf00"
+    },
+    {
+      "tool": "history",
+      "request": {
+        "operation": "preview-source",
+        "selection": {
+          "question": "Explain the Waybar investigation, the failed restart, the corrected interface and the limits of the reported verification.",
+          "through": 6,
+          "owner_boundary": {
+            "objective_links": 0,
+            "review_requests": 0,
+            "review_relationships": 0
+          },
+          "owner_version": "eb0e6f7780103e5cdd3deaeab7e5c522f150eb08d2ba60828fbe581dbac3f6c2",
+          "exclusions": [],
+          "mode": "explicit-subject",
+          "target": {
+            "kind": "session",
+            "id": "ordinary-waybar-session"
+          },
+          "frontier": {
+            "ledger": 6,
+            "objectives": 0,
+            "objective_links": 0,
+            "review_requests": 0,
+            "review_relationships": 0
+          },
+          "cutoff": {
+            "kind": "point-in-time"
+          },
+          "namespace_frontier": {
+            "ledger": 6,
+            "objectives": 0,
+            "objective_links": 0,
+            "review_requests": 0,
+            "review_relationships": 0
+          }
+        },
+        "preview_sha256": "bcd99a50754e70d5edd6ac69c8dc32f8a11cc36a3df0f946450ffbb2ddc21f7f",
+        "member_key": "source-9f00267356254f8d20ff42cf5f4461f6fa3a5d37c7d4bbfbeae0c1e1147eb742"
+      },
+      "elapsed_ms": 163.80067800000006,
+      "returned_bytes": 2451,
+      "sha256": "737395ef9b09f6e6b6cf541c4f5d18aa88786d087dbe7e99724ae586a963044d"
+    },
+    {
+      "tool": "history",
+      "request": {
+        "operation": "read",
+        "session_id": "ordinary-waybar-session",
+        "source_session_id": "ordinary-waybar-session",
+        "after": 6,
+        "through": 7,
+        "limit": 20
+      },
+      "elapsed_ms": 152.89854800000012,
+      "returned_bytes": 34346,
+      "sha256": "2a010c87076434563449c31ef5c8c00f76d4e0287cab56d4ea4dae47211087cb"
+    },
+    {
+      "tool": "history",
+      "request": {
+        "operation": "population-source",
+        "population_id": "retrospective-3c6e66a4feb3828cbe3857f9e7123a12bec39b38173b3914b225682d30ebc7ba",
+        "manifest_sha256": "d394200eface757dabb5a561a3c210ed44ffa1f64b8d4a28b8a90634ace8c40c",
+        "member_key": "source-9f00267356254f8d20ff42cf5f4461f6fa3a5d37c7d4bbfbeae0c1e1147eb742"
+      },
+      "elapsed_ms": 146.9202179999993,
+      "returned_bytes": 1706,
+      "sha256": "303ebdd4fa0b1b354b19a8f59db1e2775f7c37ddca6a16876fc4285c1e087b96"
+    }
+  ],
+  "resources": {
+    "elapsed_ms": 540.940615,
+    "max_rss_kib": 140508,
+    "user_cpu_microseconds": 584207,
+    "system_cpu_microseconds": 81490,
+    "public_calls": 42,
+    "returned_bytes": 651437,
+    "failed_public_calls": 1,
+    "native_history_enumerations": 0,
+    "native_model_creates": 0,
+    "native_model_prompts": 0,
+    "native_context_injections": 0,
+    "original_owner_reads": {
+      "retrospective": {
+        "calls": 219,
+        "available": 219,
+        "serialized_original_bytes": 86100,
+        "elapsed_ms": 4.231675999999936,
+        "unique_source_versions": 6
+      },
+      "deterministic": {
+        "calls": 404,
+        "available": 404,
+        "serialized_original_bytes": 158580,
+        "elapsed_ms": 18.513004000000336,
+        "unique_source_versions": 6
+      }
+    },
+    "log": [
+      {
+        "tool": "record",
+        "operation": "add",
+        "format": "json",
+        "elapsed_ms": 10.151346999999987,
+        "returned_bytes": 424,
+        "ok": true
+      },
+      {
+        "tool": "record",
+        "operation": "add",
+        "format": "json",
+        "elapsed_ms": 1.0322480000000098,
+        "returned_bytes": 383,
+        "ok": true
+      },
+      {
+        "tool": "record",
+        "operation": "add",
+        "format": "json",
+        "elapsed_ms": 0.9153709999999933,
+        "returned_bytes": 391,
+        "ok": true
+      },
+      {
+        "tool": "record",
+        "operation": "add",
+        "format": "json",
+        "elapsed_ms": 1.0567900000000066,
+        "returned_bytes": 402,
+        "ok": true
+      },
+      {
+        "tool": "record",
+        "operation": "add",
+        "format": "json",
+        "elapsed_ms": 0.9153509999999869,
+        "returned_bytes": 417,
+        "ok": true
+      },
+      {
+        "tool": "record",
+        "operation": "add",
+        "format": "json",
+        "elapsed_ms": 0.8076090000000136,
+        "returned_bytes": 409,
+        "ok": true
+      },
+      {
+        "tool": "insights",
+        "operation": "learning-progress",
+        "format": "json",
+        "elapsed_ms": 10.465981999999997,
+        "returned_bytes": 10952,
+        "ok": true
+      },
+      {
+        "tool": "insights",
+        "operation": "learning-progress",
+        "format": "html",
+        "elapsed_ms": 11.155316,
+        "returned_bytes": 38865,
+        "ok": true
+      },
+      {
+        "tool": "insights",
+        "operation": "learning-progress",
+        "format": "markdown",
+        "elapsed_ms": 10.29481899999999,
+        "returned_bytes": 15298,
+        "ok": true
+      },
+      {
+        "tool": "insights",
+        "operation": "learning-report",
+        "format": "json",
+        "elapsed_ms": 3.268332000000015,
+        "returned_bytes": 3237,
+        "ok": true
+      },
+      {
+        "tool": "insights",
+        "operation": "learning-report",
+        "format": "html",
+        "elapsed_ms": 3.135891999999984,
+        "returned_bytes": 12683,
+        "ok": true
+      },
+      {
+        "tool": "insights",
+        "operation": "learning-report",
+        "format": "markdown",
+        "elapsed_ms": 3.049892,
+        "returned_bytes": 4566,
+        "ok": true
+      },
+      {
+        "tool": "insights",
+        "operation": "learning-source",
+        "format": "json",
+        "elapsed_ms": 1.3214779999999848,
+        "returned_bytes": 1391,
+        "ok": true
+      },
+      {
+        "tool": "insights",
+        "operation": "learning-source",
+        "format": "html",
+        "elapsed_ms": 1.1028040000000203,
+        "returned_bytes": 6067,
+        "ok": true
+      },
+      {
+        "tool": "insights",
+        "operation": "learning-source",
+        "format": "markdown",
+        "elapsed_ms": 2.224467000000004,
+        "returned_bytes": 1845,
+        "ok": true
+      },
+      {
+        "tool": "history",
+        "operation": "preview-population",
+        "format": "json",
+        "elapsed_ms": 21.613317000000023,
+        "returned_bytes": 19280,
+        "ok": true
+      },
+      {
+        "tool": "history",
+        "operation": "preview-population",
+        "format": "html",
+        "elapsed_ms": 13.414420000000007,
+        "returned_bytes": 35460,
+        "ok": true
+      },
+      {
+        "tool": "history",
+        "operation": "preview-population",
+        "format": "markdown",
+        "elapsed_ms": 14.010620000000017,
+        "returned_bytes": 27926,
+        "ok": true
+      },
+      {
+        "tool": "history",
+        "operation": "preview-source",
+        "format": "json",
+        "elapsed_ms": 11.506254999999953,
+        "returned_bytes": 2450,
+        "ok": true
+      },
+      {
+        "tool": "history",
+        "operation": "preview-source",
+        "format": "html",
+        "elapsed_ms": 13.010421000000008,
+        "returned_bytes": 7861,
+        "ok": true
+      },
+      {
+        "tool": "history",
+        "operation": "preview-source",
+        "format": "markdown",
+        "elapsed_ms": 11.302843999999993,
+        "returned_bytes": 3229,
+        "ok": true
+      },
+      {
+        "tool": "review",
+        "operation": "establish-subject",
+        "format": "json",
+        "elapsed_ms": 3.112135999999964,
+        "returned_bytes": 2218,
+        "ok": true
+      },
+      {
+        "tool": "record",
+        "operation": "add",
+        "format": "json",
+        "elapsed_ms": 0.7740079999999807,
+        "returned_bytes": 413,
+        "ok": true
+      },
+      {
+        "tool": "insights",
+        "operation": "learning-progress",
+        "format": "json",
+        "elapsed_ms": 9.045829000000026,
+        "returned_bytes": 11115,
+        "ok": true
+      },
+      {
+        "tool": "insights",
+        "operation": "learning-progress",
+        "format": "html",
+        "elapsed_ms": 8.536290000000008,
+        "returned_bytes": 40296,
+        "ok": true
+      },
+      {
+        "tool": "insights",
+        "operation": "learning-progress",
+        "format": "markdown",
+        "elapsed_ms": 9.998887000000025,
+        "returned_bytes": 15533,
+        "ok": true
+      },
+      {
+        "tool": "history",
+        "operation": "preview-population",
+        "format": "json",
+        "elapsed_ms": 13.892205999999987,
+        "returned_bytes": 21566,
+        "ok": true
+      },
+      {
+        "tool": "history",
+        "operation": "preview-population",
+        "format": "html",
+        "elapsed_ms": 13.801124000000016,
+        "returned_bytes": 38347,
+        "ok": true
+      },
+      {
+        "tool": "history",
+        "operation": "preview-population",
+        "format": "markdown",
+        "elapsed_ms": 15.76211699999999,
+        "returned_bytes": 30813,
+        "ok": true
+      },
+      {
+        "tool": "history",
+        "operation": "preview-source",
+        "format": "json",
+        "elapsed_ms": 15.113715000000013,
+        "returned_bytes": 0,
+        "ok": false,
+        "error": "Error: Retrospective source unavailable"
+      },
+      {
+        "tool": "review",
+        "operation": "freeze-population",
+        "format": "json",
+        "elapsed_ms": 19.344857999999988,
+        "returned_bytes": 15551,
+        "ok": true
+      },
+      {
+        "tool": "history",
+        "operation": "population",
+        "format": "json",
+        "elapsed_ms": 4.060576999999967,
+        "returned_bytes": 15551,
+        "ok": true
+      },
+      {
+        "tool": "history",
+        "operation": "population",
+        "format": "html",
+        "elapsed_ms": 3.625220000000013,
+        "returned_bytes": 32061,
+        "ok": true
+      },
+      {
+        "tool": "history",
+        "operation": "population",
+        "format": "markdown",
+        "elapsed_ms": 3.5988399999999956,
+        "returned_bytes": 21276,
+        "ok": true
+      },
+      {
+        "tool": "insights",
+        "operation": "evaluation-interpretation",
+        "format": "json",
+        "elapsed_ms": 16.732715999999982,
+        "returned_bytes": 18487,
+        "ok": true
+      },
+      {
+        "tool": "insights",
+        "operation": "evaluation-interpretation",
+        "format": "html",
+        "elapsed_ms": 17.470885000000067,
+        "returned_bytes": 65409,
+        "ok": true
+      },
+      {
+        "tool": "insights",
+        "operation": "evaluation-interpretation",
+        "format": "markdown",
+        "elapsed_ms": 14.467116000000033,
+        "returned_bytes": 25059,
+        "ok": true
+      },
+      {
+        "tool": "insights",
+        "operation": "evaluation-interpretation",
+        "format": "json",
+        "elapsed_ms": 14.833769999999959,
+        "returned_bytes": 13674,
+        "ok": true
+      },
+      {
+        "tool": "insights",
+        "operation": "evaluation-interpretation",
+        "format": "html",
+        "elapsed_ms": 13.448379000000045,
+        "returned_bytes": 49139,
+        "ok": true
+      },
+      {
+        "tool": "insights",
+        "operation": "evaluation-interpretation",
+        "format": "markdown",
+        "elapsed_ms": 13.662402000000043,
+        "returned_bytes": 18015,
+        "ok": true
+      },
+      {
+        "tool": "history",
+        "operation": "population",
+        "format": "json",
+        "elapsed_ms": 4.004974999999945,
+        "returned_bytes": 15551,
+        "ok": true
+      },
+      {
+        "tool": "history",
+        "operation": "subject-activities",
+        "format": "json",
+        "elapsed_ms": 2.14836200000002,
+        "returned_bytes": 7827,
+        "ok": true
+      }
+    ]
+  },
+  "passed": true,
+  "limitations": [
+    "Controlled Session fixture, not recovered private historical work.",
+    "Scripted interpretation tests S5 publication/readback; it does not qualify model reasoning.",
+    "Automated navigation does not establish human or screen-reader comprehension.",
+    "No production model execution authority is granted.",
+    "Scripted task assertions are separate from a fresh agent's independent comprehension assessment.",
+    "Keyboard, Chromium, axe and 390px reflow checks do not certify manual screen-reader use or operating-system magnification."
+  ]
+}

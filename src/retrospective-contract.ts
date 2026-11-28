@@ -1,5 +1,7 @@
 import { canonical, digest, ProcessingBudget, uid, type Actor } from "./model.js"
 import type { EvaluationSourceRef } from "./evaluation-store.js"
+import { evaluationFrontier, evaluationTarget, type EvaluationCutoff, type EvaluationTarget } from "./evaluation-subject.js"
+import type { LearningFrontier } from "./learning-sources.js"
 
 export const RETROSPECTIVE_LIMITS = Object.freeze({ members: 20000, contributors: 2000, chars: 33554432, values: 2000000 })
 /** A single population operation keeps its existing owner-resolution budget.
@@ -12,18 +14,22 @@ const LOCAL_VIEWS: Readonly<Record<string, string>> = { "ledger-record": "record
   "review-request": "review-request", "review-relationship": "review-relationship" }
 
 /** A proposal boundary, not a permission receipt or an automatic relevance judgment. */
-export type RetrospectiveSelection = {
-  mode: "explicit-objective"; objective_id: string; question: string; through: number;
+type SelectionBoundary = {
+  question: string; through: number;
   owner_boundary: { objective_links: number | null; review_requests: number; review_relationships: number };
   owner_version: string; exclusions: Array<{ record_id: string; reason: string }>;
 }
+export type RetrospectiveSelection = SelectionBoundary & (
+  { mode: "explicit-objective"; objective_id: string }
+  | { mode: "explicit-subject"; target: EvaluationTarget; subject_id?: string; subject_sha256?: string;
+      frontier: LearningFrontier; namespace_frontier?: LearningFrontier; cutoff: EvaluationCutoff })
 export type RetrospectiveMember = {
   key: string; source_store_id: string; source: EvaluationSourceRef; permitted_view: string;
   availability: "available" | "missing" | "unresolved" | "unsupported";
   basis: Record<string, unknown>[]; historical_scope: Record<string, unknown> | null; qualifications: string[];
 }
 export type RetrospectiveManifest = {
-  format: "loom-retrospective-population/v1"; source_store_id: string; selection: RetrospectiveSelection;
+  format: "loom-retrospective-population/v1" | "loom-retrospective-population/v2"; source_store_id: string; selection: RetrospectiveSelection;
   contributors: string[]; objective: Record<string, unknown>; coverage: Record<string, unknown>;
   qualifications: string[]; members: RetrospectiveMember[];
 }
@@ -32,7 +38,7 @@ export type RetrospectivePopulation = {
   manifest: RetrospectiveManifest;
 }
 export type RetrospectivePopulationRef = {
-  kind: "retrospective-population"; format: "loom-retrospective-population/v1";
+  kind: "retrospective-population"; format: "loom-retrospective-population/v1" | "loom-retrospective-population/v2";
   population_id: string; manifest_sha256: string;
 }
 export type RetrospectiveSources = {
@@ -98,10 +104,12 @@ export function parseRetrospectiveManifest(input: unknown): RetrospectiveManifes
   canonical(input, retrospectiveBudget())
   const value = mapping(input, "manifest")
   keys(value, ["format", "source_store_id", "selection", "contributors", "objective", "coverage", "qualifications", "members"])
-  if (value.format !== "loom-retrospective-population/v1") throw new Error("Unsupported retrospective population format")
+  if (value.format !== "loom-retrospective-population/v1" && value.format !== "loom-retrospective-population/v2") throw new Error("Unsupported retrospective population format")
   const selected = mapping(value.selection, "selection")
-  keys(selected, ["mode", "objective_id", "question", "through", "owner_boundary", "owner_version", "exclusions"])
-  if (selected.mode !== "explicit-objective") throw new Error("Unsupported retrospective selection mode")
+  const subjectMode = value.format === "loom-retrospective-population/v2"
+  keys(selected, ["mode", "question", "through", "owner_boundary", "owner_version", "exclusions",
+    ...(subjectMode ? ["target", "frontier", "cutoff"] : ["objective_id"])], subjectMode ? ["subject_id", "subject_sha256", "namespace_frontier"] : [])
+  if (selected.mode !== (subjectMode ? "explicit-subject" : "explicit-objective")) throw new Error("Unsupported retrospective selection mode")
   const boundary = mapping(selected.owner_boundary, "owner boundary")
   keys(boundary, ["objective_links", "review_requests", "review_relationships"])
   if (!Array.isArray(selected.exclusions) || selected.exclusions.length > RETROSPECTIVE_LIMITS.members) throw new Error("Invalid retrospective exclusions")
@@ -111,16 +119,41 @@ export function parseRetrospectiveManifest(input: unknown): RetrospectiveManifes
     return { record_id: uid(excluded.record_id, "excluded record"), reason: string(excluded.reason, "exclusion reason", 8000) }
   }).sort((a, b) => a.record_id.localeCompare(b.record_id))
   if (new Set(exclusions.map(item => item.record_id)).size !== exclusions.length) throw new Error("Duplicate retrospective exclusion")
-  const selection: RetrospectiveSelection = {
-    mode: selected.mode, objective_id: uid(selected.objective_id, "objective_id"), question: string(selected.question, "question", 8000),
+  const common: SelectionBoundary = {
+    question: string(selected.question, "question", 8000),
     through: count(selected.through), owner_boundary: { objective_links: boundary.objective_links === null ? null : count(boundary.objective_links),
       review_requests: count(boundary.review_requests), review_relationships: count(boundary.review_relationships) },
     owner_version: hash(selected.owner_version), exclusions,
   }
+  let selection: RetrospectiveSelection
+  if (subjectMode) {
+    const target = evaluationTarget(selected.target), frontier = evaluationFrontier(selected.frontier), cutoffInput = mapping(selected.cutoff, "cutoff")
+    const namespace = selected.namespace_frontier === undefined ? undefined : evaluationFrontier(selected.namespace_frontier)
+    if (namespace && (Object.keys(frontier) as Array<keyof LearningFrontier>).some(key => frontier[key] > namespace[key]))
+      throw new Error("Retrospective selection exceeds namespace frontier")
+    if (namespace && target.kind !== "session" && canonical(namespace) !== canonical(frontier)) throw new Error("Retrospective namespace domain mismatch")
+    let cutoff: EvaluationCutoff
+    if (cutoffInput.kind === "point-in-time") { keys(cutoffInput, ["kind"]); cutoff = { kind: "point-in-time" } }
+    else if (cutoffInput.kind === "recorded-completion") {
+      keys(cutoffInput, ["kind", "record"])
+      const ref = source(cutoffInput.record, true)
+      if (ref.kind !== "ledger-record" || Number(ref.revision) !== frontier.ledger) throw new Error("Invalid recorded completion boundary")
+      cutoff = { kind: "recorded-completion", record: ref }
+    } else throw new Error("Invalid retrospective cutoff")
+    if (namespace && cutoff.kind === "recorded-completion" && namespace.ledger !== frontier.ledger)
+      throw new Error("Retrospective namespace exceeds recorded completion")
+    if (frontier.ledger !== common.through || frontier.objective_links !== common.owner_boundary.objective_links
+      || frontier.review_requests !== common.owner_boundary.review_requests || frontier.review_relationships !== common.owner_boundary.review_relationships)
+      throw new Error("Retrospective subject frontier mismatch")
+    if ((selected.subject_id === undefined) !== (selected.subject_sha256 === undefined)) throw new Error("Incomplete retrospective subject reference")
+    selection = { ...common, mode: "explicit-subject", target, frontier, cutoff,
+      ...(namespace ? { namespace_frontier: namespace } : {}),
+      ...(selected.subject_id === undefined ? {} : { subject_id: uid(selected.subject_id, "subject_id"), subject_sha256: hash(selected.subject_sha256) }) }
+  } else selection = { ...common, mode: "explicit-objective", objective_id: uid(selected.objective_id, "objective_id") }
   if (!Array.isArray(value.contributors) || value.contributors.length > RETROSPECTIVE_LIMITS.contributors) throw new Error("Invalid retrospective contributors")
   const contributors = value.contributors.map(item => uid(item, "retrospective contributor")).sort((a, b) => a.localeCompare(b))
   if (new Set(contributors).size !== contributors.length) throw new Error("Duplicate retrospective contributor")
-  if (!Array.isArray(value.members) || value.members.length < 1 || value.members.length > RETROSPECTIVE_LIMITS.members) throw new Error("Invalid retrospective population size")
+  if (!Array.isArray(value.members) || value.members.length < (subjectMode ? 0 : 1) || value.members.length > RETROSPECTIVE_LIMITS.members) throw new Error("Invalid retrospective population size")
   const seen = new Set<string>()
   const members = value.members.map(item => {
     const member = mapping(item, "member")
@@ -147,3 +180,25 @@ export function parseRetrospectiveManifest(input: unknown): RetrospectiveManifes
     qualifications: strings(value.qualifications, "qualifications"), members }
 }
 export const retrospectiveDigest = (manifest: RetrospectiveManifest): string => digest(manifest, retrospectiveBudget())
+
+export function retrospectiveTarget(manifest: RetrospectiveManifest): EvaluationTarget {
+  return manifest.selection.mode === "explicit-objective" ? { kind: "objective", id: manifest.selection.objective_id } : manifest.selection.target
+}
+export function retrospectiveFrontier(manifest: RetrospectiveManifest): LearningFrontier {
+  return manifest.selection.mode === "explicit-subject" ? { ...manifest.selection.frontier }
+    : { ledger: manifest.selection.through, objectives: 0, objective_links: manifest.selection.owner_boundary.objective_links ?? 0,
+      review_requests: manifest.selection.owner_boundary.review_requests, review_relationships: manifest.selection.owner_boundary.review_relationships }
+}
+
+/** Earlier context must belong to the same typed subject and cannot include a
+ * later independent owner frontier, even when its ledger cutoff is unchanged. */
+export function compatibleRetrospectiveContext(current: RetrospectiveManifest, prior: RetrospectiveManifest): boolean {
+  if (current.source_store_id !== prior.source_store_id || canonical(retrospectiveTarget(current)) !== canonical(retrospectiveTarget(prior))) return false
+  // New Session selections distinguish owned progress from the comparable
+  // namespace prefix. Never infer that wider prefix for an older saved report.
+  const currentNamespace = current.selection.mode === "explicit-subject" ? current.selection.namespace_frontier : undefined
+  const priorNamespace = prior.selection.mode === "explicit-subject" ? prior.selection.namespace_frontier : undefined
+  const older = currentNamespace && priorNamespace ? priorNamespace : retrospectiveFrontier(prior)
+  const newer = currentNamespace && priorNamespace ? currentNamespace : retrospectiveFrontier(current)
+  return (Object.keys(older) as Array<keyof LearningFrontier>).every(key => older[key] <= newer[key])
+}

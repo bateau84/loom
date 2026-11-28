@@ -1,8 +1,11 @@
 import { canonical, digest, ProcessingBudget, PROCESSING_LIMITS, uid } from "./model.js"
 import type { SQL, Store } from "./store.js"
 import type { EvaluationMember, EvaluationSourceRef } from "./evaluation-store.js"
+import { evaluationFrontier, evaluationInvocationActivity, evaluationSessionActivity, evaluationTarget, type EvaluationTarget } from "./evaluation-subject.js"
 
 export type LearningSource = { ref: EvaluationSourceRef; value: Record<string, unknown>; sequence: number }
+export type LearningFrontier = { ledger: number; objectives: number; objective_links: number; review_requests: number; review_relationships: number }
+export const EMPTY_LEARNING_FRONTIER: LearningFrontier = Object.freeze({ ledger: 0, objectives: 0, objective_links: 0, review_requests: 0, review_relationships: 0 })
 export const SOURCE_LIMIT = 20000
 const snapshotBudget = () => new ProcessingBudget(8 * 1024 * 1024, 1000000)
 const guarded = `CASE WHEN typeof(data)='text' AND octet_length(data)<=${PROCESSING_LIMITS.recordChars * 3} THEN data END AS data`
@@ -14,6 +17,173 @@ const engineeringReview = (column: string) => `CASE WHEN typeof(${column})='text
 export class LearningSources {
   constructor(private readonly store: Store, private readonly actionDB: SQL, private readonly learningDB: SQL) {}
   get namespace() { return this.store.reviews.storeID }
+  isEvaluationSession(session: string): boolean { return evaluationSessionActivity(this.learningDB, uid(session)) }
+  classificationBoundary(session: string): number {
+    uid(session)
+    const exists = (name: string) => !!this.learningDB.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(name)
+    const activities = exists("learning_subject_activities") ? (this.learningDB.prepare("SELECT COALESCE(MAX(sequence),0) AS n FROM learning_subject_activities WHERE session_id=? AND call_id IS NOT NULL").get(session) as { n: number }).n : 0
+    const subjects = exists("learning_subject_subjects") ? (this.learningDB.prepare("SELECT COALESCE(MAX(rowid),0) AS n FROM learning_subject_subjects WHERE json_extract(data_json,'$.origin.kind')='native-invocation' AND json_extract(data_json,'$.origin.invocation.session_id')=?").get(session) as { n: number }).n : 0
+    const result = activities + subjects
+    if (!Number.isSafeInteger(result)) throw new Error("Evaluation activity frontier exceeds processing limit")
+    return result
+  }
+
+  /** Owner maxima only; no history hydration. Each database contributes its own
+   * insertion boundary. This is not a claim of an atomic cross-store timestamp. */
+  captureFrontier(session: string): LearningFrontier {
+    uid(session, "learning Session")
+    const max = (db: SQL, sql: string) => (db.prepare(sql).get(session) as { n: number }).n
+    return { ledger: max(this.actionDB, "SELECT COALESCE(MAX(seq),0) AS n FROM ledger WHERE session_id=?"),
+      objectives: max(this.learningDB, "SELECT COALESCE(MAX(rowid),0) AS n FROM learning_objectives WHERE author_session=?"),
+      objective_links: max(this.learningDB, "SELECT COALESCE(MAX(l.sequence),0) AS n FROM learning_objective_links l JOIN learning_objectives o ON o.id=l.objective_id WHERE l.author_session=? AND l.author_session=o.author_session"),
+      review_requests: max(this.actionDB, "SELECT COALESCE(MAX(rowid),0) AS n FROM review_requests WHERE requester_session=?"),
+      review_relationships: max(this.actionDB, "SELECT COALESCE(MAX(r.sequence),0) AS n FROM review_relationships r JOIN review_requests q ON q.request_id=r.request_id WHERE q.requester_session=?") }
+  }
+
+  /** Comparable insertion ceilings for the source namespace. Session progress
+   * remains scoped to its own rows, so unrelated appends do not create work. */
+  captureNamespaceFrontier(): LearningFrontier {
+    const max = (db: SQL, sql: string) => (db.prepare(sql).get() as { n: number }).n
+    return { ledger: max(this.actionDB, "SELECT COALESCE(MAX(seq),0) AS n FROM ledger"),
+      objectives: max(this.learningDB, "SELECT COALESCE(MAX(rowid),0) AS n FROM learning_objectives"),
+      objective_links: max(this.learningDB, "SELECT COALESCE(MAX(sequence),0) AS n FROM learning_objective_links"),
+      review_requests: max(this.actionDB, "SELECT COALESCE(MAX(rowid),0) AS n FROM review_requests"),
+      review_relationships: max(this.actionDB, "SELECT COALESCE(MAX(sequence),0) AS n FROM review_relationships") }
+  }
+
+  /** Normalize a processed Session cursor into a comparable namespace prefix.
+   * A partial chunk stops before the first still-unprocessed owned row. Every
+   * axis remains capped by the snapshot taken before evidence processing. This
+   * metadata read does not admit foreign rows into current membership. */
+  namespaceThrough(session: string, processedInput: LearningFrontier, capturedInput: LearningFrontier): LearningFrontier {
+    uid(session, "learning Session")
+    const processed = evaluationFrontier(processedInput), captured = evaluationFrontier(capturedInput)
+    for (const key of Object.keys(processed) as Array<keyof LearningFrontier>)
+      if (processed[key] > captured[key]) throw new Error("Session cursor exceeds captured namespace frontier")
+    const next = (db: SQL, sql: string, key: keyof LearningFrontier) => {
+      const row = db.prepare(sql).get(session, processed[key], captured[key]) as { n: number | null }
+      return row.n === null ? captured[key] : row.n - 1
+    }
+    return {
+      ledger: next(this.actionDB, "SELECT MIN(seq) AS n FROM ledger WHERE session_id=? AND seq>? AND seq<=?", "ledger"),
+      objectives: next(this.learningDB, "SELECT MIN(rowid) AS n FROM learning_objectives WHERE author_session=? AND rowid>? AND rowid<=?", "objectives"),
+      objective_links: next(this.learningDB, "SELECT MIN(l.sequence) AS n FROM learning_objective_links l JOIN learning_objectives o ON o.id=l.objective_id WHERE l.author_session=? AND l.author_session=o.author_session AND l.sequence>? AND l.sequence<=?", "objective_links"),
+      review_requests: next(this.actionDB, "SELECT MIN(rowid) AS n FROM review_requests WHERE requester_session=? AND rowid>? AND rowid<=?", "review_requests"),
+      review_relationships: next(this.actionDB, "SELECT MIN(r.sequence) AS n FROM review_relationships r JOIN review_requests q ON q.request_id=r.request_id WHERE q.requester_session=? AND r.sequence>? AND r.sequence<=?", "review_relationships"),
+    }
+  }
+
+  targetFrontier(input: EvaluationTarget, namespaceInput?: LearningFrontier): LearningFrontier {
+    const target = evaluationTarget(input)
+    const namespace = namespaceInput === undefined ? this.captureNamespaceFrontier() : evaluationFrontier(namespaceInput)
+    const max = (db: SQL, sql: string, ...args: unknown[]) => (db.prepare(sql).get(...args) as { n: number }).n
+    let ledger: number
+    if (target.kind === "session" || target.kind === "action") {
+      if (target.kind === "action") this.store.action(target.id)
+      ledger = max(this.actionDB, `SELECT COALESCE(MAX(seq),0) AS n FROM ledger WHERE ${target.kind}_id=? AND seq<=?`, target.id, namespace.ledger)
+    } else {
+      if (!this.learningDB.prepare("SELECT 1 FROM learning_objectives WHERE id=?").get(target.id)) throw new Error("Evaluation objective unavailable")
+      const rows = this.learningDB.prepare("SELECT source_id FROM learning_objective_links WHERE objective_id=? AND source_type='ledger-record' AND sequence<=? ORDER BY sequence LIMIT ?")
+        .all(target.id, namespace.objective_links, SOURCE_LIMIT + 1) as Array<{ source_id: string }>
+      if (rows.length > SOURCE_LIMIT) throw new Error("Evaluation subject exceeds source limit")
+      const ids = rows.map(row => row.source_id)
+      const selected = this.store.engineeringHistory.objectiveEvidenceSources(ids, namespace.ledger)
+      ledger = max(this.actionDB, "SELECT COALESCE(MAX(seq),0) AS n FROM ledger WHERE id IN (SELECT value FROM json_each(?))", JSON.stringify(selected))
+    }
+    return { ...namespace, ledger }
+  }
+
+  /** Source-owner routing metadata only. Callers authorize this exact record
+   * before recordedCompletion parses or hashes the original content. */
+  recordedCompletionScope(input: EvaluationTarget, id: string): { id: string; session_id: string } {
+    const target = evaluationTarget(input), row = this.actionDB.prepare("SELECT session_id,action_id,kind FROM ledger WHERE id=?")
+      .get(uid(id)) as { session_id: string; action_id: string | null; kind: string } | undefined
+    if (!row || row.kind !== "completion" || target.kind === "session" && row.session_id !== target.id
+      || target.kind === "action" && row.action_id !== target.id
+      || target.kind === "objective" && !this.learningDB.prepare("SELECT 1 FROM learning_objective_links WHERE objective_id=? AND source_type='ledger-record' AND source_id=? LIMIT 1").get(target.id, id))
+      throw new Error("Recorded completion is unavailable in the selected subject")
+    return { id, session_id: row.session_id }
+  }
+  recordedCompletion(input: EvaluationTarget, id: string): LearningSource {
+    const owner = this.recordedCompletionScope(input, id)
+    const source = this.ledger(owner.session_id, owner.id)
+    if (!source || this.isEvaluation(source.ref)) throw new Error("Engineering completion original unavailable")
+    return source
+  }
+
+  /** Native parts identify the wrapper, while observed inner tools can share
+   * its IDs. Never treat that group identity as unique inner-call provenance. */
+  isEvaluation(ref: EvaluationSourceRef): boolean {
+    if (!ref.session_id) return false
+    if (evaluationSessionActivity(this.learningDB, ref.session_id)) return true
+    if (ref.kind === "native-call" && ref.message_id)
+      return evaluationInvocationActivity(this.learningDB, { session_id: ref.session_id, message_id: ref.message_id, call_id: ref.id })
+    if (ref.kind !== "ledger-record") return false
+    const source = this.ledger(ref.session_id, ref.id)
+    if (!source || source.ref.revision !== ref.revision || source.ref.sha256 !== ref.sha256) return false
+    const data = source.value.data
+    if (!data || typeof data !== "object" || Array.isArray(data)) return false
+    const fields = data as Record<string, unknown>
+    // Code Mode gives inner tools its outer context. A learning read therefore
+    // classifies the observed wrapper, not an engineering shell/read sibling.
+    if (fields.tool !== "codemode" && fields.tool !== "execute") return false
+    if (fields.learning_purpose === "contains-evaluation") return true
+    if (fields.phase === "started") {
+      const finish = this.actionDB.prepare(`SELECT id FROM ledger WHERE session_id=? AND kind='observation'
+        AND json_extract(data,'$.data.start_id')=? AND json_extract(data,'$.data.tool')=?
+        AND json_extract(data,'$.data.learning_purpose')='contains-evaluation' LIMIT 1`).get(ref.session_id, ref.id, fields.tool) as { id: string } | undefined
+      if (finish) {
+        const recorded = this.ledger(ref.session_id, finish.id), detail = recorded?.value.data as Record<string, unknown> | undefined
+        if (detail?.attribution === "captured-at-start" && detail.message_id === fields.message_id && detail.call_id === fields.call_id) return true
+      }
+    }
+    return typeof fields.message_id === "string" && typeof fields.call_id === "string"
+      ? evaluationInvocationActivity(this.learningDB, { session_id: ref.session_id, message_id: fields.message_id, call_id: fields.call_id }) : false
+  }
+
+  /** Select only new original-owner positions. At most limit owner rows are
+   * examined; exclusions still advance their owner's processed position. Owner
+   * interleaving prevents one busy source family from starving the others. */
+  selectIncrement(session: string, afterInput: LearningFrontier, upperInput: LearningFrontier, limit = 128, startOwner = 0) {
+    uid(session); const after = evaluationFrontier(afterInput), upper = evaluationFrontier(upperInput), through = { ...after }
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error("Invalid incremental source limit")
+    if (!Number.isSafeInteger(startOwner) || startOwner < 0 || startOwner > 4) throw new Error("Invalid incremental owner cursor")
+    for (const key of Object.keys(upper) as Array<keyof LearningFrontier>) if (after[key] > upper[key]) throw new Error("Increment cursor exceeds source boundary")
+    type Candidate = { id: string; sequence: number; kind: string; excluded?: number }
+    const queues: Record<keyof LearningFrontier, Candidate[]> = {
+      ledger: this.actionDB.prepare("SELECT id,seq AS sequence,'ledger-record' AS kind FROM ledger WHERE session_id=? AND seq>? AND seq<=? ORDER BY seq LIMIT ?").all(session, after.ledger, upper.ledger, limit + 1) as Candidate[],
+      objectives: this.learningDB.prepare("SELECT id,rowid AS sequence,'objective' AS kind FROM learning_objectives WHERE author_session=? AND rowid>? AND rowid<=? ORDER BY rowid LIMIT ?").all(session, after.objectives, upper.objectives, limit + 1) as Candidate[],
+      objective_links: this.learningDB.prepare("SELECT CAST(l.sequence AS TEXT) AS id,l.sequence,'objective-link' AS kind FROM learning_objective_links l JOIN learning_objectives o ON o.id=l.objective_id WHERE l.author_session=? AND l.author_session=o.author_session AND l.sequence>? AND l.sequence<=? ORDER BY l.sequence LIMIT ?").all(session, after.objective_links, upper.objective_links, limit + 1) as Candidate[],
+      review_requests: this.actionDB.prepare(`SELECT request_id AS id,rowid AS sequence,'review-request' AS kind,NOT (${engineeringReview("data")}) AS excluded FROM review_requests WHERE requester_session=? AND rowid>? AND rowid<=? ORDER BY rowid LIMIT ?`).all(session, after.review_requests, upper.review_requests, limit + 1) as Candidate[],
+      review_relationships: this.actionDB.prepare(`SELECT r.id,r.sequence,'review-relationship' AS kind,NOT (${engineeringReview("q.data")}) AS excluded FROM review_relationships r JOIN review_requests q ON q.request_id=r.request_id WHERE q.requester_session=? AND r.sequence>? AND r.sequence<=? ORDER BY r.sequence LIMIT ?`).all(session, after.review_relationships, upper.review_relationships, limit + 1) as Candidate[],
+    }
+    const positions: LearningFrontier = { ...EMPTY_LEARNING_FRONTIER }, selected: EvaluationSourceRef[] = [], budget = snapshotBudget()
+    let examined = 0, excluded = 0, nextOwner = startOwner
+    const keys = Object.keys(queues) as Array<keyof LearningFrontier>
+    while (examined < limit) {
+      let advanced = false
+      for (let offset = 0; offset < keys.length; offset++) {
+        const ownerIndex = (nextOwner + offset) % keys.length, key = keys[ownerIndex]!
+        const candidate = queues[key][positions[key]]
+        if (!candidate) continue
+        positions[key]++; examined++; advanced = true; through[key] = candidate.sequence
+        nextOwner = (ownerIndex + 1) % keys.length
+        if (candidate.excluded || evaluationSessionActivity(this.learningDB, session)) { excluded++; break }
+        const source = candidate.kind === "ledger-record" ? this.ledger(session, candidate.id)
+          : candidate.kind === "objective" || candidate.kind === "objective-link" ? this.objectiveSource(session, candidate.kind, candidate.id)
+          : this.reviewSource(session, candidate.kind as "review-request" | "review-relationship", candidate.id)
+        if (!source) throw new Error("Increment original unavailable")
+        if (this.isEvaluation(source.ref)) { excluded++; break }
+        canonical(source.value, budget); selected.push(source.ref)
+        break
+      }
+      if (!advanced) break
+    }
+    for (const key of keys) if (positions[key] >= queues[key].length) through[key] = upper[key]
+    const members: EvaluationMember[] = []
+    for (let start = 0; start < selected.length; start += 32) members.push({ key: "increment:" + session + ":" + start, kind: "session", source_refs: selected.slice(start, start + 32) })
+    return { members, through, upper, eligible: selected.length, excluded, examined, next_owner: nextOwner, more: keys.some(key => through[key] < upper[key]) }
+  }
 
   /** Enumeration is queue metadata, not permission to inspect another Session's sources. */
   sessions(after = "", limit = 100): string[] {
@@ -42,7 +212,7 @@ export class LearningSources {
     const source = ref.kind === "ledger-record" ? this.ledger(ref.session_id, ref.id)
       : ref.kind === "objective" || ref.kind === "objective-link" ? this.objectiveSource(ref.session_id, ref.kind, ref.id)
       : ref.kind === "review-request" || ref.kind === "review-relationship" ? this.reviewSource(ref.session_id, ref.kind, ref.id) : null
-    return source && source.ref.sha256 === ref.sha256 && source.ref.revision === ref.revision ? source : null
+    return source && source.ref.sha256 === ref.sha256 && source.ref.revision === ref.revision && !this.isEvaluation(ref) ? source : null
   }
 
   /** Original-owner lookup for an already authorized retrospective selection.
@@ -144,7 +314,8 @@ export class LearningSources {
         group("review:" + review.request_id, "session", refs)
       }
       for (const db of opened.reverse()) db.exec("COMMIT")
-      return { members, boundary: { ledger: rows.at(-1)?.seq ?? 0, objectives: objectives.at(-1)?.sequence ?? 0, objective_links: linkBoundary, review_requests: reviews.at(-1)?.sequence ?? 0, review_relationships: relationshipBoundary } }
+      const eligible = members.map(member => ({ ...member, source_refs: member.source_refs.filter(ref => !this.isEvaluation(ref)) })).filter(member => member.source_refs.length)
+      return { members: eligible, boundary: { ledger: rows.at(-1)?.seq ?? 0, objectives: objectives.at(-1)?.sequence ?? 0, objective_links: linkBoundary, review_requests: reviews.at(-1)?.sequence ?? 0, review_relationships: relationshipBoundary } }
     } catch (error) { for (const db of opened.reverse()) { try { db.exec("ROLLBACK") } catch {} } throw error }
   }
 }

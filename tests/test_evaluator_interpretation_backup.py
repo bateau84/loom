@@ -76,7 +76,9 @@ class InterpretationBackupTest(unittest.TestCase):
                 "relation": "contests", "reason": "Later evidence limits the earlier conclusion."}],
         }
         batch_id = "batch-" + name
-        population = {"owner": "owner", "namespace": "namespace", "manifest_sha256": fingerprint(name), "objective_id": objective,
+        population = {"owner": "owner", "namespace": "namespace", "manifest_sha256": fingerprint(name),
+                      "target": {"kind": "objective", "id": objective},
+                      "selection": {"through": 100000, "owner_boundary": {"objective_links": 0, "review_requests": 0, "review_relationships": 0}},
                       "members": [(key, canonical([member["source"]])) for key, member in members.items()], "manifest_members": members}
         self.prepared[batch_id] = {"population": population}
         subject = {"source_store_id": "namespace", "owner_session": "owner", "batch_id": batch_id, "request_id": "request-" + name,

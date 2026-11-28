@@ -4,6 +4,8 @@ The exact packed Loom candidate owns every request, review intent and reader.
 An isolated local scripted provider invokes real native tools; it does not
 produce an interpretation, replace a source owner or attest Q4/Q5. The fixture
 creates synthetic authored fail/fail/pass evidence, not real engineering work.
+Complete-population compatibility mode is explicit because these preparations
+exercise the existing Stage 3 manifest rather than the incremental coordinator.
 """
 from __future__ import annotations
 
@@ -482,7 +484,7 @@ def run(args) -> dict:
                 "model": "question-fixture/reader", "update": "disable", "share": "disabled",
             }
             (Path(env["OPENCODE_CONFIG_DIR"]) / "opencode.json").write_text(encoded(config))
-            (project / ".loom.yaml").write_text("instructions: {enabled: false}\nledger: {capture: automatic}\n")
+            (project / ".loom.yaml").write_text("instructions: {enabled: false}\nledger: {capture: automatic}\nlearning: {incremental: false}\n")
             (root / "jobs.json").write_text("{}")
             subprocess.run(["git", "init", "-q", str(project)], check=True, env=env, timeout=10)
 
@@ -730,7 +732,7 @@ def run(args) -> dict:
                     host.close()
                     host = None
                     final_events(root)
-                    (project / ".loom.yaml").write_text("instructions: {enabled: false}\nledger: {capture: off}\n")
+                    (project / ".loom.yaml").write_text("instructions: {enabled: false}\nledger: {capture: off}\nlearning: {incremental: false}\n")
                     host = boot("capture-off")
                     scenario = Scenario(host, root, invocation_plan)
                     before_capture_off = preparation_snapshot(learning, ledger)
@@ -758,7 +760,7 @@ def run(args) -> dict:
                         changed["data"]["statement"] = "Stopped-host synthetic source corruption negative control."
                         db.execute("UPDATE ledger SET data=? WHERE id=?", (encoded(changed), trajectory["anchor"]))
                         db.commit()
-                    (project / ".loom.yaml").write_text("instructions: {enabled: false}\nledger: {capture: automatic}\n")
+                    (project / ".loom.yaml").write_text("instructions: {enabled: false}\nledger: {capture: automatic}\nlearning: {incremental: false}\n")
                     host = boot("mutated-source")
                     scenario = Scenario(host, root, invocation_plan)
                     denied(scenario, owner, "insights", detail_query)

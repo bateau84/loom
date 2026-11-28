@@ -1,0 +1,66 @@
+{
+  "schema": "loom.session-learning-review.v1",
+  "date": "2026-11-28",
+  "reviewer": "independent agent /root/recreated_independent_review",
+  "verdict": "No material code finding remains open in reviewed paths. Ready for final draft checkpoint and CI.",
+  "base_commit": "687c0029ccb1f8231765aad271e87a5af3d1fd76",
+  "candidate": "working tree; file hashes identify reviewed versions",
+  "independently_executed": [
+    {
+      "suite": "public, subject, incremental, coordinator, S5 context and paired backup",
+      "passed": 69,
+      "failed": 0,
+      "assertions": 763
+    },
+    {
+      "suite": "public and subject after recorded-completion authorization correction",
+      "passed": 28,
+      "failed": 0,
+      "assertions": 222
+    },
+    {
+      "suite": "executable later-work selector after fresh-reader finding",
+      "passed": 1,
+      "failed": 0,
+      "assertions": 9
+    },
+    {
+      "suite": "registered history discovery authorization regressions",
+      "passed": 3,
+      "failed": 0,
+      "assertions": 21
+    },
+    {
+      "suite": "native summary fragment focus source review and dashboard regressions",
+      "passed": 11,
+      "failed": 0,
+      "assertions": 2393,
+      "limitation": "Actual Chromium rerun remains separate."
+    }
+  ],
+  "limits": [
+    "Not merge approval.",
+    "Full integration CI, Chromium and installed incremental journey are separate gates.",
+    "Production inference remains disconnected and unqualified."
+  ],
+  "files": {
+    "src/plugin.ts": "eeaf4f7c0cd2b0632ec2d4ef3cc34f51e6cc767a6120e306bdb1925284622978",
+    "src/learning-sources.ts": "2c8ef6ee96f11e829516c51fabca589bf825eb053f7c49ac824a0d2a787e759e",
+    "src/evaluation-subject.ts": "f4ce36c3b8ead1b365cbaf77290822bdb7bae2cbe6a5fba1c12a2da64cb148cf",
+    "src/context.ts": "54e653585db27f05b3f5b571a5f77e0ff14a4874146a82a4c90a91c5e0ee94af",
+    "src/automatic-learning.ts": "e2293dac7d33346b2cbfed87142932de5c50ab7c1751eb87e140fbf8a798ddc4",
+    "src/incremental-interpretation.ts": "ef4be3f0a5f758c46cbdcf6457b805c9722f315be6e542b3f846f4d4fdd78845",
+    "src/evaluation-store.ts": "ee8535d0f3b6be19f1bf5efb2c9755db997cc5b9b7560eff5fcd24a01398d6e8",
+    "src/retrospective-contract.ts": "583cf62d4e8792a814fc88f2a135141986e704a3ac725c00957626e4ba66fd72",
+    "src/learning-runtime.ts": "7e31634342d0e0d61f5d915f86667a2fb37ba7ce455418a5dff957856f39f475",
+    "tools/learning-state-backup.py": "6fb06f139bf890ca89f62dec82dcb33ee4210fe713b61e0ef1b1b77cb1cdd285",
+    "tests/session-learning-public-native.test.ts": "ce6e3f498327c3156351de1a5d32c27f64967fe64a29817b724079e7f07ef73c",
+    "tests/evaluation-subject-native.test.ts": "d726eb0e6cdd6f093278527fd29c1539818fc7014b59b7290d6089b8f9814b09",
+    "tests/evaluator-context-native.test.ts": "4bed2f556eb92ed36cbef245fc6654910eb00df0079f7c19984f0b2730c6bd26",
+    "tests/session-learning-backup-native.test.ts": "ee3c650b885159a88428d968f57a3fa308106a6f22b8d36cf035be2f5b59c172",
+    "tests/incremental-learning-native.test.ts": "bd2af893c960443f27df376d9d45147a6e1f5f994baf62b7a2611fbc91e43e12",
+    "src/engineering-history-dashboard.ts": "8a278df1400267accc8067561b0720dfbcc73db21d150aba8bbdd4c2dfaaa1a3",
+    "tests/session-retrospective-browser/qualify.mjs": "e68721aa971f9b42e53edfe5004131daf176d3d6e4fd43bc7622823fcae10598",
+    "tests/engineering-history-browser/qualify.mjs": "9598dd8d128ef593062e7165563ce3e9c80366e16862285d4c22b96a1308d288"
+  }
+}

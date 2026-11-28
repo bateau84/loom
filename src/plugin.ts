@@ -21,6 +21,8 @@ import { renderEngineeringHistoryHTML, renderEngineeringHistoryMarkdown, renderR
 import { fullThreadMarkdown } from "./response-format.js"
 import { Store, RECORD_FIELDS, RECORD_KINDS, type SQL, type RecordQuery } from "./store.js"
 import { Learning } from "./learning.js"
+import { INCREMENTAL_SCOPE } from "./automatic-learning.js"
+import type { EvaluationSourceRef } from "./evaluation-store.js"
 import { EVALUATION_READS, registerAutomaticLearning, type AutomaticLearningRuntime } from "./learning-runtime.js"
 import { OBJECTIVE_RELATIONS, type ObjectiveSource, type ObjectivePhase, type ObjectiveRelation, type ObjectiveHistorySelection } from "./objectives.js"
 import type { ReviewHistorySelection } from "./review-requests.js"
@@ -32,8 +34,10 @@ import { operationInputSchema, validateOperationInput } from "./tool-input-contr
 import { withToolNavigation } from "./tool-navigation.js"
 import { findTraceSource, readSessionExport, traceTimeline } from "./session-trace.js"
 import { nativeEvidenceDigest, nativeEvidenceParts, nativeEvidenceSource, type NativeEvidenceField, type NativeEvidenceMatchField } from "./native-evidence.js"
-import { retrospectiveProposal, type RetrospectiveSourceResolver, type RetrospectivePopulationView } from "./retrospective-populations.js"
-import { retrospectiveDigest, RETROSPECTIVE_ORIGINAL_LIMITS, type RetrospectiveManifest, type RetrospectivePopulation } from "./retrospective-contract.js"
+import { retrospectiveProposal, subjectSelection, type RetrospectiveSourceResolver, type RetrospectivePopulationView } from "./retrospective-populations.js"
+import { evaluationTarget, type EvaluationSubjectInput } from "./evaluation-subject.js"
+import { renderIncrementalLearningHTML, renderIncrementalLearningMarkdown } from "./incremental-learning-view.js"
+import { retrospectiveDigest, retrospectiveBudget, RETROSPECTIVE_ORIGINAL_LIMITS, type RetrospectiveManifest, type RetrospectivePopulation } from "./retrospective-contract.js"
 import { externalOriginalDescriptor, resolveExternalOriginal } from "./external-originals.js"
 import { nativeOriginalDescriptor, resolveNativeOriginal } from "./native-originals.js"
 import { retrospectiveSourceView, renderRetrospectiveSourceHTML, renderRetrospectiveSourceMarkdown } from "./retrospective-source-view.js"
@@ -156,23 +160,30 @@ const evaluatorMethodInput = preserveInput({
   adapter: preserveInput({ id: str, version: str, profile: evaluatorPolicyInput }, ["id", "version", "profile"]),
   source_policy: evaluatorPolicyInput, route_policy: evaluatorPolicyInput,
 }, ["format", "evaluator", "audit_skill", "rubric", "instruction_bundle", "result_format", "model", "adapter", "source_policy", "route_policy"])
-const evaluatorPrepareInput = { operation: { const: "prepare-evaluation" }, batch_id: str, method: evaluatorMethodInput,
+// Nested method types live once in the root envelope; operation alternatives
+// repeat requiredness without duplicating the complete callable signature.
+const evaluatorPrepareInput = { operation: { const: "prepare-evaluation" }, batch_id: str, method: {},
   budget_policy: { anyOf: [evaluatorPolicyInput, { type: "null" }] } }
-const populationSelectionInput = preserveInput({ mode: { const: "explicit-objective" }, objective_id: str,
+const subjectTargetInput = preserveInput({ kind: choice("session", "action", "objective"), id: str }, ["kind", "id"])
+const subjectCutoffInput = preserveInput({ kind: choice("point-in-time", "recorded-completion"), record_id: str, record: { type: "object", additionalProperties: true } }, ["kind"])
+const frontierInput = preserveInput({ ledger: num, objectives: num, objective_links: num, review_requests: num, review_relationships: num },
+  ["ledger", "objectives", "objective_links", "review_requests", "review_relationships"])
+const populationSelectionInput = preserveInput({ mode: choice("explicit-objective", "explicit-subject"), objective_id: str,
+  target: subjectTargetInput, subject_id: str, subject_sha256: str, frontier: frontierInput, namespace_frontier: frontierInput, cutoff: subjectCutoffInput,
   question: { type: "string", minLength: 1, maxLength: 8000 }, through: num,
   owner_boundary: preserveInput({ objective_links: { anyOf: [num, { type: "null" }] }, review_requests: num, review_relationships: num },
     ["objective_links", "review_requests", "review_relationships"]), owner_version: { type: "string", pattern: "^[a-f0-9]{64}$" },
   exclusions: { type: "array", maxItems: 2000, items: preserveInput({ record_id: str, reason: str }, ["record_id", "reason"]) },
-}, ["objective_id", "question"])
+}, ["question"])
 const frozenPopulationSelectionInput = { ...populationSelectionInput,
-  required: ["objective_id", "question", "through", "owner_boundary", "owner_version"],
+  required: ["question", "through", "owner_boundary", "owner_version"],
   description: "Copy the complete selection returned by preview-population; do not reconstruct boundaries or versions.",
 }
 const specs = [
   { name: "agents", description: TOOL_HELP.agents, input: obj({}) },
   { name: "history", description: TOOL_HELP.history, input: preserveInput({
-    operation: choice("read", "preview-population", "population", "population-source"), action_id: str, session_id: str, objective_id: str, related: { type: "boolean" },
-    selection: populationSelectionInput, population_id: str, manifest_sha256: str, member_key: str,
+    operation: choice("read", "subject", "subject-activities", "preview-population", "preview-source", "population", "population-source"), action_id: str, session_id: str, objective_id: str, related: { type: "boolean" },
+    selection: populationSelectionInput, subject_id: str, subject_sha256: str, preview_sha256: str, population_id: str, manifest_sha256: str, member_key: str,
     source_offset: { type: "integer", minimum: 0, maximum: 33554432 }, source_limit: { type: "integer", minimum: 2, maximum: 32768 },
     branch_ref: { type: "string", minLength: 1, maxLength: 4096 }, record_id: str,
     match: { type: "string", minLength: 1, maxLength: 200 },
@@ -186,15 +197,17 @@ const specs = [
     response_format: choice("json", "markdown", "html"),
   }, ["operation"]) },
   { name: "review", description: TOOL_HELP.review, input: {
-    ...preserveInput({ operation: choice("freeze", "read", "issue", "prepare", "prepare-evaluation", "freeze-population", "relate", "work"), request: reviewRequestInput, request_id: str, authorization_ref: str,
+    ...preserveInput({ operation: choice("establish-subject", "freeze", "read", "issue", "prepare", "prepare-evaluation", "freeze-population", "relate", "work"), request: reviewRequestInput, request_id: str, authorization_ref: str,
+      target: subjectTargetInput, question: { type: "string", minLength: 1, maxLength: 8000 }, cutoff: subjectCutoffInput,
       batch_id: str, method: evaluatorMethodInput, budget_policy: evaluatorPrepareInput.budget_policy,
       population_id: str, manifest_sha256: str, selection: populationSelectionInput, preview_sha256: str,
       after: num, relationship_after: num, issue_after: num, limit: { type: "integer", minimum: 1, maximum: 50 }, member_id: str,
       relationship: choice("observed", "retrieved", "cited", "claimed-inspected", "finding", "correction"),
       source_record_id: str, member_ids: list, supersedes: str }, ["operation"]),
     oneOf: [
+      preserveInput({ operation: { const: "establish-subject" }, target: subjectTargetInput, question: str, cutoff: subjectCutoffInput }, ["operation", "target", "question"]),
       preserveInput(evaluatorPrepareInput, ["operation", "batch_id", "method", "budget_policy"]),
-      preserveInput({ operation: { const: "prepare-evaluation" }, population_id: str, manifest_sha256: str, method: evaluatorMethodInput,
+      preserveInput({ operation: { const: "prepare-evaluation" }, population_id: str, manifest_sha256: str, method: {},
         budget_policy: evaluatorPrepareInput.budget_policy }, ["operation", "population_id", "manifest_sha256", "method", "budget_policy"]),
       preserveInput({ operation: { const: "freeze-population" }, selection: frozenPopulationSelectionInput,
         preview_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" } }, ["operation", "selection", "preview_sha256"]),
@@ -218,9 +231,9 @@ const specs = [
       match_fields: { type: "array", minItems: 1, maxItems: 5, uniqueItems: true, items: choice("tool", "status", "dispatch", "input", "output") },
       source_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" }, part_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
       cursor: { type: "string", minLength: 1, maxLength: 4096 } }, ["operation"]) },
-  { name: "insights", description: TOOL_HELP.insights, input: preserveInput({ operation: choice("action", "window", "findings", ...EVALUATION_READS, ...INTERPRETATION_READS), batch_id: str, member_key: str, report_id: str,
-    report_sha256: str, section: choice("overview", "trajectory", "claims", "review_coverage", "gaps", "sources", "prior_interpretations"), response_format: choice("json", "markdown", "html"),
-    request_id: str, manifest_sha256: str, attempt_id: str, source_index: num, after: { oneOf: [num, { type: "string", maxLength: 4096 }] }, finding_cursor: { type: "string", maxLength: 512 }, action_id: str, before: { type: "integer", minimum: 1 }, limit: { type: "integer", minimum: 1, maximum: 200 }, since_at: str, until_at: str }, ["operation"]) },
+  { name: "insights", description: TOOL_HELP.insights, input: preserveInput({ operation: choice("action", "window", "findings", "learning-progress", "learning-report", "learning-source", ...EVALUATION_READS, ...INTERPRETATION_READS), batch_id: str, member_key: str, report_id: str,
+    report_sha256: str, section: choice("overview", "trajectory", "claims", "review_coverage", "gaps", "sources", "prior_interpretations", "summary", "concerns", "unfinished"), response_format: choice("json", "markdown", "html"),
+    request_id: str, manifest_sha256: str, attempt_id: str, source_index: num, source_offset: num, source_limit: { type: "integer", minimum: 2, maximum: 32768 }, max_chars: { type: "integer", minimum: 1, maximum: 16000 }, after: { oneOf: [num, { type: "string", maxLength: 4096 }] }, finding_cursor: { type: "string", maxLength: 512 }, action_id: str, before: { type: "integer", minimum: 1 }, limit: { type: "integer", minimum: 1, maximum: 200 }, since_at: str, until_at: str }, ["operation"]) },
   { name: "objective", description: TOOL_HELP.objective, input: obj({
       operation: choice("create", "link", "read", "list", "find"),
       objective_id: str, label: { type: "string", maxLength: 200 }, unit_key: str,
@@ -420,6 +433,28 @@ export default Plugin.define({
         throw new Error("Session is not in this Loom project/workspace/location")
       return session
     }
+    // Native parent identities, rather than role names, establish inherited
+    // learning purpose. Bound the walk and retain the observations for audit.
+    const classifyLearningDescendant = async (sessionID: string) => {
+      if (!learning || learning.automatic.sources.isEvaluationSession(sessionID)) return
+      const chain: Array<{ child_session_id: string; native_parent_session_id: string }> = [], visited = new Set<string>()
+      let current = sessionID
+      for (let depth = 0; depth < 32; depth++) {
+        if (visited.has(current)) throw new Error("Learning Session ancestry cycle")
+        visited.add(current)
+        const native = await checkedSession(current)
+        if (typeof native.parentID !== "string") return
+        const parent = uid(native.parentID, "native parent Session")
+        await checkedSession(parent)
+        chain.push({ child_session_id: current, native_parent_session_id: parent })
+        if (learning.automatic.sources.isEvaluationSession(parent)) {
+          for (const relationship of chain.reverse()) learning.automatic.subjects.registerSessionDescendant(relationship)
+          return
+        }
+        current = parent
+      }
+      throw new Error("Learning Session ancestry exceeds 32 ancestors")
+    }
     // Same-project Sessions are not automatically one user's work. Child discovery
     // is restricted to the caller's bounded native parent/child tree.
     const familyRoot = async (sessionID: string): Promise<string> => {
@@ -467,8 +502,36 @@ export default Plugin.define({
           execute: async (raw, toolContext) => {
             if (!await owns(toolContext.sessionID)) throw new Error("This Loom instance does not own the Session location")
             const input = payload(raw), actor: Actor = { session_id: toolContext.sessionID, agent: toolContext.agent }
+            const activityPhase = spec.name === "history" && ["subject", "subject-activities", "preview-population", "preview-source", "population", "population-source"].includes(String(input.operation)) ? "evidence-retrieval"
+              : spec.name === "insights" && ([...EVALUATION_READS, ...INTERPRETATION_READS] as readonly unknown[]).includes(input.operation)
+                || spec.name === "insights" && /^learning-/.test(String(input.operation)) ? "evidence-retrieval"
+              : spec.name === "review" && ["establish-subject", "freeze-population", "prepare-evaluation"].includes(String(input.operation)) ? "preparation" : null
+            let activitySubject: string | undefined, activityBytes = 0, activityOutcome: "succeeded" | "failed" | "cancelled" = "failed"
+            let activityCapture = false
+            const activityStarted = Date.now()
+            const auditActivity = (outcome: "started" | "succeeded" | "failed" | "cancelled") => {
+              if (!activityCapture || !activityPhase || !learning) return
+              // Operational audit is separate from the pure preview renderer.
+              // A preview never needs to create an objective, subject or frozen population.
+              const record = () => learning!.automatic.subjects.recordActivity({ ...(activitySubject ? { subject_id: activitySubject } : {}), actor,
+                invocation: { session_id: actor.session_id, message_id: toolContext.messageID, call_id: toolContext.id },
+                phase: activityPhase, outcome, returned_bytes: activityBytes, elapsed_ms: Math.max(0, Date.now() - activityStarted),
+                detail: spec.name + ":" + String(input.operation) })
+              if (spec.name === "history" && ["preview-population", "preview-source"].includes(String(input.operation))) {
+                try { record() } catch { warn("Preview audit unavailable; preview remains read-only and source authorization still applies") }
+              } else record()
+            }
+            try {
             validateOperationInput(spec.name, input, spec.input)
             const snapshot = await getConfig(toolContext.signal)
+            activityCapture = snapshot.errors.length === 0 && snapshot.config.ledger.capture === "automatic"
+            if (activityCapture && activityPhase) {
+              if (spec.name === "history" && ["preview-population", "preview-source"].includes(String(input.operation))) {
+                try { observer.noteLearningInvocation(toolContext) }
+                catch { warn("Preview wrapper audit unavailable; preview remains read-only and source authorization still applies") }
+              } else observer.noteLearningInvocation(toolContext)
+            }
+            auditActivity("started")
             lifetime.signal.throwIfAborted()
             toolContext.signal.throwIfAborted()
             const diagnostics = spec.name === "context" ? contextConfigDiagnostics(snapshot.errors, snapshot.config.context.max_chars)
@@ -535,6 +598,16 @@ export default Plugin.define({
                 return session
               }
               catch { throw new Error("Evidence source unavailable in the authorized scope") }
+            }
+            const authorizeCompletionSource = async (source: { id: string; session_id?: string }) => {
+              const sourceSession = uid(source.session_id, "completion source Session")
+              await beginEvidence(`session:${evidenceID(sourceSession, "source Session")}:record:${evidenceID(source.id, "completion record")}`,
+                ["record-full"], ["record-full"])
+              await evidenceSession(sourceSession); evidenceSessions.add(sourceSession)
+            }
+            const authorizeRecordedCompletion = async (target: EvaluationSubjectInput["target"], recordID: unknown) => {
+              const source = requiredLearning().automatic.sources.recordedCompletionScope(target, uid(recordID, "completion record"))
+              await authorizeCompletionSource(source)
             }
             const authorizeReview = async () => {
               // The native source-file read owner is the existing authority for
@@ -768,6 +841,9 @@ export default Plugin.define({
               const current = owner.retrospectiveSources(populationID, ownerOnly ? actor.session_id : undefined)
               if (digest(current) !== digest(sources)) throw new Error("Retrospective population unavailable")
               const population = owner.retrospectivePopulation(populationID, ownerOnly ? actor.session_id : undefined)
+              if (population.manifest.selection.mode === "explicit-subject" && population.manifest.selection.cutoff.kind === "recorded-completion")
+                await authorizeCompletionSource(population.manifest.selection.cutoff.record)
+              if (population.owner_session === actor.session_id && population.manifest.selection.mode === "explicit-subject") activitySubject = population.manifest.selection.subject_id
               const scope = store.captureScope()
               evidenceSourceCheck = async () => {
                 if (store.captureScope() !== scope || owner.retrospectivePopulation(populationID).manifest_sha256 !== sha256)
@@ -781,8 +857,8 @@ export default Plugin.define({
                 // This allowlist preserves actionable parser reasons without
                 // forwarding unexpected exception details or caller values.
                 const hints: Record<string, string> = {
-                  "Invalid retrospective selection": "Use selection:{objective_id,question}; omit boundaries on the first preview.",
-                  "Unsupported retrospective selection policy": "Only mode:explicit-objective is supported; mode may be omitted.",
+                  "Invalid retrospective selection": "Use selection:{target:{kind:session|action|objective,id},question}; legacy objective_id remains supported. Omit boundaries on the first preview.",
+                  "Unsupported retrospective selection policy": "Use explicit-subject for target selection or explicit-objective for legacy objective_id; mode may be omitted.",
                   "Retrospective selection requires a bounded evaluation question": "selection.question must contain 1-8000 characters without control characters.",
                   "Invalid retrospective exclusions": "Use at most 2000 {record_id,reason} exclusions, or omit exclusions.",
                   "Invalid retrospective exclusion": "Each exclusion needs only record_id and a nonblank reason of at most 8000 characters without control characters.",
@@ -798,13 +874,49 @@ export default Plugin.define({
               }
             }
             const populationPreview = async (raw: unknown): Promise<RetrospectiveManifest> => {
-              const selection = populationSelection(raw)
-              const { mode: _mode, question: _question, exclusions: _exclusions, ...query } = selection
+              let selection = populationSelection(raw)
+              let query: EngineeringHistoryQuery
+              if (selection.mode === "explicit-subject") {
+                const owner = requiredLearning().automatic
+                await beginEvidence(selection.target.kind + ":" + evidenceID(selection.target.id, "target"), ["retrospective-population"], ["retrospective-population"])
+                evidenceResources.add(filename); evidenceResources.add(learningFilename); await assertEvidence([...evidenceResources])
+                const subject = selection.subject_id ? owner.subjects.read(selection.subject_id, actor.session_id, selection.subject_sha256) : null
+                if (subject) activitySubject = subject.subject_id
+                if (subject && (digest(subject.target) !== digest(selection.target) || subject.question !== selection.question))
+                  throw new Error("Retrospective subject mismatch")
+                if (subject?.cutoff.kind === "recorded-completion") await authorizeCompletionSource(subject.cutoff.record)
+                else if (!subject && selection.cutoff?.kind === "recorded-completion")
+                  await authorizeRecordedCompletion(selection.target, selection.cutoff.record?.id)
+                // Capture both work positions and their comparable namespace
+                // ceilings before history discovery. A replayed boundary is
+                // never widened by recapturing unrelated owner maxima.
+                const proposal = !subject && !selection.frontier && selection.through === undefined
+                  ? owner.subjects.propose(actor, { target: selection.target, question: selection.question,
+                    ...(selection.cutoff?.kind === "recorded-completion" ? { cutoff: { kind: "recorded-completion" as const,
+                      record_id: selection.cutoff.record?.id } } : {}) }) : null
+                const frontier = subject?.through ?? selection.frontier ?? proposal?.through ?? owner.sources.targetFrontier(selection.target)
+                if (selection.frontier && digest(selection.frontier) !== digest(frontier) || selection.through !== undefined && selection.through !== frontier.ledger)
+                  throw new Error("Retrospective subject boundary mismatch")
+                const namespace = subject ? subject.namespace_frontier : selection.namespace_frontier ?? proposal?.namespace_frontier ?? frontier
+                if (subject && selection.namespace_frontier && digest(selection.namespace_frontier) !== digest(subject.namespace_frontier ?? frontier))
+                  throw new Error("Retrospective namespace frontier differs from the established subject")
+                const boundary = { objective_links: frontier.objective_links, review_requests: frontier.review_requests, review_relationships: frontier.review_relationships }
+                if (selection.owner_boundary && digest(selection.owner_boundary) !== digest(boundary)) throw new Error("Retrospective source owner boundary mismatch")
+                selection = { ...selection, frontier, through: frontier.ledger, owner_boundary: boundary,
+                  ...(namespace ? { namespace_frontier: namespace } : {}),
+                  ...(subject ? { cutoff: subject.cutoff } : proposal ? { cutoff: proposal.cutoff } : {}) }
+                if (!namespace) delete selection.namespace_frontier
+                query = { [selection.target.kind + "_id"]: selection.target.id, through: frontier.ledger, owner_boundary: boundary,
+                  ...(selection.owner_version ? { owner_version: selection.owner_version } : {}) }
+              } else {
+                const { mode: _mode, question: _question, exclusions: _exclusions, ...legacy } = selection
+                query = legacy
+              }
               let history: Awaited<ReturnType<typeof authorizedHistory>>
               try { history = await authorizedHistory({ ...query, limit: 20 }, true) }
               catch (error) {
                 if (error instanceof Error && error.message === "History relationship sources changed; restart the read")
-                  throw new Error("Retrospective preview sources changed or boundaries came from a different view. Start preview with objective_id, question and the same deliberate exclusions, omitting navigation boundaries; then use its returned selection/next/freeze unchanged and approve before freezing.")
+                  throw new Error("Retrospective preview sources changed or boundaries came from a different view. Start preview with target, question and the same deliberate exclusions, omitting navigation boundaries; then use its returned selection/next/freeze unchanged.")
                 throw error
               }
               await populationContributors(history.contributors)
@@ -817,15 +929,51 @@ export default Plugin.define({
               await evidenceSourceCheck?.()
               return manifest
             }
+            const readSubject = async (id: unknown, sha: unknown) => {
+              await beginEvidence("subject:" + evidenceID(id, "subject_id"), ["evaluation-subject"], ["evaluation-subject"])
+              evidenceResources.add(filename); evidenceResources.add(learningFilename); await assertEvidence([...evidenceResources])
+              if (typeof sha !== "string") throw new Error("Subject fingerprint is required")
+              const subject = requiredLearning().automatic.subjects.read(uid(id), actor.session_id, sha)
+              activitySubject = subject.subject_id
+              if (subject.cutoff.kind === "recorded-completion") await authorizeCompletionSource(subject.cutoff.record)
+              // The owner's immutable descriptor is not a live history page.
+              // Authorize its target identity without hydrating unrelated
+              // originals or requiring an original to survive merely to read
+              // the retained boundary. Preview/population reads independently
+              // authorize their complete contributors and selected originals.
+              await beginEvidence(subject.target.kind + ":" + evidenceID(subject.target.id, "target"), ["evaluation-subject"], ["evaluation-subject"])
+              if (subject.target.kind === "session") {
+                await evidenceSession(subject.target.id); evidenceSessions.add(subject.target.id)
+              }
+              return subject
+            }
             let result: unknown
             switch (spec.name) {
               case "history": {
-                if (["preview-population", "population", "population-source"].includes(String(input.operation))) {
+                if (input.operation === "subject" || input.operation === "subject-activities") {
+                  const subject = await readSubject(input.subject_id, input.subject_sha256)
+                  const { owner_version: _version, ...selection } = subjectSelection(subject)
+                  result = input.operation === "subject" ? { subject, preview: { operation: "preview-population", selection },
+                    audit: { operation: "subject-activities", subject_id: subject.subject_id, subject_sha256: subject.sha256 } }
+                    : requiredLearning().automatic.subjects.activities(subject.subject_id, actor.session_id, { after: input.after as number | undefined, limit: input.limit as number | undefined })
+                  break
+                }
+                if (["preview-population", "preview-source", "population", "population-source"].includes(String(input.operation))) {
                   if (input.response_format !== undefined && !["json", "markdown", "html"].includes(String(input.response_format)))
                     throw new Error("History response_format must be json, markdown or html")
-                  if (input.operation === "preview-population") {
+                  if (input.operation === "preview-population" || input.operation === "preview-source") {
                     const manifest = await populationPreview(input.selection)
-                    result = await requiredLearning().populations.page(actor, manifest, populationResolver, input)
+                    if (input.operation === "preview-population") result = await requiredLearning().populations.page(actor, manifest, populationResolver, input)
+                    else {
+                      if (retrospectiveDigest(manifest) !== input.preview_sha256) throw new Error("Retrospective preview changed; inspect a fresh preview")
+                      const member = manifest.members.find(item => item.key === input.member_key)
+                      if (!member) throw new Error("Retrospective source unavailable")
+                      const resolved = await requiredLearning().populations.resolve(actor, member, populationResolver, "inspect")
+                      result = retrospectiveSourceView({ preview_sha256: input.preview_sha256, member_key: member.key, source: member.source,
+                        source_store_id: member.source_store_id, permitted_view: member.permitted_view, ...resolved,
+                        read_request: { operation: "preview-source", selection: manifest.selection, preview_sha256: input.preview_sha256, member_key: member.key },
+                        frozen: false, receiving_session: actor.session_id }, input)
+                    }
                   } else {
                     const population = await populationRead(input.population_id, input.manifest_sha256)
                     if (input.operation === "population") result = await requiredLearning().populations.page(actor, population.manifest, populationResolver, { ...input, population })
@@ -853,6 +1001,7 @@ export default Plugin.define({
               }
               case "review": {
                 const allowed = input.operation === "prepare-evaluation" ? ["operation", "batch_id", "population_id", "manifest_sha256", "method", "budget_policy"]
+                  : input.operation === "establish-subject" ? ["operation", "target", "question", "cutoff"]
                   : input.operation === "freeze-population" ? ["operation", "selection", "preview_sha256"]
                   : input.operation === "freeze" ? ["operation", "request"]
                   : input.operation === "read" ? ["operation", "request_id", "after", "relationship_after", "issue_after", "limit"]
@@ -863,12 +1012,30 @@ export default Plugin.define({
                 if (!allowed) throw new Error("Unknown review operation. Choose freeze, read, issue, prepare, prepare-evaluation, freeze-population, relate or work; these do not dispatch execution.")
                 if (Object.keys(input).some(key => !allowed.includes(key))) throw new Error("Unsupported review operation field; use only the selected operation's documented arguments. For freeze-population, copy the approved preview's freeze request unchanged.")
                 await authorizeReview()
-                if (input.operation === "freeze-population") {
+                if (input.operation === "establish-subject") {
+                  const target = evaluationTarget(input.target)
+                  await beginEvidence(target.kind + ":" + evidenceID(target.id, "target"), ["evaluation-subject"], ["evaluation-subject"])
+                  evidenceResources.add(filename); evidenceResources.add(learningFilename); await assertEvidence([...evidenceResources])
+                  const cutoff = input.cutoff as EvaluationSubjectInput["cutoff"]
+                  if (cutoff?.kind === "recorded-completion") await authorizeRecordedCompletion(target, cutoff.record_id)
+                  const subject = requiredLearning().automatic.subjects.establish(actor, { target, question: input.question as string,
+                    cutoff }, { session_id: actor.session_id, message_id: toolContext.messageID, call_id: toolContext.id })
+                  activitySubject = subject.subject_id
+                  await readSubject(subject.subject_id, subject.sha256)
+                  const { owner_version: _version, ...selection } = subjectSelection(subject)
+                  result = { subject, preview: { operation: "preview-population", selection },
+                    audit: { operation: "subject-activities", subject_id: subject.subject_id, subject_sha256: subject.sha256 },
+                    qualification: "Boundary established before analysis. A point-in-time cutoff does not establish completion. Inspect the foundation before freezing." }
+                }
+                else if (input.operation === "freeze-population") {
                   if (typeof input.preview_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(input.preview_sha256)) throw new Error("Invalid retrospective preview fingerprint")
                   const selection = populationSelection(input.selection)
                   if (selection.through === undefined || selection.owner_boundary === undefined || selection.owner_version === undefined)
                     throw new Error("Freeze requires the complete pinned preview selection: through, owner_boundary and owner_version. Copy preview.freeze unchanged after approval; do not invent boundary values.")
-                  await beginEvidence("objective:" + evidenceID(selection.objective_id, "objective_id"), ["retrospective-population"], ["retrospective-population"])
+                  if (selection.mode === "explicit-subject" && (!selection.subject_id || !selection.subject_sha256))
+                    throw new Error("Establish the explicit subject before freezing; use the preview's establish request")
+                  const target = selection.mode === "explicit-subject" ? selection.target : { kind: "objective", id: selection.objective_id }
+                  await beginEvidence(target.kind + ":" + evidenceID(target.id, "target"), ["retrospective-population"], ["retrospective-population"])
                   evidenceResources.add(learningFilename); await assertEvidence([...evidenceResources])
                   const prior = requiredLearning().automatic.history.findRetrospective(input.preview_sha256, actor.session_id)
                   let population: RetrospectivePopulation
@@ -1122,7 +1289,84 @@ export default Plugin.define({
                 break
               }
               case "insights":
-                if ((INTERPRETATION_READS as readonly unknown[]).includes(input.operation)) {
+                if (["learning-progress", "learning-report", "learning-source"].includes(String(input.operation))) {
+                  const allowed = input.operation === "learning-progress" ? ["operation", "before", "limit", "response_format"]
+                    : input.operation === "learning-report" ? ["operation", "batch_id", "section", "after", "limit", "response_format"]
+                    : ["operation", "batch_id", "member_key", "source_index", "after", "max_chars", "response_format"]
+                  if (Object.keys(input).some(key => !allowed.includes(key))) throw new Error("Unsupported incremental learning read field")
+                  await beginEvidence("session:" + evidenceID(actor.session_id, "Session"), ["incremental-learning"], ["incremental-learning"])
+                  evidenceResources.add(filename); evidenceResources.add(learningFilename)
+                  await assertEvidence([...evidenceResources]); await checkedSession(actor.session_id)
+                  const automatic = requiredLearning().automatic
+                  const authorizeSources = async (sources: EvaluationSourceRef[]) => {
+                    for (const ref of sources) {
+                      const view = ref.kind === "ledger-record" ? "record-full" : ref.kind
+                      const scope = ref.kind === "ledger-record" && ref.session_id
+                        ? `session:${evidenceID(ref.session_id, "source Session")}:record:${evidenceID(ref.id, "source record")}`
+                        : `${ref.kind}:${evidenceID(ref.id, "source")}`
+                      for (const resource of sourceEvidenceResources(scope, [view], [view])) evidenceResources.add(resource)
+                      if (ref.session_id) evidenceSessions.add(ref.session_id)
+                    }
+                    await assertEvidence([...evidenceResources])
+                  }
+                  const authorizeBatch = async (id: string) => {
+                    // This is structural dependency metadata only. In particular,
+                    // report() validates originals and must not run before grants.
+                    const disclosure = automatic.history.incrementDisclosure(id, actor.session_id)
+                    if (disclosure.scope_key !== INCREMENTAL_SCOPE) throw new Error("Incremental evaluation unavailable")
+                    if (typeof disclosure.boundary.subject_id === "string") activitySubject = disclosure.boundary.subject_id
+                    await authorizeSources(disclosure.source_refs)
+                    return disclosure.disclosure_sha256
+                  }
+                  if (input.operation === "learning-progress") {
+                    const options = { before: input.before as number | undefined, limit: input.limit as number | undefined }
+                    const page = automatic.history.incrementPage(actor.session_id, INCREMENTAL_SCOPE, options)
+                    const disclosures: Record<string, string> = {}
+                    for (const item of page.items) disclosures[item.id] = await authorizeBatch(item.id)
+                    // The same read snapshot verifies the authorized page and
+                    // dependency stamps before any original or report is read.
+                    const view = automatic.incrementProgress(actor.session_id, options, disclosures)
+                    result = { ...view, inference: requiredLearning().incrementalInterpretation.progress(actor.session_id, snapshot.config.learning.interpretation) }
+                    evidenceSourceCheck = async () => {
+                      if (digest(automatic.incrementProgress(actor.session_id, options, disclosures), retrospectiveBudget()) !== digest(view, retrospectiveBudget()))
+                        throw new Error("Incremental learning sources changed")
+                    }
+                  } else if (input.operation === "learning-report") {
+                    const batchID = uid(input.batch_id, "batch_id"), disclosure = await authorizeBatch(batchID)
+                    const options = {
+                      section: input.section as "summary" | "concerns" | "unfinished" | undefined,
+                      after: input.after as number | undefined, limit: input.limit as number | undefined }
+                    const view = automatic.incrementReport(actor.session_id, batchID, options, disclosure)
+                    result = view
+                    evidenceSourceCheck = async () => {
+                      if (digest(automatic.incrementReport(actor.session_id, batchID, options, disclosure), retrospectiveBudget()) !== digest(view, retrospectiveBudget()))
+                        throw new Error("Incremental learning sources changed")
+                    }
+                  } else {
+                    const batchID = uid(input.batch_id, "batch_id"), memberKey = uid(input.member_key, "member_key"), index = input.source_index as number
+                    const frozen = automatic.history.frozenIncrement(batchID, actor.session_id)
+                    const ref = frozen.members.find(member => member.key === memberKey)?.source_refs[index]
+                    if (frozen.scope_key !== INCREMENTAL_SCOPE || !ref) throw new Error("Incremental original unavailable")
+                    if (typeof frozen.boundary.subject_id === "string") activitySubject = frozen.boundary.subject_id
+                    await authorizeSources([ref])
+                    const options = { after: input.after as number | undefined, max_chars: input.max_chars as number | undefined }
+                    const source = automatic.incrementSource(actor.session_id, batchID, memberKey, index, options)
+                    result = { ...source, status: source.availability === "available" ? "available" : "missing",
+                      representation: source.fragment ? "original-owner-view-fragment" : "original-owner-view",
+                      ...(source.fragment ? { content_json: source.fragment.text, coverage: { from: source.fragment.after,
+                        to: source.fragment.after + source.fragment.text.length, total_characters: source.fragment.total_chars,
+                        whole_original_returned: false } } : {}),
+                      read_request: { operation: "learning-source", batch_id: input.batch_id, member_key: input.member_key, source_index: input.source_index },
+                      navigation: { next: source.next }, receiving_session: actor.session_id, native_evaluator_retrieval: "not-established" }
+                    evidenceSourceCheck = async () => {
+                      // Revalidate only the requested original. Reading the full
+                      // report here would fetch unrelated, ungranted sources.
+                      if (digest(automatic.history.frozenIncrement(batchID, actor.session_id), retrospectiveBudget()) !== digest(frozen, retrospectiveBudget())
+                        || digest(automatic.incrementSource(actor.session_id, batchID, memberKey, index, options), retrospectiveBudget()) !== digest(source, retrospectiveBudget()))
+                        throw new Error("Incremental learning sources changed")
+                    }
+                  }
+                } else if ((INTERPRETATION_READS as readonly unknown[]).includes(input.operation)) {
                   try {
                     await ctx.permission.assert({ action: "read", resources: [filename, learningFilename],
                       sessionID: toolContext.sessionID, agent: toolContext.agent,
@@ -1687,9 +1931,13 @@ export default Plugin.define({
             // All presentations are derived from one view and enter the same final
             // authorization path. Hash the actual returned bytes, including HTML.
             const populationView = spec.name === "history" && ["preview-population", "population"].includes(String(input.operation))
-            const sourceView = spec.name === "history" && input.operation === "population-source"
+            const sourceView = spec.name === "history" && ["population-source", "preview-source"].includes(String(input.operation))
+              || spec.name === "insights" && ["learning-source", "evaluation-prior-source"].includes(String(input.operation))
+            const incrementView = spec.name === "insights" && ["learning-progress", "learning-report"].includes(String(input.operation))
             const interpretationView = spec.name === "insights" && input.operation === "evaluation-interpretation"
-            const content = serializeEvidence(() => interpretationView && input.response_format === "html" ? renderEvaluatorInterpretationHTML(result as EvaluatorInterpretationPage)
+            const content = serializeEvidence(() => incrementView && input.response_format === "html" ? renderIncrementalLearningHTML(result)
+              : incrementView && input.response_format === "markdown" ? renderIncrementalLearningMarkdown(result)
+              : interpretationView && input.response_format === "html" ? renderEvaluatorInterpretationHTML(result as EvaluatorInterpretationPage)
               : interpretationView && input.response_format === "markdown" ? renderEvaluatorInterpretationMarkdown(result as EvaluatorInterpretationPage)
               : sourceView && input.response_format === "html" ? renderRetrospectiveSourceHTML(result)
               : sourceView && input.response_format === "markdown" ? renderRetrospectiveSourceMarkdown(result)
@@ -1724,13 +1972,19 @@ export default Plugin.define({
                 await assertEvidence([...evidenceResources], createHash("sha256").update(content).digest("hex"))
               } catch (error) { interpretationUnavailable(error) }
             }
+            activityBytes = Buffer.byteLength(content, "utf8"); activityOutcome = "succeeded"
             return { content }
+            } catch (error) {
+              if (lifetime.signal.aborted || toolContext.signal.aborted) activityOutcome = "cancelled"
+              throw error
+            } finally { auditActivity(activityOutcome) }
           },
         })
       }))
       disposers.push(await ctx.session.hook("context", async event => {
         try {
           if (!await owns(event.sessionID)) return
+          await classifyLearningDescendant(event.sessionID)
           const snapshot = await getConfig()
           if (snapshot.errors.length) warn(snapshot.errors.join("; "))
           injectInstructions(event.system, snapshot.config, event.agent)
@@ -1781,6 +2035,7 @@ export default Plugin.define({
         if (/^loom[_.]/.test(event.tool)) return
         try {
           if (!await owns(event.sessionID)) return
+          await classifyLearningDescendant(event.sessionID)
           const snapshot = await getConfig()
           if (lifetime.signal.aborted) { observer.captureGap(); return }
           if (snapshot.config.ledger.capture === "automatic") observer.before(event)
@@ -1791,6 +2046,7 @@ export default Plugin.define({
         if (/^loom[_.]/.test(event.tool)) return
         try {
           if (!await owns(event.sessionID)) return
+          await classifyLearningDescendant(event.sessionID)
           const captureEnabled = (await getConfig()).config.ledger.capture === "automatic"
           if (lifetime.signal.aborted) return
           if (captureEnabled || observer.has(event)) {
@@ -1836,7 +2092,47 @@ export default Plugin.define({
     }
     try {
       learningRuntime = await registerAutomaticLearning(ctx, { learning, ledgerPath: filename, learningPath: learningFilename,
-        signal: lifetime.signal, getConfig, checkedSession, warn })
+        signal: lifetime.signal, getConfig, checkedSession, warn,
+        onCatchUp: async (sessionID, signal) => {
+          if (!learning) return
+          const snapshot = await getConfig(signal), policy = snapshot.config.learning.interpretation
+          if (snapshot.errors.length || !policy.enabled) return
+          const principal = await checkedSession(sessionID)
+          if (typeof principal.agent !== "string" || !principal.agent) throw new Error("Native learning principal unavailable")
+          const actor = { session_id: sessionID, agent: principal.agent }
+          const authorize = async () => {
+            signal.throwIfAborted()
+            const current = await checkedSession(sessionID), config = await getConfig(signal)
+            if (current.agent !== actor.agent || config.errors.length || config.config.ledger.capture !== "automatic"
+              || digest(config.config.learning.interpretation) !== digest(policy)) throw new Error("Incremental interpretation policy changed")
+            await ctx.permission.assert({ sessionID, agent: actor.agent, action: "read", resources: [filename, learningFilename] })
+            signal.throwIfAborted()
+          }
+          const resolve: RetrospectiveSourceResolver = async request => {
+            signal.throwIfAborted()
+            const ref = request.source, recipient = await checkedSession(request.recipient_session_id)
+            if (typeof recipient.agent !== "string" || !ref.session_id) throw new Error("Incremental source recipient unavailable")
+            await checkedSession(ref.session_id)
+            const views: Record<string, string> = { "ledger-record": "record-full", objective: "objective", "objective-link": "objective-link",
+              "review-request": "review-request", "review-relationship": "review-relationship" }
+            if (views[ref.kind] !== request.permitted_view) return { ...request, status: "unsupported" }
+            const scope = ref.kind === "ledger-record" ? `session:${encodeURIComponent(ref.session_id)}:record:${encodeURIComponent(ref.id)}`
+              : `${ref.kind}:${encodeURIComponent(ref.id)}`
+            const resources = [filename, learningFilename, `loom:evidence:discover:${scope}`, `loom:evidence:inspect:${scope}:view:${request.permitted_view}`,
+              `loom:evidence:disclose:${scope}:view:${request.permitted_view}:recipient:${encodeURIComponent(request.recipient_session_id)}`]
+            await ctx.permission.assert({ sessionID: request.recipient_session_id, agent: recipient.agent, action: "read", resources })
+            signal.throwIfAborted()
+            const original = learning!.automatic.sources.retrospectiveOriginal(ref.kind, ref.id, ref.session_id, sessionID)
+            if (!original) return { ...request, status: "missing" }
+            if (original.ref.sha256 !== ref.sha256 || original.ref.revision !== ref.revision) return { ...request, status: "changed" }
+            const current = await checkedSession(request.recipient_session_id)
+            if (current.agent !== recipient.agent) throw new Error("Incremental source recipient changed")
+            await ctx.permission.assert({ sessionID: request.recipient_session_id, agent: recipient.agent, action: "read", resources })
+            signal.throwIfAborted()
+            return { ...request, source: original.ref, status: "available", value: original.value }
+          }
+          return await learning.incrementalInterpretation.opportunity(actor, policy, { authorize, resolve }, signal)
+        } })
       disposers.push(learningRuntime)
     } catch { warn("Optional automatic learning registration unavailable; core guards and source recording remain active") }
     // The early guard remains restrictive until the entire plugin initialized.

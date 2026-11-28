@@ -1,0 +1,233 @@
+{
+  "format": "loom-installed-incremental-learning/v1",
+  "status": "PASS",
+  "checks": [
+    {
+      "name": "incremental-default-ordinary-session",
+      "status": "PASS",
+      "batches": 1,
+      "authored_originals": 2,
+      "actions": 0,
+      "plans": 0,
+      "objectives": 0,
+      "legacy_batches": 0
+    },
+    {
+      "name": "native-repeated-idle-reuses-successful-cursor",
+      "status": "PASS",
+      "opportunities": [
+        {
+          "from_generation": 1,
+          "through_generation": 2,
+          "checkpoint_ids": [
+            "9279fdbd-ec5b-4038-a7ec-c9374c4c640e"
+          ]
+        },
+        {
+          "from_generation": 2,
+          "through_generation": 3,
+          "checkpoint_ids": [
+            "9279fdbd-ec5b-4038-a7ec-c9374c4c640e"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "later-correction-processes-new-evidence-and-retains-context",
+      "status": "PASS",
+      "first_checkpoints": 1,
+      "later_checkpoints": 2,
+      "unique_originals": 9,
+      "retained_concern": "f4645d7f-3d2a-4964-94bf-a067fed0dc9d"
+    },
+    {
+      "name": "supported-readback-and-native-evaluation-isolation",
+      "status": "PASS",
+      "public_reads": 7,
+      "exact_original_reads": 1,
+      "failed_original_reads": 1,
+      "classified_native_wrappers": 14,
+      "frozen_members": 9,
+      "original_subject_unchanged": true,
+      "failed_retrieval_is_engineering_finding": false
+    },
+    {
+      "name": "no-recursive-model-execution-or-conversation-injection",
+      "status": "PASS",
+      "planned_jobs": 12,
+      "idle_turns": 2,
+      "planned_model_requests": 22,
+      "automatic_model_requests": 0,
+      "new_learning_sessions": 0,
+      "automatic_conversation_injections": 0,
+      "native_sequence_reconciled": true,
+      "qualification": "Serial scripted driver accounting, not production inference or protected-send authority"
+    }
+  ],
+  "genuine_evaluator": "UNPROVEN",
+  "production_inference": "UNQUALIFIED",
+  "limitations": [
+    "Controlled ordinary Session, not a recovered private historical engineering conversation.",
+    "Scripted external provider drives native tools; it does not supply learning reports or qualify model reasoning.",
+    "Explicit report inspections appear in their requesting driver's context; automatic learning never injects them.",
+    "Read-only database observations establish scheduler state, while public tools establish authorized readback."
+  ],
+  "source_head": "ad3dcf31db9eb45302db63467e60ecf1e5baf6da",
+  "candidate": {
+    "name": "loom-plugin",
+    "version": "2.0.0-alpha.1",
+    "sdk_version": "2.3.0",
+    "artifact_sha256": "531f5b1aca9bc3130de877b8798f53d88ac87d313bca50914c60e27e04ab9d67",
+    "artifact_filename": "loom-plugin-2.0.0-alpha.1.tgz",
+    "artifact_path": "/home/runner/work/_temp/loom-increment-package/loom-plugin-2.0.0-alpha.1.tgz",
+    "installed_path": "/home/runner/work/_temp/loom-increment-install/node_modules/loom-plugin"
+  },
+  "runtime_files_checked": 62,
+  "input_sha256": {
+    "tests/installed_incremental_learning.py": "68c384c49de5d929184201be09b925022d4da34c62876d203699c77512727f49",
+    "tests/installed_learning_stage3.py": "47bbf452ff5ddd37cf651768e5ad982e85ceca777057a93e319a7957c7867b7b",
+    "tests/installed_learning_stage4.py": "f1f07ae674e1d3af6078895c6e842e5e370ad0540e1a07676c7f309e687c7613",
+    "tests/installed_questions.py": "177797f8dfb3ad0a377593b827d9d6583ef686e9b402a685a72c6c893e9e44dd",
+    "tests/installed_host_smoke.py": "c5fb42df694962e0f6a18b0f46dd97e164fdfadb9a9165a666d01a8b98959c06",
+    "tests/question-host/server.ts": "54a7e417b9d5bceb6bbef6e999c8ec51da261364db675c26a918a8cb66e169e8",
+    "tests/question-host/provider.mjs": "8e98dfa238f709d6b89df590a23c7d708e5283f44fc6f3a4b5193c05a81d66b0",
+    "package.json": "a1836769e080f1e2f6688bbaf89eaa861139725f7acdfbce8caa4160fa9b7bcc",
+    "bun.lock": "8ad86da9f7feeaf2de0b78fcc3d53256649a0a7e2be69d975e12761ada8ac576",
+    ".bun-version": "b99b4c7cdf236f59bc9f65d963deaecae3b16a7dad87939cacb9057f7664daee"
+  },
+  "host": {
+    "version": "opencode v2.3.0",
+    "sha256": "2e0e4656521ca56e5ba16a00d48429958b8105b3fa6466710a4350e68759381f"
+  },
+  "session_id": "ses_dde0f9bc8ffeL4cHbeKZK2svNC",
+  "audit_sha256": "45035e26513674c847461ad79757517d7af7321171f463d84eeac64d1951f59e",
+  "audit_bytes": 3795662,
+  "audit_receipts": 344,
+  "readbacks": [
+    {
+      "tool": "review",
+      "operation": "establish-subject",
+      "bytes": 2186,
+      "sha256": "33f7dfca3ec74e924ed05c2e5a7bdb83cab5e7d4c14aeef2065f01b0da0a785c"
+    },
+    {
+      "tool": "history",
+      "operation": "preview-population",
+      "bytes": 34193,
+      "sha256": "6e42e3780a2c150bb12a311a7745a9350096695b485c5fc050b8b18dc16615d6"
+    },
+    {
+      "tool": "review",
+      "operation": "freeze-population",
+      "bytes": 26356,
+      "sha256": "4b70e28b20d3bca6e6c26ee17c33293e2d27d422f01cbd203ac550f6f151ac8f"
+    },
+    {
+      "tool": "insights",
+      "operation": "learning-progress",
+      "bytes": 11285,
+      "sha256": "f5b1da8c2c69d056e7fc91c7bfa4e09a821ddd146d382f7a2ed3beded949824d"
+    },
+    {
+      "tool": "insights",
+      "operation": "learning-report",
+      "bytes": 3282,
+      "sha256": "764e82d1954617d4b7217f1327154617dc9b22e55ba942f5252df09e46d5600e"
+    },
+    {
+      "tool": "insights",
+      "operation": "learning-source",
+      "bytes": 1403,
+      "sha256": "3111bb4ac353d5253bfb7157a0371124af9ee1c36e062573a5d794093002f389"
+    },
+    {
+      "tool": "history",
+      "operation": "population",
+      "bytes": 26356,
+      "sha256": "bd1f514ca11ba63efe7effe4e4db717623233f5ce3c1618401ffee8f7e42e7c7"
+    }
+  ],
+  "driver_plan": [
+    {
+      "session_id": "ses_dde0f9bc8ffeL4cHbeKZK2svNC",
+      "job": "cfeab20e2ab363b1",
+      "code_sha256": "134fbdc0215a3b91d08e677a1daaeffecdedecff64ea4ebfc64e293d69688697",
+      "audit_start": 2
+    },
+    {
+      "session_id": "ses_dde0f9bc8ffeL4cHbeKZK2svNC",
+      "job": "40a263aed4d218ee",
+      "code_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "audit_start": 35,
+      "idle_only": true
+    },
+    {
+      "session_id": "ses_dde0f9bc8ffeL4cHbeKZK2svNC",
+      "job": "59b0072e9f7d37b7",
+      "code_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "audit_start": 49,
+      "idle_only": true
+    },
+    {
+      "session_id": "ses_dde0f9bc8ffeL4cHbeKZK2svNC",
+      "job": "1f27001ddcedf5b3",
+      "code_sha256": "c2c972488edab58bdd4de91f917be51f200136e1e28f2e9db334723cadeab139",
+      "audit_start": 63
+    },
+    {
+      "session_id": "ses_dde0f9bc8ffeL4cHbeKZK2svNC",
+      "job": "16db75689b70ac71",
+      "code_sha256": "e3bced002e15f06b155b5f7ab420e9cfaff1039f50237dc2cd5ff90d7bf717d0",
+      "audit_start": 96
+    },
+    {
+      "session_id": "ses_dde0f9bc8ffeL4cHbeKZK2svNC",
+      "job": "3d3aac78cb3b3f50",
+      "code_sha256": "2f52ac4420792dbc1fa74a7901a90a04302e2de7e6911a3baff54b53d1e63360",
+      "audit_start": 127
+    },
+    {
+      "session_id": "ses_dde0f9bc8ffeL4cHbeKZK2svNC",
+      "job": "1cb42fe95d851354",
+      "code_sha256": "410f630d1f061c3d657ef38c62e3acaf33d9fa602314b7e4ab256be6ff4bf8c5",
+      "audit_start": 158
+    },
+    {
+      "session_id": "ses_dde0f9bc8ffeL4cHbeKZK2svNC",
+      "job": "7b7e0af7ca99217a",
+      "code_sha256": "906226ff0c969ab833e22e28be55367c0f1eab251992d800d4edbe17c60cbeed",
+      "audit_start": 189
+    },
+    {
+      "session_id": "ses_dde0f9bc8ffeL4cHbeKZK2svNC",
+      "job": "9fef7061671a57eb",
+      "code_sha256": "12bce2856440595d37f1404817eb58001c1d285cd31cd508253006b3c034c59d",
+      "audit_start": 220
+    },
+    {
+      "session_id": "ses_dde0f9bc8ffeL4cHbeKZK2svNC",
+      "job": "754f4c46e8eb50ee",
+      "code_sha256": "f311b192cdb64e3692ef5e5e54a42245385cbf5a6cab478ea035cda9ef66f5db",
+      "audit_start": 251
+    },
+    {
+      "session_id": "ses_dde0f9bc8ffeL4cHbeKZK2svNC",
+      "job": "1b7d57d50df452a1",
+      "code_sha256": "3ea15c2ecf6054b73304fde561ed40fd92cc18e5cac8686ee3fe0b8625b40544",
+      "audit_start": 282
+    },
+    {
+      "session_id": "ses_dde0f9bc8ffeL4cHbeKZK2svNC",
+      "job": "d1f22aaa4af03602",
+      "code_sha256": "b0b3bf69f52d199874ca69e998ee2ee9fefe792d7b8159b1a67dbc7a1c698d59",
+      "audit_start": 313
+    }
+  ],
+  "resources": {
+    "elapsed_seconds": 7.988749503999998,
+    "child_user_seconds": 4.808022,
+    "child_system_seconds": 0.626023,
+    "peak_child_rss_kib": 595692,
+    "qualification": "Process-level fixture resource observation; not per-model billing"
+  }
+}

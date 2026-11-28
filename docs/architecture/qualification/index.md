@@ -3,6 +3,8 @@
 Retained evidence manifests preserve filenames and revisions recorded when the
 evidence was captured. Use the report links below for current document locations.
 
+- [Session evaluation and incremental learning rebuild](session-learning-rebuild.md)
+
 - [Cross-session inbox performance qualification](inbox-performance.md)
 - [Initial native model-routing qualification — issue 206](initial-routing-qualification-206.md)
 - [OpenCode 2.3.0 native send identity and account-binding qualification — issue 205](native-attempt-qualification-205.md)

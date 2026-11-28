@@ -34,6 +34,7 @@ jobs:
           ./node_modules/.bin/tsc --noEmit --ignoreConfig --target ES2022 --module NodeNext
           --moduleResolution NodeNext --strict --skipLibCheck --types bun,node
           tests/engineering-history-browser/generate.ts tests/engineering-trajectory-reader.ts
+          tests/session-retrospective-browser/generate.ts tests/session-retrospective-browser/read.ts
       - name: Install pinned test-only browser and accessibility tools outside plugin dependencies
         run: >-
           npm install --prefix "$LOOM_HISTORY_BROWSER_DEPS" --ignore-scripts --no-audit --no-fund
@@ -44,6 +45,10 @@ jobs:
         run: bun tests/engineering-history-browser/generate.ts "$RUNNER_TEMP/loom-history-browser-fixtures"
       - name: Qualify native keyboard, references, layout, accessibility and inertness in Chromium
         run: node tests/engineering-history-browser/qualify.mjs "$RUNNER_TEMP/loom-history-browser-fixtures" "$RUNNER_TEMP/loom-history-browser-report"
+      - name: Generate the ordinary Session evaluation and incremental learning journey
+        run: bun tests/session-retrospective-browser/generate.ts "$RUNNER_TEMP/loom-session-retrospective-fixtures"
+      - name: Exercise Session foundation, conclusions and earlier original evidence in Chromium
+        run: node tests/session-retrospective-browser/qualify.mjs "$RUNNER_TEMP/loom-session-retrospective-fixtures" "$RUNNER_TEMP/loom-session-retrospective-report"
       - name: Verify production dependencies remain unchanged
         run: git diff --exit-code -- package.json bun.lock
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -53,5 +58,7 @@ jobs:
           path: |
             ${{ runner.temp }}/loom-history-browser-fixtures/
             ${{ runner.temp }}/loom-history-browser-report/
+            ${{ runner.temp }}/loom-session-retrospective-fixtures/
+            ${{ runner.temp }}/loom-session-retrospective-report/
           if-no-files-found: warn
           retention-days: 7

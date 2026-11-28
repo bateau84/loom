@@ -51,3 +51,13 @@ test("source document presentations retain the exact view and render hostile evi
   expect(html).toContain("default-src 'none'")
   expect(html).toContain(digest(value))
 })
+
+test("trusted preview and incremental read requests survive exact-source fragmentation", () => {
+  for (const request of [{ operation: "preview-source", selection: { target: { kind: "session", id: "ordinary" } }, preview_sha256: "a".repeat(64), member_key: "source" },
+    { operation: "learning-source", batch_id: "earlier", member_key: "retained-source", source_index: 0 }]) {
+    const value = { text: "recorded original".repeat(50) }
+    const page = retrospectiveSourceView({ status: "available", value, source: { sha256: digest(value) }, read_request: request }, { source_limit: 30 })
+    expect(page.navigation.next).toEqual({ ...request, source_offset: 30, source_limit: 30 })
+    expect(page.navigation.next).not.toHaveProperty("population_id")
+  }
+})

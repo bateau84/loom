@@ -19,3 +19,5 @@
 ## Evidence assets
 
 - [learning-stage4-host-evidence.json](evidence/learning-stage4-host-evidence.json)
+
+- [Session learning interfaces and checkpoints](ars-015-session-learning.md) — Subject, source, cursor and interpretation contracts.

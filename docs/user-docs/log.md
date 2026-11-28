@@ -6,6 +6,10 @@ tags: [loom, documentation, history]
 timestamp: 2026-11-27T00:00:00Z
 ---
 
+## 2026-11-28
+
+- Added the ordinary Session evaluation and incremental-learning walkthrough, with source boundaries and production qualification limits.
+
 ## 2026-11-27
 
 - Established the [user documentation bundle](/docs/user-docs/index.md) as part of the documentation reorganization.

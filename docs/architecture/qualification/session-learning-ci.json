@@ -1,0 +1,906 @@
+{
+  "schema": "loom.session-learning-ci.v1",
+  "date": "2026-11-28",
+  "runtime_commit": "ad3dcf31db9eb45302db63467e60ecf1e5baf6da",
+  "base_commit": "687c0029ccb1f8231765aad271e87a5af3d1fd76",
+  "status": "PASS",
+  "qualification": "Eight workflows passed for this runtime commit. A following documentation-only commit retains receipts without changing runtime or test source.",
+  "main": {
+    "run_id": 46140561354,
+    "job_id": 140965322833,
+    "core_tests": 438,
+    "native_tests": 1223,
+    "native_assertions": 27367,
+    "python_tests": 378,
+    "real_codemode_tests": 11,
+    "real_codemode_assertions": 472
+  },
+  "browser": {
+    "run_id": 46140561293,
+    "job_id": 140965322915,
+    "existing_scenes": 28,
+    "existing_checks": 352,
+    "session_scenes": 10,
+    "session_checks": 46,
+    "selected_supported_reads": 4,
+    "selected_returned_bytes": 39895,
+    "receipt": "session-learning-browser.json"
+  },
+  "incremental": {
+    "run_id": 46140561316,
+    "job_id": 140965322680,
+    "checks": 5,
+    "receipt": "session-learning-installed-increment.json"
+  },
+  "legacy": {
+    "run_id": 46140561316,
+    "job_id": 140965322944,
+    "receipts": [
+      {
+        "status": "PASS",
+        "e11": "UNPROVEN",
+        "genuine_evaluator": "UNPROVEN",
+        "source_head": "ad3dcf31db9eb45302db63467e60ecf1e5baf6da",
+        "error": null,
+        "checks": [
+          {
+            "name": "S3-installed-native-source-to-automatic-report",
+            "status": "PASS",
+            "source_record_id": "adf2994b-6bf5-4553-83e8-6167f4106c34",
+            "batch": "9a18b441-f71d-4522-862e-ca66935648d7",
+            "entry": "real native loom_record; background scheduler; SQLite publish"
+          },
+          {
+            "name": "S3-owner-only-public-source-linked-readback",
+            "status": "PASS",
+            "batch": "9a18b441-f71d-4522-862e-ca66935648d7",
+            "report_sha256": "e9c646c34bcfe9ded6c9cdf41271c2086d67ab9dc67444026c7510bcd5f92c10",
+            "source_ref_count": 4,
+            "evaluator": "blocked"
+          },
+          {
+            "name": "S3-denied-source-caught-up-after-restart",
+            "status": "PASS",
+            "old_opportunity": "blocked",
+            "recovered_batch": "5e495d79-e4fe-40c5-ab42-2066a8c4eb61",
+            "original_id": "712722f9-06e5-4af0-ab55-5f18ea02e300",
+            "processes": [
+              2435,
+              2514
+            ]
+          },
+          {
+            "name": "S3-later-source-creates-a-new-revision",
+            "status": "PASS",
+            "prior_batch": "9a18b441-f71d-4522-862e-ca66935648d7",
+            "later_batch": "76b871b7-bd41-40ec-a1ee-595b5d713afb",
+            "later_record": "13df6c8d-416a-4faa-b647-aa8c9c1beff2"
+          },
+          {
+            "name": "S3-authored-R1-correction-and-partial-R2-scope",
+            "status": "PASS",
+            "request_ids": [
+              "stage3-r1-cd7fc6c6a71147e4",
+              "stage3-r2-56bd14d7ca56da36"
+            ],
+            "report": "7a92f833-075b-45a8-a035-335bd854a99d",
+            "historical_work_preserved": true,
+            "native_review_dispatch": "withheld",
+            "report_review_requests": 2
+          },
+          {
+            "name": "S3-foreign-and-revoked-readers-denied",
+            "status": "PASS",
+            "foreign_denied": true,
+            "same_session_revoked": true
+          },
+          {
+            "name": "S3-capture-off-prevents-automatic-analysis",
+            "status": "PASS",
+            "source_record_id": "1b2853aa-305d-493b-a9d5-703ae4a58a88",
+            "published_batch": false
+          },
+          {
+            "name": "S3-no-automatic-model-or-mutation",
+            "status": "PASS",
+            "external_provider": "question-fixture",
+            "new_subagent_calls": 0,
+            "instruction_changes": 0
+          },
+          {
+            "name": "S3-stopped-backup-restore-fresh-host-readback",
+            "status": "PASS",
+            "old_session": "ses_dde0f98ddffenIue2hMhIpNV5s",
+            "restored_batch": "7a92f833-075b-45a8-a035-335bd854a99d",
+            "restored_report_sha256": "496f8cf00ceda06a0e593044b627b0df5f7e5ac234e230f0bb9662db3890e7c1",
+            "backup_set_id": "0110a783-dbf3-46ab-9ef1-a4e4721ab67c",
+            "membership": 2,
+            "original_unchanged": true,
+            "restored_bytes_identical": true,
+            "native_revocation_preserved": true,
+            "foreign_denied": true
+          },
+          {
+            "name": "S3-501-objective-population-through-native-scheduler-and-pages",
+            "status": "PASS",
+            "owner_session": "ses_dde0f71deffepP575jEzBwO6tZ",
+            "original_record": "60b2fbd1-fb59-4406-ad41-05efc6a193b1",
+            "authored_objectives": 501,
+            "actual_members": 502,
+            "unique_source_refs": 1003,
+            "independent_requests": "unknown",
+            "batch": "a149df37-98cf-43d9-8dcd-fea782986c12",
+            "trigger": "installed cold-start processing, interrupted and resumed"
+          },
+          {
+            "name": "S3-forced-crash-partial-checkpoint-and-late-source-recovery",
+            "status": "PASS",
+            "frozen_batch": "a149df37-98cf-43d9-8dcd-fea782986c12",
+            "recovered_batch": "a149df37-98cf-43d9-8dcd-fea782986c12",
+            "persisted_members": 502,
+            "checkpointed_at_crash": 1,
+            "original_checkpoints_preserved": 1,
+            "total_after_recovery": 502,
+            "logical_batches_for_frozen_identity": 1,
+            "overall_publications_for_frozen_identity": 1,
+            "late_source": "e1bbd95a-ab9c-45c6-9fd0-16e54f2f5c5f",
+            "later_revision": "4bec30ec-4225-4314-9824-21308916bbda",
+            "original_source_count": 1003,
+            "later_source_count": 1007,
+            "intervening_report_revisions": 8,
+            "revision_ancestry_reaches_recovered_batch": true,
+            "source_and_report_bodies_checked_through_native_tools": true,
+            "host_termination": "SIGKILL",
+            "host_return_code": -9,
+            "late_evidence_admitted_while_original_pending": true,
+            "report_is_genuine_evaluator": false
+          }
+        ]
+      },
+      {
+        "status": "PASS",
+        "genuine_evaluator": "UNPROVEN",
+        "e11": "UNPROVEN",
+        "q4": "UNQUALIFIED",
+        "q5": "UNQUALIFIED",
+        "source_head": "ad3dcf31db9eb45302db63467e60ecf1e5baf6da",
+        "error": null,
+        "checks": [
+          {
+            "name": "S4-native-authored-whole-objective-source-preparation",
+            "status": "PASS",
+            "original_objective": "cce9e755-5f41-481d-81cd-f9e7fce51651",
+            "source_batch": "85af687f-e8d0-4f07-a467-987e0b6ad613",
+            "verification_sequence": [
+              "fail",
+              "fail",
+              "pass"
+            ],
+            "independent_origin_qualification": "unproven",
+            "preparation": {
+              "batch_id": "eval-preparation-ba13a1a91dc033f52108e0ab71c3bef2de85d0b707255d52cd0134f6d04e0409",
+              "request_id": "evaluator-f5a416fb8096f03a4f706e1f17111c56eae823baf4e921929e1c8a0be7b6fb9c",
+              "review_request_id": "evaluator-f5a416fb8096f03a4f706e1f17111c56eae823baf4e921929e1c8a0be7b6fb9c",
+              "method_id": "evaluator/v1/7c606982b7ea99c771812150967f30098939c56f76e27e464bd612e5d21fd4a7",
+              "manifest_sha256": "5924fe47b786974f2ad992415a5804ab79ff51672f57c89cf7e870dda2597a48",
+              "attempt_id": "2f9cc2f0-6ccc-4525-9c8c-00170ae8fc14"
+            },
+            "actual_reasoning": false
+          },
+          {
+            "name": "S4-native-stable-request-review-and-issue-replay",
+            "status": "PASS",
+            "batch_id": "eval-preparation-ba13a1a91dc033f52108e0ab71c3bef2de85d0b707255d52cd0134f6d04e0409",
+            "request_id": "evaluator-f5a416fb8096f03a4f706e1f17111c56eae823baf4e921929e1c8a0be7b6fb9c",
+            "review_request_id": "evaluator-f5a416fb8096f03a4f706e1f17111c56eae823baf4e921929e1c8a0be7b6fb9c",
+            "method_id": "evaluator/v1/7c606982b7ea99c771812150967f30098939c56f76e27e464bd612e5d21fd4a7",
+            "manifest_sha256": "5924fe47b786974f2ad992415a5804ab79ff51672f57c89cf7e870dda2597a48",
+            "attempt_id": "2f9cc2f0-6ccc-4525-9c8c-00170ae8fc14"
+          },
+          {
+            "name": "S4-native-read-only-admission-and-replay",
+            "status": "PASS",
+            "batch_id": "eval-preparation-ba13a1a91dc033f52108e0ab71c3bef2de85d0b707255d52cd0134f6d04e0409",
+            "request_id": "evaluator-f5a416fb8096f03a4f706e1f17111c56eae823baf4e921929e1c8a0be7b6fb9c",
+            "review_request_id": "evaluator-f5a416fb8096f03a4f706e1f17111c56eae823baf4e921929e1c8a0be7b6fb9c",
+            "method_id": "evaluator/v1/7c606982b7ea99c771812150967f30098939c56f76e27e464bd612e5d21fd4a7",
+            "manifest_sha256": "5924fe47b786974f2ad992415a5804ab79ff51672f57c89cf7e870dda2597a48",
+            "attempt_id": "2f9cc2f0-6ccc-4525-9c8c-00170ae8fc14",
+            "blockers": [
+              {
+                "capability": "effective-method",
+                "state": "unsupported",
+                "reason": "effective-method-authority-unavailable"
+              },
+              {
+                "capability": "recipient",
+                "state": "unsupported",
+                "reason": "qualified-recipient-preparation-unavailable"
+              },
+              {
+                "capability": "recipient-source-access",
+                "state": "unsupported",
+                "reason": "recipient-source-authority-unavailable"
+              },
+              {
+                "capability": "model-provider-account",
+                "state": "unsupported",
+                "reason": "model-account-authority-unavailable"
+              },
+              {
+                "capability": "budget",
+                "state": "missing",
+                "reason": "budget-policy-missing"
+              },
+              {
+                "capability": "budget-reservation",
+                "state": "unsupported",
+                "reason": "atomic-budget-owner-unavailable"
+              },
+              {
+                "capability": "native-reconciliation",
+                "state": "unsupported",
+                "reason": "native-effect-reconciliation-unavailable"
+              }
+            ],
+            "effect_permit": null,
+            "budget_reservation": null,
+            "preparation_stores_unchanged": true,
+            "dispatch_enabled": false
+          },
+          {
+            "name": "S4-native-bounded-complete-membership-readback",
+            "status": "PASS",
+            "members": 3,
+            "pages": 3,
+            "page_chars": [
+              5324,
+              8335,
+              5672
+            ],
+            "immutable_manifest_sha256": "5924fe47b786974f2ad992415a5804ab79ff51672f57c89cf7e870dda2597a48"
+          },
+          {
+            "name": "S4-native-foreign-and-revoked-readers-denied",
+            "status": "PASS",
+            "foreign_denials": 4,
+            "revoked_same_owner_denials": 4,
+            "admission_included": true
+          },
+          {
+            "name": "S4-native-competing-intents-remain-unadmitted",
+            "status": "PASS",
+            "concurrent_assessment_reads": 3,
+            "distinct_prepared_intents": 2,
+            "preparation_stores_unchanged": true,
+            "declared_budget_is_not_authority": true,
+            "budget_reservation_exercised": false,
+            "atomic_budget_qualification": "UNPROVEN"
+          },
+          {
+            "name": "S4-native-wrong-identity-checksum-and-cursor-denied",
+            "status": "PASS",
+            "negative_controls": 12,
+            "preparation_stores_unchanged": true,
+            "declared_budget_replay": true
+          },
+          {
+            "name": "S4-native-admission-identity-and-authority-denied",
+            "status": "PASS",
+            "negative_controls": 11,
+            "preparation_stores_unchanged": true
+          },
+          {
+            "name": "S4-native-restart-preserves-preparation-and-stage3",
+            "status": "PASS",
+            "before_pid": 4025,
+            "after_pid": 4612,
+            "stage3_report_id": "e5c3dd89-2a56-4b3f-a559-fdc211d6b4ae",
+            "admission_unchanged": true,
+            "batch_id": "eval-preparation-ba13a1a91dc033f52108e0ab71c3bef2de85d0b707255d52cd0134f6d04e0409",
+            "request_id": "evaluator-f5a416fb8096f03a4f706e1f17111c56eae823baf4e921929e1c8a0be7b6fb9c",
+            "review_request_id": "evaluator-f5a416fb8096f03a4f706e1f17111c56eae823baf4e921929e1c8a0be7b6fb9c",
+            "method_id": "evaluator/v1/7c606982b7ea99c771812150967f30098939c56f76e27e464bd612e5d21fd4a7",
+            "manifest_sha256": "5924fe47b786974f2ad992415a5804ab79ff51672f57c89cf7e870dda2597a48",
+            "attempt_id": "2f9cc2f0-6ccc-4525-9c8c-00170ae8fc14"
+          },
+          {
+            "name": "S4-native-capture-off-admission-remains-blocked",
+            "status": "PASS",
+            "source_processing": "disabled",
+            "admission_readable": true,
+            "preparation_denied": true,
+            "preparation_stores_unchanged": true,
+            "stage3_report_id": "e5c3dd89-2a56-4b3f-a559-fdc211d6b4ae",
+            "effect_permit": null
+          },
+          {
+            "name": "S4-native-mutated-original-withholds-dependent-preparation",
+            "status": "PASS",
+            "original_record": "2a4776c9-0f99-45fb-9f99-73cb686d5414",
+            "stopped_host_mutation": true,
+            "native_denials": 4,
+            "admission_included": true
+          },
+          {
+            "name": "S4-native-no-evaluator-dispatch-or-instruction-mutation",
+            "status": "PASS",
+            "evaluator_dispatches": 0,
+            "instruction_mutations": 0,
+            "provider": "question-fixture",
+            "native_recipient_sessions": 0,
+            "driver_model_requests": 170,
+            "scripted_provider_requests": 170,
+            "planned_driver_invocations": 85,
+            "native_prompt_invocations": 85,
+            "native_step_invocations": 170,
+            "native_execute_invocations": 85,
+            "expected_tool_followup_requests": 85,
+            "native_auxiliary_requests": 0,
+            "invocation_sequence_reconciled": true,
+            "native_send_identity_qualification": "UNQUALIFIED; exact serial fixture sequence, not a protected per-send identity",
+            "inference_qualification": "local scripted provider drove tools; no genuine Evaluator reasoning or billing qualification"
+          }
+        ]
+      },
+      {
+        "status": "PASS",
+        "source_head": "ad3dcf31db9eb45302db63467e60ecf1e5baf6da",
+        "development_only": false,
+        "error": null,
+        "checks": [
+          {
+            "name": "positive-native-one-send-and-completed-result",
+            "status": "PASS",
+            "result": {
+              "host_id": "isolated-opencode-230-fixture",
+              "session_id": "ses_eval_9fb64c98867a6f21389dae10c465fb4f",
+              "input_id": "msg_eval_9fb64c98867a6f21389dae10c465fb4f",
+              "result_id": "msg_221f6c0ac001tU3A1MfWvE1Hqk",
+              "sha256": "f774bc2db39c032ff4a258baa7a11639cf5cbc1360486794844fd965d11497d9"
+            }
+          },
+          {
+            "name": "original-result-recovered-after-host-restart",
+            "status": "PASS"
+          },
+          {
+            "name": "old-loom-snapshot-recovers-without-new-effect",
+            "status": "PASS"
+          },
+          {
+            "name": "additional-native-send-denied-by-durable-owner",
+            "status": "PASS",
+            "denied_sends": 1
+          },
+          {
+            "name": "provider-admission-oracle-rejects-duplicate",
+            "status": "PASS"
+          },
+          {
+            "name": "lost-ack-recovered-without-new-effect",
+            "status": "PASS"
+          },
+          {
+            "name": "provider-rejection-with-native-admission-preserved",
+            "status": "PASS",
+            "native_input_admitted": true,
+            "canonical_native_outcome": "unknown",
+            "admitted_model_sends": 0,
+            "budget": "released",
+            "claim_retained": true,
+            "retry_decisions": 1
+          },
+          {
+            "name": "crashed-native-send-retains-uncertain-reservation",
+            "status": "PASS",
+            "denied_sends": 1
+          },
+          {
+            "name": "uncertain-reservation-never-claims-or-dispatches",
+            "status": "PASS",
+            "canonical_claims": 0,
+            "execute_entries": 0,
+            "native_inputs": 0,
+            "model_sends": 0,
+            "reserved_capacity": 1
+          },
+          {
+            "name": "losing-validation-failure-preserves-native-winner",
+            "status": "PASS",
+            "canonical_claim_retained": true,
+            "authority_cancellations": 0,
+            "native_interrupts": 0,
+            "execute_entries": 1,
+            "model_sends": 1,
+            "result": {
+              "host_id": "isolated-opencode-230-fixture",
+              "session_id": "ses_eval_9816bb6356e617ad84b0c57f89bc4da4",
+              "input_id": "msg_eval_9816bb6356e617ad84b0c57f89bc4da4",
+              "result_id": "msg_221f6fac2001fJT3SLSPoezaKs",
+              "sha256": "f774bc2db39c032ff4a258baa7a11639cf5cbc1360486794844fd965d11497d9"
+            }
+          },
+          {
+            "name": "losing-caller-abort-preserves-native-winner",
+            "status": "PASS",
+            "canonical_claim_retained": true,
+            "authority_cancellations": 0,
+            "native_interrupts": 0,
+            "execute_entries": 1,
+            "model_sends": 1,
+            "result": {
+              "host_id": "isolated-opencode-230-fixture",
+              "session_id": "ses_eval_8887df45d8744d9aa6f4d49b0d56f147",
+              "input_id": "msg_eval_8887df45d8744d9aa6f4d49b0d56f147",
+              "result_id": "msg_221f704c0001RjwkDzKWzFJwYP",
+              "sha256": "f774bc2db39c032ff4a258baa7a11639cf5cbc1360486794844fd965d11497d9"
+            }
+          },
+          {
+            "name": "concurrent-issues-share-one-capacity-pool",
+            "status": "PASS"
+          }
+        ]
+      },
+      {
+        "status": "PASS",
+        "source_head": "ad3dcf31db9eb45302db63467e60ecf1e5baf6da",
+        "development_only": false,
+        "error": null,
+        "checks": [
+          {
+            "name": "positive-native-two-send-retrieval-and-completed-result",
+            "status": "PASS",
+            "result": {
+              "host_id": "isolated-opencode-230-fixture",
+              "session_id": "ses_eval_d31c18b4daf5895338d7e607116839b4",
+              "input_id": "msg_eval_d31c18b4daf5895338d7e607116839b4",
+              "result_id": "msg_221f71e2d001sy9OfnPvpBVvRo",
+              "sha256": "f774bc2db39c032ff4a258baa7a11639cf5cbc1360486794844fd965d11497d9"
+            }
+          },
+          {
+            "name": "exact-frozen-v2-preparation-and-native-recipient-retrieval",
+            "status": "PASS",
+            "population_id": "retrospective-68799b8ed1a67d1a325629cfbb7443a6c9bf38aa396f9791840b5127582d7dc1",
+            "population_manifest_sha256": "ad7a6f1a4f8ae6cee305f984efcf25f4a3e933974cd3ee3252a6ed45305d7b6d",
+            "preparation_manifest_sha256": "d109a91f1b7a024c8e49ee208a6551d7916ed92a2ec6da00fa6c4a2756e83407",
+            "member_count": 9,
+            "native_session_id": "ses_eval_d31c18b4daf5895338d7e607116839b4",
+            "native_message_id": "msg_221f71d3d0010dM4nQcmBXrItV",
+            "native_tool_id": "call_eval_d31c18b4daf5895338d7e607116839b4",
+            "native_tool_result_sha256": "649adf15d3e328ac2402874023d78f11e03aaa2c4a762cd12b26873e177c7eb6",
+            "requests": 2,
+            "callback_bytes": 64463,
+            "native_tool_bytes": 64463,
+            "provider_bytes": 64463,
+            "concurrent_source_callback_denials": 1,
+            "available_originals": 8,
+            "explicit_gaps": 1
+          },
+          {
+            "name": "later-history-cannot-change-evaluated-population",
+            "status": "PASS",
+            "population_id": "retrospective-68799b8ed1a67d1a325629cfbb7443a6c9bf38aa396f9791840b5127582d7dc1",
+            "manifest_sha256": "ad7a6f1a4f8ae6cee305f984efcf25f4a3e933974cd3ee3252a6ed45305d7b6d",
+            "member_count": 9,
+            "later_record_id": "3dd8ad54-9724-4053-9312-0049a3b93e9a"
+          },
+          {
+            "name": "original-result-recovered-after-host-restart",
+            "status": "PASS"
+          },
+          {
+            "name": "old-loom-snapshot-recovers-without-new-effect",
+            "status": "PASS"
+          },
+          {
+            "name": "additional-native-send-denied-by-durable-owner",
+            "status": "PASS",
+            "denied_sends": 1
+          },
+          {
+            "name": "provider-admission-oracle-rejects-duplicate",
+            "status": "PASS"
+          },
+          {
+            "name": "lost-ack-recovered-without-new-effect",
+            "status": "PASS"
+          },
+          {
+            "name": "provider-rejection-with-native-admission-preserved",
+            "status": "PASS",
+            "native_input_admitted": true,
+            "canonical_native_outcome": "unknown",
+            "admitted_model_sends": 0,
+            "budget": "released",
+            "claim_retained": true,
+            "retry_decisions": 1
+          },
+          {
+            "name": "crashed-native-send-retains-uncertain-reservation",
+            "status": "PASS",
+            "denied_sends": 1
+          },
+          {
+            "name": "uncertain-reservation-never-claims-or-dispatches",
+            "status": "PASS",
+            "canonical_claims": 0,
+            "execute_entries": 0,
+            "native_inputs": 0,
+            "model_sends": 0,
+            "reserved_capacity": 2
+          },
+          {
+            "name": "losing-validation-failure-preserves-native-winner",
+            "status": "PASS",
+            "canonical_claim_retained": true,
+            "authority_cancellations": 0,
+            "native_interrupts": 0,
+            "execute_entries": 1,
+            "model_sends": 2,
+            "result": {
+              "host_id": "isolated-opencode-230-fixture",
+              "session_id": "ses_eval_c9a23862c4689057ce259b6608c3d5f8",
+              "input_id": "msg_eval_c9a23862c4689057ce259b6608c3d5f8",
+              "result_id": "msg_221f75c28001cutOsJc3N77Op0",
+              "sha256": "f774bc2db39c032ff4a258baa7a11639cf5cbc1360486794844fd965d11497d9"
+            }
+          },
+          {
+            "name": "losing-caller-abort-preserves-native-winner",
+            "status": "PASS",
+            "canonical_claim_retained": true,
+            "authority_cancellations": 0,
+            "native_interrupts": 0,
+            "execute_entries": 1,
+            "model_sends": 2,
+            "result": {
+              "host_id": "isolated-opencode-230-fixture",
+              "session_id": "ses_eval_26fa2fda022875de39865e8f387d55a8",
+              "input_id": "msg_eval_26fa2fda022875de39865e8f387d55a8",
+              "result_id": "msg_221f766dc001oNoZBXgeiIMw7m",
+              "sha256": "f774bc2db39c032ff4a258baa7a11639cf5cbc1360486794844fd965d11497d9"
+            }
+          },
+          {
+            "name": "concurrent-issues-share-one-capacity-pool",
+            "status": "PASS"
+          },
+          {
+            "name": "wrong-request-cannot-authorize-execution",
+            "status": "PASS",
+            "canonical_claims": 0,
+            "model_sends": 0,
+            "native_inputs": 0,
+            "source_releases": 0
+          },
+          {
+            "name": "wrong-population-cannot-authorize-execution",
+            "status": "PASS",
+            "canonical_claims": 0,
+            "model_sends": 0,
+            "native_inputs": 0,
+            "source_releases": 0
+          },
+          {
+            "name": "denied-recipient-cannot-retrieve-or-execute",
+            "status": "PASS",
+            "canonical_claims": 0,
+            "model_sends": 0,
+            "native_inputs": 0,
+            "source_releases": 0
+          },
+          {
+            "name": "changed-original-cannot-authorize-execution",
+            "status": "PASS",
+            "canonical_claims": 0,
+            "model_sends": 0,
+            "native_inputs": 0,
+            "source_releases": 0
+          },
+          {
+            "name": "invalid-reservation-cannot-authorize-execution",
+            "status": "PASS",
+            "canonical_claims": 0,
+            "model_sends": 0,
+            "native_inputs": 0,
+            "source_releases": 0
+          },
+          {
+            "name": "truncated-native-source-cannot-authorize-second-send",
+            "status": "PASS",
+            "callback_bytes": 64463,
+            "native_tool_bytes": 51200,
+            "provider_text_bytes": 51376,
+            "provider_serialized_output_bytes": 54678,
+            "provider_output_type": "content",
+            "admitted_model_sends": 1,
+            "denied_model_sends": 1,
+            "budget": "uncertain",
+            "reserved_capacity": 2
+          },
+          {
+            "name": "cancelled-native-execution-cannot-dispatch-again",
+            "status": "PASS",
+            "canonical_claim_retained": true,
+            "model_sends": 2,
+            "budget": "uncertain",
+            "reserved_capacity": 2
+          }
+        ]
+      },
+      {
+        "status": "PASS",
+        "source_head": "ad3dcf31db9eb45302db63467e60ecf1e5baf6da",
+        "development_only": false,
+        "error": null,
+        "checks": [
+          {
+            "name": "native-original-result-published-with-exact-bindings",
+            "status": "PASS",
+            "batch_id": "eval-preparation-40f5b6cae1bff56e7a606c0d163c65bad7d33bf6d435d24e682681c600ffdc48",
+            "report_id": "interpretation-43c608feba5f430059f9d755d13b9893a1a2faec0ce033e653198d29a21ac666",
+            "report_sha256": "b9605edc145087b891309c40efd9de65a0fccc6af8eebaf67dadf2f3d4eba370",
+            "qualification": "publication-mechanics-only",
+            "population_id": "retrospective-04f9216bebdfa95e8c48f9bfc28ba24e1dacc70b7cb4992ceb885050f1773ccd",
+            "population_sha256": "08d9edd5ba128f88524ce616fe9e2851b5a33a7351323609c71198aba264b72e",
+            "result": {
+              "host_id": "isolated-opencode-230-fixture",
+              "session_id": "ses_eval_6e15111eecb2bca2109e5a734254fb62",
+              "input_id": "msg_eval_6e15111eecb2bca2109e5a734254fb62",
+              "result_id": "msg_221f7bbe4001fsWkGj00g5dSZY",
+              "sha256": "32e9fb42da7b4fdf544a84486988d8dced22eac61f01fc3aa521aa39add9b60f"
+            },
+            "native_evidence": {
+              "population_id": "retrospective-04f9216bebdfa95e8c48f9bfc28ba24e1dacc70b7cb4992ceb885050f1773ccd",
+              "population_manifest_sha256": "08d9edd5ba128f88524ce616fe9e2851b5a33a7351323609c71198aba264b72e",
+              "preparation_manifest_sha256": "5a4758a9f9bbd71e3af01a3f9825608bdddebc33e764083ede96923efd7440c5",
+              "member_count": 9,
+              "native_session_id": "ses_eval_6e15111eecb2bca2109e5a734254fb62",
+              "native_message_id": "msg_221f7b85c0012AKMIkq3ipczfN",
+              "native_tool_id": "call_eval_6e15111eecb2bca2109e5a734254fb62",
+              "native_tool_result_sha256": "756bbbeec9874a0e5e23c92eab986799df4520394e80a973ff8cf463a4ba9f84",
+              "requests": 2,
+              "callback_bytes": 64463,
+              "native_tool_bytes": 64463,
+              "provider_bytes": 64463,
+              "concurrent_source_callback_denials": 1,
+              "available_originals": 8,
+              "explicit_gaps": 1
+            }
+          },
+          {
+            "name": "complete-bounded-multipage-readback",
+            "status": "PASS",
+            "pages": {
+              "overview": 2,
+              "trajectory": 1,
+              "claims": 4,
+              "review_coverage": 1,
+              "gaps": 1,
+              "sources": 5,
+              "prior_interpretations": 1
+            }
+          },
+          {
+            "name": "selected-retrieved-cited-unavailable-evidence-distinguished",
+            "status": "PASS",
+            "selected": 9,
+            "retrieved": 8,
+            "cited": 2,
+            "unavailable": 1
+          },
+          {
+            "name": "human-markdown-and-html-retain-exact-evidence-navigation",
+            "status": "PASS"
+          },
+          {
+            "name": "pagination-oracle-rejects-incomplete-and-duplicate-pages",
+            "status": "PASS"
+          },
+          {
+            "name": "replay-restart-and-old-snapshot-preserve-report-without-inference",
+            "status": "PASS",
+            "batch_id": "eval-preparation-40f5b6cae1bff56e7a606c0d163c65bad7d33bf6d435d24e682681c600ffdc48",
+            "report_id": "interpretation-43c608feba5f430059f9d755d13b9893a1a2faec0ce033e653198d29a21ac666",
+            "report_sha256": "b9605edc145087b891309c40efd9de65a0fccc6af8eebaf67dadf2f3d4eba370",
+            "qualification": "publication-mechanics-only",
+            "provider_requests": 2
+          },
+          {
+            "name": "source-loss-withholds-dependent-content",
+            "status": "PASS",
+            "error": "Retrospective preparation source unavailable or changed",
+            "source_id": "81ffb904-3d01-4d48-8f3e-9422e267bab4"
+          },
+          {
+            "name": "current-authority-denies-initial-and-continuation-reads",
+            "status": "PASS"
+          },
+          {
+            "name": "malformed-native-result-rejected",
+            "status": "PASS",
+            "error": "JSON Parse error: Property name must be a string literal",
+            "result_sha256": "e241b550120d7ce006f9405396cb6c1fa37d2ecdd8d2493b2207e7efcc57d2be"
+          },
+          {
+            "name": "unsupported-native-claim-rejected",
+            "status": "PASS",
+            "error": "Supported Evaluator claim requires supporting evidence",
+            "result_sha256": "8682e43613d304e1c6ae73b07c4c258d29498d85d056822138d838dc94072268"
+          },
+          {
+            "name": "unknown-native-citation-rejected",
+            "status": "PASS",
+            "error": "Evaluator interpretation names a member outside the frozen population",
+            "result_sha256": "7161b25803332f244fef96adf2fe23eee3eb98282d1679debef4ed0ce141ecf5"
+          },
+          {
+            "name": "unavailable-native-citation-rejected",
+            "status": "PASS",
+            "error": "Evaluator citation requires an actual retrieval of the frozen available original",
+            "result_sha256": "cc3d0a555a5177ef3885c7a48a4eefa71467764a2a467cf78e0aec56d916b9b3"
+          },
+          {
+            "name": "explicit-no-change-published",
+            "status": "PASS",
+            "batch_id": "eval-preparation-abbf75b5ea8c06a052af2d4c644694b98a8f30a3b254afe3d5076ebb7182d708",
+            "report_id": "interpretation-a40ccc8ab291101417981f500c00b841c9868c62cda9cd78acfeb6905b9e76f4",
+            "report_sha256": "ded8c179ddb8af02f6e28371c7211e76f28b6c96bf3639c7f745db2074098ef9",
+            "qualification": "publication-mechanics-only"
+          },
+          {
+            "name": "interrupted-ack-result-published-after-restart-without-inference",
+            "status": "PASS",
+            "batch_id": "eval-preparation-87ab8b624f8470fa730226bf4c5b0aad380104ab45a1949b16a1fa119c85dc98",
+            "report_id": "interpretation-61783b199db7c9cc788d79c6feb71de67aebe49b7cb3e4f8e7303c8b9bdaaadd",
+            "report_sha256": "a1dec7639203abaf2331b522043710d26b48e2d379d0efd52c2d6088185892a8",
+            "qualification": "publication-mechanics-only",
+            "provider_requests": 2
+          },
+          {
+            "name": "contradictory-later-population-adds-attributable-revision",
+            "status": "PASS",
+            "original": {
+              "batch_id": "eval-preparation-26e5ae91784119eff90fb5498395cc597317d24b7c239b5e345b7b5d3db6995d",
+              "report_id": "interpretation-37ed7de77edb1466643d0c1c59d131802fef8f93d1c3da0337494fff098c5843",
+              "report_sha256": "a5cf97ee2853d12ccf0743f71b4244bae0f2bcecbd5c24985988063821268e1b",
+              "qualification": "publication-mechanics-only"
+            },
+            "revision": {
+              "batch_id": "eval-preparation-169eb8870d22f563e2162e119f4c811c3516c1aceb7e29569a9b2faaecf5affe",
+              "report_id": "interpretation-b20692979fd61d358182d864688c9c689aedbe28a9ebd310048ffb77c813ac2d",
+              "report_sha256": "764e7dc657b4c578fd9202558156bc211548d4bb4e7615ddc84d1cbb81f90ede",
+              "qualification": "publication-mechanics-only"
+            },
+            "provider_requests": 4
+          }
+        ]
+      }
+    ]
+  },
+  "workflows": [
+    {
+      "id": 46140561287,
+      "name": "Installed OpenCode boot and trust regression",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bateau84/loom/actions/runs/46140561287"
+    },
+    {
+      "id": 46140561315,
+      "name": "Installed OpenCode 2.3.0 unqualified routing guard",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bateau84/loom/actions/runs/46140561315"
+    },
+    {
+      "id": 46140561290,
+      "name": "Installed V2 routing acceptance (local providers)",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bateau84/loom/actions/runs/46140561290"
+    },
+    {
+      "id": 46140561293,
+      "name": "Engineering history browser qualification",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bateau84/loom/actions/runs/46140561293"
+    },
+    {
+      "id": 46140561281,
+      "name": "Installed question production-path qualification",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bateau84/loom/actions/runs/46140561281"
+    },
+    {
+      "id": 46140561284,
+      "name": "Installed historical engineering evidence",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bateau84/loom/actions/runs/46140561284"
+    },
+    {
+      "id": 46140561354,
+      "name": "Loom plugin CI",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bateau84/loom/actions/runs/46140561354"
+    },
+    {
+      "id": 46140561316,
+      "name": "Installed Stage 3 and Stage 4 learning mechanics",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/bateau84/loom/actions/runs/46140561316"
+    }
+  ],
+  "artifacts": [
+    {
+      "id": 15261633105,
+      "name": "engineering-history-browser-ad3dcf31db9eb45302db63467e60ecf1e5baf6da",
+      "sha256": "sha256:c4d624b43fbd3ff3364f66034f35cde3e8ae9ea365cada64d8ac3045f8bad1f6",
+      "bytes": 24046132,
+      "expires_at": "2026-12-05T11:36:55Z",
+      "url": "https://github.com/bateau84/loom/actions/runs/46140561293/artifacts/15261633105"
+    },
+    {
+      "id": 15261861990,
+      "name": "installed-stage4-preparation-f338063da13d0b5f5aa85898195ea65b1f21a551",
+      "sha256": "sha256:bca54d28a8723ff84fd2818dcb19987695a9a4e43959d7072d95bda34e1608af",
+      "bytes": 9428639,
+      "expires_at": "2026-12-05T11:42:24Z",
+      "url": "https://github.com/bateau84/loom/actions/runs/46140561316/artifacts/15261861990"
+    },
+    {
+      "id": 15261837101,
+      "name": "installed-stage3-mechanics-f338063da13d0b5f5aa85898195ea65b1f21a551",
+      "sha256": "sha256:bfda480e4ba32cac2f37417a7a637521fcafd70a1f014945bde2e0524c856e78",
+      "bytes": 64868620,
+      "expires_at": "2026-12-05T11:41:43Z",
+      "url": "https://github.com/bateau84/loom/actions/runs/46140561316/artifacts/15261837101"
+    },
+    {
+      "id": 15261718157,
+      "name": "installed-restricted-execution-f338063da13d0b5f5aa85898195ea65b1f21a551",
+      "sha256": "sha256:76a3d7f64226f25f310a9d95ab4f3d71ecde2ad286bd924c033d34cc9c038efd",
+      "bytes": 39763,
+      "expires_at": "2026-12-05T11:42:49Z",
+      "url": "https://github.com/bateau84/loom/actions/runs/46140561316/artifacts/15261718157"
+    },
+    {
+      "id": 15261409709,
+      "name": "installed-evaluator-interpretations-f338063da13d0b5f5aa85898195ea65b1f21a551",
+      "sha256": "sha256:08a087eb1a7f5944cf89692a0171319753c8ea0030a639e2b98c748fa51c96d3",
+      "bytes": 119339,
+      "expires_at": "2026-12-05T11:44:02Z",
+      "url": "https://github.com/bateau84/loom/actions/runs/46140561316/artifacts/15261409709"
+    },
+    {
+      "id": 15261289869,
+      "name": "installed-retrospective-execution-f338063da13d0b5f5aa85898195ea65b1f21a551",
+      "sha256": "sha256:f697f346f5354e0b95be5acf0a065de094a13684fa5cf07d0113127710e13066",
+      "bytes": 84884,
+      "expires_at": "2026-12-05T11:43:29Z",
+      "url": "https://github.com/bateau84/loom/actions/runs/46140561316/artifacts/15261289869"
+    },
+    {
+      "id": 15261278972,
+      "name": "installed-session-increments-ad3dcf31db9eb45302db63467e60ecf1e5baf6da",
+      "sha256": "sha256:b603212bd4052cf6966ceef6cd1449a0750a3ae558ac8ec275e150ebf5de0193",
+      "bytes": 586819,
+      "expires_at": "2026-12-05T11:35:37Z",
+      "url": "https://github.com/bateau84/loom/actions/runs/46140561316/artifacts/15261278972"
+    }
+  ],
+  "limits": [
+    "Controlled historical fixtures do not recover the private Waybar Session.",
+    "Scripted providers and S5 reports do not qualify genuine reasoning.",
+    "Automated Chromium/axe plus fresh-agent reading do not establish human or manual screen-reader acceptance.",
+    "No production execution authority or inference integration has been enabled."
+  ]
+}

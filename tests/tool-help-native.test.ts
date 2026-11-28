@@ -27,7 +27,7 @@ for (const name of Object.keys(TOOL_HELP) as LoomToolName[]) test(`registered ${
 
 test("registered insights help exposes automatic evaluation readers and truthful limits", async () => {
   const f = await registeredLoom([], { beforeSetup: async directory => {
-    await writeFile(join(directory, ".loom.yaml"), "agents: {}\ninstructions: {enabled: false}\nledger: {capture: automatic}\n")
+    await writeFile(join(directory, ".loom.yaml"), "agents: {}\ninstructions: {enabled: false}\nledger: {capture: automatic}\nlearning: {incremental: false}\n")
   } })
   f.sessions.set("s", { id: "s", agent: "author", projectID: "tool-help", location: { directory: f.directory } })
   try {

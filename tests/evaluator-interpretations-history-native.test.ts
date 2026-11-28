@@ -73,6 +73,11 @@ process.stdout.write(JSON.stringify(data[endpoint]));
       }
       manifest.members = selected
       offset += count
+      // Each new chunk advances the selection frontier. Its size is not a
+      // historical cursor: the final 20/21-source chunk is later than the two
+      // preceding 54-source chunks, not a rewind to frontier 20/21.
+      manifest.selection.through = offset
+      manifest.selection.owner_boundary.objective_links = offset
       const f = publicationFixture(state, actor, { manifest, resolve, authorityPath: join(host.directory, "authority-" + index + ".sqlite") })
       controlled.push(f)
       const prior = reports.at(-1)

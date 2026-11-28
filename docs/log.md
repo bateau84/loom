@@ -4,6 +4,10 @@ type: Log
 
 # Update Log
 
+## 2026-11-28
+
+- Added Session evaluation architecture, specification, product design, operational guidance and rebuilt qualification; #227 remains open.
+
 ## 2026-11-27
 
 **Documentation organization:** Moved the existing corpus into

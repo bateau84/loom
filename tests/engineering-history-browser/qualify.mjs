@@ -176,7 +176,8 @@ try {
             assert.equal(item.ordinal, view.navigation.repeat.after + index + 1)
             if (view.state === "frozen") assert.deepEqual(item.inspect, { operation: "population-source",
               population_id: view.population_id, manifest_sha256: view.manifest_sha256, member_key: item.key })
-            else assert.equal(item.inspect, null)
+            else assert.deepEqual(item.inspect, { operation: "preview-source", selection: view.manifest.selection,
+              preview_sha256: view.manifest_sha256, member_key: item.key }, "Preview originals are inspectable before freezing")
           }
           if (view.navigation.next) {
             assert.equal(view.navigation.next.after, view.items.at(-1).ordinal)
@@ -267,14 +268,18 @@ try {
           assert.equal(await anchor.evaluate(element => element === document.activeElement), true)
         }
         await page.keyboard.press("Tab")
-        const summary = page.locator(firstSummary).first()
+        // The foundation now explains gaps and boundaries before its source
+        // cards. Verify the first disclosure in actual document order here;
+        // source-card navigation has its own keyboard check below.
+        const summary = page.locator(population ? "#selection details > summary" : firstSummary).first()
         assert.equal(await summary.evaluate(element => element === document.activeElement), true)
         await keyboardToggle(summary, "Enter", true)
         await keyboardToggle(summary, "Space", false)
         const cdp = await context.newCDPSession(page)
         const { nodes } = await cdp.send("Accessibility.getFullAXTree")
         await cdp.detach()
-        assert.ok(nodes.some(node => !node.ignored && (population ? node.name?.value?.includes(view.items[0].source.id) : node.name?.value === "Source scope and boundary")
+        const summaryName = await summary.textContent()
+        assert.ok(nodes.some(node => !node.ignored && node.name?.value === summaryName
           && node.properties?.some(property => property.name === "expanded" && property.value.value === false)),
         "Chromium accessibility tree exposes collapsed disclosure state")
         await page.locator(".skip").press("Enter")
@@ -409,7 +414,7 @@ try {
           await keyboardToggle(summary, "Enter", true)
         }
         assert.equal(await page.locator("details:not([open])").count(), 0)
-        if (population) assert.equal(await page.locator("#members details[open]").count(), view.items.length)
+        if (population) assert.equal(await page.locator("#members details.card[open]").count(), view.items.length)
         else assert.equal(await page.locator(".relationships > li").count(), view.relationships.length)
         if (fixture.dense) assert.ok(view.relationships.length >= 100, "Dense qualification retains at least 100 typed edges")
         const sizes = await noOverflow()
@@ -469,6 +474,7 @@ try {
       await context.close()
     }
     console.log(`${result.passed ? "PASS" : "FAIL"} ${fixture.name}: ${result.checks.filter(check => check.passed).length} checks`)
+    if (!result.passed && result.error) console.error(result.error.slice(0, 4000))
   }
   report.passed = report.fixtures.every(fixture => fixture.passed)
 } catch (error) {

@@ -7,6 +7,54 @@ concurrency:
 permissions:
   contents: read
 jobs:
+  session-increments:
+    name: Ordinary Session incremental learning
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      EXPECT_HEAD: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .bun-version
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - run: bun install --frozen-lockfile
+      - name: Pack and install the exact incremental-learning candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/loom-increment-package"
+          npm pack --json --pack-destination "$RUNNER_TEMP/loom-increment-package" > "$RUNNER_TEMP/loom-increment-package/pack.json"
+          LOOM_INCREMENT_ARTIFACT=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))[0].filename)' "$RUNNER_TEMP/loom-increment-package/pack.json")
+          npm install --prefix "$RUNNER_TEMP/loom-increment-install" --no-audit --no-fund "$RUNNER_TEMP/loom-increment-package/$LOOM_INCREMENT_ARTIFACT"
+      - name: Install unmodified pinned OpenCode 2.3.0
+        run: npm install --prefix "$RUNNER_TEMP/loom-increment-host" --no-audit --no-fund @opencode/cli@2.3.0
+      - name: Qualify incremental evidence across real native idle opportunities
+        shell: bash
+        run: >-
+          python3 tests/installed_incremental_learning.py
+          --opencode "$RUNNER_TEMP/loom-increment-host/node_modules/.bin/opencode"
+          --plugin "$RUNNER_TEMP/loom-increment-install/node_modules/loom-plugin"
+          --artifact "$(find "$RUNNER_TEMP/loom-increment-package" -maxdepth 1 -name 'loom-plugin-*.tgz' -print -quit)"
+          --repository "$GITHUB_WORKSPACE"
+          --expect-head "$EXPECT_HEAD"
+          --expect-plugin-version "$(node -p 'require("./package.json").version')"
+          --report-directory "$RUNNER_TEMP/loom-increment-installed-report"
+      - name: Verify production dependency graph is unchanged
+        run: git diff --exit-code -- package.json bun.lock
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: installed-session-increments-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/loom-increment-installed-report/
+          if-no-files-found: warn
+          retention-days: 7
   stage3:
     runs-on: ubuntu-latest
     timeout-minutes: 30
