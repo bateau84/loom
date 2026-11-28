@@ -58,10 +58,34 @@ export type EvaluatorRetrievedSource = {
   member_key: string; source_index: 0; receipt_id: string;
   boundary: "native-tool-result" | "provider-input"; source_sha256: string;
 }
+/** Context delivery is a separate identity domain. An earlier original remains
+ * a member of its own report's population, never of the current increment.
+ * The qualified execution owner records every delivered report, list item and
+ * original at the actual native boundary, including material the model omits
+ * from its citations. These records are not accepted from public tools. */
+export type EvaluatorRetrievedContext = {
+  kind: "prior-interpretation"; report_id: string; report_sha256: string;
+  receipt_id: string; boundary: "native-tool-result" | "provider-input";
+} | {
+  kind: "prior-original"; report_id: string; report_sha256: string;
+  member_key: string; source_index: 0; source_sha256: string;
+  receipt_id: string; boundary: "native-tool-result" | "provider-input";
+}
+export type EvaluatorPriorReportSelector = { report_id: string; report_sha256: string }
+export type EvaluatorInterpretationReader = {
+  list(input?: { before?: number; limit?: number }): Promise<unknown>;
+  read(input: EvaluatorPriorReportSelector & { section?: string; after?: string; limit?: number }): Promise<unknown>;
+  source(input: EvaluatorPriorReportSelector & { member_key: string; source_index: 0 }): Promise<unknown>;
+}
+export type EvaluatorSourceReader = ((memberKey: string, sourceIndex: number) => Promise<unknown>) & {
+  interpretations: EvaluatorInterpretationReader;
+}
 export type EvaluatorOriginalResult = {
   format: "loom-evaluator-result/v1"; admission_sha256: string;
   result: NonNullable<EvaluatorExecutionReceipt["result"]>;
   text: string; retrieved: EvaluatorRetrievedSource[];
+  // Omitted for existing originals; their canonical bytes are unchanged.
+  context_retrieved?: EvaluatorRetrievedContext[];
 }
 
 /** Valid recovery observations need not authorize a fresh canonical claim. In
@@ -96,11 +120,13 @@ export interface EvaluatorExecutionAuthority {
   validate(admission: EvaluatorExecutionAdmission, boundary: "claim" | "source",
     recheckCaller?: () => Promise<void>): Promise<EvaluatorExecutionReceipt>;
   execute(admission: EvaluatorExecutionAdmission,
-    source: (memberKey: string, sourceIndex: number) => Promise<unknown>, signal: AbortSignal): Promise<EvaluatorExecutionReceipt>;
+    source: EvaluatorSourceReader, signal: AbortSignal): Promise<EvaluatorExecutionReceipt>;
   cancel(admission: EvaluatorExecutionAdmission): Promise<EvaluatorExecutionReceipt>;
   /** Read the exact original completed result and durable delivery receipts.
    * This must never infer, resume, retry, enqueue or wake native work. A missing
-   * capability fails publication closed; caller-authored JSON is no substitute. */
+   * capability fails publication closed; caller-authored JSON is no substitute.
+   * context_retrieved must account for EVERY delivered prior report/list item
+   * and original, not only cited material. It survives process restart. */
   readResult?(admission: EvaluatorExecutionAdmission, receipt: EvaluatorExecutionReceipt): Promise<EvaluatorOriginalResult>;
 }
 
@@ -138,7 +164,7 @@ function subject(value: unknown): EvaluatorExecutionSubject {
   let source: RetrospectivePopulationRef | undefined
   if (hasSource) {
     const s = object(x.source, ["kind", "format", "population_id", "manifest_sha256"])
-    if (s.kind !== "retrospective-population" || s.format !== "loom-retrospective-population/v1") throw new Error("Unsupported execution source")
+    if (s.kind !== "retrospective-population" || s.format !== "loom-retrospective-population/v1" && s.format !== "loom-retrospective-population/v2") throw new Error("Unsupported execution source")
     source = { kind: s.kind, format: s.format, population_id: uid(s.population_id), manifest_sha256: hash(s.manifest_sha256) }
   }
   return { source_store_id: uid(x.source_store_id), owner_session: uid(x.owner_session), batch_id: uid(x.batch_id),

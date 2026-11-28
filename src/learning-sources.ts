@@ -75,8 +75,8 @@ export class LearningSources {
     return source
   }
 
-  /** Exact owner-resolved tuple only. A different call in the same message is
-   * independent. A later purpose receipt invalidates an earlier derived read. */
+  /** Native parts identify the wrapper, while observed inner tools can share
+   * its IDs. Never treat that group identity as unique inner-call provenance. */
   isEvaluation(ref: EvaluationSourceRef): boolean {
     if (!ref.session_id) return false
     if (evaluationSessionActivity(this.learningDB, ref.session_id)) return true
@@ -88,6 +88,19 @@ export class LearningSources {
     const data = source.value.data
     if (!data || typeof data !== "object" || Array.isArray(data)) return false
     const fields = data as Record<string, unknown>
+    // Code Mode gives inner tools its outer context. A learning read therefore
+    // classifies the observed wrapper, not an engineering shell/read sibling.
+    if (fields.tool !== "codemode") return false
+    if (fields.learning_purpose === "contains-evaluation") return true
+    if (fields.phase === "started") {
+      const finish = this.actionDB.prepare(`SELECT id FROM ledger WHERE session_id=? AND kind='observation'
+        AND json_extract(data,'$.data.start_id')=? AND json_extract(data,'$.data.tool')='codemode'
+        AND json_extract(data,'$.data.learning_purpose')='contains-evaluation' LIMIT 1`).get(ref.session_id, ref.id) as { id: string } | undefined
+      if (finish) {
+        const recorded = this.ledger(ref.session_id, finish.id), detail = recorded?.value.data as Record<string, unknown> | undefined
+        if (detail?.attribution === "captured-at-start" && detail.message_id === fields.message_id && detail.call_id === fields.call_id) return true
+      }
+    }
     return typeof fields.message_id === "string" && typeof fields.call_id === "string"
       ? evaluationInvocationActivity(this.learningDB, { session_id: ref.session_id, message_id: fields.message_id, call_id: fields.call_id }) : false
   }
@@ -95,9 +108,10 @@ export class LearningSources {
   /** Select only new original-owner positions. At most limit owner rows are
    * examined; exclusions still advance their owner's processed position. Owner
    * interleaving prevents one busy source family from starving the others. */
-  selectIncrement(session: string, afterInput: LearningFrontier, upperInput: LearningFrontier, limit = 128) {
+  selectIncrement(session: string, afterInput: LearningFrontier, upperInput: LearningFrontier, limit = 128, startOwner = 0) {
     uid(session); const after = evaluationFrontier(afterInput), upper = evaluationFrontier(upperInput), through = { ...after }
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error("Invalid incremental source limit")
+    if (!Number.isSafeInteger(startOwner) || startOwner < 0 || startOwner > 4) throw new Error("Invalid incremental owner cursor")
     for (const key of Object.keys(upper) as Array<keyof LearningFrontier>) if (after[key] > upper[key]) throw new Error("Increment cursor exceeds source boundary")
     type Candidate = { id: string; sequence: number; kind: string; excluded?: number }
     const queues: Record<keyof LearningFrontier, Candidate[]> = {
@@ -108,29 +122,31 @@ export class LearningSources {
       review_relationships: this.actionDB.prepare(`SELECT r.id,r.sequence,'review-relationship' AS kind,NOT (${engineeringReview("q.data")}) AS excluded FROM review_relationships r JOIN review_requests q ON q.request_id=r.request_id WHERE q.requester_session=? AND r.sequence>? AND r.sequence<=? ORDER BY r.sequence LIMIT ?`).all(session, after.review_relationships, upper.review_relationships, limit + 1) as Candidate[],
     }
     const positions: LearningFrontier = { ...EMPTY_LEARNING_FRONTIER }, selected: EvaluationSourceRef[] = [], budget = snapshotBudget()
-    let examined = 0, excluded = 0
+    let examined = 0, excluded = 0, nextOwner = startOwner
     const keys = Object.keys(queues) as Array<keyof LearningFrontier>
     while (examined < limit) {
       let advanced = false
-      for (const key of keys) {
-        if (examined >= limit) break
+      for (let offset = 0; offset < keys.length; offset++) {
+        const ownerIndex = (nextOwner + offset) % keys.length, key = keys[ownerIndex]!
         const candidate = queues[key][positions[key]]
         if (!candidate) continue
         positions[key]++; examined++; advanced = true; through[key] = candidate.sequence
-        if (candidate.excluded || evaluationSessionActivity(this.learningDB, session)) { excluded++; continue }
+        nextOwner = (ownerIndex + 1) % keys.length
+        if (candidate.excluded || evaluationSessionActivity(this.learningDB, session)) { excluded++; break }
         const source = candidate.kind === "ledger-record" ? this.ledger(session, candidate.id)
           : candidate.kind === "objective" || candidate.kind === "objective-link" ? this.objectiveSource(session, candidate.kind, candidate.id)
           : this.reviewSource(session, candidate.kind as "review-request" | "review-relationship", candidate.id)
         if (!source) throw new Error("Increment original unavailable")
-        if (this.isEvaluation(source.ref)) { excluded++; continue }
+        if (this.isEvaluation(source.ref)) { excluded++; break }
         canonical(source.value, budget); selected.push(source.ref)
+        break
       }
       if (!advanced) break
     }
     for (const key of keys) if (positions[key] >= queues[key].length) through[key] = upper[key]
     const members: EvaluationMember[] = []
     for (let start = 0; start < selected.length; start += 32) members.push({ key: "increment:" + session + ":" + start, kind: "session", source_refs: selected.slice(start, start + 32) })
-    return { members, through, upper, eligible: selected.length, excluded, examined, more: keys.some(key => through[key] < upper[key]) }
+    return { members, through, upper, eligible: selected.length, excluded, examined, next_owner: nextOwner, more: keys.some(key => through[key] < upper[key]) }
   }
 
   /** Enumeration is queue metadata, not permission to inspect another Session's sources. */

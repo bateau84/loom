@@ -21,3 +21,5 @@
 ## Evidence assets
 
 - [learning-restricted-execution-source-evidence.json](evidence/learning-restricted-execution-source-evidence.json)
+
+- [Session evaluation and incremental learning](ard-018-session-evaluation-and-incremental-learning.md) — Explicit boundaries and bounded background processing.

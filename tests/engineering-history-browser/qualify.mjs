@@ -176,7 +176,8 @@ try {
             assert.equal(item.ordinal, view.navigation.repeat.after + index + 1)
             if (view.state === "frozen") assert.deepEqual(item.inspect, { operation: "population-source",
               population_id: view.population_id, manifest_sha256: view.manifest_sha256, member_key: item.key })
-            else assert.equal(item.inspect, null)
+            else assert.deepEqual(item.inspect, { operation: "preview-source", selection: view.manifest.selection,
+              preview_sha256: view.manifest_sha256, member_key: item.key }, "Preview originals are inspectable before freezing")
           }
           if (view.navigation.next) {
             assert.equal(view.navigation.next.after, view.items.at(-1).ordinal)
@@ -274,7 +275,7 @@ try {
         const cdp = await context.newCDPSession(page)
         const { nodes } = await cdp.send("Accessibility.getFullAXTree")
         await cdp.detach()
-        assert.ok(nodes.some(node => !node.ignored && (population ? node.name?.value?.includes(view.items[0].source.id) : node.name?.value === "Source scope and boundary")
+        assert.ok(nodes.some(node => !node.ignored && (population ? node.name?.value?.includes(view.items[0].historical_scope?.title ?? view.items[0].source.kind.replaceAll("-", " ")) : node.name?.value === "Source scope and boundary")
           && node.properties?.some(property => property.name === "expanded" && property.value.value === false)),
         "Chromium accessibility tree exposes collapsed disclosure state")
         await page.locator(".skip").press("Enter")

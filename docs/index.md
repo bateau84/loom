@@ -9,7 +9,7 @@ historical status does not imply current runtime support.
 
 - [Anchors](anchors/index.md) — Product purpose and first principles; no standalone concepts yet.
 - [Requirements](requirements/index.md) — Behavioral requirements, obligation contracts, and quality scenarios.
-- [Product design](design/index.md) — Design specifications, user stories, and scenarios; no standalone concepts yet.
+- [Product design](design/index.md) — Design specifications, user stories, and scenarios.
 - [Architecture](architecture/index.md) — Architectural designs, decisions, specifications, qualifications, and historical references.
 - [User documentation](user-docs/index.md) — Tool reference, workflows, operation, recovery, testing, and migration.
 - [Documentation change log](log.md) — Shared history and this reorganization.

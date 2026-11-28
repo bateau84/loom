@@ -228,14 +228,16 @@ export class EvaluationSubjects {
     return this.save(this.propose(actor, input, origin))
   }
 
-  establishAutomatic(session: string, method: { id: string; instruction_sha256: string }, after: LearningFrontier): EvaluationSubject {
+  establishAutomatic(session: string, method: { id: string; instruction_sha256: string }, after: LearningFrontier, through?: LearningFrontier): EvaluationSubject {
     const proposal = this.propose({ session_id: session, agent: "automatic-learning" }, {
       target: { kind: "session", id: session }, question: "Describe new eligible engineering evidence while retaining unresolved earlier work.",
     })
-    proposal.through = this.sources.captureFrontier(session)
+    const current = this.sources.captureFrontier(session)
+    proposal.through = through === undefined ? current : evaluationFrontier(through)
     proposal.origin = { kind: "automatic-checkpoint", method: { id: bounded(method.id, "method", 200), instruction_sha256: hash(method.instruction_sha256) },
       after: evaluationFrontier(after) }
-    for (const key of Object.keys(after) as Array<keyof LearningFrontier>) if (after[key] > proposal.through[key]) throw new Error("Evaluation checkpoint exceeds source frontier")
+    for (const key of Object.keys(after) as Array<keyof LearningFrontier>)
+      if (after[key] > proposal.through[key] || proposal.through[key] > current[key]) throw new Error("Evaluation checkpoint exceeds source frontier")
     return this.save(proposal)
   }
 

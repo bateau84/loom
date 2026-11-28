@@ -133,8 +133,8 @@ test("unavailable original concern blocks further progress without discarding it
 test("late retrieval classification withdraws only its exact call without rewriting original reports", async () => {
   const f = fixture()
   try {
-    const retrieval = f.store.observe(f.actor, undefined, { phase: "finished", status: "error", message_id: "shared", call_id: "retrieval" })
-    const engineering = f.store.observe(f.actor, undefined, { phase: "finished", status: "error", message_id: "shared", call_id: "engineering" })
+    const retrieval = f.store.observe(f.actor, undefined, { phase: "finished", status: "error", tool: "codemode", message_id: "shared", call_id: "retrieval" })
+    const engineering = f.store.observe(f.actor, undefined, { phase: "finished", status: "error", tool: "shell", message_id: "shared", call_id: "engineering" })
     const first = await f.run(), before = f.derived.query("SELECT body_json,sha256 FROM learning_evaluation_reports WHERE batch_id=? AND slot='overall'").get(first.batch_id!)
     f.learning.automatic.subjects.recordActivity({ actor: f.actor, invocation: { session_id: f.actor.session_id, message_id: "shared", call_id: "retrieval" }, phase: "evidence-retrieval", outcome: "failed", detail: "Supported retrieval was denied", elapsed_ms: 10 })
     expect(f.learning.automatic.history.report(first.batch_id!, f.actor.session_id)!.availability).toBe("source-unavailable")
@@ -150,7 +150,7 @@ test("late retrieval classification withdraws only its exact call without rewrit
 test("a bounded failed batch reclassified as learning can be replaced; generic source loss cannot", async () => {
   const f = fixture()
   try {
-    const work = f.store.observe(f.actor, undefined, { phase: "finished", status: "error", message_id: "m", call_id: "read" })
+    const work = f.store.observe(f.actor, undefined, { phase: "finished", status: "error", tool: "codemode", message_id: "m", call_id: "read" })
     const original = f.learning.automatic.sources.resolve.bind(f.learning.automatic.sources)
     const fail = spyOn(f.learning.automatic.sources, "resolve").mockImplementation((ref, ns) => ref.id === work.id ? null : original(ref, ns))
     await expect(f.run()).rejects.toThrow("source unavailable")
@@ -243,5 +243,65 @@ test("large exact originals page without skipped content and every page rechecks
     expect(text).toBe(canonical(record)); expect(pages).toBeGreaterThan(1)
     f.action.query("DELETE FROM ledger WHERE id=?").run(record.id)
     expect(f.learning.automatic.incrementSource(f.actor.session_id, result.batch_id!, member.key, 0, { after: 1000 })).toMatchObject({ availability: "source-unavailable", value: null, fragment: null })
+  } finally { f.close() }
+})
+
+test("the durable owner cursor prevents a one-source quantum from starving authored relationships after restart", async () => {
+  const f = fixture()
+  try {
+    const original = f.store.record(f.actor, undefined, { kind: "result", statement: "Recorded source for one explicitly authored goal" })
+    for (let i = 0; i < 10; i++) f.store.record(f.actor, undefined, { kind: "result", statement: "Continuing ledger work " + i })
+    f.learning.objectives.create(f.actor, f.learning.objectives.ledgerSource(original.id), "Explicit fixture goal")
+    const first = await f.run(1)
+    const resumed = new Learning(f.derived, f.store, f.action)
+    const second = await resumed.automatic.runIncrement(f.actor.session_id, async () => {}, new AbortController().signal, 1)
+    const third = await f.run(1)
+    const batches = [first, second, third].map(item => f.learning.automatic.history.frozenIncrement(item.batch_id!, f.actor.session_id))
+    expect(batches.map(batch => batch.members[0]!.source_refs[0]!.kind)).toEqual(["ledger-record", "objective", "objective-link"])
+    expect(batches.map(batch => batch.boundary.from_owner)).toEqual([0, 1, 2])
+    expect(batches.map(batch => batch.boundary.through_owner)).toEqual([1, 2, 3])
+    expect(batches[2]!.boundary.through_ledger).toBeLessThan(f.learning.automatic.sources.captureFrontier(f.actor.session_id).ledger)
+  } finally { f.close() }
+})
+
+test("increment disclosure and page selection enumerate retained dependencies without reading any original", async () => {
+  const f = fixture()
+  try {
+    const retained = f.store.record(f.actor, undefined, { kind: "concern", statement: "Private retained finding needs its own source grant" })
+    const first = await f.run()
+    const current = f.store.record(f.actor, undefined, { kind: "result", statement: "New separately authorized work" })
+    const second = await f.run()
+    const resolve = spyOn(f.learning.automatic.sources, "resolve")
+    const disclosure = f.learning.automatic.history.incrementDisclosure(second.batch_id!, f.actor.session_id)
+    expect(disclosure.source_refs.map(ref => ref.id).sort()).toEqual([retained.id, current.id].sort())
+    expect(disclosure.members.flatMap(member => member.source_refs).map(ref => ref.id)).toEqual([current.id])
+    expect(disclosure.report).toMatchObject({ id: disclosure.report_id })
+    expect("body" in disclosure.report!).toBe(false)
+    expect(f.learning.automatic.history.incrementPage(f.actor.session_id, INCREMENTAL_SCOPE, { limit: 1 }).items.map(row => row.id)).toEqual([second.batch_id!])
+    expect(f.learning.automatic.history.batchScope(first.batch_id!, f.actor.session_id)).toBe(INCREMENTAL_SCOPE)
+    expect(resolve).not.toHaveBeenCalled(); resolve.mockRestore()
+  } finally { f.close() }
+})
+
+test("a concurrent append or publication cannot expand an already authorized incremental disclosure", async () => {
+  const f = fixture()
+  try {
+    f.store.record(f.actor, undefined, { kind: "concern", statement: "Retained protected finding" })
+    const first = await f.run(), authorized = f.learning.automatic.history.incrementDisclosure(first.batch_id!, f.actor.session_id)
+    f.store.record(f.actor, undefined, { kind: "result", statement: "Append after authorization" })
+    const controller = new AbortController(); let checks = 0
+    await expect(f.run(128, async () => { if (++checks === 2) controller.abort(new Error("Before overall publication")) }, controller.signal)).rejects.toThrow("Before overall publication")
+    const pending = f.learning.automatic.history.incrementalHead(f.actor.session_id, INCREMENTAL_SCOPE)!
+    const beforePublication = f.learning.automatic.history.incrementDisclosure(pending.id, f.actor.session_id)
+    expect(beforePublication.report).toBeNull()
+    await f.run()
+    const resolve = spyOn(f.learning.automatic.sources, "resolve")
+    expect(() => f.learning.automatic.incrementProgress(f.actor.session_id, { limit: 1 }, { [first.batch_id!]: authorized.disclosure_sha256 }))
+      .toThrow("page changed")
+    expect(() => f.learning.automatic.incrementReport(f.actor.session_id, pending.id, {}, beforePublication.disclosure_sha256))
+      .toThrow("disclosure changed")
+    expect(resolve).not.toHaveBeenCalled(); resolve.mockRestore()
+    const current = f.learning.automatic.history.incrementDisclosure(pending.id, f.actor.session_id)
+    expect(f.learning.automatic.incrementReport(f.actor.session_id, pending.id, {}, current.disclosure_sha256).body).not.toBeNull()
   } finally { f.close() }
 })

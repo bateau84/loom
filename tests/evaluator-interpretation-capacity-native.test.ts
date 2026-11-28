@@ -24,6 +24,10 @@ function setup() {
   return { state, count: () => resolutions, reset: () => { resolutions = 0 }, loseSources: () => { missing = true },
     fixture(name: string, count: number, sourcePrefix = name) {
       const manifest = retrospectiveFixture(count, state.store.reviews.storeID)
+      // A later differently sized population is not an earlier owner cutoff.
+      const through = fixtures.reduce((total, fixture) => total + fixture.population.manifest.members.length, 0) + count
+      manifest.selection.through = through
+      manifest.selection.owner_boundary.objective_links = through
       manifest.contributors = [ACTOR.session_id]
       manifest.selection.question = "Controlled original-capacity boundary " + name
       manifest.members = manifest.members.map((member, index) => {

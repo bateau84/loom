@@ -6,6 +6,7 @@ run on disposable copies. Does not stop writers, repair files, migrate schemas,
 touch native sessions, or authorize work.
 """
 import argparse
+from bisect import bisect_right
 from contextlib import closing
 from datetime import datetime, timezone
 import hashlib
@@ -87,6 +88,12 @@ RETROSPECTIVE_COLUMNS = {
         "metadata_sha256", "created_at",
     },
     "learning_retrospective_members": {"population_id", "key", "ordinal", "data_json"},
+}
+SUBJECT_COLUMNS = {
+    "learning_subject_schema": {"singleton", "version"},
+    "learning_subject_subjects": {"id", "owner_session", "source_store_id", "data_json", "sha256"},
+    "learning_subject_activities": {"sequence", "subject_id", "session_id", "message_id", "call_id", "data_json", "sha256"},
+    "learning_subject_descendants": {"session_id", "parent_session_id", "data_json", "sha256"},
 }
 # Execution records are mirrors in the existing learning database, not a
 # provider authority or spend pool. A retained preparation marker makes loss
@@ -185,7 +192,385 @@ def shape(value, fields, optional=()):
             "Invalid retrospective contract fields")
 
 
-def retrospective_integrity(db, ledger_store_id):
+def subject_frontier(value):
+    shape(value, ("ledger", "objectives", "objective_links", "review_requests", "review_relationships"))
+    require(all(type(n) is int and 0 <= n <= 9007199254740991 for n in value.values()), "Invalid evaluation subject frontier")
+    return value
+
+
+def subject_target(value):
+    shape(value, ("kind", "id"))
+    require(value["kind"] in ("session", "action", "objective") and isinstance(value["id"], str)
+            and re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}", value["id"]), "Invalid evaluation subject target")
+    return value
+
+
+def subject_cutoff(value, frontier, target):
+    require(isinstance(value, dict), "Invalid evaluation subject cutoff")
+    if value.get("kind") == "point-in-time":
+        shape(value, ("kind",))
+        return
+    shape(value, ("kind", "record"))
+    ref = value["record"]
+    shape(ref, ("id", "kind", "required", "revision", "session_id", "sha256"))
+    require(value["kind"] == "recorded-completion" and ref["kind"] == "ledger-record" and ref["required"] is True
+            and isinstance(ref["revision"], str) and re.fullmatch(r"[1-9][0-9]*", ref["revision"])
+            and int(ref["revision"]) == frontier["ledger"] and isinstance(ref["sha256"], str)
+            and re.fullmatch(r"[a-f0-9]{64}", ref["sha256"]), "Invalid evaluation completion original")
+    for field in ("id", "session_id"):
+        require(isinstance(ref[field], str) and re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}", ref[field]),
+                "Invalid evaluation completion identity")
+    require(target["kind"] != "session" or target["id"] == ref["session_id"], "Evaluation completion Session mismatch")
+
+
+def subject_integrity(db, ledger_store_id, has_execution):
+    """Validate boundary and causal-purpose records without fetching history."""
+    marker = db.execute("SELECT singleton,version FROM learning_subject_schema").fetchall()
+    require(marker == [(1, 1)], "Missing or unsupported evaluation subject schema marker")
+    identifier = lambda value: isinstance(value, str) and bool(re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,119}", value))
+    plain = lambda value, limit=8000: isinstance(value, str) and bool(value.strip()) and len(value) <= limit and not re.search(r"[\x00-\x1f]", value)
+    fingerprint = lambda value: isinstance(value, str) and bool(re.fullmatch(r"[a-f0-9]{64}", value))
+    def invocation(value):
+        shape(value, ("session_id", "message_id", "call_id"))
+        require(all(identifier(v) for v in value.values()), "Invalid evaluation invocation")
+        return tuple(value[key] for key in ("session_id", "message_id", "call_id"))
+    subjects, invocations = {}, set()
+    for identity, owner, namespace, text, fingerprint_value in db.execute(
+            "SELECT id,owner_session,source_store_id,data_json,sha256 FROM learning_subject_subjects"):
+        require(isinstance(text, str) and len(text) <= 32768 and sha_text(text) == fingerprint_value,
+                "Evaluation subject integrity mismatch")
+        fields, value = raw_object(text), json.loads(text)
+        shape(value, ("format", "source_store_id", "owner_session", "established_by", "target", "question", "cutoff", "through", "origin", "subject_id", "created_at"))
+        require(value["format"] == "loom-evaluation-subject/v1" and value["subject_id"] == identity
+                and value["owner_session"] == owner and value["source_store_id"] == namespace == ledger_store_id
+                and identifier(owner) and identifier(namespace) and plain(value["question"]), "Invalid evaluation subject owner")
+        shape(value["established_by"], ("session_id", "agent"))
+        require(value["established_by"]["session_id"] == owner and plain(value["established_by"]["agent"], 200), "Invalid subject author")
+        frontier, target = subject_frontier(value["through"]), subject_target(value["target"])
+        subject_cutoff(value["cutoff"], frontier, target)
+        require(plain(value["created_at"], 64), "Invalid subject timestamp")
+        datetime.fromisoformat(value["created_at"].replace("Z", "+00:00"))
+        origin = value["origin"]
+        require(isinstance(origin, dict), "Invalid subject origin")
+        if origin.get("kind") == "explicit-selection":
+            shape(origin, ("kind",))
+        elif origin.get("kind") == "native-invocation":
+            shape(origin, ("kind", "invocation"))
+            call = invocation(origin["invocation"])
+            require(call[0] == owner, "Subject origin owner mismatch")
+            invocations.add(call)
+        else:
+            shape(origin, ("kind", "method", "after"))
+            shape(origin["method"], ("id", "instruction_sha256"))
+            after = subject_frontier(origin["after"])
+            require(origin["kind"] == "automatic-checkpoint" and target == {"kind": "session", "id": owner}
+                    and all(after[key] <= frontier[key] for key in frontier) and plain(origin["method"]["id"], 200)
+                    and fingerprint(origin["method"]["instruction_sha256"]), "Invalid automatic subject origin")
+        proposal = {key: raw for key, raw in fields.items() if key not in ("subject_id", "created_at")}
+        require(identity == "subject-" + sha_text(object_text(proposal)), "Evaluation subject identity mismatch")
+        subjects[identity] = {**value, "sha256": fingerprint_value}
+    for sequence, subject_id, session, message, call_id, text, fingerprint_value in db.execute(
+            "SELECT sequence,subject_id,session_id,message_id,call_id,data_json,sha256 FROM learning_subject_activities"):
+        require(type(sequence) is int and sequence > 0 and isinstance(text, str) and len(text) <= 32768
+                and sha_text(text) == fingerprint_value, "Invalid evaluation activity integrity")
+        raw_object(text)
+        value = json.loads(text)
+        shape(value, ("actor", "subject_id", "invocation", "phase", "outcome", "returned_bytes", "elapsed_ms", "detail", "recorded_at"))
+        shape(value["actor"], ("session_id", "agent"))
+        require(value["actor"]["session_id"] == session and identifier(session) and plain(value["actor"]["agent"], 200)
+                and value["subject_id"] == subject_id and (subject_id is None or subject_id in subjects and subjects[subject_id]["owner_session"] == session)
+                and value["phase"] in ("preparation", "evidence-retrieval", "research", "evaluation", "publication", "review")
+                and value["outcome"] in ("started", "succeeded", "failed", "denied", "cancelled"), "Invalid evaluation activity provenance")
+        if value["invocation"] is None:
+            require(message is None and call_id is None, "Evaluation activity invocation mismatch")
+        else:
+            call = invocation(value["invocation"])
+            require(call == (session, message, call_id), "Evaluation activity invocation mismatch")
+            invocations.add(call)
+        for field in ("returned_bytes", "elapsed_ms"):
+            require(value[field] is None or type(value[field]) is int and 0 <= value[field] <= 9007199254740991, "Invalid activity resource accounting")
+        require(value["detail"] is None or plain(value["detail"], 2000), "Invalid evaluation activity detail")
+        datetime.fromisoformat(value["recorded_at"].replace("Z", "+00:00"))
+    admitted = set()
+    if has_execution:
+        for text, fingerprint_value in db.execute("SELECT data_json,sha256 FROM learning_execution_admissions"):
+            require(sha_text(text) == fingerprint_value, "Evaluation admission integrity mismatch")
+            value = json.loads(text)
+            admitted.add(value["grant"]["recipient"]["session_id"])
+    descendants = {}
+    for child, parent, text, fingerprint_value in db.execute("SELECT session_id,parent_session_id,data_json,sha256 FROM learning_subject_descendants"):
+        require(identifier(child) and identifier(parent) and child != parent and isinstance(text, str)
+                and len(text) <= 32768 and sha_text(text) == fingerprint_value, "Invalid learning descendant integrity")
+        raw_object(text)
+        value = json.loads(text)
+        shape(value, ("kind", "parent", "child_session_id", "native_parent_session_id"))
+        require(value["child_session_id"] == child and value["native_parent_session_id"] == parent, "Learning descendant identity mismatch")
+        if value["kind"] == "native-invocation-descendant":
+            require(invocation(value["parent"])[0] == parent, "Learning invocation parent mismatch")
+        else:
+            require(value["kind"] == "native-session-descendant" and value["parent"] is None, "Invalid learning descendant provenance")
+        descendants[child] = value
+    def established(session, seen):
+        if session in admitted:
+            return True
+        require(session not in seen and len(seen) < 64, "Invalid learning descendant ancestry")
+        value = descendants.get(session)
+        if value is None:
+            return False
+        if value["parent"] is not None and invocation(value["parent"]) in invocations:
+            return True
+        return established(value["native_parent_session_id"], seen | {session})
+    require(all(established(child, set()) for child in descendants), "Learning descendant has no trusted origin")
+    return subjects
+
+
+def incremental_integrity(db, ledger_store_id, subjects, preparations=None, issues=None):
+    """Close successful cursor bindings using the existing batch/report store."""
+    fields = ("id", "sequence", "owner_session", "source_store_id", "scope_key", "identity", "boundary_json", "method_json",
+              "membership_sha256", "state", "report_id", "previous_batch_id", "revision")
+    batches = {row[0]: dict(zip(fields, row)) for row in db.execute("SELECT " + ",".join(fields) + " FROM learning_evaluation_batches")}
+    preparations, issues = preparations or {}, issues or {}
+    # Cursor history grows continuously. Index each owner/method once instead
+    # of scanning every batch again for every predecessor and prefix check.
+    grouped = {}
+    for row in batches.values():
+        grouped.setdefault((row["owner_session"], row["scope_key"]), []).append(row)
+    previous_complete, completed, sequences = {}, {}, {}
+    for key, rows in grouped.items():
+        rows.sort(key=lambda row: row["sequence"])
+        last, committed = None, []
+        for row in rows:
+            previous_complete[row["id"]] = last
+            if row["state"] == "complete":
+                last = row
+                committed.append(row)
+        completed[key], sequences[key] = committed, [row["sequence"] for row in committed]
+    def integer(value, maximum=9007199254740991):
+        return type(value) is int and 0 <= value <= maximum
+    def vector(boundary, prefix):
+        return subject_frontier({key: boundary.get(prefix + "_" + key)
+            for key in ("ledger", "objectives", "objective_links", "review_requests", "review_relationships")})
+    for batch in batches.values():
+        deterministic = batch["scope_key"].startswith("incremental-session-evidence/")
+        interpretation = batch["scope_key"].startswith("incremental-interpretation/")
+        if not deterministic and not interpretation:
+            continue
+        boundary, method = json.loads(batch["boundary_json"]), json.loads(batch["method_json"])
+        raw_object(batch["boundary_json"]); raw_object(batch["method_json"])
+        shape(method, ("id", "instruction_sha256"))
+        require(batch["source_store_id"] == ledger_store_id and batch["scope_key"].split("/", 1)[1] == sha_text(batch["method_json"]),
+                "Incremental method scope or source owner mismatch")
+        predecessor = batches.get(batch["previous_batch_id"]) if batch["previous_batch_id"] is not None else None
+        require((batch["previous_batch_id"] is None and batch["revision"] == 1) or
+                (predecessor is not None and predecessor["owner_session"] == batch["owner_session"]
+                 and predecessor["scope_key"] == batch["scope_key"] and predecessor["source_store_id"] == batch["source_store_id"]
+                 and predecessor["sequence"] < batch["sequence"] and batch["revision"] == predecessor["revision"] + 1),
+                "Incremental predecessor chain mismatch")
+        previous = previous_complete[batch["id"]]
+        previous_boundary = json.loads(previous["boundary_json"]) if previous else None
+        subject = subjects.get(boundary.get("subject_id"))
+        require(subject is not None and subject["sha256"] == boundary.get("subject_sha256")
+                and subject["owner_session"] == batch["owner_session"] and subject["origin"]["kind"] == "automatic-checkpoint"
+                and subject["origin"]["method"] == method, "Incremental subject origin mismatch")
+        if deterministic:
+            ranges = {prefix: subject_frontier({key: boundary.get(prefix + "_" + key) for key in subject["through"]})
+                      for prefix in ("from", "through", "observed")}
+            require(ranges["observed"] == subject["through"] and ranges["from"] == subject["origin"]["after"]
+                    and all(ranges["from"][key] <= ranges["through"][key] <= ranges["observed"][key] for key in ranges["from"]),
+                    "Incremental evidence boundary mismatch")
+            require(("from_owner" in boundary) == ("through_owner" in boundary)
+                    and integer(boundary.get("from_owner", 0), 4) and integer(boundary.get("through_owner", 0), 4),
+                    "Invalid incremental source owner cursor")
+            require(boundary.get("previous_checkpoint") == (previous["id"] if previous else "")
+                    and ranges["from"] == (vector(previous_boundary, "through") if previous else dict.fromkeys(ranges["from"], 0))
+                    and boundary.get("from_owner", 0) == (previous_boundary.get("through_owner", 0) if previous else 0),
+                    "Incremental successful predecessor cursor mismatch")
+            for count in ("new_sources", "excluded_sources", "examined_sources", "classification_sequence"):
+                require(integer(boundary.get(count)), "Invalid incremental coverage counter")
+            require(boundary["new_sources"] + boundary["excluded_sources"] == boundary["examined_sources"],
+                    "Incremental examined evidence accounting mismatch")
+        else:
+            ranges = {prefix: subject_frontier(json.loads(boundary[prefix + "_frontier"])) for prefix in ("from", "through")}
+            require(ranges["from"] == subject["origin"]["after"] and ranges["through"] == subject["through"]
+                    and all(ranges["from"][key] <= ranges["through"][key] for key in ranges["from"]), "Interpretation cursor boundary mismatch")
+            require(boundary["kind"] in ("interpreted", "no-eligible-change") and type(boundary["from_sequence"]) is int
+                    and type(boundary["through_sequence"]) is int and 0 <= boundary["from_sequence"] < boundary["through_sequence"],
+                    "Invalid interpretation checkpoint sequence")
+            require(boundary["from_sequence"] == (previous_boundary["through_sequence"] if previous else 0)
+                    and ranges["from"] == (json.loads(previous_boundary["through_frontier"]) if previous else dict.fromkeys(ranges["from"], 0)),
+                    "Interpretation successful predecessor cursor mismatch")
+            previous_model = None
+            if previous:
+                if previous_boundary["kind"] == "interpreted":
+                    saved = db.execute("SELECT body_json FROM learning_evaluation_reports WHERE id=?", (previous["report_id"],)).fetchone()
+                    require(saved is not None, "Missing previous interpretation checkpoint report")
+                    previous_model = json.loads(saved[0]).get("interpretation")
+                else:
+                    previous_model = json.loads(previous_boundary["previous_interpretation"])
+            require(json.loads(boundary["previous_interpretation"]) == previous_model,
+                    "Interpretation previous report chain mismatch")
+            sources = json.loads(boundary["source_batches"])
+            require(isinstance(sources, list) and 1 <= len(sources) <= 64, "Invalid interpretation checkpoint prefix")
+            previous_sequence = boundary["from_sequence"]
+            source_scope = None
+            for source in sources:
+                shape(source, ("batch_id", "report_id", "sha256"))
+                original = batches.get(source["batch_id"])
+                require(original is not None and original["owner_session"] == batch["owner_session"]
+                        and original["source_store_id"] == ledger_store_id and original["scope_key"].startswith("incremental-session-evidence/")
+                        and original["state"] == "complete" and original["report_id"] == source["report_id"]
+                        and previous_sequence < original["sequence"] <= boundary["through_sequence"], "Interpretation source checkpoint mismatch")
+                receipt = db.execute("SELECT sha256 FROM learning_evaluation_reports WHERE id=?", (source["report_id"],)).fetchone()
+                require(receipt is not None and receipt[0] == source["sha256"], "Interpretation source report mismatch")
+                require(source_scope is None or source_scope == original["scope_key"], "Mixed deterministic source methods")
+                source_scope = original["scope_key"]
+                previous_sequence = original["sequence"]
+            require(previous_sequence == boundary["through_sequence"], "Interpretation cursor skips its last checkpoint")
+            key = (batch["owner_session"], source_scope)
+            start = bisect_right(sequences[key], boundary["from_sequence"])
+            end = bisect_right(sequences[key], boundary["through_sequence"])
+            require(end - start == len(sources), "Interpretation cursor skips or substitutes a committed source checkpoint")
+            prefix = completed[key][start:end]
+            require([source["batch_id"] for source in sources] == [row["id"] for row in prefix]
+                    and ranges["through"] == vector(json.loads(prefix[-1]["boundary_json"]), "through"),
+                    "Interpretation cursor skips or substitutes a committed source checkpoint")
+            manifest_text = boundary.get("method_manifest")
+            method_manifest = json.loads(manifest_text) if isinstance(manifest_text, str) else None
+            require(isinstance(method_manifest, dict) and method["id"] == "evaluator/v1/" + sha_text(manifest_text)
+                    and method["instruction_sha256"] == method_manifest.get("instruction_bundle", {}).get("sha256"),
+                    "Interpretation method manifest mismatch")
+            for count in ("new_sources", "earlier_context_sources"):
+                require(integer(boundary.get(count)), "Invalid interpretation coverage counter")
+            retained = preparations.get(boundary.get("prepared_batch_id"))
+            if boundary["kind"] == "interpreted":
+                require(retained is not None and retained["batch"]["owner_session"] == batch["owner_session"]
+                        and retained["batch"]["method_json"] == batch["method_json"]
+                        and retained["request"]["source"]["population_id"] == boundary.get("population_id")
+                        and retained["population"]["manifest_sha256"] == boundary.get("population_sha256")
+                        and retained["population"]["selection"].get("subject_id") == subject["subject_id"]
+                        and retained["population"]["selection"].get("subject_sha256") == subject["sha256"]
+                        and retained["request"]["request_id"] == boundary.get("request_id")
+                        and retained["request"]["manifest_sha256"] == boundary.get("manifest_sha256")
+                        and retained["values"]["budget_policy"] == boundary.get("budget_policy"),
+                        "Interpretation pending preparation binding mismatch")
+                intent_key = object_text({"kind": encoded("initial"), "request_id": encoded(boundary["request_id"])})
+                initial = [item for item in issues.get(boundary["request_id"], []) if item["intent_key"] == intent_key]
+                require(len(initial) == 1 and initial[0]["attempt_id"] == boundary.get("attempt_id"),
+                        "Interpretation preparation attempt mismatch")
+            else:
+                require(all(boundary.get(key) == "" for key in ("population_id", "population_sha256", "prepared_batch_id",
+                    "request_id", "manifest_sha256", "attempt_id")) and boundary["new_sources"] == 0,
+                    "No-inference checkpoint has execution pins or unprocessed eligible change")
+        members = db.execute("SELECT key,ordinal,kind,source_refs,report_id FROM learning_evaluation_members WHERE batch_id=? ORDER BY ordinal", (batch["id"],)).fetchall()
+        require(members and len(members) <= 100000, "Missing incremental frozen membership")
+        texts = []
+        for ordinal, (key, actual, kind, refs, report) in enumerate(members, 1):
+            require(actual == ordinal and kind in ("session", "objective"), "Invalid incremental member order or kind")
+            normalized = interpretation_source_refs(raw_array(refs))
+            require(refs == "[" + ",".join(normalized.values()) + "]", "Noncanonical incremental member sources")
+            texts.append(object_text({"key": encoded(key), "kind": encoded(kind), "source_refs": refs}))
+        membership = sha_text("[" + ",".join(texts) + "]")
+        member_sources = {row[0]: raw_array(row[3]) for row in members}
+        frozen_sources = [source for values in member_sources.values() for source in values]
+        if interpretation and boundary["kind"] == "interpreted":
+            population_sources = [source for _, values in retained["population"]["members"] for source in raw_array(values)]
+            require(interpretation_source_refs(frozen_sources) == interpretation_source_refs(population_sources),
+                    "Interpretation checkpoint frozen population mismatch")
+        require(membership == batch["membership_sha256"], "Incremental membership digest mismatch")
+        identity = sha_text(object_text({"owner": encoded(batch["owner_session"]), "scope": encoded(batch["scope_key"]),
+            "namespace": encoded(batch["source_store_id"]), "boundary": batch["boundary_json"], "method": batch["method_json"], "membership": encoded(membership)}))
+        require(identity == batch["identity"], "Incremental batch identity mismatch")
+        if batch["state"] == "complete":
+            require(batch["report_id"] is not None and all(row[4] is not None for row in members), "Incomplete successful incremental checkpoint")
+        reports = db.execute("SELECT id,member_key,slot,body_json,qualifications_json,sha256 FROM learning_evaluation_reports WHERE batch_id=?", (batch["id"],)).fetchall()
+        if batch["state"] == "complete":
+            require(len(reports) == len(members) + 1, "Incremental report population mismatch")
+        for report_id, member, slot, body_text, qualifications, checksum in reports:
+            require(slot == ("overall" if member is None else "member:" + member), "Incremental report slot mismatch")
+            refs = db.execute("SELECT source_key,source_ref FROM learning_evaluation_dependencies WHERE report_id=? ORDER BY source_key", (report_id,)).fetchall()
+            normalized = interpretation_source_refs([text for _, text in refs])
+            require(refs == list(normalized.items()), "Incremental report dependency identity mismatch")
+            expected = sha_text(object_text({"batch_id": encoded(batch["id"]), "member_key": encoded(member), "body": body_text,
+                "qualifications": qualifications, "source_refs": "[" + ",".join(normalized.values()) + "]"}))
+            require(checksum == expected, "Incremental report integrity mismatch")
+            body = json.loads(body_text)
+            if slot != "overall":
+                require(any(row[0] == member and row[4] == report_id for row in members), "Incremental member checkpoint mismatch")
+                require(normalized == interpretation_source_refs(member_sources[member]), "Incremental member dependency union mismatch")
+                if deterministic:
+                    shape(body, ("method", "scope", "observations"))
+                    require(body["method"] == method["id"] and body["scope"] == "incremental-session-fragment"
+                            and isinstance(body["observations"], list) and len(body["observations"]) == len(member_sources[member]),
+                            "Incremental member observation coverage mismatch")
+                    for index, observation in enumerate(body["observations"]):
+                        require(isinstance(observation, dict) and observation.get("source") == json.loads(member_sources[member][index])
+                                and observation.get("origin") == {"batch_id": batch["id"], "member_key": member, "source_index": index},
+                                "Incremental observation original binding mismatch")
+                else:
+                    shape(body, ("format", "checkpoint", "interpretation"))
+                    require(body["format"] == "loom-incremental-interpretation-member/v1" and body["checkpoint"] == batch["id"],
+                            "Interpretation member checkpoint binding mismatch")
+                continue
+            require(batch["report_id"] == report_id and body.get("subject") == {"subject_id": subject["subject_id"], "sha256": subject["sha256"]}
+                    and body.get("through") == ranges["through"] and body.get("processing_complete") is True
+                    and body.get("objective_success") == "not-assessed", "Incremental successful cursor binding mismatch")
+            if deterministic:
+                require(body.get("format") == "loom-incremental-learning-report/v1" and body.get("from") == ranges["from"]
+                        and body.get("observed") == ranges["observed"] and body.get("method") == method["id"]
+                        and body.get("target") == subject["target"], "Invalid deterministic incremental report")
+                if body.get("previous") is not None:
+                    prior = body["previous"]
+                    original = batches.get(prior["batch_id"])
+                    old_report = db.execute("SELECT sha256 FROM learning_evaluation_reports WHERE id=?", (prior["report_id"],)).fetchone()
+                    require(original is not None and original["owner_session"] == batch["owner_session"] and original["scope_key"] == batch["scope_key"]
+                            and original["report_id"] == prior["report_id"] and old_report is not None and old_report[0] == prior["sha256"], "Invalid prior incremental report")
+                require((body.get("previous") or {}).get("batch_id", "") == boundary["previous_checkpoint"],
+                        "Incremental report omits its successful predecessor")
+                require(all(body.get(key) == boundary[key] for key in ("new_sources", "excluded_sources", "examined_sources")),
+                        "Incremental report coverage mismatch")
+                retained = body.get("retained")
+                shape(retained, ("concerns", "unfinished"))
+                require(all(isinstance(retained[key], list) for key in retained)
+                        and len(retained["concerns"]) + len(retained["unfinished"]) <= 4000, "Invalid retained incremental work")
+                context_sources = []
+                for item in retained["concerns"] + retained["unfinished"]:
+                    require(isinstance(item, dict) and isinstance(item.get("origin"), dict) and isinstance(item.get("source"), dict),
+                            "Invalid retained original attribution")
+                    origin = item["origin"]
+                    shape(origin, ("batch_id", "member_key", "source_index"))
+                    original = batches.get(origin["batch_id"])
+                    sources_row = db.execute("SELECT source_refs FROM learning_evaluation_members WHERE batch_id=? AND key=?",
+                        (origin["batch_id"], origin["member_key"])).fetchone()
+                    own_sources = json.loads(sources_row[0]) if sources_row else []
+                    require(original is not None and original["owner_session"] == batch["owner_session"]
+                            and original["scope_key"] == batch["scope_key"] and original["sequence"] <= batch["sequence"]
+                            and integer(origin["source_index"], 31) and origin["source_index"] < len(own_sources)
+                            and own_sources[origin["source_index"]] == item["source"], "Retained original member binding mismatch")
+                    context_sources.append(object_text({key: encoded(value) for key, value in item["source"].items()}))
+                require(normalized == interpretation_source_refs(frozen_sources + context_sources),
+                        "Incremental report dependency union mismatch")
+            else:
+                require(body.get("format") == "loom-incremental-interpretation-checkpoint/v1" and body.get("kind") == boundary["kind"]
+                        and body.get("source_batches") == sources and body.get("through_sequence") == boundary["through_sequence"]
+                        and body.get("from_sequence") == boundary["from_sequence"]
+                        and body.get("previous_interpretation") == json.loads(boundary["previous_interpretation"])
+                        and all(body.get(key) == boundary[key] for key in ("new_sources", "earlier_context_sources")), "Invalid interpretation checkpoint report")
+                require(normalized == interpretation_source_refs(frozen_sources), "Interpretation checkpoint dependency union mismatch")
+                result = body.get("interpretation")
+                for _, child, _, child_body, _, _ in reports:
+                    if child is not None:
+                        require(json.loads(child_body).get("interpretation") == result, "Interpretation member result binding mismatch")
+                require((boundary["kind"] == "interpreted") == (result is not None), "Interpretation checkpoint has no S5 publication")
+                if result is not None:
+                    published = batches.get(result["batch_id"])
+                    receipt = db.execute("SELECT sha256 FROM learning_evaluation_reports WHERE id=?", (result["report_id"],)).fetchone()
+                    require(published is not None and published["scope_key"] == "evaluator-preparation/retrospective" and published["state"] == "complete"
+                            and published["owner_session"] == batch["owner_session"] and result["batch_id"] == boundary["prepared_batch_id"]
+                            and published["report_id"] == result["report_id"] and receipt is not None and receipt[0] == result["report_sha256"]
+                            and result["sequence"] == boundary["through_sequence"] and result["frontier"] == ranges["through"], "Interpretation cursor advanced without its exact S5 publication")
+
+
+def retrospective_integrity(db, ledger_store_id, subjects):
     """Validate populations and return their exact preparation projections."""
     maximum = 33554432
     identifier = lambda value: isinstance(value, str) and bool(re.fullmatch(
@@ -203,15 +588,17 @@ def retrospective_integrity(db, ledger_store_id):
                 "Retrospective source namespace does not match paired ledger")
         require(identifier(population_id) and identifier(owner) and identifier(namespace) and plain(agent, 200)
                 and fingerprint(manifest_sha) and fingerprint(metadata_sha) and private_reviews in (0, 1)
-                and type(member_count) is int and 1 <= member_count <= 20000,
+                and type(member_count) is int and 0 <= member_count <= 20000,
                 "Invalid retrospective population metadata")
         require(isinstance(created_at, str), "Invalid retrospective freeze timestamp")
         datetime.fromisoformat(created_at.replace("Z", "+00:00"))
         header_values = raw_object(header_json)
         header = json.loads(header_json)
         shape(header, ("format", "source_store_id", "selection", "contributors", "objective", "coverage", "qualifications"))
-        require(header["format"] == "loom-retrospective-population/v1" and header["source_store_id"] == namespace,
+        require(header["format"] in ("loom-retrospective-population/v1", "loom-retrospective-population/v2") and header["source_store_id"] == namespace,
                 "Invalid retrospective population format or source namespace")
+        subject_mode = header["format"] == "loom-retrospective-population/v2"
+        require(subject_mode or member_count > 0, "Empty legacy retrospective population")
         contributors = json.loads(contributors_json)
         require(isinstance(contributors, list) and len(contributors) <= 2000 and all(identifier(item) for item in contributors)
                 and len(set(contributors)) == len(contributors) and contributors == header["contributors"],
@@ -221,14 +608,28 @@ def retrospective_integrity(db, ledger_store_id):
         require(isinstance(header["qualifications"], list) and len(header["qualifications"]) <= 2000
                 and all(plain(item) for item in header["qualifications"]), "Invalid retrospective qualifications")
         selected = header["selection"]
-        shape(selected, ("mode", "objective_id", "question", "through", "owner_boundary", "owner_version", "exclusions"))
-        require(selected["mode"] == "explicit-objective" and identifier(selected["objective_id"]) and plain(selected["question"])
+        shape(selected, ("mode", "question", "through", "owner_boundary", "owner_version", "exclusions")
+              + (("target", "frontier", "cutoff", "subject_id", "subject_sha256") if subject_mode else ("objective_id",)))
+        require(selected["mode"] == ("explicit-subject" if subject_mode else "explicit-objective") and plain(selected["question"])
                 and integer(selected["through"]) and fingerprint(selected["owner_version"]), "Invalid retrospective selection")
+        if subject_mode:
+            target, frontier = subject_target(selected["target"]), subject_frontier(selected["frontier"])
+            subject_cutoff(selected["cutoff"], frontier, target)
+            subject = subjects.get(selected["subject_id"])
+            require(subject is not None and subject["sha256"] == selected["subject_sha256"] and subject["owner_session"] == owner
+                    and subject["target"] == target and subject["through"] == frontier and subject["cutoff"] == selected["cutoff"]
+                    and subject["question"] == selected["question"], "Retrospective subject boundary mismatch")
+        else:
+            require(identifier(selected["objective_id"]), "Invalid retrospective objective")
+            target = {"kind": "objective", "id": selected["objective_id"]}
         boundary = selected["owner_boundary"]
         shape(boundary, ("objective_links", "review_requests", "review_relationships"))
         require((boundary["objective_links"] is None or integer(boundary["objective_links"]))
                 and integer(boundary["review_requests"]) and integer(boundary["review_relationships"]),
                 "Invalid retrospective selection boundary")
+        if subject_mode:
+            require(frontier["ledger"] == selected["through"] and all(frontier[key] == boundary[key] for key in boundary),
+                    "Retrospective owner frontier mismatch")
         exclusions = selected["exclusions"]
         require(isinstance(exclusions, list) and len(exclusions) <= 20000, "Invalid retrospective exclusions")
         excluded_ids = set()
@@ -297,7 +698,7 @@ def retrospective_integrity(db, ledger_store_id):
         require(sha_text(metadata_text) == metadata_sha, "Retrospective metadata digest mismatch")
         populations[population_id] = {"owner": owner, "namespace": namespace, "manifest_sha256": manifest_sha,
                                       "members": preparation_members, "manifest_members": manifest_members,
-                                      "objective_id": selected["objective_id"]}
+                                      "format": header["format"], "target": target, "selection": selected}
     return populations
 
 
@@ -333,7 +734,7 @@ def retrospective_preparation_integrity(db, populations, has_evaluator):
             marked = isinstance(data, dict) and (data.get("format") == "loom-evaluation-request/v2"
                 or data.get("source_scope") == "frozen-retrospective-population"
                 or isinstance(source, dict) and (source.get("kind") == "retrospective-population"
-                    or source.get("format") == "loom-retrospective-population/v1"))
+                    or source.get("format") in ("loom-retrospective-population/v1", "loom-retrospective-population/v2")))
             if record["batch_id"] not in batches and not marked:
                 continue  # Existing v1 preparation semantics are unchanged.
             require(record["batch_id"] in batches, "Retrospective request has no matching preparation batch")
@@ -356,7 +757,8 @@ def retrospective_preparation_integrity(db, populations, has_evaluator):
         require(isinstance(boundary["preparation_budget_policy"], str)
                 and re.fullmatch(r"[a-f0-9]{64}", boundary["preparation_budget_policy"]),
                 "Invalid retrospective preparation budget binding")
-        expected_rows = [(key, ordinal, "objective", refs) for ordinal, (key, refs)
+        member_kind = "session" if population["target"]["kind"] != "objective" else "objective"
+        expected_rows = [(key, ordinal, member_kind, refs) for ordinal, (key, refs)
                          in enumerate(population["members"], 1)]
         actual_rows = db.execute("SELECT key,ordinal,kind,source_refs FROM learning_evaluation_members "
                                  "WHERE batch_id=? ORDER BY ordinal", (batch_id,)).fetchall()
@@ -394,7 +796,7 @@ def retrospective_preparation_integrity(db, populations, has_evaluator):
                      "source_scope", "originating_request_independence", "method_binding", "original_review_requests",
                      "review_request", "source"))
         source_text = object_text({"kind": encoded("retrospective-population"),
-            "format": encoded("loom-retrospective-population/v1"), "population_id": encoded(population_id),
+            "format": encoded(population["format"]), "population_id": encoded(population_id),
             "manifest_sha256": encoded(population["manifest_sha256"])})
         require(data["format"] == "loom-evaluation-request/v2" and data_values["source"] == source_text
                 and data["source_scope"] == "frozen-retrospective-population"
@@ -408,11 +810,15 @@ def retrospective_preparation_integrity(db, populations, has_evaluator):
             "method": batch["method_json"], "slot": encoded("overall")}))
         require(record["request_id"] == data["request_id"] == data["review_request_id"] == request_id
                 and data["slot"] == "overall", "Retrospective preparation request identity mismatch")
+        counts = {"objective_count": "1"}
+        if population["format"] == "loom-retrospective-population/v2":
+            counts = {"objective_count": "1" if population["target"]["kind"] == "objective" else "null",
+                      "target": object_text({key: encoded(value) for key, value in population["target"].items()}), "target_count": "1"}
         manifest_text = object_text({"format": encoded("loom-evaluation-manifest/v2"), "batch_id": encoded(batch_id),
             "source": source_text, "source_store_id": encoded(population["namespace"]), "boundary": batch["boundary_json"],
             "method": batch["method_json"], "membership_sha256": encoded(membership_sha),
             "member_count": encoded(len(expected_rows)), "member_count_unit": encoded("deduplicated-evidence-sources"),
-            "objective_count": "1", "members": members_text})
+            **counts, "members": members_text})
         require(data["manifest_sha256"] == sha_text(manifest_text),
                 "Retrospective preparation manifest digest mismatch")
         # The ledger review/issue may not exist yet, but the retained canonical
@@ -554,7 +960,7 @@ def interpretation_json_equal(left, right):
     return type(left) is type(right) and left == right
 
 
-def interpretation_content(value, members, retrieved):
+def interpretation_content(value, members, retrieved, context_retrieved=()):
     """Check the versioned result's retained referential/coverage contract.
 
     These are descriptor checks, not an entailment review or a claim of live
@@ -575,9 +981,9 @@ def interpretation_content(value, members, retrieved):
         for item in items(value, 200):
             narrative(item)
 
-    def scoped(value):
+    def scoped(value, allow_empty=False):
         scope = items(value)
-        require(scope and all(isinstance(key, str) and key in members for key in scope)
+        require((allow_empty or scope) and all(isinstance(key, str) and key in members for key in scope)
                 and len(set(scope)) == len(scope), "Interpretation member scope mismatch")
         return scope
 
@@ -600,9 +1006,33 @@ def interpretation_content(value, members, retrieved):
         receipt_keys.add(identity)
         retrieved_keys.add(key)
 
+    context_keys, prior_originals = set(), set()
+    for receipt in items(list(context_retrieved), 100000):
+        require(isinstance(receipt, dict) and receipt.get("kind") in ("prior-interpretation", "prior-original"), "Invalid context receipt kind")
+        original = receipt["kind"] == "prior-original"
+        shape(receipt, ("kind", "report_id", "report_sha256", "receipt_id", "boundary")
+              + (("member_key", "source_index", "source_sha256") if original else ()))
+        require(identifier(receipt["report_id"]) and fingerprint(receipt["report_sha256"]) and identifier(receipt["receipt_id"])
+                and receipt["boundary"] in ("native-tool-result", "provider-input"), "Invalid context receipt identity")
+        key = (receipt["kind"], receipt["report_id"], receipt.get("member_key"), receipt["receipt_id"], receipt["boundary"])
+        require(key not in context_keys, "Duplicate context retrieval receipt")
+        context_keys.add(key)
+        if original:
+            require(isinstance(receipt["member_key"], str) and 0 < len(receipt["member_key"]) <= 200
+                    and type(receipt["source_index"]) is int and receipt["source_index"] == 0
+                    and fingerprint(receipt["source_sha256"]), "Invalid prior original receipt")
+            prior_originals.add((receipt["report_id"], receipt["report_sha256"], receipt["member_key"]))
+
     def citations(value, scope):
         seen = set()
         for ref in items(value):
+            if isinstance(ref, dict) and ref.get("kind") == "prior-original":
+                shape(ref, ("kind", "report_id", "report_sha256", "member_key", "source_index"))
+                key = (ref["report_id"], ref["report_sha256"], ref["member_key"])
+                require(key in prior_originals and key not in seen and type(ref["source_index"]) is int and ref["source_index"] == 0,
+                        "Prior original citation lacks trusted retrieval")
+                seen.add(key)
+                continue
             shape(ref, ("member_key", "source_index"))
             key = ref["member_key"]
             require(isinstance(key, str) and key in scope and key in retrieved_keys and key not in seen
@@ -625,7 +1055,7 @@ def interpretation_content(value, members, retrieved):
             seen.add(entry[id_field])
             for field in fields:
                 (narrative if field == "statement" else narratives)(entry[field])
-            require(citations(entry["supporting"], scoped(entry["members"])), "Unsupported interpretation trajectory or review coverage")
+            require(citations(entry["supporting"], scoped(entry["members"], True)), "Unsupported interpretation trajectory or review coverage")
             narratives(entry["limitations"])
     claim_ids, recommendations, supported, prior_recommendations = set(), 0, False, []
     for claim in items(value["claims"]):
@@ -637,8 +1067,9 @@ def interpretation_content(value, members, retrieved):
                 and claim["category"] in ("finding", "successful-practice", "avoidable-failure", "necessary-exploration", "recovery")
                 and claim["basis"] in ("supported", "hypothesis"), "Unsupported interpretation claim")
         narrative(claim["statement"])
-        scope = scoped(claim["members"])
+        scope = scoped(claim["members"], True)
         supports, contradicts = citations(claim["supporting"], scope), citations(claim["contradicting"], scope)
+        require(scope or any(isinstance(ref, tuple) for ref in supports | contradicts), "Interpretation claim has no current or retrieved prior scope")
         narratives(claim["limitations"])
         narratives(claim["applicability"])
         require((claim["basis"] != "supported" or supports)
@@ -688,12 +1119,14 @@ def interpretation_content(value, members, retrieved):
     for prior in items(value["prior_interpretations"], 32):
         shape(prior, ("report_id", "report_sha256", "relation", "reason"))
         require(identifier(prior["report_id"]) and fingerprint(prior["report_sha256"])
-                and prior["relation"] in ("supersedes", "contests") and prior["report_id"] not in priors,
+                and prior["relation"] in ("supersedes", "contests", "context") and prior["report_id"] not in priors,
                 "Invalid prior interpretation identity")
         narrative(prior["reason"])
         priors[prior["report_id"]] = prior["report_sha256"]
     require(all(priors.get(prior["report_id"]) == prior["report_sha256"] for prior in prior_recommendations),
             "Prior recommendation lacks attributable prior interpretation")
+    require(all(priors.get(receipt["report_id"]) == receipt["report_sha256"] for receipt in context_retrieved),
+            "Delivered context lacks explicit prior interpretation dependency")
     require((conclusion["kind"] == "recommendations") == bool(recommendations)
             and (conclusion["kind"] != "no-change" or supported or value["trajectory"] or value["review_coverage"])
             and (conclusion["kind"] != "insufficient-evidence" or conclusion["limitations"] or value["gaps"]),
@@ -747,7 +1180,7 @@ def retrospective_interpretation_integrity(db, prepared, has_execution):
                 and overall["member_key"] is None, "Interpretation overall report slot mismatch")
         values = raw_object(overall["body_json"])
         body = json.loads(overall["body_json"])
-        shape(body, ("format", "binding", "original_result_text", "retrieved", "interpretation"))
+        shape(body, ("format", "binding", "original_result_text", "retrieved", "interpretation"), ("context_retrieved",))
         require(body["format"] == "loom-evaluator-publication/v1", "Unsupported interpretation publication format")
         binding_values = raw_object(values["binding"])
         binding = body["binding"]
@@ -785,7 +1218,7 @@ def retrospective_interpretation_integrity(db, prepared, has_execution):
             "admission_sha256": binding_values["admission_sha256"], "result": binding_values["result"]}))
         require(report_id == expected_id, "Interpretation durable report identity mismatch")
         retained = prepared[batch_id]
-        priors, recommendations = interpretation_content(body["interpretation"], retained["population"]["manifest_members"], body["retrieved"])
+        priors, recommendations = interpretation_content(body["interpretation"], retained["population"]["manifest_members"], body["retrieved"], body.get("context_retrieved", []))
         for record in records:
             dependencies = db.execute("SELECT source_key,source_ref FROM learning_evaluation_dependencies WHERE report_id=? ORDER BY source_key", (record["id"],)).fetchall()
             refs = interpretation_source_refs([ref for _, ref in dependencies])
@@ -830,8 +1263,15 @@ def retrospective_interpretation_integrity(db, prepared, has_execution):
             prior = publications[prior_id]
             old = prior["prepared"]["population"]
             require(prior["report"]["sha256"] == fingerprint and old["owner"] == population["owner"]
-                    and old["namespace"] == population["namespace"] and old["objective_id"] == population["objective_id"],
+                    and old["namespace"] == population["namespace"] and old["target"] == population["target"],
                     "Prior interpretation provenance mismatch")
+            old_selection, selection = old["selection"], population["selection"]
+            require(old_selection["through"] <= selection["through"] and all(
+                (old_selection["owner_boundary"][key] or 0) <= (selection["owner_boundary"][key] or 0)
+                for key in selection["owner_boundary"]), "Prior interpretation exceeds current owner frontier")
+            if "frontier" in old_selection and "frontier" in selection:
+                require(all(old_selection["frontier"][key] <= selection["frontier"][key] for key in selection["frontier"]),
+                        "Prior interpretation exceeds current subject frontier")
             refs.extend(dependencies(prior_id).values())
             selected.update(member_unions[prior_id])
             originals.update(original_unions[prior_id])
@@ -840,7 +1280,15 @@ def retrospective_interpretation_integrity(db, prepared, has_execution):
             link = next(item for item in current["body"]["interpretation"]["prior_interpretations"] if item["report_id"] == prior_id)
             invalidation = db.execute("SELECT 1 FROM learning_evaluation_invalidations WHERE batch_id=? AND source_key=? AND reason=?",
                                       (prior["report"]["batch_id"], report_id, "interpretation-" + link["relation"])).fetchone()
-            require(invalidation is not None, "Prior interpretation lacks revision invalidation")
+            if link["relation"] != "context":
+                require(invalidation is not None, "Prior interpretation lacks revision invalidation")
+        for receipt in current["body"].get("context_retrieved", []):
+            prior = publications.get(receipt["report_id"])
+            require(prior is not None and prior["report"]["sha256"] == receipt["report_sha256"], "Context report identity mismatch")
+            if receipt["kind"] == "prior-original":
+                member = prior["prepared"]["population"]["manifest_members"].get(receipt["member_key"])
+                require(member is not None and member["availability"] == "available"
+                        and member["source"].get("sha256") == receipt["source_sha256"], "Context original is outside the named report population")
         for recommendation in current["recommendations"]:
             prior = publications[recommendation["report_id"]]
             require(any(claim["claim_id"] == recommendation["claim_id"] and claim["kind"] == "recommendation"
@@ -962,6 +1410,7 @@ def inspect_sql(directory, file_names):
                 has_retrospective = name == "learning.sqlite" and any(
                     table.startswith("learning_retrospective_") for table in tables
                 )
+                has_subject = name == "learning.sqlite" and any(table.startswith("learning_subject_") for table in tables)
                 if has_evaluation or has_evaluator or has_execution or has_retrospective:
                     required_columns = {**required_columns, **EVALUATION_COLUMNS}
                 if has_evaluator or has_execution:
@@ -973,8 +1422,11 @@ def inspect_sql(directory, file_names):
                         {"execution_admission_sha256"}
                     )
                 populations = {}
+                subjects = {}
                 if has_retrospective:
                     required_columns = {**required_columns, **RETROSPECTIVE_COLUMNS}
+                if has_subject:
+                    required_columns = {**required_columns, **SUBJECT_COLUMNS}
                 required_tables = REQUIRED_TABLES[name] | set(required_columns)
                 require(required_tables <= tables,
                         "Missing required " + name + " tables: " +
@@ -1006,13 +1458,24 @@ def inspect_sql(directory, file_names):
                     ).fetchone()
                     require(has_retrospective or not retrospective_preparation,
                             "Missing required learning_retrospective_ tables for retrospective preparation")
+                if has_subject:
+                    subjects = subject_integrity(db, ledger_store_id, has_execution)
+                if has_evaluation:
+                    for owner, namespace, boundary_json in db.execute(
+                            "SELECT owner_session,source_store_id,boundary_json FROM learning_evaluation_batches "
+                            "WHERE json_type(boundary_json,'$.subject_id') IS NOT NULL"):
+                        boundary = json.loads(boundary_json)
+                        subject = subjects.get(boundary["subject_id"])
+                        require(subject is not None and subject["sha256"] == boundary.get("subject_sha256")
+                                and subject["owner_session"] == owner and subject["source_store_id"] == namespace,
+                                "Missing or substituted evaluation subject for incremental checkpoint")
                 if has_retrospective:
                     markers = db.execute("SELECT singleton,version FROM learning_retrospective_schema").fetchall()
                     require(len(markers) == 1 and markers[0][0] == 1,
                             "Missing or invalid retrospective population schema marker")
                     require(markers[0][1] == 1,
                             "Unsupported retrospective population schema version: " + str(markers[0][1]))
-                    populations = retrospective_integrity(db, ledger_store_id)
+                    populations = retrospective_integrity(db, ledger_store_id, subjects)
                 if has_evaluator:
                     markers = db.execute(
                         "SELECT singleton,version FROM learning_evaluator_schema"
@@ -1061,6 +1524,7 @@ def inspect_sql(directory, file_names):
                             "Evaluator execution enrollment/mirror mismatch")
                     retrospective_execution_integrity(db, preparations, issues)
                 if has_evaluation:
+                    incremental_integrity(db, ledger_store_id, subjects, preparations, issues)
                     retrospective_interpretation_integrity(db, preparations, has_execution)
                 if name == "ledger.sqlite" and version == 2:
                     identity = db.execute(

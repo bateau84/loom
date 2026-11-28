@@ -6,6 +6,10 @@ tags: [loom, documentation, history]
 timestamp: 2026-11-27T00:00:00Z
 ---
 
+## 2026-11-28
+
+- Added DS-001 for the ordinary Session foundation, trajectory, conclusions, retained learning and separate audit experience.
+
 ## 2026-11-27
 
 - Established the [product design bundle](/docs/design/index.md) as part of the documentation reorganization.

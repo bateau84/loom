@@ -25,3 +25,5 @@
 
 - [learning-automatic-stage3-redo-status.json](evidence/learning-automatic-stage3-redo-status.json)
 - [learning-stage3-independent-qualification.json](evidence/learning-stage3-independent-qualification.json)
+
+- [Evaluate an ordinary Session](session-learning.md)

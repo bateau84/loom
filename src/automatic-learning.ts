@@ -277,6 +277,7 @@ export class AutomaticLearning {
       }
     }
     const from = previous ? frontierFromBoundary(previous.boundary, "through") : { ...EMPTY_LEARNING_FRONTIER }
+    const fromOwner = incrementInteger(previous?.boundary.through_owner ?? 0, 0, 4, "source owner cursor")
     let batch: Pick<EvaluationBatch, "id" | "source_store_id" | "boundary" | "method" | "published_state"> | null = head && head.published_state !== "complete" ? head : null
     // A classified wrapper may have been frozen before its inner purpose became
     // known. Keep that failed batch immutable; reselect from the last success
@@ -294,12 +295,13 @@ export class AutomaticLearning {
       // Establish a durable exact subject BEFORE selecting or interpreting any
       // originals. A late append can only be considered by the next increment.
       const subject = this.subjects.establishAutomatic(session, INCREMENTAL_METHOD, from)
-      const selected = this.sources.selectIncrement(session, from, subject.through, limit)
+      const selected = this.sources.selectIncrement(session, from, subject.through, limit, fromOwner)
       if (sameFrontier(from, selected.through) && !withdrawn.length)
         return previous ? { state: "complete", batch_id: previous.id, replayed: true } : { state: "empty" }
       const boundary: Record<string, number | string> = {
         subject_id: subject.subject_id, subject_sha256: subject.sha256, classification_sequence: classification,
         previous_checkpoint: previous?.id ?? "", new_sources: selected.eligible,
+        from_owner: fromOwner, through_owner: selected.next_owner,
         excluded_sources: selected.excluded, examined_sources: selected.examined,
         withdrawn_sha256: digest(withdrawn), ...encodeFrontier("from", from),
         ...encodeFrontier("through", selected.through), ...encodeFrontier("observed", subject.through),
@@ -428,8 +430,16 @@ export class AutomaticLearning {
       qualification: "Recorded original; source availability does not independently establish the authored claim. Fragment cursors count UTF-16 characters of the canonical original JSON." })
   }
 
-  incrementReport(session: string, batchID: string, input: { section?: "summary" | "concerns" | "unfinished"; after?: number; limit?: number } = {}) {
-    const frozen = this.history.frozenIncrement(batchID, session), report = this.history.report(batchID, session)
+  incrementReport(session: string, batchID: string, input: { section?: "summary" | "concerns" | "unfinished"; after?: number; limit?: number } = {},
+    disclosureSHA?: string): ReturnType<AutomaticLearning["readIncrementReport"]> {
+    return disclosureSHA === undefined ? this.readIncrementReport(session, batchID, input)
+      : this.history.withIncrementDisclosures(session, { [batchID]: disclosureSHA }, () => this.readIncrementReport(session, batchID, input))
+  }
+  private readIncrementReport(session: string, batchID: string, input: { section?: "summary" | "concerns" | "unfinished"; after?: number; limit?: number }) {
+    const frozen = this.history.frozenIncrement(batchID, session)
+    if (frozen.scope_key !== INCREMENTAL_SCOPE || frozen.source_store_id !== this.sources.namespace || canonical(frozen.method) !== canonical(INCREMENTAL_METHOD))
+      throw new Error("Incremental evaluation unavailable")
+    const report = this.history.report(batchID, session)
     const section = input.section ?? "summary"
     if (!["summary", "concerns", "unfinished"].includes(section)) throw new Error("Invalid incremental report section")
     const after = incrementInteger(input.after ?? 0, 0, Number.MAX_SAFE_INTEGER, "report cursor"),
@@ -453,20 +463,27 @@ export class AutomaticLearning {
       next: next === null ? null : { operation: "learning-report", batch_id: batchID, section, after: next, limit } })
   }
 
-  incrementProgress(session: string, input: { before?: number; limit?: number } = {}) {
+  incrementProgress(session: string, input: { before?: number; limit?: number } = {}, disclosures?: Record<string, string>):
+    ReturnType<AutomaticLearning["readIncrementProgress"]> {
+    return disclosures === undefined ? this.readIncrementProgress(session, input)
+      : this.history.withIncrementDisclosures(session, disclosures, () => this.readIncrementProgress(session, input, disclosures))
+  }
+  private readIncrementProgress(session: string, input: { before?: number; limit?: number }, disclosures?: Record<string, string>) {
     const before = incrementInteger(input.before ?? Number.MAX_SAFE_INTEGER, 1, Number.MAX_SAFE_INTEGER, "progress cursor"),
       limit = incrementInteger(input.limit ?? 5, 1, 20, "progress page")
-    const observed = this.sources.captureFrontier(session), latest = this.history.latestInScope(session, INCREMENTAL_SCOPE),
-      successful = this.history.latestInScope(session, INCREMENTAL_SCOPE, true)
+    const observed = this.sources.captureFrontier(session), latest = this.history.incrementalHead(session, INCREMENTAL_SCOPE),
+      successful = this.history.incrementalHead(session, INCREMENTAL_SCOPE, true)
     const committed = successful ? frontierFromBoundary(successful.boundary, "through") : { ...EMPTY_LEARNING_FRONTIER }
-    const page = this.history.listScope(session, INCREMENTAL_SCOPE, { before, limit, direction: "desc" })
-    const items = page.items.map(batch => ({ batch,
-      inspect: { operation: "learning-report", batch_id: batch.id },
-      report: this.incrementReport(session, batch.id).body ?? null }))
-    const nextBefore = page.next_after
+    const page = this.history.incrementPage(session, INCREMENTAL_SCOPE, { before, limit })
+    if (disclosures && (page.items.length !== Object.keys(disclosures).length || page.items.some(batch => !Object.hasOwn(disclosures, batch.id))))
+      throw new Error("Incremental learning page changed; authorize its current source union")
+    const items = page.items.map(row => ({ batch: this.history.get(row.id, session),
+      inspect: { operation: "learning-report", batch_id: row.id },
+      report: this.incrementReport(session, row.id).body ?? null }))
+    const nextBefore = page.next_before
     return boundedIncrementRead({ format: "loom-incremental-learning-progress/v1", session_id: session,
       target: { kind: "session", id: session }, method: INCREMENTAL_METHOD,
-      state: !latest ? "empty" : latest.state === "incomplete" || latest.published_state === "blocked" ? "blocked" : latest?.published_state === "processing" ? "processing"
+      state: !latest ? "empty" : items.find(item => item.batch.id === latest.id)?.batch.state === "incomplete" || latest.published_state === "blocked" ? "blocked" : latest?.published_state === "processing" ? "processing"
         : latest?.published_state === "pending" ? "pending" : sameFrontier(observed, committed) ? "caught-up" : "pending",
       observed, committed, latest_successful_batch_id: successful?.id ?? null, latest_batch_id: latest?.id ?? null,
       inference: { state: "unavailable", reasons: EVALUATOR_BLOCK.reasons },

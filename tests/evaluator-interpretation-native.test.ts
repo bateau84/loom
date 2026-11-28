@@ -270,3 +270,84 @@ test("all representations retain the same evidence page while hostile source tex
   expect(html).not.toContain("PRIVATE RAW DUPLICATE")
   expect(digest(page.binding)).toBe(digest(doc.body.binding))
 })
+
+test("ordinary overview explains the trajectory and counterevidence through local exact-source links", () => {
+  const input = fixture(), concern = input.population.manifest.members[1]!
+  input.interpretation.claims[0]!.members.push(concern.key)
+  input.interpretation.claims[0]!.contradicting.push({ member_key: concern.key, source_index: 0 })
+  input.interpretation.claims[0]!.limitations = ["Ethernet was not retested; the recorded WiFi pass does not establish all-interface recovery."]
+  const doc = document(input)
+  doc.foundation = { question: "What was verified during this investigation?", target: { kind: "session", id: "ordinary" }, cutoff: { kind: "point-in-time" } }
+  Object.assign(doc.sources![0]!, { label: "Reported WiFi verification", excerpt: "The scoped WiFi check was reported as passing.", evidence_kind: "Authored claim; not independently verified." })
+  Object.assign(doc.sources![1]!, { label: "Ethernet verification remains missing", excerpt: "Ethernet has not been retested." })
+  const before = canonical(doc.body.interpretation), page = paginateEvaluatorInterpretation(doc), rendered = renderEvaluatorInterpretationHTML(page)
+  expect(page.items).toHaveLength(3)
+  expect(page.narrative?.find(group => group.section === "trajectory")?.items).toHaveLength(1)
+  expect(page.evidence).toHaveLength(2)
+  expect(rendered).toContain("What was verified during this investigation?")
+  expect(rendered).toContain("Counterevidence and scope limits")
+  expect(rendered).toContain("Missing verification may limit a conclusion without contradicting a reported pass")
+  expect(rendered).toContain('href="#claims-item-0"')
+  expect(rendered).toContain('href="#trajectory-item-0"')
+  expect(rendered).toContain('id="report-technical"')
+  expect(rendered).not.toContain('id="report-technical" open')
+  expect(rendered).toContain('aria-label="Retrospective sections"')
+  expect(rendered).toContain("does not prove that this Session")
+  expect(canonical(doc.body.interpretation)).toBe(before)
+  const links = [...rendered.matchAll(/href="#([^"\s]+)"/g)].map(match => match[1])
+  const ids = new Set([...rendered.matchAll(/id="([^"\s]+)"/g)].map(match => match[1]))
+  expect(links.every(link => ids.has(link))).toBe(true)
+})
+
+test("bounded narrative discloses omitted entries and never consumes section continuation", () => {
+  const input = fixture()
+  input.interpretation.trajectory = Array.from({ length: 37 }, (_, i) => ({ ...input.interpretation.trajectory[0]!, event_id: `step-${i}` }))
+  const doc = document(input), page = paginateEvaluatorInterpretation(doc), narrative = page.narrative?.find(group => group.section === "trajectory")
+  expect(narrative?.total).toBe(37)
+  expect(narrative?.items).toHaveLength(10)
+  expect(renderEvaluatorInterpretationHTML(page)).toContain("Showing 10 of 37 items in this overview")
+  expect(pageItems(doc, "trajectory").items).toEqual(input.interpretation.trajectory)
+})
+
+test("mutable Action context is labelled current and completion remains an authored cutoff", () => {
+  const doc = document()
+  doc.foundation = { question: "Inspect the selected work", target: { kind: "action", id: "action" },
+    intent: { goal: "A later edited goal", meaning: "current-authored-action" }, cutoff: { kind: "recorded-completion" } }
+  const rendered = renderEvaluatorInterpretationHTML(paginateEvaluatorInterpretation(doc))
+  expect(rendered).toContain("Current authored Action context")
+  expect(rendered).toContain("Original user intent is not independently established")
+  expect(rendered).toContain("authored record does not itself establish independent acceptance")
+})
+
+test("reused exact originals are not presented as independent corroboration", () => {
+  const doc = document(), source = doc.sources![0]!
+  doc.sources = [source, { ...structuredClone(source as Record<string, unknown>), context: { report_id: "earlier", report_sha256: "a".repeat(64) }, selected: false }]
+  const rendered = renderEvaluatorInterpretationHTML(paginateEvaluatorInterpretation(doc, { section: "sources" }))
+  expect(rendered).toContain("Reusing it does not provide independent corroboration")
+  const different = structuredClone(source) as any
+  different.source.sha256 = "9".repeat(64)
+  doc.sources = [source, different]
+  expect(renderEvaluatorInterpretationHTML(paginateEvaluatorInterpretation(doc, { section: "sources" }))).not.toContain("Reusing it does not provide independent corroboration")
+})
+
+test("a prior-original citation does not mark a current population member cited", () => {
+  const input = fixture(), current = input.population.manifest.members[0]!
+  const prior = { kind: "prior-original" as const, report_id: "earlier-report", report_sha256: "b".repeat(64),
+    member_key: current.key, source_index: 0 as const }
+  input.interpretation.trajectory = []
+  input.interpretation.review_coverage = []
+  input.interpretation.claims[0]!.supporting = [prior]
+  input.interpretation.prior_interpretations = [{ report_id: prior.report_id, report_sha256: prior.report_sha256,
+    relation: "context", reason: "Keep the earlier verification limit available." }]
+  const sources = evaluatorInterpretationSources(input.population, input.retrieved, input.interpretation)
+  expect(sources.find(source => source.member_key === current.key)!.cited).toBe(false)
+  const doc = document(input)
+  doc.sources!.push({ ...sources[0], ...prior, selected: false, cited: true, label: "Earlier Ethernet concern",
+    inspect: { operation: "evaluation-prior-source", report_id: prior.report_id, report_sha256: prior.report_sha256, member_key: prior.member_key, source_index: 0 } })
+  const page = paginateEvaluatorInterpretation(doc), html = renderEvaluatorInterpretationHTML(page)
+  expect(page.report_context).toEqual({ context: 1, supersedes: 0, contests: 0 })
+  expect(html).toContain("Earlier Ethernet concern")
+  expect(html).toContain("It does not add a member to the current increment")
+  expect(html).toContain("Keeping an earlier report as context does not supersede or invalidate it")
+  expect(html).toContain("evaluation-prior-source")
+})

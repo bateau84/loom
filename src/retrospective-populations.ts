@@ -377,8 +377,13 @@ export class RetrospectivePopulations {
       population_id: frozen?.population_id ?? null, manifest_sha256: sha256, manifest: header, member_count: members.length,
       owner_session: frozen?.owner_session ?? actor.session_id, frozen_by: frozen?.frozen_by ?? null, created_at: frozen?.created_at ?? null,
       items, navigation: { repeat: { ...query, after, limit }, next: null as Record<string, unknown> | null },
-      freeze: frozen || manifest.selection.mode === "explicit-subject" && !manifest.selection.subject_id ? null
+      freeze: frozen || !members.length || manifest.selection.mode === "explicit-subject" && !manifest.selection.subject_id ? null
         : { operation: "freeze-population", selection: manifest.selection, preview_sha256: sha256 },
+      ...(!members.length ? { freeze_unavailable: "No eligible evidence exists within this boundary. The read-only preview remains available; a later increment needs a new subject." } : {}),
+      ...(manifest.selection.mode === "explicit-subject" && manifest.selection.subject_id && actor.session_id === frozen?.owner_session
+        ? { activity: { operation: "subject-activities", subject_id: manifest.selection.subject_id, subject_sha256: manifest.selection.subject_sha256 } }
+        : manifest.selection.mode === "explicit-subject" && manifest.selection.subject_id && !frozen
+          ? { activity: { operation: "subject-activities", subject_id: manifest.selection.subject_id, subject_sha256: manifest.selection.subject_sha256 } } : {}),
       ...(manifest.selection.mode === "explicit-subject" && !manifest.selection.subject_id ? { establish: { operation: "establish-subject",
         target: manifest.selection.target, question: manifest.selection.question, cutoff: manifest.selection.cutoff.kind === "recorded-completion"
           ? { kind: "recorded-completion", record_id: manifest.selection.cutoff.record.id } : { kind: "point-in-time" } } } : {}),

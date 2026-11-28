@@ -5,7 +5,7 @@ import type { EvaluationStore } from "./evaluation-store.js"
 import type { Store } from "./store.js"
 import { evaluatorEnrollmentKey, evaluatorReservationHeld, parseEvaluatorAdmission, parseEvaluatorGrant, parseEvaluatorReceipt,
   type EvaluatorExecutionAdmission, type EvaluatorExecutionAuthority, type EvaluatorExecutionReceipt,
-  type EvaluatorExecutionGrant, type EvaluatorExecutionSnapshot, type EvaluatorExecutionSubject } from "./evaluator-execution-contract.js"
+  type EvaluatorExecutionGrant, type EvaluatorExecutionSnapshot, type EvaluatorExecutionSubject, type EvaluatorSourceReader } from "./evaluator-execution-contract.js"
 import type { RetrospectivePopulations, RetrospectiveSourceResolver } from "./retrospective-populations.js"
 import { retrospectiveBudget, type RetrospectiveSources } from "./retrospective-contract.js"
 import { evaluatorPublication } from "./evaluator-publication.js"
@@ -293,7 +293,7 @@ export class EvaluatorExecution {
       prepared = this.prepared(actor, pins)
       this.bound(this.subject(actor, prepared), admission, prepared)
       this.live(admission.grant.expires_at)
-      const receipt = await authority.execute(admission, async (memberKey, sourceIndex) => {
+      const recheckSource = async () => {
         signal.throwIfAborted()
         await authorize(actor)
         this.live(admission.grant.expires_at)
@@ -307,6 +307,9 @@ export class EvaluatorExecution {
         // Original owner reads are preserved; the trusted adapter independently
         // authorizes this exact recipient/transfer before receiving these bytes.
         this.bound(this.subject(actor, this.prepared(actor, pins)), admission)
+      }
+      const source = async (memberKey: string, sourceIndex: number) => {
+        await recheckSource()
         if (!admission.grant.subject.source)
           return this.preparation.source(actor.session_id, pins.batch_id, pins.request_id, pins.manifest_sha256, memberKey, sourceIndex)
         const recipient: Actor = { session_id: admission.grant.recipient.session_id, agent: admission.grant.recipient.agent }
@@ -336,7 +339,17 @@ export class EvaluatorExecution {
           ...resolved, receiving_session: recipient.session_id, native_evaluator_retrieval: "authority-must-observe" }
         canonical(result, retrospectiveBudget())
         return result
-      }, signal)
+      }
+      const recipient: Actor = { session_id: admission.grant.recipient.session_id, agent: admission.grant.recipient.agent }
+      const contextPopulation = admission.grant.subject.source ? await this.population(actor, pins, recipient) : null
+      const retrospective = this.connected().retrospective
+      const unavailable = async () => { throw new Error("Earlier interpretation context requires an admitted retrospective population") }
+      const contextReader = contextPopulation && retrospective
+        ? new EvaluatorInterpretations(this.history, retrospective.populations, retrospective)
+          .executionReader(actor, recipient, contextPopulation, recheckSource, signal)
+        : { list: unavailable, read: unavailable, source: unavailable }
+      const read: EvaluatorSourceReader = Object.assign(source, { interpretations: contextReader })
+      const receipt = await authority.execute(admission, read, signal)
       const remembered = this.remember(actor, subject, { admission, receipt })
       // A result can arrive after an abort that the native owner did not yet
       // observe. Retain it, then fence/cancel through the catch path; do not

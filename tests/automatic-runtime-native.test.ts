@@ -6,7 +6,7 @@ import { registeredLoom } from "./helpers/registered-loom.js"
 
 async function host() {
   const f = await registeredLoom([], { beforeSetup: async directory => {
-    await writeFile(join(directory, ".loom.yaml"), "agents: {}\ninstructions: {enabled: false}\nledger: {capture: automatic}\n")
+    await writeFile(join(directory, ".loom.yaml"), "agents: {}\ninstructions: {enabled: false}\nledger: {capture: automatic}\nlearning: {incremental: false}\n")
   } })
   f.sessions.set("s", { id: "s", agent: "author", projectID: "tool-help", location: { directory: f.directory } })
   return f
@@ -71,7 +71,7 @@ test("every public report page rechecks native permission and denies unrelated o
 
 test("restart catches up sources from failed work even when the first process never authorized analysis", async () => {
   const directory = await mkdtemp(join(tmpdir(), "loom-auto-restart-"))
-  const setup = async (directory: string) => { await writeFile(join(directory, ".loom.yaml"), "agents: {}\ninstructions: {enabled: false}\nledger: {capture: automatic}\n") }
+  const setup = async (directory: string) => { await writeFile(join(directory, ".loom.yaml"), "agents: {}\ninstructions: {enabled: false}\nledger: {capture: automatic}\nlearning: {incremental: false}\n") }
   let f = await registeredLoom([], { directory, beforeSetup: setup })
   try {
     // No native agent is available to the first automatic worker, so it cannot inspect sources.

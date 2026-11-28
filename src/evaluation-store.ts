@@ -4,11 +4,11 @@ import type { SQL } from "./store.js"
 import { evaluatorMethod, parseEvaluatorMethod, type EvaluatorMethodManifest } from "./evaluator-method.js"
 import { assertEvaluatorReceiptProgress, evaluatorEnrollmentKey, parseEvaluatorAdmission, parseEvaluatorReceipt,
   type EvaluatorExecutionAdmission, type EvaluatorExecutionReceipt } from "./evaluator-execution-contract.js"
-import { compatibleRetrospectiveContext, parseRetrospectiveManifest, retrospectiveBudget, retrospectiveDigest, RETROSPECTIVE_LIMITS,
+import { compatibleRetrospectiveContext, parseRetrospectiveManifest, retrospectiveBudget, retrospectiveDigest, retrospectiveTarget, retrospectiveFrontier, RETROSPECTIVE_LIMITS,
   type RetrospectiveManifest, type RetrospectivePopulation, type RetrospectiveSources } from "./retrospective-contract.js"
 import { evaluatorInterpretationID, evaluatorMemberInterpretationID, evaluatorPriorReports,
   evaluatorInterpretationOriginals, EVALUATOR_INTERPRETATION_LIMITS, INTERPRETATION_QUALIFICATIONS,
-  validateEvaluatorPublication, type EvaluatorPublication } from "./evaluator-publication.js"
+  validateEvaluatorPublication, validateEvaluatorPriorOriginals, type EvaluatorPublication } from "./evaluator-publication.js"
 
 export type EvaluationSourceRef = { kind: string; id: string; session_id?: string; message_id?: string; revision?: string; sha256?: string; required: boolean }
 export type EvaluationMember = { key: string; kind: "session" | "objective"; source_refs: EvaluationSourceRef[] }
@@ -80,8 +80,8 @@ export type EvaluatorInterpretationRecord = {
   report: EvaluationReport & { body: EvaluatorPublication }; batch: EvaluationBatch;
   population: RetrospectivePopulation; populations: RetrospectivePopulation[];
 }
-const interpretationPopulationSnapshot = () => ({ populations: new Map<string, RetrospectivePopulation>(),
-  originals: new Set<string>(), dependencies: new Set<string>() })
+const interpretationPopulationSnapshot = (structuralBudget?: ProcessingBudget) => ({ populations: new Map<string, RetrospectivePopulation>(),
+  originals: new Set<string>(), dependencies: new Set<string>(), structuralBudget })
 export const EXECUTION_COLUMNS = {
   schema: ["singleton", "version"],
   admissions: ["batch_id", "request_id", "attempt_id", "authority_id", "reservation_id", "semantic_key", "data_json", "sha256"],
@@ -195,6 +195,11 @@ export class EvaluationStore {
     if (!row || (owner !== undefined && row.owner_session !== owner)) throw new Error("Evaluation unavailable")
     return row
   }
+  /** Authorization routing only. Never hydrate derived reports or originals
+   * merely to decide which public source/disclosure boundary owns a batch. */
+  batchScope(batchID: string, owner: string): string {
+    return this.row(batchID, text(owner, "owner", 200)).scope_key
+  }
   private originals(batch: BatchRow, sources: EvaluationSourceRef[]): EvaluationSourceRef[] {
     return sources.filter(ref => {
       if (!ref.required) return false
@@ -288,7 +293,7 @@ export class EvaluationStore {
 
   /** Immutable manifest reconstruction. Current source availability is separate;
    * callers perform asynchronous original and disclosure checks on every read. */
-  retrospectivePopulation(id: string, owner?: string): RetrospectivePopulation {
+  retrospectivePopulation(id: string, owner?: string, structuralBudget?: ProcessingBudget): RetrospectivePopulation {
     const sources = this.retrospectiveSources(id, owner)
     const size = this.db.prepare(`SELECT COUNT(*) AS count,SUM(length(data_json)) AS chars,
       SUM(CASE WHEN typeof(data_json)='text' THEN 0 ELSE 1 END) AS invalid
@@ -309,6 +314,7 @@ export class EvaluationStore {
     const readBudget = retrospectiveBudget()
     readBudget.take(row.header_json.length)
     for (const member of rows) readBudget.take(member.data_json!.length)
+    structuralBudget?.take(readBudget.chars, rows.length + 1)
     const header: unknown = JSON.parse(row.header_json)
     if (!header || typeof header !== "object" || Array.isArray(header) || "members" in header) throw new Error("Invalid retrospective manifest header")
     const manifest = parseRetrospectiveManifest({ ...header, members: rows.map(member => JSON.parse(member.data_json!)) })
@@ -325,6 +331,7 @@ export class EvaluationStore {
   freezeRetrospective(actor: Actor, input: unknown): RetrospectivePopulation {
     const owner = uid(actor.session_id), agent = text(actor.agent, "retrospective author", 200)
     const manifest = parseRetrospectiveManifest(input), sha256 = retrospectiveDigest(manifest)
+    if (!manifest.members.length) throw new Error("No eligible evidence within the retrospective subject; inspect the read-only preview")
     const id = retrospectiveID(owner, manifest.source_store_id, sha256)
     const { members, ...header } = manifest
     const metadata: RetrospectiveSources = { population_id: id, manifest_sha256: sha256, source_store_id: manifest.source_store_id,
@@ -377,7 +384,10 @@ export class EvaluationStore {
 
   /** Complete original membership, with no foreign or optional-source bypass. */
   preparationPopulation(batchID: string, owner: string): { batch: EvaluationBatch; members: EvaluationMember[] } {
-    const batch = this.row(batchID, owner), rows = this.verifyMembership(batch)
+    const batch = this.row(batchID, owner)
+    if (batch.scope_key.startsWith("incremental-session-evidence/") || batch.scope_key.startsWith("incremental-interpretation/"))
+      throw new Error("Incremental preparation unavailable through the legacy source route")
+    const rows = this.verifyMembership(batch)
     const members = rows.map(row => ({ key: row.key, kind: row.kind, source_refs: refs(JSON.parse(row.source_refs)) }))
     const sources = members.flatMap(member => member.source_refs)
     if (sources.some(ref => ref.session_id !== owner || !ref.required) || this.originals(batch, sources).length)
@@ -505,13 +515,16 @@ export class EvaluationStore {
           || canonical(data.source) !== canonical(subject.source)) throw new Error("Evaluator execution population binding mismatch")
       const population = this.retrospectivePopulation(subject.source.population_id, owner)
       const frozen = this.frozenPreparationPopulation(batchID, owner)
-      const members: EvaluationMember[] = population.manifest.members.map(member => ({ key: member.key, kind: "objective", source_refs: [member.source] }))
+      const target = retrospectiveTarget(population.manifest), subjectPopulation = population.manifest.format === "loom-retrospective-population/v2"
+      const members: EvaluationMember[] = population.manifest.members.map(member => ({ key: member.key,
+        kind: subjectPopulation && target.kind !== "objective" ? "session" : "objective", source_refs: [member.source] }))
       const boundary = { retrospective_population: population.population_id, retrospective_manifest: population.manifest_sha256,
         preparation_budget_policy: digest(data.budget_policy) }
       const manifest = { format: "loom-evaluation-manifest/v2", batch_id: batchID, source: subject.source,
         source_store_id: batch.source_store_id, boundary, method: frozen.batch.method,
         membership_sha256: frozen.batch.membership_sha256, member_count: members.length,
-        member_count_unit: "deduplicated-evidence-sources", objective_count: 1 }
+        member_count_unit: "deduplicated-evidence-sources", ...(subjectPopulation
+          ? { objective_count: target.kind === "objective" ? 1 : null, target, target_count: 1 } : { objective_count: 1 }) }
       if (population.manifest_sha256 !== subject.source.manifest_sha256 || population.manifest.source_store_id !== batch.source_store_id
           || canonical(frozen.batch.boundary) !== canonical(boundary)
           || encoded(frozen.members) !== encoded(members)
@@ -621,10 +634,28 @@ export class EvaluationStore {
       throw new Error("Evaluator interpretation population mismatch")
     return metadata
   }
-  evaluatorInterpretationCandidates(owner: string, input: { before?: number; limit?: number } = {}) {
+  evaluatorInterpretationCandidates(owner: string, input: { before?: number; limit?: number; context?: RetrospectiveManifest } = {}) {
     const before = integer(input.before ?? Number.MAX_SAFE_INTEGER, "cursor", 1), take = integer(input.limit ?? 20, "page limit", 1, 100)
-    const rows = this.db.prepare("SELECT id,sequence FROM learning_evaluation_batches WHERE owner_session=? AND scope_key='evaluator-preparation/retrospective' AND report_id IS NOT NULL AND sequence<? ORDER BY sequence DESC LIMIT ?")
-      .all(text(owner, "owner", 200), before, take) as Array<{ id: string; sequence: number }>
+    const args: Array<string | number> = [text(owner, "owner", 200), before]
+    let filter = "", join = ""
+    if (input.context) {
+      if (!this.retrospectiveSchema(false)) return { items: [], next_before: null }
+      const target = retrospectiveTarget(input.context), frontier = retrospectiveFrontier(input.context)
+      join = " JOIN learning_retrospective_populations p ON p.id=json_extract(b.boundary_json,'$.retrospective_population')"
+      filter = " AND p.source_store_id=? AND COALESCE(json_extract(p.header_json,'$.selection.target.kind'),'objective')=?"
+        + " AND COALESCE(json_extract(p.header_json,'$.selection.target.id'),json_extract(p.header_json,'$.selection.objective_id'))=?"
+        + " AND json_extract(p.header_json,'$.selection.through')<=?"
+        + " AND COALESCE(json_extract(p.header_json,'$.selection.frontier.objectives'),0)<=?"
+        + " AND COALESCE(json_extract(p.header_json,'$.selection.owner_boundary.objective_links'),0)<=?"
+        + " AND json_extract(p.header_json,'$.selection.owner_boundary.review_requests')<=?"
+        + " AND json_extract(p.header_json,'$.selection.owner_boundary.review_relationships')<=?"
+      args.push(input.context.source_store_id, target.kind, target.id, frontier.ledger, frontier.objectives,
+        frontier.objective_links, frontier.review_requests, frontier.review_relationships)
+    }
+    args.push(take)
+    const rows = this.db.prepare("SELECT b.id,b.sequence FROM learning_evaluation_batches b" + join
+      + " WHERE b.owner_session=? AND b.scope_key='evaluator-preparation/retrospective' AND b.report_id IS NOT NULL AND b.sequence<?"
+      + filter + " ORDER BY b.sequence DESC LIMIT ?").all(...args) as Array<{ id: string; sequence: number }>
     // A full page carries a continuation derived only from its authorized last
     // row. It makes no assertion about another (possibly protected) report.
     return { items: rows, next_before: rows.length === take ? rows.at(-1)!.sequence : null }
@@ -636,12 +667,13 @@ export class EvaluationStore {
     return row.batch_id
   }
 
-  private structuralReport(id: string, batch: BatchRow, member: string | null): EvaluationReport {
+  private structuralReport(id: string, batch: BatchRow, member: string | null, structuralBudget?: ProcessingBudget): EvaluationReport {
     const row = this.db.prepare(`SELECT id,batch_id,member_key,slot,created_at,qualifications_json,sha256,
       CASE WHEN typeof(body_json)='text' AND octet_length(body_json)<=100663296 THEN body_json END AS body_json
       FROM learning_evaluation_reports WHERE id=? AND batch_id=?`).get(id, batch.id) as ReportRow | undefined
     if (!row?.body_json || row.body_json.length > 33554432 || row.member_key !== member
       || row.slot !== (member === null ? "overall" : "member:" + member)) throw new Error("Evaluator interpretation report unavailable")
+    structuralBudget?.take(row.body_json.length, 1)
     const dependencies = this.db.prepare("SELECT source_key,source_ref FROM learning_evaluation_dependencies WHERE report_id=? LIMIT 100001")
       .all(id) as Array<{ source_key: string; source_ref: string }>
     if (dependencies.length > 100000) throw new Error("Evaluator interpretation dependency limit exceeded")
@@ -669,6 +701,7 @@ export class EvaluationStore {
         || prior.batch.source_store_id !== population.manifest.source_store_id
         || !compatibleRetrospectiveContext(population.manifest, prior.population.manifest))
         throw new Error("Prior evaluator interpretation scope or identity mismatch")
+      validateEvaluatorPriorOriginals(body, reference, prior.population)
       for (const claim of body.interpretation.claims) for (const link of claim.recommendation?.prior_recommendations ?? []) {
         if (link.report_id === reference.report_id && !prior.report.body.interpretation.claims.some(old => old.claim_id === link.claim_id && old.recommendation))
           throw new Error("Prior evaluator recommendation unavailable")
@@ -698,11 +731,11 @@ export class EvaluationStore {
     const populationID = execution.admission.grant.subject.source.population_id
     let population = populationCache.populations.get(populationID)
     if (!population) {
-      population = this.retrospectivePopulation(populationID, owner)
+      population = this.retrospectivePopulation(populationID, owner, populationCache.structuralBudget)
       evaluatorInterpretationOriginals([population], populationCache)
       populationCache.populations.set(populationID, population)
     }
-    const report = this.structuralReport(batch.report_id, batch, null)
+    const report = this.structuralReport(batch.report_id, batch, null, populationCache.structuralBudget)
     const body = validateEvaluatorPublication(report.body, execution.admission, receipt, population)
     if (report.id !== evaluatorInterpretationID(body.binding) || encoded(report.qualifications) !== encoded(INTERPRETATION_QUALIFICATIONS))
       throw new Error("Evaluator interpretation identity mismatch")
@@ -710,6 +743,7 @@ export class EvaluationStore {
     const linked = this.interpretationDependencies(body, population, owner, visiting, checked, populationCache)
     if (encoded(report.source_refs) !== encoded(linked.dependencies)) throw new Error("Evaluator interpretation dependency union mismatch")
     for (const link of body.interpretation.prior_interpretations) {
+      if (link.relation === "context") continue
       const prior = this.db.prepare("SELECT batch_id FROM learning_evaluation_reports WHERE id=?").get(link.report_id) as { batch_id: string }
       if (!this.db.prepare("SELECT 1 FROM learning_evaluation_invalidations WHERE batch_id=? AND source_key=? AND reason=?")
         .get(prior.batch_id, report.id, "interpretation-" + link.relation)) throw new Error("Evaluator interpretation revision marker unavailable")
@@ -717,7 +751,7 @@ export class EvaluationStore {
     for (const member of members) {
       const id = evaluatorMemberInterpretationID(report.id, member.key)
       if (member.report_id !== id) throw new Error("Evaluator interpretation member checkpoint unavailable")
-      const checkpoint = this.structuralReport(id, batch, member.key)
+      const checkpoint = this.structuralReport(id, batch, member.key, populationCache.structuralBudget)
       if (encoded(checkpoint.body) !== encoded({ format: "loom-evaluator-member/v1", report_id: report.id, report_sha256: report.sha256, member_key: member.key })
         || encoded(checkpoint.qualifications) !== encoded(INTERPRETATION_QUALIFICATIONS)
         || encoded(checkpoint.source_refs) !== encoded(refs(JSON.parse(member.source_refs)))) throw new Error("Evaluator interpretation member checkpoint mismatch")
@@ -740,6 +774,20 @@ export class EvaluationStore {
     return this.transaction(() => {
       const populations = interpretationPopulationSnapshot()
       return batchIDs.map(batchID => this.interpretationRecord(batchID, owner, new Set(), new Map(), populations))
+    }, "read")
+  }
+
+  /** One execution's earlier context shares a report and original budget across
+   * every request. The caller authorizes each root before this structural read
+   * and the complete returned population union before any disclosure. */
+  readEvaluatorInterpretationContext(batchIDs: string[], owner: string): EvaluatorInterpretationRecord[] {
+    if (batchIDs.length >= EVALUATOR_INTERPRETATION_LIMITS.reports) throw new Error("Evaluator context leaves no room for the current report")
+    return this.transaction(() => {
+      const populations = interpretationPopulationSnapshot(new ProcessingBudget(33554432, 2000000)), checked = new Map<string, EvaluatorInterpretationRecord>()
+      for (const batchID of batchIDs)
+        if (!this.interpretationRecord(batchID, owner, new Set(), checked, populations)) throw new Error("Evaluator interpretation is not published")
+      if (checked.size >= EVALUATOR_INTERPRETATION_LIMITS.reports) throw new Error("Evaluator context leaves no room for the current report")
+      return [...checked.values()]
     }, "read")
   }
 
@@ -780,6 +828,7 @@ export class EvaluationStore {
       this.db.prepare("UPDATE learning_evaluation_batches SET state='complete',blocked_reason=NULL,report_id=?,claim_token=NULL,worker_id=NULL,lease_until_ms=NULL,updated_at=? WHERE id=?")
         .run(id, new Date(this.clock()).toISOString(), batchID)
       for (const link of body.interpretation.prior_interpretations) {
+        if (link.relation === "context") continue
         const prior = this.db.prepare("SELECT batch_id FROM learning_evaluation_reports WHERE id=?").get(link.report_id) as { batch_id: string }
         this.db.prepare("INSERT INTO learning_evaluation_invalidations(batch_id,source_key,reason,recorded_at) VALUES(?,?,?,?) ON CONFLICT(batch_id,source_key,reason) DO NOTHING")
           .run(prior.batch_id, id, "interpretation-" + link.relation, new Date(this.clock()).toISOString())
@@ -954,17 +1003,71 @@ export class EvaluationStore {
    * content. Unchanged idle opportunities can avoid rereading retained sources;
    * publication and report readers still validate all applicable dependencies. */
   incrementalHead(owner: string, scope: string, completeOnly = false) {
-    if (!scope.startsWith("incremental-session-evidence/")) throw new Error("Incremental scope unavailable")
+    if (!scope.startsWith("incremental-session-evidence/") && !scope.startsWith("incremental-interpretation/")) throw new Error("Incremental scope unavailable")
     const row = this.db.prepare("SELECT * FROM learning_evaluation_batches WHERE owner_session=? AND scope_key=?"
       + (completeOnly ? " AND state='complete'" : "") + " ORDER BY sequence DESC LIMIT 1")
       .get(text(owner, "owner", 200), text(scope, "scope", 200)) as BatchRow | undefined
     if (!row) return null
+    return this.incrementalMetadata(row)
+  }
+  private incrementalMetadata(row: BatchRow) {
     const boundary = JSON.parse(row.boundary_json) as Record<string, number | string>, method = JSON.parse(row.method_json) as EvaluationMethod
     if (fingerprint({ owner: row.owner_session, scope: row.scope_key, namespace: row.source_store_id, boundary,
       method, membership: row.membership_sha256 }) !== row.identity) throw new Error("Incremental boundary identity mismatch")
     return { id: row.id, sequence: row.sequence, owner_session: row.owner_session, source_store_id: row.source_store_id,
       scope_key: row.scope_key, boundary, method, previous_batch_id: row.previous_batch_id,
-      published_state: row.state, state: row.state, report_id: row.report_id }
+      published_state: row.state, state: row.state, report_id: row.report_id,
+      blocked_reason: row.blocked_reason, created_at: row.created_at, updated_at: row.updated_at }
+  }
+  /** Bounded metadata-only planning. Threshold checks on repeated idle never
+   * hydrate originals or repeatedly validate every earlier retained concern. */
+  incrementalWindow(owner: string, scope: string, input: { after?: number; limit?: number } = {}) {
+    if (!scope.startsWith("incremental-session-evidence/") && !scope.startsWith("incremental-interpretation/")) throw new Error("Incremental scope unavailable")
+    const limit = integer(input.limit ?? 64, "page limit", 1, 100), after = integer(input.after ?? 0, "cursor")
+    const rows = this.db.prepare("SELECT * FROM learning_evaluation_batches WHERE owner_session=? AND scope_key=? AND state='complete' AND sequence>? ORDER BY sequence LIMIT ?")
+      .all(text(owner, "owner", 200), text(scope, "scope", 200), after, limit + 1) as BatchRow[]
+    const items = rows.slice(0, limit).map(row => this.incrementalMetadata(row))
+    return { items, more: rows.length > limit }
+  }
+  /** Structural disclosure union, never a source read or disclosure grant.
+   * Current membership plus retained dependencies must be authorized before
+   * the caller uses any report body. Pending member checkpoints are included. */
+  incrementDisclosure(batchID: string, owner: string) {
+    const row = this.row(batchID, text(owner, "owner", 200))
+    if (!row.scope_key.startsWith("incremental-session-evidence/") && !row.scope_key.startsWith("incremental-interpretation/"))
+      throw new Error("Incremental evaluation unavailable")
+    const batch = this.incrementalMetadata(row), rows = this.verifyMembership(row)
+    const members = rows.map(member => ({ key: member.key, kind: member.kind, source_refs: refs(JSON.parse(member.source_refs)) }))
+    const dependencies = members.flatMap(member => member.source_refs)
+    for (const member of rows) if (member.report_id) dependencies.push(...this.structuralReport(member.report_id, row, member.key).source_refs)
+    const current = row.report_id ? this.structuralReport(row.report_id, row, null) : null
+    if (current) dependencies.push(...current.source_refs)
+    const source_refs = refs(dependencies), report = current ? { id: current.id, sha256: current.sha256, created_at: current.created_at,
+      source_refs: current.source_refs } : null
+    return { ...batch, members, source_refs, report,
+      disclosure_sha256: fingerprint({ identity: row.identity, members, source_refs, report }) }
+  }
+  /** Read-only page selection before source grants. No get()/report() call may
+   * occur on this path, including for an extra row used to find continuation. */
+  incrementPage(owner: string, scope: string, input: { before?: number; limit?: number } = {}) {
+    if (!scope.startsWith("incremental-session-evidence/") && !scope.startsWith("incremental-interpretation/")) throw new Error("Incremental scope unavailable")
+    const before = integer(input.before ?? Number.MAX_SAFE_INTEGER, "cursor", 1), limit = integer(input.limit ?? 5, "page limit", 1, 20)
+    const rows = this.db.prepare("SELECT * FROM learning_evaluation_batches WHERE owner_session=? AND scope_key=? AND sequence<? ORDER BY sequence DESC LIMIT ?")
+      .all(text(owner, "owner", 200), text(scope, "scope", 200), before, limit + 1) as BatchRow[]
+    const items = rows.slice(0, limit).map(row => this.incrementalMetadata(row))
+    return { items, next_before: rows.length > limit ? items.at(-1)!.sequence : null }
+  }
+  /** Keep publication/page races outside an already authorized disclosure.
+   * The callback is synchronous and runs in the same read snapshot as these
+   * exact dependency checks. This does not itself grant source permission. */
+  withIncrementDisclosures<T>(owner: string, expected: Record<string, string>, read: () => T): T {
+    const entries = Object.entries(expected)
+    if (entries.length > 20) throw new Error("Incremental disclosure page exceeds its bound")
+    return this.transaction(() => {
+      for (const [id, sha256] of entries) if (this.incrementDisclosure(id, owner).disclosure_sha256 !== hash(sha256))
+        throw new Error("Incremental learning disclosure changed; authorize its current source union")
+      return read()
+    }, "read")
   }
   /** A method-specific incremental cursor is the latest successfully committed
    * batch boundary. Pending and blocked heads remain separate physical work. */
@@ -989,7 +1092,7 @@ export class EvaluationStore {
    * caller still supplies native authority and resolves the selected original. */
   frozenIncrement(batchID: string, owner: string) {
     const batch = this.row(batchID, owner)
-    if (!batch.scope_key.startsWith("incremental-session-evidence/")) throw new Error("Incremental evaluation unavailable")
+    if (!batch.scope_key.startsWith("incremental-session-evidence/") && !batch.scope_key.startsWith("incremental-interpretation/")) throw new Error("Incremental evaluation unavailable")
     if (fingerprint({ owner: batch.owner_session, scope: batch.scope_key, namespace: batch.source_store_id,
       boundary: JSON.parse(batch.boundary_json), method: JSON.parse(batch.method_json), membership: batch.membership_sha256 }) !== batch.identity)
       throw new Error("Incremental boundary identity mismatch")

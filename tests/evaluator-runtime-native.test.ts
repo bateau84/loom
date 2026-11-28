@@ -15,7 +15,8 @@ function method(): EvaluatorMethodManifest {
     result_format: "loom-evaluator-interpretation/v1", model: { provider_id: "synthetic-unqualified", model_id: "no-model", settings: ref("settings") },
     adapter: { id: "unqualified", version: "1", profile: policy("profile") }, source_policy: policy("sources"), route_policy: policy("route") }
 }
-const config = (capture: string) => `agents: {}\ninstructions: {enabled: false}\nledger: {capture: ${capture}}\n`
+// This suite preserves the v1 complete-population preparation contract.
+const config = (capture: string) => `agents: {}\ninstructions: {enabled: false}\nledger: {capture: ${capture}}\nlearning: {incremental: false}\n`
 async function fixture() {
   const f = await registeredLoom([], { beforeSetup: directory => writeFile(join(directory, ".loom.yaml"), config("automatic")) })
   f.sessions.set("s", { id: "s", agent: "author", projectID: "tool-help", location: { directory: f.directory } })

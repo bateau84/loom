@@ -165,6 +165,24 @@ test("bounded increments retain exact source identity, advance exclusions and do
   } finally { f.close() }
 })
 
+test("single-source increments rotate source owners while ledger work remains pending", () => {
+  const f = fixture()
+  try {
+    const original = f.record("One investigation source")
+    for (let index = 0; index < 10; index++) f.record("Continued engineering work " + index)
+    f.learning.objectives.create(f.engineer, f.learning.objectives.ledgerSource(original.id), "Explicitly authored goal")
+    const upper = f.source.captureFrontier("work")
+    const first = f.source.selectIncrement("work", EMPTY_LEARNING_FRONTIER, upper, 1, 0)
+    const second = f.source.selectIncrement("work", first.through, upper, 1, first.next_owner)
+    const third = f.source.selectIncrement("work", second.through, upper, 1, second.next_owner)
+    expect([first, second, third].map(value => value.members[0]!.source_refs[0]!.kind))
+      .toEqual(["ledger-record", "objective", "objective-link"])
+    expect(third.through.ledger).toBeLessThan(upper.ledger)
+    expect([first, second, third].every(value => value.examined === 1)).toBe(true)
+    expect(() => f.source.selectIncrement("work", EMPTY_LEARNING_FRONTIER, upper, 1, 5)).toThrow("owner cursor")
+  } finally { f.close() }
+})
+
 test("automatic subject establishment is idempotent across competing workers and exact prior context fences every owner", () => {
   const f = fixture()
   try {

@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto"
 import { canonical, digest } from "./model.js"
 import type { EvaluatorExecutionAdmission, EvaluatorExecutionReceipt, EvaluatorExecutionSubject, EvaluatorOriginalResult,
-  EvaluatorRetrievedSource } from "./evaluator-execution-contract.js"
-import { parseEvaluatorInterpretation, type EvaluatorInterpretation } from "./evaluator-interpretation.js"
-import { retrospectiveBudget, RETROSPECTIVE_ORIGINAL_LIMITS, type RetrospectivePopulation } from "./retrospective-contract.js"
+  EvaluatorRetrievedContext, EvaluatorRetrievedSource } from "./evaluator-execution-contract.js"
+import { parseEvaluatorInterpretation, parseEvaluatorContextReceipts, type EvaluatorInterpretation } from "./evaluator-interpretation.js"
+import { retrospectiveBudget, retrospectiveMemberKey, RETROSPECTIVE_ORIGINAL_LIMITS, type RetrospectivePopulation } from "./retrospective-contract.js"
 
 export const INTERPRETATION_QUALIFICATIONS = ["Machine-validated publication; reasoning quality and review independence are not established."]
 // One interpretation may inherit the existing bounded 32-report history. Its
@@ -36,6 +36,7 @@ export type EvaluatorPublication = {
     result: NonNullable<EvaluatorExecutionReceipt["result"]> };
   original_result_text: string;
   retrieved: EvaluatorRetrievedSource[];
+  context_retrieved?: EvaluatorRetrievedContext[];
   interpretation: EvaluatorInterpretation;
 }
 export const evaluatorInterpretationID = (binding: EvaluatorPublication["binding"]) => "interpretation-" + digest({
@@ -60,15 +61,17 @@ export function evaluatorPublication(admission: EvaluatorExecutionAdmission, rec
     || subject.source.manifest_sha256 !== population.manifest_sha256 || subject.owner_session !== population.owner_session
     || subject.source_store_id !== population.manifest.source_store_id)
     throw new Error("Evaluator publication population binding mismatch")
-  if (!fields(original, ["format", "admission_sha256", "result", "text", "retrieved"])
+  const hasContext = Object.hasOwn(original, "context_retrieved")
+  if (!fields(original, ["format", "admission_sha256", "result", "text", "retrieved", ...(hasContext ? ["context_retrieved"] : [])])
     || original.format !== "loom-evaluator-result/v1" || original.admission_sha256 !== digest(admission)
     || !same(original.result, receipt.result) || typeof original.text !== "string"
     || createHash("sha256").update(original.text, "utf8").digest("hex") !== receipt.result.sha256)
     throw new Error("Evaluator original result integrity mismatch")
-  const interpretation = parseEvaluatorInterpretation(original.text, population, original.retrieved)
+  const context = hasContext ? parseEvaluatorContextReceipts(original.context_retrieved) : undefined
+  const interpretation = parseEvaluatorInterpretation(original.text, population, original.retrieved, context)
   return { format: "loom-evaluator-publication/v1", binding: { subject, admission_sha256: digest(admission),
     method_sha256: digest(admission.grant.method), result: receipt.result }, original_result_text: original.text,
-    retrieved: structuredClone(original.retrieved), interpretation }
+    retrieved: structuredClone(original.retrieved), ...(context ? { context_retrieved: context } : {}), interpretation }
 }
 
 /** Revalidate the retained raw result against its immutable native result hash,
@@ -77,16 +80,35 @@ export function evaluatorPublication(admission: EvaluatorExecutionAdmission, rec
 export function validateEvaluatorPublication(raw: unknown, admission: EvaluatorExecutionAdmission,
   receipt: EvaluatorExecutionReceipt, population: RetrospectivePopulation): EvaluatorPublication {
   canonical(raw, retrospectiveBudget())
-  if (!fields(raw, ["format", "binding", "original_result_text", "retrieved", "interpretation"])
+  const hasContext = !!raw && typeof raw === "object" && Object.hasOwn(raw, "context_retrieved")
+  if (!fields(raw, ["format", "binding", "original_result_text", "retrieved", "interpretation", ...(hasContext ? ["context_retrieved"] : [])])
     || raw.format !== "loom-evaluator-publication/v1"
     || !fields(raw.binding, ["subject", "admission_sha256", "method_sha256", "result"]))
     throw new Error("Invalid evaluator publication envelope")
   const body = raw as unknown as EvaluatorPublication
   const checked = evaluatorPublication(admission, receipt, { format: "loom-evaluator-result/v1",
     admission_sha256: body.binding.admission_sha256, result: body.binding.result,
-    text: body.original_result_text, retrieved: body.retrieved }, population)
+    text: body.original_result_text, retrieved: body.retrieved,
+    ...(hasContext ? { context_retrieved: body.context_retrieved! } : {}) }, population)
   if (!same(body, checked)) throw new Error("Evaluator publication provenance mismatch")
   return checked
+}
+
+/** A context report may itself inherit many populations. A named earlier
+ * original must belong to that report's OWN population; inherited aliases
+ * cannot turn an unrelated member into evidence for the named report. */
+export function validateEvaluatorPriorOriginals(body: EvaluatorPublication,
+  reference: { report_id: string; report_sha256: string }, population: RetrospectivePopulation): void {
+  for (const receipt of body.context_retrieved ?? []) {
+    if (receipt.report_id !== reference.report_id) continue
+    if (receipt.report_sha256 !== reference.report_sha256) throw new Error("Prior original report identity mismatch")
+    if (receipt.kind !== "prior-original") continue
+    const member = population.manifest.members.find(member => member.key === receipt.member_key)
+    if (!member || member.availability !== "available" || receipt.source_index !== 0 || !member.source.revision
+      || receipt.source_sha256 !== member.source.sha256
+      || member.key !== retrospectiveMemberKey(member.source_store_id, member.source, member.permitted_view))
+      throw new Error("Prior original receipt does not identify the named report's own frozen available original")
+  }
 }
 
 /** Unique referenced reports. A recommendation link also inherits its prior

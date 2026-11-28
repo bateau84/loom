@@ -12,7 +12,7 @@ type Options = {
   checkedSession: (id: string) => Promise<Record<string, unknown>>;
   warn: (error: unknown) => void;
   onIncrement?: (session: string, result: AutomaticResult, signal: AbortSignal) => Promise<void>;
-  onCatchUp?: (session: string, signal: AbortSignal) => Promise<void>;
+  onCatchUp?: (session: string, signal: AbortSignal) => Promise<void | { retry_at?: number }>;
 }
 export const EVALUATION_READS = ["evaluation-status", "evaluations", "evaluation", "evaluation-members", "evaluation-sources", "evaluation-observations",
   "evaluation-preparation", "evaluation-preparation-members", "evaluation-preparation-source", "evaluation-admission"] as const
@@ -70,6 +70,7 @@ export async function registerAutomaticLearning(ctx: Plugin.Context, options: Op
   const controller = new AbortController(), signal = AbortSignal.any([options.signal, controller.signal])
   const registrations: Array<{ dispose(): Promise<void> }> = []
   const dirty = new Set<string>()
+  const retrySessions = new Map<string, number>()
   let running: Promise<void> | undefined, scheduled: ReturnType<typeof setTimeout> | undefined
   let retry: ReturnType<typeof setTimeout> | undefined, rescan = false, wasEnabled = false
   let incremental = true, maxSources = 128, coalesceMS = 250
@@ -118,7 +119,7 @@ export async function registerAutomaticLearning(ctx: Plugin.Context, options: Op
         if (!await enabled()) return
       }
     }
-    let more = true, retryAt: number | undefined
+    let more = true
     while (more && !signal.aborted) {
       more = false
       for (const id of dirty) engine.history.noteOpportunity(id, "native-source-opportunity")
@@ -128,6 +129,7 @@ export async function registerAutomaticLearning(ctx: Plugin.Context, options: Op
         const page = engine.history.opportunities(after, 100)
         for (const opportunity of page) {
           if (opportunity.state !== "pending") continue
+          retrySessions.delete(opportunity.session_id)
           signal.throwIfAborted()
           let stage = "native-authorization-unavailable"
           try {
@@ -143,14 +145,17 @@ export async function registerAutomaticLearning(ctx: Plugin.Context, options: Op
                 await abortable(options.onIncrement(opportunity.session_id, result, signal), signal)
               if (options.onCatchUp) {
                 await authorize(opportunity.session_id)
-                await abortable(options.onCatchUp(opportunity.session_id, signal), signal)
+                const followup = await abortable(options.onCatchUp(opportunity.session_id, signal), signal)
+                if (followup?.retry_at !== undefined && Number.isSafeInteger(followup.retry_at) && followup.retry_at > 0)
+                  retrySessions.set(opportunity.session_id, Math.max(Date.now() + 1, followup.retry_at))
               }
             } catch {
               if (signal.aborted) return
               options.warn("Incremental interpretation unavailable; deterministic source processing continues")
             }
             if (result.state === "pending" || (result.state === "complete" && !result.replayed)) more = true
-            else if (result.state === "busy") retryAt = Math.min(retryAt ?? Infinity, result.retry_at ?? Date.now() + 30000)
+            else if (result.state === "busy") retrySessions.set(opportunity.session_id,
+              Math.min(retrySessions.get(opportunity.session_id) ?? Infinity, result.retry_at ?? Date.now() + 30000))
             else engine.history.setOpportunity(opportunity.session_id, "idle", null, opportunity.generation)
           } catch {
             if (signal.aborted) return
@@ -166,9 +171,19 @@ export async function registerAutomaticLearning(ctx: Plugin.Context, options: Op
       }
       if (dirty.size) more = true
     }
-    if (retryAt !== undefined && !signal.aborted) {
-      if (retry) clearTimeout(retry)
-      retry = setTimeout(() => { retry = undefined; wake() }, Math.max(1, retryAt - Date.now()))
+    if (retry) { clearTimeout(retry); retry = undefined }
+    if (retrySessions.size && !signal.aborted) {
+      let retryAt = Infinity
+      for (const deadline of retrySessions.values()) retryAt = Math.min(retryAt, deadline)
+      retry = setTimeout(() => {
+        retry = undefined
+        if (signal.aborted) return
+        const now = Date.now()
+        for (const [session, deadline] of retrySessions) if (deadline <= now) {
+          retrySessions.delete(session); dirty.add(session)
+        }
+        wake()
+      }, Math.max(1, Math.min(86400000, retryAt - Date.now())))
       retry.unref()
     }
   }
@@ -197,6 +212,7 @@ export async function registerAutomaticLearning(ctx: Plugin.Context, options: Op
     if (scheduled) clearTimeout(scheduled)
     if (retry) clearTimeout(retry)
     dirty.clear()
+    retrySessions.clear()
     await running
     await Promise.allSettled(registrations.map(registration => registration.dispose()))
   }
@@ -212,6 +228,11 @@ export async function registerAutomaticLearning(ctx: Plugin.Context, options: Op
     read(input: Record<string, unknown>, session: string, captureEnabled: boolean): unknown {
       if (!engine) throw new Error("LOOM_LEARNING_UNAVAILABLE: original Action history remains available")
       const operation = input.operation
+      if (typeof input.batch_id === "string") {
+        const scope = engine.history.batchScope(input.batch_id, session)
+        if (scope.startsWith("incremental-session-evidence/") || scope.startsWith("incremental-interpretation/"))
+          throw new Error("Use the authorized learning-progress, learning-report, or learning-source reader for incremental learning")
+      }
       if (operation === "evaluation-admission") {
         const allowed = ["operation", "batch_id", "request_id", "manifest_sha256", "attempt_id"]
         if (Object.keys(input).some(key => !allowed.includes(key)) || typeof input.batch_id !== "string")
@@ -244,12 +265,16 @@ export async function registerAutomaticLearning(ctx: Plugin.Context, options: Op
       let result: unknown
       if (operation === "evaluation-status") result = { enabled: captureEnabled, scope: "calling-session", queued: dirty.has(session) || rescan, opportunity: engine.history.opportunity(session),
         processing: "deterministic-descriptions-only", genuine_evaluator: EVALUATOR_BLOCK, automatic_model_calls: false,
+        reporting_mode: incremental ? "incremental" : "complete-population", ...(incremental ? { inspect: { operation: "learning-progress" } } : {}),
         Q4: "partial", Q5: "unqualified-transfer-withheld", E11: "unqualified" }
-      else if (operation === "evaluations") result = engine.history.list(session, { before: input.before as number | undefined,
-        limit: input.limit as number | undefined ?? 5, exclude_scope: ["evaluator-preparation/calling-session", "evaluator-preparation/retrospective"] })
+      else if (operation === "evaluations") {
+        const page = engine.history.listScope(session, "permitted-session-evidence", { before: input.before as number | undefined,
+          limit: input.limit as number | undefined ?? 5, direction: "desc" })
+        result = { items: page.items, next_before: page.next_after }
+      }
       else {
         if (typeof input.batch_id !== "string") throw new Error("Evaluation batch_id is required")
-        if (["evaluator-preparation/calling-session", "evaluator-preparation/retrospective"].includes(engine.history.get(input.batch_id, session).scope_key))
+        if (["evaluator-preparation/calling-session", "evaluator-preparation/retrospective"].includes(engine.history.batchScope(input.batch_id, session)))
           throw new Error("Evaluation unavailable")
         if (operation === "evaluation-members") {
           const page = engine.history.reports(input.batch_id, session, { after: input.after as number | undefined, limit: input.limit as number | undefined ?? 10 })

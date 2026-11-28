@@ -1,3 +1,3 @@
 # Design specifications
 
-No standalone concepts of this kind exist in the current corpus.
+- [Understand a Session and its accumulated learning](ds-001-session-learning.md)

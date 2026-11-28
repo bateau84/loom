@@ -10,8 +10,12 @@ const contracts: Readonly<Record<string, Readonly<Record<string, OperationContra
     read: contract([], ["action_id", "session_id", "objective_id", "branch_ref", "record_id", "related", "match", "record_kinds", "verdict",
       "source_session_id", "node_id", "plan_revision", "has_gaps", "after", "through", "branch_offset", "limit", "owner_boundary", "owner_version", "connection_cursor", "response_format"],
     "Use exactly one action_id, session_id or objective_id. Copy returned navigation requests for continuation."),
+    subject: contract(["subject_id", "subject_sha256"], ["subject_id", "subject_sha256"], "Read the exact established subject; no new capture or freeze."),
+    "subject-activities": contract(["subject_id", "subject_sha256"], ["subject_id", "subject_sha256", "after", "limit"], "Read the subject's separate learning audit, including failed retrieval."),
     "preview-population": contract(["selection"], ["selection", "after", "limit", "response_format"],
-      "Put objective_id and question inside selection. Obtain the objective ID from loom_objective find/list or an authorized create; omit boundaries on the first preview."),
+      "Put target:{kind:session|action|objective,id} and question inside selection; legacy objective_id is supported. Copy returned selection."),
+    "preview-source": contract(["selection", "preview_sha256", "member_key"], ["selection", "preview_sha256", "member_key", "source_offset", "source_limit", "response_format"],
+      "Copy preview member.inspect to read its exact original before freezing. No mutation is required."),
     population: contract(["population_id", "manifest_sha256"], ["population_id", "manifest_sha256", "after", "limit", "response_format"],
       "Use population_id and manifest_sha256 returned by freeze-population; copy the returned next request."),
     "population-source": contract(["population_id", "manifest_sha256", "member_key"], ["population_id", "manifest_sha256", "member_key", "source_offset", "source_limit", "response_format"],
@@ -39,6 +43,8 @@ const operationRequirements: Readonly<Record<string, Readonly<Record<string, rea
   tweak: { propose: ["target_kind", "target_id", "base_sha256", "candidate_content", "hypothesis"],
     read: ["id"], retire: ["id"], trial: ["id", "observed_effect", "statement"] },
   insights: {
+    "learning-report": ["batch_id"], "learning-source": ["batch_id", "member_key", "source_index"],
+    "evaluation-prior-source": ["report_id", "report_sha256", "member_key", "source_index"],
     evaluation: ["batch_id"], "evaluation-members": ["batch_id"], "evaluation-sources": ["batch_id"],
     "evaluation-observations": ["batch_id", "member_key", "report_id"], "evaluation-preparation": ["batch_id"],
     "evaluation-preparation-members": ["batch_id", "request_id", "manifest_sha256"],
@@ -61,7 +67,8 @@ function combinations(name: string, operation: string): Record<string, unknown>[
   // Keep conditional checks on the operation envelope, not the nested
   // property shape imported by Effect. Full JSON Schema and the source
   // owners still enforce both dependencies.
-  if (name === "history" && operation === "preview-population") return [
+  if (name === "history" && ["preview-population", "preview-source"].includes(operation)) return [
+    { properties: { selection: { oneOf: [{ required: ["objective_id"] }, { required: ["target"] }] } } },
     ...[["owner_boundary", "through"], ["owner_version", "owner_boundary"]].map(([field, prerequisite]) => ({
       if: { properties: { selection: { required: [field] } } },
       then: { properties: { selection: { required: [prerequisite] } } },
@@ -139,7 +146,7 @@ export function operationInputSchema(name: string, input: Record<string, unknown
       // Code Mode can render the discriminated alternatives without duplicating
       // every selector and boundary in the public callable signature.
       type: "object", properties: Object.fromEntries(["operation", ...rule.required].map(field => [field,
-        field === "operation" ? { const: operation, description: rule.hint } : properties[field]])),
+        field === "operation" ? { const: operation } : field === "selection" ? {} : properties[field]])),
       required: ["operation", ...rule.required], additionalProperties: true,
       propertyNames: { enum: rule.fields },
       ...(combinations(name, operation).length ? { allOf: combinations(name, operation) } : {}),
@@ -164,5 +171,5 @@ export function validateOperationInput(name: string, input: Record<string, unkno
   if (Object.keys(input).some(key => !rule.fields.includes(key)))
     throw new Error(`Unsupported ${name} operation field. ${rule.hint} Allowed fields: ${rule.fields.join(", ")}.`)
   if (name === "history" && operation === "preview-population" && !object(input.selection))
-    throw new Error("loom_history preview-population requires selection: {objective_id, question}. Start without boundary fields; use the returned selection for continuation.")
+    throw new Error("loom_history preview-population requires selection: {target:{kind,id}, question}. Start without boundary fields; use the returned selection for continuation.")
 }

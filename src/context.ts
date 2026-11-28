@@ -278,7 +278,7 @@ export type EndEvent = CaptureEvent & { status: "completed" | "error"; result?: 
 // Keep negative knowledge outside the module graph: neither hot reload nor a
 // failed SQLite write may erase a known gap. No per-call data is kept here.
 const CONTINUITY = Symbol.for("loom.observer.continuity.v1")
-type Continuity = { pairingDegraded: boolean; startsAfterGap: boolean }
+type Continuity = { pairingDegraded: boolean; startsAfterGap: boolean; learningGroups?: Set<string> }
 type ContinuityRegistry = { files: Map<string, Continuity>; memory: WeakMap<object, Continuity> }
 function continuityFor(store: Store): Continuity {
   const host = globalThis as typeof globalThis & { [CONTINUITY]?: ContinuityRegistry }
@@ -304,6 +304,17 @@ export class Observer {
   constructor(private store: Store) { this.continuity = continuityFor(store) }
   private key(e: CaptureEvent) { return digest([e.sessionID, e.messageID, e.id, e.tool]) }
   has(e: CaptureEvent) { return this.store.hasUnfinishedObservationStart(this.key(e)) }
+  /** A registered learning read can borrow Code Mode's outer IDs. Remember
+   * only an actually observed wrapper, never its colliding inner invocations.
+   * This is a bounded delivery hint for the normal append-only observation,
+   * not a second evidence store or an invented native invocation identity. */
+  noteLearningInvocation(call: { sessionID: string; messageID: string; id: string }) {
+    const key = digest([call.sessionID, call.messageID, call.id, "codemode"])
+    if (!this.store.hasUnfinishedObservationStart(key)) return
+    const groups = this.continuity.learningGroups ??= new Set<string>()
+    if (groups.size >= 1024 && !groups.has(key)) throw new Error("Learning wrapper continuity capacity reached")
+    groups.add(key)
+  }
   /** A lost before hook means even identical inputs cannot establish pairing. */
   captureGap() { this.continuity.pairingDegraded = true }
   status() { return { pairing: this.continuity.pairingDegraded || this.continuity.startsAfterGap ? "degraded" : "available", restart_continuity: "not-assumed", gap_scope: "host-process/database" } }
@@ -325,11 +336,15 @@ export class Observer {
     // Avoid hashing disabled calls merely because their key once appeared in history.
     if (!captureEnabled && !this.has(e)) return undefined
     // Compute first. A digest/insert failure leaves all saved starts intact.
-    return this.store.finishObservation({ session_id: e.sessionID, agent: e.agent }, {
+    const group = this.key(e), learningWrapper = e.tool === "codemode" && this.continuity.learningGroups?.has(group)
+    const recorded = this.store.finishObservation({ session_id: e.sessionID, agent: e.agent }, {
       phase: "finished", tool: e.tool, message_id: e.messageID, call_id: e.id,
       correlation_key: this.key(e), observer_epoch: this.epoch,
       input_digest: digest(e.input), result_digest: digest(e.status === "completed" ? e.result : e.error),
       status: e.status,
+      ...(learningWrapper ? { learning_purpose: "contains-evaluation" } : {}),
     }, !this.continuity.pairingDegraded, captureEnabled)
+    if (recorded && learningWrapper) this.continuity.learningGroups?.delete(group)
+    return recorded
   }
 }

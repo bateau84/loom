@@ -27,15 +27,16 @@ type PreparedRequest = {
 type RetrospectiveSource = RetrospectivePopulationRef
 type RetrospectiveManifest = Omit<Manifest, "format" | "source_batch_id"> & {
   format: "loom-evaluation-manifest/v2"; source: RetrospectiveSource;
-  member_count_unit: "deduplicated-evidence-sources"; objective_count: 1;
+  member_count_unit: "deduplicated-evidence-sources"; objective_count: 1 | null;
+  target?: { kind: "session" | "action" | "objective"; id: string }; target_count?: 1;
 }
 type RetrospectiveRequest = Omit<PreparedRequest, "format" | "source_batch_id" | "source_scope"> & {
   format: "loom-evaluation-request/v2"; source: RetrospectiveSource; source_scope: "frozen-retrospective-population";
 }
 const retrospectiveSource = (population: RetrospectivePopulation): RetrospectiveSource => ({ kind: "retrospective-population",
-  format: "loom-retrospective-population/v1", population_id: population.population_id, manifest_sha256: population.manifest_sha256 })
+  format: population.manifest.format, population_id: population.population_id, manifest_sha256: population.manifest_sha256 })
 const retrospectiveMembers = (population: RetrospectivePopulation): EvaluationMember[] => population.manifest.members.map(member => ({
-  key: member.key, kind: "objective", source_refs: [member.source],
+  key: member.key, kind: population.manifest.selection.mode === "explicit-subject" && population.manifest.selection.target.kind !== "objective" ? "session" : "objective", source_refs: [member.source],
 }))
 const retrospectiveBoundary = (population: RetrospectivePopulation, budget: EvaluatorPolicyRef | null) => ({
   retrospective_population: population.population_id, retrospective_manifest: population.manifest_sha256, preparation_budget_policy: digest(budget),
@@ -44,7 +45,11 @@ function retrospectiveManifest(batch: EvaluationBatch, population: Retrospective
   return { format: "loom-evaluation-manifest/v2", batch_id: batch.id, source: retrospectiveSource(population),
     source_store_id: batch.source_store_id, boundary: batch.boundary, method: batch.method,
     membership_sha256: batch.membership_sha256, member_count: batch.member_count,
-    member_count_unit: "deduplicated-evidence-sources", objective_count: 1 }
+    member_count_unit: "deduplicated-evidence-sources",
+    ...(population.manifest.selection.mode === "explicit-subject"
+      ? { objective_count: population.manifest.selection.target.kind === "objective" ? 1 : null,
+          target: population.manifest.selection.target, target_count: 1 }
+      : { objective_count: 1 }) }
 }
 function retrospectiveRequest(batch: EvaluationBatch, population: RetrospectivePopulation, method: EvaluatorMethodManifest,
   budget: EvaluatorPolicyRef | null, manifestSHA: string, requestID: string, requester: Actor): RetrospectiveRequest {
@@ -203,7 +208,9 @@ export class EvaluatorPreparation {
       const source = "source" in record.data ? record.data.source : undefined
       if (!source || typeof source !== "object" || !("population_id" in source) || typeof source.population_id !== "string"
         || !("manifest_sha256" in source) || typeof source.manifest_sha256 !== "string") throw new Error("Retrospective preparation unavailable")
-      return { kind: "retrospective-population", format: "loom-retrospective-population/v1", population_id: source.population_id, manifest_sha256: source.manifest_sha256 }
+      const population = this.automatic.history.retrospectivePopulation(source.population_id, owner)
+      if (!("format" in source) || source.format !== population.manifest.format) throw new Error("Retrospective preparation format mismatch")
+      return { kind: "retrospective-population", format: population.manifest.format, population_id: source.population_id, manifest_sha256: source.manifest_sha256 }
     }
     return null
   }

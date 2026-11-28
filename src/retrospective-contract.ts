@@ -177,14 +177,16 @@ export const retrospectiveDigest = (manifest: RetrospectiveManifest): string => 
 export function retrospectiveTarget(manifest: RetrospectiveManifest): EvaluationTarget {
   return manifest.selection.mode === "explicit-objective" ? { kind: "objective", id: manifest.selection.objective_id } : manifest.selection.target
 }
+export function retrospectiveFrontier(manifest: RetrospectiveManifest): LearningFrontier {
+  return manifest.selection.mode === "explicit-subject" ? { ...manifest.selection.frontier }
+    : { ledger: manifest.selection.through, objectives: 0, objective_links: manifest.selection.owner_boundary.objective_links ?? 0,
+      review_requests: manifest.selection.owner_boundary.review_requests, review_relationships: manifest.selection.owner_boundary.review_relationships }
+}
 
 /** Earlier context must belong to the same typed subject and cannot include a
  * later independent owner frontier, even when its ledger cutoff is unchanged. */
 export function compatibleRetrospectiveContext(current: RetrospectiveManifest, prior: RetrospectiveManifest): boolean {
   if (current.source_store_id !== prior.source_store_id || canonical(retrospectiveTarget(current)) !== canonical(retrospectiveTarget(prior))) return false
-  const frontier = (manifest: RetrospectiveManifest): LearningFrontier => manifest.selection.mode === "explicit-subject" ? manifest.selection.frontier
-    : { ledger: manifest.selection.through, objectives: 0, objective_links: manifest.selection.owner_boundary.objective_links ?? 0,
-      review_requests: manifest.selection.owner_boundary.review_requests, review_relationships: manifest.selection.owner_boundary.review_relationships }
-  const older = frontier(prior), newer = frontier(current)
+  const older = retrospectiveFrontier(prior), newer = retrospectiveFrontier(current)
   return (Object.keys(older) as Array<keyof LearningFrontier>).every(key => older[key] <= newer[key])
 }

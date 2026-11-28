@@ -1,7 +1,8 @@
-import { canonical, ProcessingBudget, ProcessingLimitError, uid } from "./model.js"
+import { canonical, digest, ProcessingBudget, ProcessingLimitError, uid } from "./model.js"
 import type { EvaluatorExecutionSubject, EvaluatorExecutionReceipt, EvaluatorRetrievedSource } from "./evaluator-execution-contract.js"
 import { evaluatorInterpretationBudget, type EvaluatorInterpretation } from "./evaluator-interpretation.js"
 import type { RetrospectivePopulation } from "./retrospective-contract.js"
+import { escapeRetrospectiveHTML, retrospectiveDetails, retrospectiveHTMLDocument, retrospectiveMapping } from "./retrospective-source-view.js"
 
 export const EVALUATOR_INTERPRETATION_SECTIONS = ["overview", "trajectory", "claims", "review_coverage", "gaps", "sources", "prior_interpretations"] as const
 export type EvaluatorInterpretationSection = typeof EVALUATOR_INTERPRETATION_SECTIONS[number]
@@ -10,9 +11,9 @@ export type EvaluatorInterpretationDocument = {
   body: {
     format: "loom-evaluator-publication/v1";
     binding: { subject: EvaluatorExecutionSubject; admission_sha256: string; method_sha256: string; result: NonNullable<EvaluatorExecutionReceipt["result"]> };
-    retrieved: EvaluatorRetrievedSource[]; interpretation: EvaluatorInterpretation;
+    retrieved: EvaluatorRetrievedSource[]; context_retrieved?: unknown[]; interpretation: EvaluatorInterpretation;
   };
-  sources?: unknown[]; state?: string; qualifications?: string[];
+  sources?: unknown[]; state?: string; qualifications?: string[]; foundation?: Record<string, unknown>;
 }
 export type EvaluatorInterpretationPageInput = { report_id?: unknown; report_sha256?: unknown; section?: unknown; after?: unknown; limit?: unknown }
 type Navigation = { report_id: string; report_sha256: string; section: EvaluatorInterpretationSection; limit: number; after?: string }
@@ -22,6 +23,11 @@ export type EvaluatorInterpretationPage = {
   section: EvaluatorInterpretationSection; representation: "items" | "item-fragment";
   coverage: { from: number; to: number; total: number; complete: boolean };
   items: unknown[];
+  foundation?: Record<string, unknown>;
+  narrative?: Array<{ section: EvaluatorInterpretationSection; items: unknown[]; total: number }>;
+  evidence?: unknown[];
+  evidence_omitted?: number;
+  report_context?: { supersedes: number; contests: number; context: number };
   fragment?: { encoding: "canonical-json"; ordinal: number; from: number; to: number; total_characters: number; content_json: string };
   navigation: { sections: Navigation[]; next: Navigation | null };
 }
@@ -40,7 +46,7 @@ const citedMembers = (interpretation: EvaluatorInterpretation): Set<string> => n
   ...interpretation.trajectory.flatMap(event => event.supporting),
   ...interpretation.claims.flatMap(claim => [...claim.supporting, ...claim.contradicting]),
   ...interpretation.review_coverage.flatMap(review => review.supporting),
-].map(ref => ref.member_key))
+].filter(ref => retrospectiveMapping(ref).kind !== "prior-original").map(ref => ref.member_key))
 
 /** This is a projection of already authorized metadata. It does not resolve a
  * source or grant inspection; population-source rechecks authority on every read. */
@@ -80,6 +86,48 @@ function defaultSources(document: EvaluatorInterpretationDocument) {
     retrieved: retrieved.has(member_key), cited: cited.has(member_key), unavailable: unavailable.has(member_key),
     ...(population ? { inspect: { operation: "population-source", population_id: population.population_id, manifest_sha256: population.manifest_sha256, member_key } } : {}) }))
 }
+const referenceIdentity = (value: unknown): string => {
+  const ref = retrospectiveMapping(value), context = retrospectiveMapping(ref.context)
+  return canonical({ report_id: ref.report_id ?? context.report_id ?? null, report_sha256: ref.report_sha256 ?? context.report_sha256 ?? null,
+    member_key: ref.member_key, source_index: ref.source_index ?? 0 })
+}
+const references = (value: unknown): unknown[] => {
+  const entry = retrospectiveMapping(value)
+  return [entry.supporting, entry.contradicting].flatMap(field => Array.isArray(field) ? field : [])
+}
+function supplemental(document: EvaluatorInterpretationDocument, section: EvaluatorInterpretationSection, items: unknown[]) {
+  const interpretation = document.body.interpretation, narrative: NonNullable<EvaluatorInterpretationPage["narrative"]> = []
+  let remaining = 20000
+  if (section === "overview") for (const name of ["trajectory", "claims", "review_coverage", "gaps", "prior_interpretations"] as const) {
+    const candidates = interpretation[name], selected: unknown[] = []
+    for (const candidate of candidates.slice(0, name === "trajectory" ? 10 : 6)) {
+      const size = canonical(candidate, evaluatorInterpretationBudget()).length
+      if (size > remaining) break
+      remaining -= size; selected.push(candidate)
+    }
+    if (candidates.length) narrative.push({ section: name, items: selected, total: candidates.length })
+  }
+  const selected = [...items, ...narrative.flatMap(group => group.items)]
+  const wanted = new Set(selected.flatMap(references).map(referenceIdentity))
+  const evidence: unknown[] = [], candidates = section === "sources" ? [] : (document.sources ?? defaultSources(document))
+    .filter(value => wanted.has(referenceIdentity(value)))
+  let evidenceBudget = 20000
+  for (const candidate of candidates) {
+    const size = canonical(candidate, evaluatorInterpretationBudget()).length
+    if (size > evidenceBudget) continue
+    evidenceBudget -= size; evidence.push(candidate)
+  }
+  const report_context = { supersedes: 0, contests: 0, context: 0 }
+  for (const prior of interpretation.prior_interpretations) {
+    const relation: string = prior.relation
+    if (relation === "supersedes" || relation === "contests" || relation === "context") report_context[relation]++
+  }
+  const foundation = document.foundation
+  if (foundation) canonical(foundation, new ProcessingBudget(12000, 4000))
+  return { ...(foundation ? { foundation } : {}), ...(narrative.length ? { narrative } : {}),
+    ...(evidence.length || candidates.length ? { evidence, evidence_omitted: candidates.length - evidence.length } : {}), report_context }
+}
+
 function sectionItems(document: EvaluatorInterpretationDocument, section: EvaluatorInterpretationSection): unknown[] {
   const interpretation = document.body.interpretation
   if (section === "overview") return [
@@ -131,7 +179,7 @@ export function paginateEvaluatorInterpretation(document: EvaluatorInterpretatio
   const sections = EVALUATOR_INTERPRETATION_SECTIONS.map(section => navigation(section))
   const page = (items: unknown[], to: number, next: Navigation | null): EvaluatorInterpretationPage => ({ ...base,
     representation: "items", coverage: { from: ordinal, to, total: values.length, complete: ordinal === 0 && offset === 0 && to === values.length },
-    items, navigation: { sections, next } })
+    items, ...supplemental(document, section, items), navigation: { sections, next } })
   if (values.length === 0) { const empty = page([], 0, null); boundedPage(empty); return empty }
   const items: unknown[] = []
   if (offset === 0) {
@@ -175,11 +223,11 @@ function jsonBlock(value: unknown): string {
 }
 function summary(value: unknown): { title: string; statement?: string; details: Array<{ label: string; values: string[] }> } {
   const entry = value as Record<string, unknown>
-  const title = typeof entry.claim_id === "string" ? `Claim ${entry.claim_id}: ${entry.kind} / ${entry.category} (${entry.basis})`
-    : typeof entry.event_id === "string" ? `Trajectory ${entry.event_id}` : typeof entry.review_id === "string" ? `Review coverage ${entry.review_id}`
-      : typeof entry.member_key === "string" ? `${entry.kind === undefined ? "Source" : "Gap"} ${entry.member_key}`
-        : typeof entry.report_id === "string" ? `Prior interpretation ${entry.report_id} (${entry.relation})`
-          : entry.entry === "conclusion" ? `Conclusion: ${entry.kind}` : entry.entry === "coverage" ? "Frozen population coverage" : "Qualifications"
+  const title = typeof entry.claim_id === "string" ? `${String(entry.category).replaceAll("-", " ")} · ${entry.basis === "hypothesis" ? "hypothesis" : "attributed finding"}`
+    : typeof entry.event_id === "string" ? "Recorded engineering step" : typeof entry.review_id === "string" ? "Review scope and coverage"
+      : typeof entry.member_key === "string" ? entry.kind === undefined ? "Selected evidence" : "Evidence gap"
+        : typeof entry.report_id === "string" ? entry.relation === "supersedes" ? "Earlier interpretation superseded by this report" : entry.relation === "contests" ? "Earlier interpretation contested by this report" : "Earlier interpretation retained as context"
+          : entry.entry === "conclusion" ? `Conclusion · ${entry.kind === "no-change" ? "no new recommendation" : String(entry.kind).replaceAll("-", " ")}` : entry.entry === "coverage" ? "Frozen population coverage" : "Interpretation limits"
   const details: Array<{ label: string; values: string[] }> = []
   for (const [field, label] of [["limitations", "Limitations"], ["applicability", "Applicability"], ["requested", "Requested review coverage"],
     ["covered", "Actual review coverage"], ["chronology", "Chronology qualifications"]]) {
@@ -214,20 +262,97 @@ export function renderEvaluatorInterpretationMarkdown(page: EvaluatorInterpretat
   return lines.join("\n")
 }
 
+function sourceLabel(value: unknown, index: number): string {
+  const source = retrospectiveMapping(value), original = retrospectiveMapping(source.source)
+  const kind = typeof original.kind === "string" ? original.kind.replaceAll("-", " ") : "recorded evidence"
+  const label = typeof source.label === "string" && source.label.trim() ? source.label : `Evidence ${index + 1} · ${kind}`
+  const excerpt = typeof source.excerpt === "string" ? source.excerpt.replace(/\s+/g, " ").trim() : ""
+  return excerpt ? label + " · " + excerpt.slice(0, 100) + (excerpt.length > 100 ? "…" : "") : label
+}
+const evidenceAnchor = (value: unknown) => "evidence-" + digest(referenceIdentity(value)).slice(0, 24)
+const listHTML = (values: unknown[], className = "") => values.length ? '<ul' + (className ? ' class="' + className + '"' : '') + '>'
+  + values.map(value => '<li class="prose">' + escapeRetrospectiveHTML(value) + '</li>').join('') + '</ul>' : ''
+const SECTION_LABELS: Record<EvaluatorInterpretationSection, string> = { overview: "Conclusion and scope", trajectory: "Engineering trajectory", claims: "Findings and recommendations",
+  review_coverage: "Review coverage", gaps: "Missing evidence", sources: "Evidence foundation", prior_interpretations: "Earlier interpretations" }
+
+/** A readable projection of the protected S5 page. All links are local anchors;
+ * exact Loom requests remain secondary inspection details, not fake fetch UI. */
 export function renderEvaluatorInterpretationHTML(page: EvaluatorInterpretationPage): string {
-  const articles = page.items.map(value => {
-    const item = summary(value)
-    return '<article><h2>' + escapeHTML(item.title) + '</h2>' + (item.statement ? '<p class="prose">' + escapeHTML(item.statement) + '</p>' : '')
-      + item.details.map(detail => '<h3>' + escapeHTML(detail.label) + '</h3><ul>'
-        + detail.values.map(value => '<li class="prose">' + escapeHTML(value) + '</li>').join('') + '</ul>').join('') + '</article>'
-  }).join('')
-  return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-    + '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; base-uri \'none\'; form-action \'none\'">'
-    + '<title>Evaluator retrospective</title><style>body{font:1rem/1.6 system-ui;margin:1.5rem;max-width:90rem}pre,.prose{white-space:pre-wrap;overflow-wrap:anywhere}article{border-top:1px solid #888;padding-top:1rem}h1{font-size:1.8rem}h2{font-size:1.35rem}h3{font-size:1.1rem}</style></head><body><main>'
-    + '<h1>Evaluator retrospective</h1><dl><dt>Report</dt><dd>' + escapeHTML(page.report_id) + '</dd><dt>Fingerprint</dt><dd>' + escapeHTML(page.report_sha256)
-    + '</dd><dt>Section</dt><dd>' + escapeHTML(page.section) + '</dd><dt>Item coverage</dt><dd>' + page.coverage.from + '–' + page.coverage.to + ' of ' + page.coverage.total + '</dd></dl>'
-    + '<p>This is an attributed interpretation. Evidence references establish provenance; independent review must assess the conclusions. Recommendations require separate authorization to apply.</p>'
-    + articles + (page.fragment ? '<h2>Exact item fragment</h2><p>Concatenate content_json in offset order before parsing. This fragment is not a complete item.</p>' : '')
-    + '<h2>Exact page and evidence navigation</h2><p>Supporting and contradictory citations, source inspection commands, provenance and continuation fields are preserved below.</p><pre>'
-    + escapeHTML(JSON.stringify(page, null, 2)) + '</pre></main></body></html>'
+  const html = escapeRetrospectiveHTML
+  const sources = page.section === "sources" ? page.items : page.evidence ?? []
+  const sourceMap = new Map(sources.map((source, index) => [referenceIdentity(source), { source, index }]))
+  const backlinks = new Map<string, Array<{ id: string; label: string }>>()
+  const citationHTML = (refs: unknown[], id: string, label: string) => refs.length ? '<ul>' + refs.map(ref => {
+    const key = referenceIdentity(ref), source = sourceMap.get(key)
+    if (!source) return '<li>Evidence reference outside this page. Use the <a href="#report-navigation">evidence section request</a> to inspect it.'
+      + retrospectiveDetails("Exact citation", ref) + '</li>'
+    const links = backlinks.get(key) ?? []; if (!links.some(link => link.id === id)) links.push({ id, label }); backlinks.set(key, links)
+    return '<li><a href="#' + evidenceAnchor(source.source) + '">' + html(sourceLabel(source.source, source.index)) + '</a></li>'
+  }).join('') + '</ul>' : '<p>No originals are cited for this statement.</p>'
+  const renderItem = (value: unknown, section: EvaluatorInterpretationSection, index: number): string => {
+    const entry = retrospectiveMapping(value), item = summary(value), id = section + '-item-' + index
+    const supporting = Array.isArray(entry.supporting) ? entry.supporting : [], contradicting = Array.isArray(entry.contradicting) ? entry.contradicting : []
+    const prior = typeof entry.report_id === "string"
+    return '<article id="' + id + '" tabindex="-1"><h3>' + html(section === "trajectory" ? `Step ${index + 1}` : item.title) + '</h3>'
+      + (item.statement ? '<p class="prose">' + html(item.statement) + '</p>' : '')
+      + item.details.map(detail => '<h4>' + html(detail.label) + '</h4>' + listHTML(detail.values)).join('')
+      + (entry.basis === "hypothesis" ? '<p class="notice">This is a limited hypothesis, not an established observation.</p>' : '')
+      + (supporting.length ? '<h4>Supporting evidence</h4>' + citationHTML(supporting, id, section === "trajectory" ? `Step ${index + 1}` : `Finding ${index + 1}`) : '')
+      + (contradicting.length ? '<h4>Counterevidence and scope limits</h4><p>The report cites these sources against the claim or its scope. Missing verification may limit a conclusion without contradicting a reported pass.</p>'
+        + citationHTML(contradicting, id, `Finding ${index + 1}`) : '')
+      + (prior ? '<p class="meta">' + (entry.relation === "supersedes" ? 'This report explicitly declares that it supersedes the named earlier interpretation.'
+        : entry.relation === "contests" ? 'This report explicitly contests the earlier interpretation; it does not erase it.' : 'Keeping an earlier report as context does not supersede or invalidate it.') + '</p>'
+        + (entry.inspect ? retrospectiveDetails("Read this earlier interpretation", entry.inspect) : '') : '')
+      + '</article>'
+  }
+  const foundation = retrospectiveMapping(page.foundation), target = retrospectiveMapping(foundation.target), subject = retrospectiveMapping(foundation.subject)
+  const cutoff = retrospectiveMapping(foundation.cutoff ?? subject.cutoff), intent = retrospectiveMapping(foundation.intent)
+  const question = typeof foundation.question === "string" ? foundation.question : null
+  const intentText = typeof foundation.intent === "string" ? foundation.intent : typeof intent.goal === "string" ? intent.goal : typeof intent.statement === "string" ? intent.statement : null
+  let content = '<header><p class="meta">Loom · Evaluator retrospective</p><p class="notice">This is an attributed interpretation of selected evidence. A citation establishes provenance; it does not independently verify the conclusion.</p></header>'
+    + '<section id="scope" class="panel" tabindex="-1"><h2>Intent and scope</h2>'
+    + (question ? '<h3>Evaluation question</h3><p class="prose">' + html(question) + '</p>' : '<p>The evaluation question is not included in this page. Inspect the frozen population for its authored scope.</p>')
+    + (target.kind ? '<p>Selected work: ' + html(target.kind) + '. Separate goals and participating Sessions are not automatically one objective.</p>' : '')
+    + (intentText ? '<h3>' + (target.kind === "action" ? 'Current authored Action context' : 'Recorded intent context') + '</h3><p class="prose">' + html(intentText) + '</p>' : '')
+    + '<p>Original user intent is not independently established by this interpretation. Current authored context and an evaluation question do not reconstruct a missing original request.</p>'
+    + (cutoff.kind === "recorded-completion" ? '<p>The cutoff is an exact recorded completion. That authored record does not itself establish independent acceptance.</p>' : '<p>The evidence cutoff is a point in recorded history. It does not prove that this Session, its descendants or its objectives are complete.</p>')
+    + (page.report_context && Object.values(page.report_context).some(Boolean) ? '<p>Relationship to earlier reports: ' + page.report_context.supersedes + ' superseded; '
+      + page.report_context.contests + ' contested; ' + page.report_context.context + ' retained as context.</p>' : '') + '</section>'
+  const groups: Array<{ section: EvaluatorInterpretationSection; items: unknown[]; total: number }> = page.section === "sources" ? [] : [
+    { section: page.section, items: page.items, total: page.coverage.total }, ...(page.narrative ?? [])]
+  for (const group of groups) content += '<section id="section-' + group.section + '" class="panel" tabindex="-1"><h2>' + html(SECTION_LABELS[group.section]) + '</h2>'
+    + '<p class="meta">Showing ' + group.items.length + ' of ' + group.total + ' items' + (group.section === page.section ? ' in this page.' : ' in this overview.') + '</p>'
+    + (group.items.length ? group.items.map((value, index) => renderItem(value, group.section, index + (group.section === page.section ? page.coverage.from : 0))).join('') : '<p>No items are included here.</p>')
+    + (group.items.length < group.total ? '<p>More items remain. Use the <a href="#report-navigation">' + html(SECTION_LABELS[group.section].toLowerCase()) + ' request</a> for complete readback.</p>' : '') + '</section>'
+  const originalCounts = new Map<string, number>()
+  const originalKey = (value: unknown) => {
+    const source = retrospectiveMapping(value)
+    return source.source && source.source_store_id && source.permitted_view ? canonical({ source_store_id: source.source_store_id, source: source.source, permitted_view: source.permitted_view }) : null
+  }
+  for (const source of sources) { const key = originalKey(source); if (key) originalCounts.set(key, (originalCounts.get(key) ?? 0) + 1) }
+  if (sources.length || page.section === "sources") content += '<section id="evidence" class="panel" tabindex="-1"><h2>Evidence foundation</h2>'
+    + '<p>Selected, retrieved and cited are distinct facts. Open exact originals through the supported requests; this document does not fetch them.</p>'
+    + sources.map((value, index) => {
+      const source = retrospectiveMapping(value), links = backlinks.get(referenceIdentity(value)) ?? [], key = originalKey(source)
+      return '<article class="evidence-card" id="' + evidenceAnchor(value) + '" tabindex="-1"><h3>' + html(sourceLabel(value, index)) + '</h3>'
+        + '<p class="meta">' + html(source.evidence_kind ?? 'Source reference; the authored interpretation must be assessed against its exact original.') + '</p>'
+        + '<p>Selected in this population: ' + (source.selected === false ? 'no' : 'yes') + '. Retrieved: ' + (source.retrieved ? 'yes' : 'no') + '. Cited: ' + (source.cited ? 'yes' : 'no') + '.</p>'
+        + (source.selected === false ? '<p>This original belongs to an earlier report context. It does not add a member to the current increment.</p>' : '')
+        + (key && (originalCounts.get(key) ?? 0) > 1 ? '<p>The same exact original appears elsewhere on this page in another report context. Reusing it does not provide independent corroboration.</p>' : '')
+        + (source.unavailable ? '<p class="notice">This original was unavailable when membership was frozen. Inspect the exact source request for its present status.</p>' : '')
+        + (typeof source.excerpt === "string" ? '<blockquote>' + html(source.excerpt) + '</blockquote>' : '')
+        + (source.inspect ? retrospectiveDetails("Read this exact original", source.inspect) : '<p>No supported original-source request accompanies this reference.</p>')
+        + (links.length ? '<p class="backlinks">Used by: ' + links.map(link => '<a href="#' + link.id + '">' + html(link.label) + '</a>').join(' · ') + '</p>' : '')
+        + retrospectiveDetails("Exact source identity and provenance", value) + '</article>'
+    }).join('') + (page.evidence_omitted ? '<p>' + page.evidence_omitted + ' further cited sources are outside this overview. Follow the full evidence section request below.</p>' : '') + '</section>'
+  if (page.fragment) content += '<section class="panel"><h2>Exact item fragment</h2><p>This fragment is not a complete item. Concatenate content_json in offset order before parsing.</p></section>'
+  content += '<section id="report-navigation" class="panel" tabindex="-1"><h2>Continue reading</h2><p>These exact requests use the authorized Loom interface. They preserve the report identity and section; each read rechecks permission.</p>'
+    + page.navigation.sections.map(request => retrospectiveDetails("Read " + SECTION_LABELS[request.section].toLowerCase(), request)).join('')
+    + (page.navigation.next ? retrospectiveDetails("Continue this section", page.navigation.next) : '<p>This section has no further page.</p>') + '</section>'
+    + retrospectiveDetails("Exact report data, identifiers and qualifications", page, "report-technical")
+  const nav = '<nav aria-label="Retrospective sections"><a href="#scope">Intent and scope</a>'
+    + groups.map(group => '<a href="#section-' + group.section + '">' + html(SECTION_LABELS[group.section]) + '</a>').join('')
+    + (sources.length || page.section === "sources" ? '<a href="#evidence">Evidence foundation</a>' : '')
+    + '<a href="#report-navigation">Continue reading</a><a href="#report-technical">Technical details</a></nav>'
+  return retrospectiveHTMLDocument("Evaluator retrospective", content, nav)
 }

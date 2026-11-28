@@ -10,7 +10,7 @@ async function until(check: () => boolean, label: string, timeout = 5000) {
   const deadline = Date.now() + timeout
   while (!check()) { if (Date.now() >= deadline) throw new Error("Timed out: " + label); await new Promise(r => setTimeout(r, 5)) }
 }
-async function fixture(callbacks: { onIncrement?: () => Promise<void>; onCatchUp?: () => Promise<void> } = {}) {
+async function fixture(callbacks: { onIncrement?: () => Promise<void>; onCatchUp?: () => Promise<void | { retry_at?: number }> } = {}) {
   const ledger = new Database(":memory:"), db = new Database(":memory:"), store = new Store(ledger), learning = new Learning(db, store, ledger)
   const actor = { session_id: "session", agent: "ordinary-agent" }, config = defaults(), hooks = new Map<string, (input: any) => Promise<void>>()
   config.learning.coalesce_ms = 10; config.learning.max_sources = 2
@@ -78,5 +78,54 @@ test("a blocked source failure settles the opportunity without a busy loop and r
     await until(f.idle, "restored original retry")
     expect(f.learning.automatic.history.listScope(f.actor.session_id, INCREMENTAL_SCOPE).items).toHaveLength(1)
     expect(f.learning.automatic.history.latestInScope(f.actor.session_id, INCREMENTAL_SCOPE, true)).not.toBeNull()
+  } finally { await f.close() }
+})
+
+test("one idle schedules the existing retry timer for interpretation age and cancellation fences that continuation", async () => {
+  let deadline = 0, calls = 0, completed = 0, cancelPhase = false, cancelledRuns = 0
+  let armed!: () => void
+  const cancellationArmed = new Promise<void>(resolve => { armed = resolve })
+  const f = await fixture({ onCatchUp: async () => {
+    calls++
+    if (!deadline) deadline = Date.now() + 150
+    if (cancelPhase) armed()
+    if (Date.now() < deadline) return { retry_at: deadline }
+    if (cancelPhase) cancelledRuns++
+    else completed = 1
+  } })
+  try {
+    f.store.record(f.actor, undefined, { kind: "result", statement: "A small increment waits for its age threshold" })
+    await f.hooks.get("experimental.idle")!({ sessionID: f.actor.session_id })
+    await until(f.idle, "initial age wait")
+    await until(() => completed === 1, "age deadline without another work or idle event")
+    expect(calls).toBeGreaterThanOrEqual(2)
+    expect(f.learning.automatic.history.listScope(f.actor.session_id, INCREMENTAL_SCOPE).items).toHaveLength(1)
+    deadline = Date.now() + 150; cancelPhase = true
+    f.runtime.notify(f.actor.session_id)
+    await cancellationArmed
+    f.signal.abort()
+    const stopped = calls
+    await new Promise(resolve => setTimeout(resolve, 190))
+    expect(calls).toBe(stopped)
+    expect(completed).toBe(1)
+    expect(cancelledRuns).toBe(0)
+  } finally { await f.close() }
+})
+
+test("legacy readers route incremental data to its granular authorization boundary before any original read", async () => {
+  const f = await fixture()
+  try {
+    f.store.record(f.actor, undefined, { kind: "concern", statement: "A retained finding requires the source-specific reader" })
+    const completed = await f.learning.automatic.runIncrement(f.actor.session_id, async () => {}, new AbortController().signal)
+    const member = f.learning.automatic.history.members(completed.batch_id!, f.actor.session_id).items[0]!
+    const resolve = spyOn(f.learning.automatic.sources, "resolve")
+    for (const operation of ["evaluation", "evaluation-members", "evaluation-sources", "evaluation-observations", "evaluation-preparation", "evaluation-admission"])
+      expect(() => f.runtime.read({ operation, batch_id: completed.batch_id!, member_key: member.key, report_id: member.report_id }, f.actor.session_id, true))
+        .toThrow("authorized learning-progress")
+    expect(f.runtime.read({ operation: "evaluations" }, f.actor.session_id, true)).toEqual({ items: [], next_before: null })
+    expect(f.runtime.read({ operation: "evaluation-status" }, f.actor.session_id, true)).toMatchObject({ reporting_mode: "incremental", inspect: { operation: "learning-progress" } })
+    expect(() => f.learning.automatic.history.preparationPopulation(completed.batch_id!, f.actor.session_id))
+      .toThrow("legacy source route")
+    expect(resolve).not.toHaveBeenCalled(); resolve.mockRestore()
   } finally { await f.close() }
 })

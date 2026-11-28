@@ -164,7 +164,7 @@ test("validation guidance neither echoes untrusted fields nor bypasses source pe
     await expect(f.invoke("history", { operation: "preview-population", selection: { objective_id: secret, question: "Question", owner_boundary: { objective_links: 0 } } }))
       .rejects.toThrow("objective_links, review_requests and review_relationships")
     for (const [selection, diagnostic] of [
-      [{ objective_id: "unknown", question: "Question", mode: "invented-policy" }, "Only mode:explicit-objective is supported"],
+      [{ objective_id: "unknown", question: "Question", mode: "invented-policy" }, "Use explicit-subject for target selection"],
       [{ objective_id: "unknown", question: "Question\n" }, "without control characters"],
       [{ objective_id: "unknown", question: "Question", exclusions: [{ record_id: "record", reason: "Reason" }, { record_id: "record", reason: "Again" }] }, "Include each excluded record_id once"],
     ] as const) await expect(f.invoke("history", { operation: "preview-population", selection })).rejects.toThrow(diagnostic)
